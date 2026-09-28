@@ -284,7 +284,10 @@ class DisplayController:
             if os.path.isabs(plugins_dir_name):
                 plugins_dir = plugins_dir_name
             else:
-                # If relative, resolve relative to the project root (LEDMatrix directory)
+                # If relative, resolve against the current working directory.
+                # That is the project root only because ledmatrix.service
+                # sets WorkingDirectory to it; run from anywhere else, a
+                # relative path resolves against wherever that is.
                 project_root = os.getcwd()
                 plugins_dir = os.path.join(project_root, plugins_dir_name)
             
@@ -803,7 +806,15 @@ class DisplayController:
         if use_per_day:
             day_config = days_config[current_day]
             if not day_config.get('enabled', True):
+                # Past the minute gate, so the cache must say the same thing:
+                # returning here without it left the previous minute's dim
+                # value to be served for the rest of this one, and the
+                # brightness flipped between dim and normal every minute.
+                if self._was_dimmed:
+                    logger.info(f"Dim schedule deactivated: brightness restored to {normal_brightness}%")
                 self.is_dimmed = False
+                self._was_dimmed = False
+                self._cached_target_brightness = normal_brightness  # persist for minute-gate
                 return normal_brightness
             start_time_str = day_config.get('start_time', '20:00')
             end_time_str = day_config.get('end_time', '07:00')
@@ -1712,10 +1723,16 @@ class DisplayController:
         pinned = bool(request.get('pinned', False))
         now = time.time()
 
-        if self.available_modes:
-            self.rotation_resume_index = self.current_mode_index
-        else:
-            self.rotation_resume_index = None
+        # Only a request that starts a session records where rotation was.
+        # A request made while on-demand is already showing would otherwise
+        # save the previous request's mode (current_mode_index points at it
+        # by now), and clearing would resume there instead of where the
+        # normal rotation was interrupted.
+        if not self.on_demand_active:
+            if self.available_modes:
+                self.rotation_resume_index = self.current_mode_index
+            else:
+                self.rotation_resume_index = None
 
         if resolved_mode in self.available_modes:
             self.current_mode_index = self.available_modes.index(resolved_mode)
@@ -3312,6 +3329,13 @@ class DisplayController:
                 self.vegas_coordinator.cleanup()
             except Exception as e:
                 logger.warning("Error cleaning up Vegas mode: %s", e)
+        # After Vegas, which sends through it. Stopping also withdraws the
+        # sync status file, which the web UI otherwise kept showing as live.
+        if getattr(self, 'sync_manager', None) is not None:
+            try:
+                self.sync_manager.stop()
+            except Exception as e:
+                logger.warning("Error stopping display sync: %s", e)
         # Shutdown config service if it exists
         if hasattr(self, 'config_service'):
             try:

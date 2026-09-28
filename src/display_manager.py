@@ -20,7 +20,10 @@ Key responsibilities
 
 Singleton: only one ``DisplayManager`` instance exists per process.  The
 first call to ``DisplayManager(config)`` creates it; subsequent calls return
-the same object.
+the same object, but ``__init__`` runs again on it each time, so it is
+re-initialised (matrix included) with the new arguments rather than handed
+back as it was.  Construct it once and pass that instance around;
+:meth:`DisplayManager.cleanup` clears the singleton.
 """
 
 import json

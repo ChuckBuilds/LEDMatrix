@@ -95,6 +95,31 @@ class TestMissingBodyGivesTheDeclaredError:
         assert response.status_code == 400
 
 
+class TestNonObjectBodyIsRefused:
+    """A JSON array parses and is truthy, so it got past "No data provided".
+
+    The raw editors then wrote it over config.json / config_secrets.json, and
+    validate_request_json checked ``field in data`` against a list -- so
+    ``["plugin_id"]`` passed and the handler raised TypeError.
+    """
+
+    @pytest.mark.parametrize("url", [
+        "/api/v3/config/raw/main",
+        "/api/v3/config/raw/secrets",
+    ])
+    def test_raw_config_saves_refuse_an_array(self, api_v3_client, api_v3_module, url):
+        response = api_v3_client.post(url, json=["display", "schedule"])
+
+        assert response.status_code == 400
+        api_v3_module.api_v3.config_manager.save_raw_file_content.assert_not_called()
+
+    def test_validate_request_json_refuses_an_array(self, api_v3_client, api_v3_module):
+        response = api_v3_client.post("/api/v3/plugins/uninstall", json=["plugin_id"])
+
+        assert response.status_code == 400
+        assert "object" in response.get_json()["message"]
+
+
 class TestNoBodyReadContradictsItsOwnGuard:
     PKG = Path(__file__).parent.parent / "web_interface/blueprints/api_v3"
 

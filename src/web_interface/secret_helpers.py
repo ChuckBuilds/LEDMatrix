@@ -64,7 +64,14 @@ def separate_secrets(
     secrets: Dict[str, Any] = {}
     for key, value in config.items():
         full_path = f"{prefix}.{key}" if prefix else key
-        if isinstance(value, dict):
+        # The field's own x-secret marker is checked before its type. A secret
+        # whose value is an object or array used to fall into the recursion
+        # below, where none of its children are marked, and was written to
+        # config.json in plain text. mask_secret_fields already checks the
+        # marker first, so this also matches what the API masks.
+        if full_path in secret_paths:
+            secrets[key] = value
+        elif isinstance(value, dict):
             nested_regular, nested_secrets = separate_secrets(value, secret_paths, full_path)
             if nested_regular:
                 regular[key] = nested_regular
@@ -94,8 +101,6 @@ def separate_secrets(
                         secrets[key] = sec_items
                 else:
                     regular[key] = value
-        elif full_path in secret_paths:
-            secrets[key] = value
         else:
             regular[key] = value
     return regular, secrets

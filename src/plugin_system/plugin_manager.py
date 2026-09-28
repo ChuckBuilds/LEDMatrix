@@ -183,6 +183,8 @@ class PluginManager:
         someone opened a page -- the same log-volume problem this is meant to
         help diagnose.
         """
+        # setdefault rather than self._skip_reported: tests build a bare
+        # scanner with PluginManager.__new__ and skip __init__.
         reported = self.__dict__.setdefault('_skip_reported', set())
         if key in reported:
             return
@@ -433,7 +435,18 @@ class PluginManager:
                 self.state_manager.set_state(plugin_id, PluginState.ENABLED)
                 # Call on_enable if plugin is enabled
                 if hasattr(plugin_instance, 'on_enable'):
-                    plugin_instance.on_enable()
+                    try:
+                        plugin_instance.on_enable()
+                    except Exception:
+                        # Undo the registration above before the outer
+                        # handler marks it ERROR: left in self.plugins, the
+                        # next load_plugin() would return True as "already
+                        # loaded" for a plugin that never enabled.
+                        self.plugins.pop(plugin_id, None)
+                        with self._plugin_last_update_lock:
+                            self.plugin_last_update.pop(plugin_id, None)
+                        self._update_interval_cache.pop(plugin_id, None)
+                        raise
             else:
                 self.state_manager.set_state(plugin_id, PluginState.DISABLED)
             
@@ -452,7 +465,7 @@ class PluginManager:
     
     #: Config keys the **core** reads out of a plugin's own config block. The
     #: plugin never declares them, so a schema with
-    #: ``"additionalProperties": false`` — 37 of the 42 published ones — reports
+    #: ``"additionalProperties": false`` — most published ones do — reports
     #: them as violations and the plugin gets flagged degraded in the web UI for
     #: using a documented core feature.
     #:
@@ -744,7 +757,13 @@ class PluginManager:
         if plugin:
             info['loaded'] = True
             if hasattr(plugin, 'get_info'):
-                info['runtime_info'] = plugin.get_info()
+                # One plugin's get_info() raising must not take down the
+                # whole installed-plugins listing (/api/v3/plugins/installed).
+                try:
+                    info['runtime_info'] = plugin.get_info()
+                except Exception as e:
+                    self.logger.warning("Plugin %s get_info() failed: %s", plugin_id, e)
+                    info['runtime_info'] = {}
         else:
             info['loaded'] = False
         

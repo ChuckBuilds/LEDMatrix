@@ -17,7 +17,7 @@ from src.logging_config import get_logger
 class PluginState(Enum):
     """Plugin state enumeration."""
     UNLOADED = "unloaded"  # Plugin not loaded
-    LOADED = "loaded"  # Plugin module loaded but not instantiated
+    LOADED = "loaded"  # load_plugin() in progress: set before the module is imported
     ENABLED = "enabled"  # Plugin instantiated and enabled
     RUNNING = "running"  # Plugin is currently executing
     ERROR = "error"  # Plugin encountered an error

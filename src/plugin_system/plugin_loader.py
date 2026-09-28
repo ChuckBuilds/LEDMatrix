@@ -23,6 +23,11 @@ from src.exceptions import PluginError
 from src.logging_config import get_logger
 from src.plugin_system.plugin_dirs import resolve_plugin_dir
 
+#: Serialises pip runs across threads. Startup loads plugins on a small
+#: thread pool, and two concurrent ``pip install`` processes writing the same
+#: site-packages can corrupt it or fail on each other's partial installs.
+_PIP_INSTALL_LOCK = threading.Lock()
+
 
 def requirements_has_real_deps(requirements_file: str) -> bool:
     """
@@ -325,93 +330,94 @@ class PluginLoader:
         if requirements_file is None:
             return True
 
-        try:
-            self.logger.info("Installing dependencies for plugin %s...", plugin_id)
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", requirements_file],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False
-            )
+        with _PIP_INSTALL_LOCK:
+            try:
+                self.logger.info("Installing dependencies for plugin %s...", plugin_id)
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", requirements_file],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False
+                )
 
-            if result.returncode == 0:
-                self.logger.info("Dependencies installed successfully for %s", plugin_id)
-                return True
-            else:
-                stderr = result.stderr or ""
-                # uninstall-no-record-file means a system-managed copy of a package
-                # (e.g. apt's python3-requests, which ships no pip RECORD file) is in
-                # the way of the version this requirements.txt pins. Retry with
-                # --ignore-installed so pip lays the pinned version down alongside
-                # the system copy instead of trying to replace it — matching the
-                # retry already used by install_dependencies_apt.py / safe_pip_install.sh.
-                # Without this retry, the plugin would silently keep running against
-                # whatever version the system happened to ship.
-                if "uninstall-no-record-file" in stderr:
-                    self.logger.warning(
-                        "Dependencies for %s conflict with a system-managed package "
-                        "(no pip RECORD); retrying with --ignore-installed: %s",
-                        plugin_id, stderr.strip()
-                    )
-                    # Wrapped in its own try/except so a retry timeout is
-                    # tolerated the same way as a retry failure, instead of
-                    # propagating to the outer handler and returning False
-                    # (which would contradict the "assume satisfied" fallback
-                    # below).
-                    try:
-                        # sys.executable is this process's own interpreter (not
-                        # attacker-influenced), and requirements_file is rebuilt
-                        # by contained_plugin_dir() from a trusted listing, never raw
-                        # external input.
-                        retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
-                            [sys.executable, "-m", "pip", "install", "--break-system-packages",
-                             "--ignore-installed", "-r", requirements_file],
-                            capture_output=True,
-                            text=True,
-                            timeout=timeout,
-                            check=False
-                        )
-                        if retry_result.returncode != 0:
-                            self.logger.warning(
-                                "Retry with --ignore-installed also failed for %s; assuming the "
-                                "system-managed version satisfies the requirement: %s",
-                                plugin_id, (retry_result.stderr or "").strip()
-                            )
-                    except subprocess.TimeoutExpired:
-                        self.logger.warning(
-                            "Retry with --ignore-installed timed out for %s; assuming the "
-                            "system-managed version satisfies the requirement",
-                            plugin_id
-                        )
+                if result.returncode == 0:
+                    self.logger.info("Dependencies installed successfully for %s", plugin_id)
                     return True
-                self.logger.warning(
-                    "Dependency installation returned non-zero exit code for %s: %s",
-                    plugin_id,
-                    stderr
-                )
+                else:
+                    stderr = result.stderr or ""
+                    # uninstall-no-record-file means a system-managed copy of a package
+                    # (e.g. apt's python3-requests, which ships no pip RECORD file) is in
+                    # the way of the version this requirements.txt pins. Retry with
+                    # --ignore-installed so pip lays the pinned version down alongside
+                    # the system copy instead of trying to replace it — matching the
+                    # retry already used by install_dependencies_apt.py / safe_pip_install.sh.
+                    # Without this retry, the plugin would silently keep running against
+                    # whatever version the system happened to ship.
+                    if "uninstall-no-record-file" in stderr:
+                        self.logger.warning(
+                            "Dependencies for %s conflict with a system-managed package "
+                            "(no pip RECORD); retrying with --ignore-installed: %s",
+                            plugin_id, stderr.strip()
+                        )
+                        # Wrapped in its own try/except so a retry timeout is
+                        # tolerated the same way as a retry failure, instead of
+                        # propagating to the outer handler and returning False
+                        # (which would contradict the "assume satisfied" fallback
+                        # below).
+                        try:
+                            # sys.executable is this process's own interpreter (not
+                            # attacker-influenced), and requirements_file is rebuilt
+                            # by contained_plugin_dir() from a trusted listing, never raw
+                            # external input.
+                            retry_result = subprocess.run(  # nosec B603 - no shell invoked (list-form argv)  # nosemgrep
+                                [sys.executable, "-m", "pip", "install", "--break-system-packages",
+                                 "--ignore-installed", "-r", requirements_file],
+                                capture_output=True,
+                                text=True,
+                                timeout=timeout,
+                                check=False
+                            )
+                            if retry_result.returncode != 0:
+                                self.logger.warning(
+                                    "Retry with --ignore-installed also failed for %s; assuming the "
+                                    "system-managed version satisfies the requirement: %s",
+                                    plugin_id, (retry_result.stderr or "").strip()
+                                )
+                        except subprocess.TimeoutExpired:
+                            self.logger.warning(
+                                "Retry with --ignore-installed timed out for %s; assuming the "
+                                "system-managed version satisfies the requirement",
+                                plugin_id
+                            )
+                        return True
+                    self.logger.warning(
+                        "Dependency installation returned non-zero exit code for %s: %s",
+                        plugin_id,
+                        stderr
+                    )
+                    return False
+            except subprocess.TimeoutExpired:
+                self.logger.error("Dependency installation timed out for %s", plugin_id)
                 return False
-        except subprocess.TimeoutExpired:
-            self.logger.error("Dependency installation timed out for %s", plugin_id)
-            return False
-        except FileNotFoundError:
-            self.logger.warning("pip not found. Skipping dependency installation for %s", plugin_id)
-            return True
-        except OSError as e:
-            # A broken pipe (EPIPE) happens when pip's output pipe closes
-            # mid-download, usually a network interruption.
-            if e.errno == errno.EPIPE:
-                self.logger.error(
-                    "Broken pipe error during dependency installation for %s. "
-                    "This usually indicates a network interruption or pip output buffer issue. "
-                    "Try installing again or check your network connection.", plugin_id
-                )
-            else:
-                self.logger.error("OS error during dependency installation for %s: %s", plugin_id, e)
-            return False
-        except Exception as e:
-            self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
-            return False
+            except FileNotFoundError:
+                self.logger.warning("pip not found. Skipping dependency installation for %s", plugin_id)
+                return True
+            except OSError as e:
+                # A broken pipe (EPIPE) happens when pip's output pipe closes
+                # mid-download, usually a network interruption.
+                if e.errno == errno.EPIPE:
+                    self.logger.error(
+                        "Broken pipe error during dependency installation for %s. "
+                        "This usually indicates a network interruption or pip output buffer issue. "
+                        "Try installing again or check your network connection.", plugin_id
+                    )
+                else:
+                    self.logger.error("OS error during dependency installation for %s: %s", plugin_id, e)
+                return False
+            except Exception as e:
+                self.logger.error("Unexpected error installing dependencies for %s: %s", plugin_id, e, exc_info=True)
+                return False
     
     @staticmethod
     def _iter_plugin_bare_modules(
