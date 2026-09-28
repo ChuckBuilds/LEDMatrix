@@ -115,15 +115,25 @@ class TestGetOdds:
         assert result == {'spread': -3.0}
         mock_get.assert_not_called()
 
-    def test_cached_no_odds_sentinel_returned_verbatim(
+    def test_cached_no_odds_marker_is_a_hit_but_not_odds(
             self, manager, cache_manager, mock_get):
+        # The marker keeps a game with no odds from being re-requested every
+        # update, but it isn't odds: returned as-is, callers saw a truthy
+        # dict and treated the game as having some.
         cache_manager.get_with_auto_strategy.return_value = {'no_odds': True}
 
         result = manager.get_odds('football', 'nfl', '401')
 
-        assert result == {'no_odds': True}
+        assert result is None
         mock_get.assert_not_called()
         assert manager.is_odds_available(result) is False
+
+    def test_the_no_odds_marker_is_not_the_stale_fallback_either(
+            self, manager, cache_manager, mock_get):
+        mock_get.side_effect = requests.exceptions.ConnectionError("down")
+        cache_manager.get_with_auto_strategy.side_effect = [None, {'no_odds': True}]
+
+        assert manager.get_odds('football', 'nfl', '401') is None
 
     def test_success_caches_extracted_data_with_interval_ttl(
             self, manager, cache_manager, mock_get):
