@@ -1,10 +1,10 @@
 # Test/dev-only dependencies (not needed on a running display).
 # Install alongside requirements.txt:  pip install -r requirements.txt -r requirements-test.txt
 pytest>=9.0.3,<10.0.0
-pytest-cov>=4.1.0,<5.0.0
+pytest-cov>=4.1.0,<8.0.0
 pytest-mock>=3.11.0,<4.0.0
 freezegun>=1.2,<2        # deterministic time for golden-image tests
-psutil>=6.0.0,<8.0.0     # optional at runtime; installed for tests so the
+psutil>=6.0.0,<7.0.0     # optional at runtime; installed for tests so the
                          # /system/status endpoint's real path is exercised
 mypy>=1.5.0,<2.0.0       # static type checking (also pinned in .pre-commit-config.yaml)
 PyYAML>=6.0.2,<7.0.0     # not a core dependency: test_starlark_pixlet_routes loads

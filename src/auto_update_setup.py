@@ -70,7 +70,14 @@ def _read(path):
 
 
 def is_enabled(config):
-    return bool((config.get('auto_update') or {}).get('enabled', False))
+    # Only the {"enabled": true} object turns this on. A hand-edited
+    # non-dict (e.g. "auto_update": true) raised AttributeError here and
+    # aborted startup setup; the web UI's save replaces such a value with {}
+    # (disabled), so read it the same way.
+    section = config.get('auto_update')
+    if not isinstance(section, dict):
+        return False
+    return bool(section.get('enabled', False))
 
 
 class UpdateHelperSetup:
@@ -201,17 +208,26 @@ class UpdateHelperSetup:
         try:
             self.result_file.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=str(self.result_file.parent), prefix='.auto_update_setup_')
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(result, f, indent=2)
-            os.chmod(tmp, 0o644)
-            if self._web_ids and hasattr(os, 'chown'):
-                # Only root can give the file away; the result is readable
-                # (0644) either way, so a failed chown must not lose it.
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, indent=2)
+                os.chmod(tmp, 0o644)
+                if self._web_ids and hasattr(os, 'chown'):
+                    # Only root can give the file away; the result is readable
+                    # (0644) either way, so a failed chown must not lose it.
+                    try:
+                        os.chown(tmp, *self._web_ids)
+                    except OSError:
+                        pass
+                os.replace(tmp, self.result_file)
+            except BaseException:
+                # Don't leave a .auto_update_setup_* file behind in the
+                # project dir every time the write fails.
                 try:
-                    os.chown(tmp, *self._web_ids)
+                    os.unlink(tmp)
                 except OSError:
                     pass
-            os.replace(tmp, self.result_file)
+                raise
         except OSError as e:
             logger.warning("Could not record automatic update setup result: %s", e)
         return result

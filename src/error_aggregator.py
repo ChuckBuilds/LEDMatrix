@@ -6,7 +6,8 @@ for the LEDMatrix system. Enables automatic bug detection by tracking
 error frequency, patterns, and context.
 
 This is a local-only implementation with no external dependencies.
-Errors are stored in memory with optional JSON export.
+Errors are stored in memory; ErrorSnapshotPublisher shares a summary with the
+web process through the cache.
 """
 
 import math
@@ -18,7 +19,6 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Tuple
 import logging
 
@@ -105,7 +105,6 @@ class ErrorAggregator:
         max_records: int = 1000,
         pattern_threshold: int = 5,
         pattern_window_minutes: int = 60,
-        export_path: Optional[Path] = None
     ):
         """
         Initialize the error aggregator.
@@ -114,20 +113,18 @@ class ErrorAggregator:
             max_records: Maximum number of error records to keep in memory
             pattern_threshold: Number of occurrences to detect a pattern
             pattern_window_minutes: Time window for pattern detection
-            export_path: Optional path for JSON export (auto-export on pattern detection)
         """
         self.logger = logging.getLogger(__name__)
         self.max_records = max_records
         self.pattern_threshold = pattern_threshold
         self.pattern_window = timedelta(minutes=pattern_window_minutes)
-        self.export_path = export_path
 
         self._records: List[ErrorRecord] = []
         self._error_counts: Dict[str, int] = defaultdict(int)
         self._plugin_error_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self._patterns: Dict[str, ErrorPattern] = {}
         self._pattern_callbacks: List[Callable[[ErrorPattern], None]] = []
-        self._lock = threading.RLock()  # RLock allows nested acquisition for export_to_file
+        self._lock = threading.RLock()  # RLock: build_snapshot and pattern callbacks re-enter
 
         # Track session start for relative timing
         self._session_start = datetime.now()
@@ -248,10 +245,6 @@ class ErrorAggregator:
                         callback(pattern)
                     except Exception as e:
                         self.logger.error(f"Pattern callback failed: {e}")
-
-                # Auto-export if path configured
-                if self.export_path:
-                    self._auto_export()
             else:
                 # Update existing pattern
                 self._patterns[pattern_key].count = count
@@ -424,33 +417,6 @@ class ErrorAggregator:
         # turned into a string here rather than failing the write.
         return json.loads(json.dumps(summary, default=str))
 
-    def export_to_file(self, filepath: Path) -> None:
-        """
-        Export error data to JSON file.
-
-        Args:
-            filepath: Path to export file
-        """
-        with self._lock:
-            data = {
-                "exported_at": datetime.now().isoformat(),
-                "summary": self.get_error_summary(),
-                "all_records": [r.to_dict() for r in self._records]
-            }
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            filepath.write_text(json.dumps(data, indent=2))
-            self.logger.info(f"Exported error data to {filepath}")
-
-    def _auto_export(self) -> None:
-        """Auto-export on pattern detection (if export_path configured)."""
-        if self.export_path:
-            try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filepath = self.export_path / f"errors_{timestamp}.json"
-                self.export_to_file(filepath)
-            except Exception as e:
-                self.logger.error(f"Auto-export failed: {e}")
-
 
 # Global singleton instance
 _error_aggregator: Optional[ErrorAggregator] = None
@@ -461,7 +427,6 @@ def get_error_aggregator(
     max_records: int = 1000,
     pattern_threshold: int = 5,
     pattern_window_minutes: int = 60,
-    export_path: Optional[Path] = None
 ) -> ErrorAggregator:
     """
     Get or create the global error aggregator instance.
@@ -470,7 +435,6 @@ def get_error_aggregator(
         max_records: Maximum records to keep (only used on first call)
         pattern_threshold: Pattern detection threshold (only used on first call)
         pattern_window_minutes: Pattern detection window (only used on first call)
-        export_path: Export path for auto-export (only used on first call)
 
     Returns:
         The global ErrorAggregator instance
@@ -483,7 +447,6 @@ def get_error_aggregator(
                 max_records=max_records,
                 pattern_threshold=pattern_threshold,
                 pattern_window_minutes=pattern_window_minutes,
-                export_path=export_path
             )
         return _error_aggregator
 

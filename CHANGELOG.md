@@ -29,6 +29,33 @@ accepts both, but the store flags the old spelling as deprecated
   - `get_vegas_render_width()` reads `display_manager.width` first, as plugins are told to.
   - Store and state files are read as UTF-8 regardless of the system locale.
   - Docs: `update_interval` in `config.json` sets the scheduler's cadence only for a plugin whose manifest has none (TROUBLESHOOTING, PLUGIN_CONFIGURATION_GUIDE). The health/metrics reset and limits routes note that they only change the web process's view.
+- Web UI cleanup and dependency pins:
+  - A plugin's own config widget (`/static/plugin-widgets/<id>/<widget>.js`) is requested with `?v=<plugin version>`, so an updated plugin's widget reaches browsers instead of the copy cached as immutable for a year.
+  - A failed installed-plugins reload after a toggle, install or uninstall shows one error, not a second generic "unexpected error" toast.
+  - The timezone picker on the General tab renders again when the tab is reloaded in the same page session.
+  - Removed dead code: the plugin-action button's six plugin-id fallbacks (the button always passes its id) and its `[DEBUG]` logging, `window.currentPluginConfig` (never set to anything but `null`), the file-upload widget's JSON delete branch (its endpoint never existed), unused `PluginAPI` / `PluginInstallManager` / `PluginStateManager` helpers, `loadPluginWidgetsFromManifest`, no-longer-reachable fallbacks for a stale `install_manager.js` and a missing `LEDVisibility`, and 13 unused CSS utility rules.
+  - `pytz` may be any release before 2027, so current timezone data installs; `requirements-test.txt` caps `psutil` below 7 like the runtime requirements and allows `pytest-cov` up to 7.x (checked against pytest 9 with the CI coverage run).
+  - The Claude GitHub Actions workflows pin `anthropics/claude-code-action` to a commit SHA like the other actions.
+- Core services and `src.common` fixes:
+  - A plugin font declared as a `.zip` URL is served as the font extracted from it after a restart, instead of registering the archive itself. Font downloads time out after 30s and land in the cache only once complete, so an interrupted download is retried rather than served forever.
+  - `APIHelper`'s rate limit and the display-sync heartbeat/leader timeouts measure elapsed time with `time.monotonic()`. A wall-clock step (NTP correcting a Pi with no RTC) could stall API requests for as long as the step or fake a sync timeout. `get_request_stats()['last_request_time']` is still wall-clock time.
+  - `LogoHelper.load_logo_with_download()` sizes its placeholder to the scaled logo box, like a real logo (only differs when `scale` isn't 1).
+  - The AP Top 25 resolver remembers a failed or empty rankings fetch for 5 minutes, so an ESPN outage no longer costs every scoreboard update a 30s timeout. Its duplicate INFO log line is gone.
+  - `sudo_remove_directory()` tries each bash path the sudoers rule might name, as `install_requirements_file()` already did.
+  - An element's saved layout `scale` equal to its schema default is no longer treated as a user choice when the default is declared under an alias (`score` for `score_text`).
+  - `BackgroundDataService` runs a cache-hit callback outside its lock, as the fetch path does.
+  - Plugin config saves recombine position-keyed inputs for nullable array fields (`"type": ["array", "null"]`).
+  - A hand-edited non-object `auto_update` value reads as off instead of raising at startup, and a failed result write no longer leaves a temp file behind.
+  - `CacheError`/`ConfigError`/`PluginError`/`DisplayError` no longer write their key into the caller's `context` dict; the JSON log formatter stringifies values it can't encode instead of dropping the record.
+  - Removed `ErrorAggregator`'s unused JSON export (`export_path`, `export_to_file()`); nothing called it. Docstring fixes in `validate_file_upload`, `StartupValidator.raise_on_errors`, `DisplaySyncManager.set_on_new_cycle`, `dynamic_team_resolver` and `config_arrays`.
+- Display thread-safety and consistency fixes:
+  - `DisplayManager.defer_update()` from a plugin's update thread no longer loses queued updates while the render thread processes the queue; the queue is locked, and the queued callables still run outside the lock.
+  - BDF fonts: `FontManager.get_font()` and `element_style.load_font()` no longer hand one `freetype.Face` to every thread. BDF faces come from `load_bdf_face`, which already caches them per thread; TrueType fonts are cached as before. `element_style`'s font cache is locked (a concurrent eviction could raise `KeyError`).
+  - **Behaviour change:** when `display.hardware.limit_refresh_rate_hz` is missing from config, the panel is now capped at 100 Hz (the config template's value) instead of 90 Hz. Scroll pacing already assumed 100 Hz in that case, so it now matches what the panel does. Configs that set the key (every config migrated from the template) are unaffected.
+  - A sync follower adopts the leader's scroll image between frames on the render thread, instead of the TCP thread swapping the image, array and width while a frame is being drawn.
+  - `update_display()` errors are logged once with a traceback, then at most once a minute with a count, instead of an untraced line every frame. Several swallowed exceptions in `DisplayController` now log at DEBUG.
+  - The repo-root `display_controller.py` now runs `run.py` (the real entry point), so it gets run.py's `-e`/`-d` flags, logging setup and `sys.dont_write_bytecode`.
+- Vegas: a plugin set to `vegas_mode: "static"` pauses the scroll for its turn again. The pause was triggered by peeking at the front of a segment buffer that continuous scrolling (the default) never advances, so a static plugin paused only if it happened to be first, once, at startup, and otherwise scrolled past as ordinary content; swap mode had the same problem for any static plugin not first in its cycle. The render pipeline now marks where each static plugin's turn falls in the strip and the scroll pauses when it gets there. The pause runs the plugin's `display()` under its plugin lock, and a static plugin's content is no longer rendered for the strip.
 
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 

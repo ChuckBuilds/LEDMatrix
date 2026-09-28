@@ -465,7 +465,10 @@ def update_starlark_app_config(app_id):
 
                         def update_fn(manifest):
                             manifest['apps'][app_id].update(timing_updates)
-                        starlark_plugin._update_manifest_safe(update_fn)
+                        # _update_manifest_safe answers False rather than
+                        # raising, so the except below never sees this failure.
+                        if starlark_plugin._update_manifest_safe(update_fn) is False:
+                            logger.warning("Timing for %s was not persisted to the manifest", app_id)
                     except Exception as e:
                         logger.warning(f"Failed to persist timing to manifest for {app_id}: {e}")
                 starlark_plugin._render_app(app, force=True)

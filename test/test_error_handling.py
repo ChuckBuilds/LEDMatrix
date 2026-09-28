@@ -31,3 +31,18 @@ class TestCustomExceptions:
         # DisplayError includes context in string representation
         assert "Display not found" in str(error)
         assert error.context.get('display_mode') == 'adafruit'
+
+    def test_callers_context_dict_is_not_mutated(self):
+        """A caller reusing one context dict across raises used to have
+        every error's own key written into it."""
+        cases = [
+            (CacheError, {'cache_key': 'k'}),
+            (ConfigError, {'config_path': 'c.json', 'field': 'f'}),
+            (PluginError, {'plugin_id': 'weather'}),
+            (DisplayError, {'display_mode': 'm'}),
+        ]
+        for cls, kwargs in cases:
+            shared = {'attempt': 1}
+            error = cls("boom", context=shared, **kwargs)
+            assert shared == {'attempt': 1}, cls.__name__
+            assert error.context == {'attempt': 1, **kwargs}, cls.__name__

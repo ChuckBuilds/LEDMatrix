@@ -1115,6 +1115,14 @@ class TestAliasedLookup:
         ).style("score_text")
         assert st.scale == 2.0
 
+    def test_scale_default_is_found_through_an_alias(self):
+        """The saved value equals the default filed under the bare-noun
+        layout key, so it is the save flow's write-in, not a choice."""
+        defaults = {"customization": {"layout": {"score": {"scale": 1.5}}}}
+        config = {"customization": {"layout": {"score": {"scale": 1.5}}}}
+        st = ElementStyleResolver(config, defaults).style("score_text")
+        assert st.scale == 1.0
+
 HANDWRITTEN = {
     "type": "object",
     "properties": {

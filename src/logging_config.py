@@ -43,7 +43,10 @@ class StructuredFormatter(logging.Formatter):
         if hasattr(record, 'operation_id'):
             log_data['operation_id'] = record.operation_id
         
-        return json.dumps(log_data)
+        # default=str: record.context / extras can hold datetimes, Paths,
+        # exceptions etc.; without it one such value raised TypeError and
+        # the whole record was dropped by the handler's error path.
+        return json.dumps(log_data, default=str)
 
 
 class ContextualFormatter(logging.Formatter):
