@@ -738,7 +738,7 @@ def get_github_auth_status():
         return jsonify({
             'status': 'success',
             'data': {
-                'token_status': 'none',
+                'token_status': 'none',  # nosec B105 - a status label  # nosemgrep
                 'authenticated': False,
                 'rate_limit': 60,
                 'message': 'No GitHub token configured',
@@ -753,7 +753,7 @@ def get_github_auth_status():
         return jsonify({
             'status': 'success',
             'data': {
-                'token_status': 'valid',
+                'token_status': 'valid',  # nosec B105 - a status label  # nosemgrep
                 'authenticated': True,
                 'rate_limit': 5000,
                 'message': 'GitHub API authenticated',
@@ -764,7 +764,7 @@ def get_github_auth_status():
         return jsonify({
             'status': 'success',
             'data': {
-                'token_status': 'invalid',
+                'token_status': 'invalid',  # nosec B105 - a status label  # nosemgrep
                 'authenticated': False,
                 'rate_limit': 60,
                 'message': f'GitHub token is invalid: {error_message}' if error_message else 'GitHub token is invalid',

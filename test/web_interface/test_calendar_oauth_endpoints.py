@@ -402,8 +402,8 @@ class TestDiagnosticsAreRedacted:
                                                                         tmp_path,
                                                                         monkeypatch):
         # OSError from the spawn carries the interpreter path and whatever the
-        # OS chose to say; it reaches the client through the redactor like
-        # everything else.
+        # OS chose to say; none of it reaches the client, which is pointed at
+        # the log instead.
         script = tmp_path / 'calendar_registration.py'
         script.write_text('', encoding='utf-8')
 
@@ -414,7 +414,8 @@ class TestDiagnosticsAreRedacted:
         payload, error = mod._run_calendar_registration(tmp_path, '')
         assert payload is None
         assert 'abcd1234' not in error, error
-        assert 'OSError' in error, error
+        assert 'Exec format' not in error, error
+        assert 'log' in error, error
 
     def test_a_missing_google_library_is_reported_without_raw_exception_text(
             self, client, monkeypatch):

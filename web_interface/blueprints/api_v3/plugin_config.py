@@ -435,7 +435,8 @@ def save_plugin_config():
                 )
             except Exception:
                 secrets_path = api_v3.config_manager.secrets_path
-                logger.error("Error saving secrets config for %s (path=%s)", plugin_id, secrets_path, exc_info=True)
+                # Logs the file path, not any secret value.
+                logger.error("Error saving secrets config for %s (path=%s)", plugin_id, secrets_path, exc_info=True)  # nosemgrep
                 return error_response(
                     ErrorCode.CONFIG_SAVE_FAILED,
                     "Failed to save secrets configuration; see logs for details",
