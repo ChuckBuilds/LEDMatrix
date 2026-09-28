@@ -29,7 +29,15 @@ BASE=http://<pi-ip>:5000 node run_all.js
 ```
 
 `run_all.js` skips the DOM suites (rather than failing) when jsdom is missing or
-nothing is listening, so it stays useful in a bare checkout.
+nothing is listening, so it stays useful in a bare checkout. `REQUIRE_DOM=1`
+makes that a failure instead.
+
+CI runs everything: the **Web UI JS tests** job in `.github/workflows/test.yml`
+installs jsdom, starts the web interface in emulator mode on port 5000 and runs
+`run_all.js` with `REQUIRE_DOM=1`. The DOM suites don't assume a particular
+device: the store suite checks pagination whichever side of 48 plugins the live
+registry is, and the Tools suite supplies two sample Starlark apps when the
+server has none.
 
 ## The suites
 
