@@ -19,6 +19,10 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Background data fetches retry at one level instead of two. The session adapter retried a connection error three times inside every attempt of the service's own retry loop, so a dead network cost up to 16 connection attempts per request and held one of the few worker threads throughout; now it is the loop's `max_retries + 1` attempts. ESPN date-range chunks, which don't go through that loop and skip a chunk that fails, keep a small connection retry of their own so a brief blip doesn't drop a month from a cached season.
+- CI installs `web_interface/requirements.txt` too, so flask-limiter, flask-compress and the web floors are tested. `test_api_helper_does_not_hand_set_brotli` now checks what it meant: core doesn't add `br` itself, and `requests` may advertise it when a brotli decoder is installed.
+- All Discord links point to the LEDMatrix server's invite.
+
 - Web backend and WiFi fixes:
   - Plugins installed as `ledmatrix-<id>` (or in a directory not named after their id) work in the installed list, the update button, recorded versions, the plugin config form and plugin web UI pages. Those routes built `plugins_dir/<id>` themselves instead of asking the plugin manager.
   - The captive-portal checks (`/generate_204` and friends) also detect an access point brought up through NetworkManager, the fallback `enable_ap_mode` uses without hostapd; only hostapd was checked, so phones on that AP were told the internet worked.

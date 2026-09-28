@@ -389,3 +389,43 @@ class TestPriorityIsAcceptedAndIgnored:
         rid = service.submit_fetch_request(
             "nfl", 2026, "http://example.invalid/x", cache_key="k", priority=5)
         assert service.get_result(rid).cached is True
+
+
+class TestOneRetryLayer:
+    """Each fetch used to retry at two levels: the session adapter retried a
+    connection error three times inside every attempt of the service's own
+    retry loop, so a dead network cost up to 16 connection attempts per
+    request. Only the loop retries now; date chunks, which bypass it, get a
+    small connection retry of their own."""
+
+    def test_the_session_adapters_do_not_retry(self, service):
+        for prefix in ("http://", "https://"):
+            assert service.session.get_adapter(prefix).max_retries.total == 0
+
+    def test_a_chunk_request_retries_a_connection_error(self, monkeypatch):
+        import requests
+        from src.background_data_service import _ConnectionRetryingSession
+        monkeypatch.setattr(bds_module.time, "sleep", lambda s: None)
+        inner = MagicMock()
+        inner.get.side_effect = [requests.ConnectionError("blip"), "ok"]
+        assert _ConnectionRetryingSession(inner).get("http://x") == "ok"
+        assert inner.get.call_count == 2
+
+    def test_a_chunk_request_gives_up_after_its_attempts(self, monkeypatch):
+        import requests
+        from src.background_data_service import _ConnectionRetryingSession
+        monkeypatch.setattr(bds_module.time, "sleep", lambda s: None)
+        inner = MagicMock()
+        inner.get.side_effect = requests.ConnectionError("down")
+        with pytest.raises(requests.ConnectionError):
+            _ConnectionRetryingSession(inner).get("http://x")
+        assert inner.get.call_count == _ConnectionRetryingSession.ATTEMPTS
+
+    def test_other_errors_are_not_retried(self, monkeypatch):
+        import requests
+        from src.background_data_service import _ConnectionRetryingSession
+        inner = MagicMock()
+        inner.get.side_effect = requests.Timeout("slow")
+        with pytest.raises(requests.Timeout):
+            _ConnectionRetryingSession(inner).get("http://x")
+        assert inner.get.call_count == 1
