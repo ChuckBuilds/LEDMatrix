@@ -11,7 +11,7 @@ import time
 import threading
 from collections import deque
 from contextlib import nullcontext
-from typing import Optional, List, Any, Dict, Deque
+from typing import Optional, List, Any, Dict, Deque, Tuple
 from PIL import Image
 
 from src.common.scroll_config import solve_crisp
@@ -57,6 +57,14 @@ class RenderPipeline:
     # flight when Vegas stops cannot land in the next run. Class-level so
     # pipelines built without __init__ (tests) still have it.
     _prefetch_generation = 0
+
+    # Where each STATIC plugin's turn falls in the strip, as (x, plugin_id)
+    # in ascending strip columns: x is the end of the content before it. When
+    # that column reaches the right edge of the viewport, the coordinator
+    # pauses the scroll for the plugin (next_static_trigger). Always replaced,
+    # never mutated, so the class-level default is safe for pipelines built
+    # without __init__ (tests).
+    _static_markers: Tuple[Tuple[int, str], ...] = ()
 
     def __init__(
         self,
@@ -282,6 +290,7 @@ class RenderPipeline:
             # Content grouped by plugin, so a separator can be placed at the
             # plugin boundaries only.
             grouped = self.stream_manager.get_grouped_content_for_composition()
+            self._static_markers = ()
 
             if not grouped:
                 logger.warning("No content available for composition")
@@ -317,6 +326,8 @@ class RenderPipeline:
                 logger.error("ScrollHelper failed to create cached image")
                 return False
 
+            self._static_markers = self._markers_for_composition(blocks)
+
             # Track which plugins are in this scroll (get safely via buffer status)
             self._segments_in_scroll = self.stream_manager.get_active_plugin_ids()
 
@@ -343,6 +354,56 @@ class RenderPipeline:
             # Expected errors from image operations, scroll helper, or bad data
             logger.exception("Error composing scroll content")
             return False
+
+    def _markers_for_composition(self, blocks: List[Image.Image]) -> Tuple[Tuple[int, str], ...]:
+        """Static markers for a strip just built by create_scrolling_image.
+
+        Mirrors its layout: lead_in_width, then each block followed by
+        separator_width except the last. A STATIC plugin's marker is the end
+        of whatever content precedes it (the lead-in, if nothing does).
+        """
+        layout_fn = getattr(self.stream_manager, 'get_static_layout', None)
+        if layout_fn is None:
+            return ()
+        layout = layout_fn()
+        if not any(is_static for _pid, is_static in layout):
+            return ()
+        markers = []
+        end = max(0, int(self.config.lead_in_width))
+        x = end
+        block_index = 0
+        for plugin_id, is_static in layout:
+            if is_static:
+                markers.append((end, plugin_id))
+                continue
+            if block_index >= len(blocks):
+                break
+            end = x + blocks[block_index].width
+            x = end + self.config.separator_width
+            block_index += 1
+        return tuple(markers)
+
+    def _add_static_markers(self, markers: List[Tuple[int, str]]) -> None:
+        if markers:
+            self._static_markers = tuple(
+                sorted(self._static_markers + tuple(markers), key=lambda m: m[0]))
+
+    def next_static_trigger(self) -> Optional[str]:
+        """
+        The STATIC plugin whose turn the scroll has just reached, if any.
+
+        Called every frame by the coordinator, so it is a comparison against
+        the first marker and nothing more. The marker is consumed: a plugin
+        pauses the scroll once per place it holds in the strip.
+        """
+        markers = self._static_markers
+        if not markers:
+            return None
+        x, plugin_id = markers[0]
+        if x > self.scroll_helper.scroll_position + self.display_width:
+            return None
+        self._static_markers = markers[1:]
+        return plugin_id
 
     def needs_extension(self) -> bool:
         """
@@ -507,6 +568,21 @@ class RenderPipeline:
                 logger.warning("No content available to extend the scroll strip")
                 return False
 
+            # STATIC plugins pause the scroll instead of joining the strip.
+            # Note each one's place -- how many of this group's blocks come
+            # before it -- and take it out before anything else sees it.
+            is_static = getattr(self.stream_manager, 'is_static_plugin', None)
+            statics: List[Tuple[int, str]] = []
+            content: List[Tuple[str, Optional[List[Image.Image]]]] = []
+            for pid, images in grouped:
+                if is_static is not None and is_static(pid):
+                    statics.append((sum(1 for _p, imgs in content if imgs), pid))
+                else:
+                    content.append((pid, images))
+            grouped = content
+            strip_end = (self.scroll_helper.cached_image.width
+                         if self.scroll_helper.cached_image is not None else 0)
+
             # Plugins the background thread had to defer need the shared canvas,
             # so they can only be fetched here. Queue them rather than doing all
             # of them now: measured, six in one go held the render thread for
@@ -523,6 +599,9 @@ class RenderPipeline:
             grouped = [(pid, imgs) for pid, imgs in grouped if imgs]
 
             if not grouped:
+                # Nothing is appended, so each STATIC turn falls at the end
+                # of the strip as it stands.
+                self._add_static_markers([(strip_end, pid) for _n, pid in statics])
                 if deferred:
                     # Everything in this group is queued; the queue will extend
                     # the strip as it drains, so this is not a failure.
@@ -538,6 +617,7 @@ class RenderPipeline:
                 total_rows += len(images)
                 blocks.append(self._join_plugin_rows(images))
 
+            had_strip = self.scroll_helper.cached_image is not None
             appended = self.scroll_helper.append_content(
                 content_items=blocks,
                 item_gap=self.config.separator_width,
@@ -546,8 +626,25 @@ class RenderPipeline:
             if not appended:
                 return False
 
+            if statics:
+                # Where each block ends, laid out as append_content does: a
+                # separator before every block, or -- when there was no strip
+                # to extend -- as create_scrolling_image does with no lead-in.
+                gap = max(0, self.config.separator_width)
+                ends = []
+                x = strip_end if had_strip else -gap
+                for block in blocks:
+                    x += gap + block.width
+                    ends.append(x)
+                self._add_static_markers([
+                    (ends[n - 1] if n > 0 else strip_end, pid) for n, pid in statics
+                ])
+
             # Keep a screen's worth behind the viewport as a safety margin.
-            self.scroll_helper.drop_scrolled_prefix(keep_before=self.display_width)
+            cut = self.scroll_helper.drop_scrolled_prefix(keep_before=self.display_width)
+            if cut and self._static_markers:
+                self._static_markers = tuple(
+                    (max(0, x - cut), pid) for x, pid in self._static_markers)
 
             self._segments_in_scroll = [pid for pid, _ in grouped]
             self.stats['composition_count'] += 1
@@ -935,6 +1032,7 @@ class RenderPipeline:
             self._prefetch_generation += 1
             self._prepared_group = None
             self._deferred_queue = []
+        self._static_markers = ()
 
         self.display_manager.set_scrolling_state(False)
 

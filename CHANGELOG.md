@@ -19,6 +19,8 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Vegas: a plugin set to `vegas_mode: "static"` pauses the scroll for its turn again. The pause was triggered by peeking at the front of a segment buffer that continuous scrolling (the default) never advances, so a static plugin paused only if it happened to be first, once, at startup, and otherwise scrolled past as ordinary content; swap mode had the same problem for any static plugin not first in its cycle. The render pipeline now marks where each static plugin's turn falls in the strip and the scroll pauses when it gets there. The pause runs the plugin's `display()` under its plugin lock, and a static plugin's content is no longer rendered for the strip.
+
 - The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
 
 - Contributor tooling and docs:
