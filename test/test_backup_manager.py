@@ -479,3 +479,31 @@ def test_same_second_exports_do_not_overwrite_each_other(
     assert first.exists() and second.exists()
     assert second.name == first.name[:-len(".zip")] + "-2.zip"
     assert not list(out.glob("*.tmp"))
+
+
+def test_export_name_is_claimed_atomically(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two exports racing both see "no such file" before either publishes.
+    # Simulate that by making exists() always say no: the name must still be
+    # claimed exclusively, so the second export gets -2 instead of replacing
+    # the first archive.
+    from datetime import datetime as real_datetime
+
+    class FrozenDatetime:
+        @staticmethod
+        def now(*a, **k):
+            return real_datetime(2026, 1, 2, 3, 4, 5)
+
+    monkeypatch.setattr(backup_manager, "datetime", FrozenDatetime)
+    out = tmp_path / "exports"
+    first = create_backup(project, output_dir=out)
+    first_bytes = first.read_bytes()
+
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    second = create_backup(project, output_dir=out)
+    monkeypatch.undo()
+
+    assert second != first
+    assert first.read_bytes() == first_bytes
+    assert zipfile.is_zipfile(second)

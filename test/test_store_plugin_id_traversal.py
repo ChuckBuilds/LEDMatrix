@@ -80,3 +80,15 @@ def test_registry_install_rejects_a_traversal_manifest_id(store, victim, monkeyp
     assert store._install_plugin_impl("good-plugin") is False
     assert (victim / "keep.txt").read_text() == "precious"
     assert not (store.plugins_dir / "good-plugin").exists()
+
+
+def test_install_plugin_rejects_a_traversal_id_before_touching_disk(store, victim, monkeypatch):
+    # install_plugin moves an existing plugins_dir / plugin_id aside before
+    # installing; for "../victim" that is a directory outside plugins_dir.
+    # A later rollback may move it back, so assert nothing was touched at all.
+    touched = []
+    monkeypatch.setattr(store, "_set_aside", lambda *a: touched.append("set_aside"))
+    monkeypatch.setattr(store, "_install_plugin_impl", lambda *a, **k: touched.append("install"))
+    assert store.install_plugin("../victim") is False
+    assert touched == []
+    assert (victim / "keep.txt").read_text() == "precious"

@@ -362,12 +362,23 @@ def create_backup(
             zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
         # Same-second exports share a timestamp; number the later one rather
-        # than replacing the backup the first one just returned.
+        # than replacing the backup the first one just returned. The name is
+        # claimed with an exclusive create (O_EXCL fails if it exists), so two
+        # exports finishing together can't both pick the same free name; the
+        # replace then swaps the finished archive in over our own placeholder.
         suffix = 2
-        while zip_path.exists():
-            zip_path = output_dir / f"{Path(zip_name).stem}-{suffix}.zip"
-            suffix += 1
-        os.replace(tmp_path, zip_path)
+        while True:
+            try:
+                os.close(os.open(zip_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+                break
+            except FileExistsError:
+                zip_path = output_dir / f"{Path(zip_name).stem}-{suffix}.zip"
+                suffix += 1
+        try:
+            os.replace(tmp_path, zip_path)
+        except BaseException:
+            zip_path.unlink(missing_ok=True)
+            raise
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise

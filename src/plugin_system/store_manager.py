@@ -1178,6 +1178,13 @@ class PluginStoreManager:
         other's freshly installed copy. The lock is reentrant because the
         rollback path already holds it when it calls in here.
         """
+        # Before anything touches the filesystem: plugin_id comes from the
+        # request body, and the set-aside below moves plugins_dir / plugin_id
+        # -- which for "../x" is a directory outside the plugins directory.
+        if not self._is_valid_plugin_id(plugin_id):
+            self.logger.error(f"Refusing to install invalid plugin id: {plugin_id!r}")
+            return False
+
         with self._get_reinstall_lock(plugin_id):
             plugin_path = self.plugins_dir / plugin_id
             if not plugin_path.exists():
