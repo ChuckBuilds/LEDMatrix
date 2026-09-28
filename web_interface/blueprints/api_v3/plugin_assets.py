@@ -143,8 +143,7 @@ def upload_plugin_asset():
         # Generate unique filename
         timestamp = int(_pkg.time.time())
         # Only makes the filename unique; nothing is verified with it.
-        file_hash = hashlib.md5(file_content + file.filename.encode(),
-                                usedforsecurity=False).hexdigest()[:8]
+        file_hash = hashlib.sha256(file_content + file.filename.encode()).hexdigest()[:8]
         safe_filename = f"image_{timestamp}_{file_hash}{file_ext}"
         file_path = assets_dir / safe_filename
 
