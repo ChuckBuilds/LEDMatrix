@@ -102,6 +102,12 @@ _SINGLE_FILE_SECTIONS: Tuple[Tuple[str, Path, str], ...] = (
     ("ytm_auth", _YTM_REL, "restore_wifi"),
 )
 
+#: Sections holding credentials. Restored onto a device that has no copy yet,
+#: they would otherwise take the extracted temp file's umask mode (0o644,
+#: world-readable); 0o640 matches what config_manager_atomic gives secrets.
+_PRIVATE_SECTION_RELS = frozenset({_SECRETS_REL, _WIFI_REL, _YTM_REL})
+_PRIVATE_FILE_MODE = 0o640
+
 MANIFEST_NAME = "manifest.json"
 PLUGINS_MANIFEST_NAME = "plugins.json"
 
@@ -235,6 +241,10 @@ def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
                     data = json.load(f)
             except (OSError, json.JSONDecodeError):
                 continue
+            # Valid JSON that is not an object (a list, a bare string) would
+            # raise AttributeError on .get() and abort the whole export.
+            if not isinstance(data, dict):
+                continue
             plugin_id = data.get("id") or entry.name
             if plugin_id not in plugins:
                 plugins[plugin_id] = {
@@ -310,7 +320,11 @@ def create_backup(
     contents: List[str] = []
 
     # Stream directly to a temp file so we never hold the whole ZIP in memory.
-    tmp_path = zip_path.with_suffix(".zip.tmp")
+    # The name is unique per call: a fixed "<zip>.tmp" was shared by two
+    # exports started in the same second, which then wrote the same file.
+    fd, tmp_name = tempfile.mkstemp(dir=str(output_dir), prefix=f".{zip_name}.", suffix=".tmp")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
     try:
         with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for section, rel, _flag in _SINGLE_FILE_SECTIONS:
@@ -347,7 +361,24 @@ def create_backup(
             manifest = _build_manifest(contents)
             zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
-        os.replace(tmp_path, zip_path)
+        # Same-second exports share a timestamp; number the later one rather
+        # than replacing the backup the first one just returned. The name is
+        # claimed with an exclusive create (O_EXCL fails if it exists), so two
+        # exports finishing together can't both pick the same free name; the
+        # replace then swaps the finished archive in over our own placeholder.
+        suffix = 2
+        while True:
+            try:
+                os.close(os.open(zip_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+                break
+            except FileExistsError:
+                zip_path = output_dir / f"{Path(zip_name).stem}-{suffix}.zip"
+                suffix += 1
+        try:
+            os.replace(tmp_path, zip_path)
+        except BaseException:
+            zip_path.unlink(missing_ok=True)
+            raise
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -493,7 +524,7 @@ def _extract_zip_safe(zip_path: Path, dest_dir: Path) -> None:
                 shutil.copyfileobj(src, dst, length=64 * 1024)
 
 
-def _copy_file(src: Path, dst: Path) -> None:
+def _copy_file(src: Path, dst: Path, new_mode: Optional[int] = None) -> None:
     """Replace ``dst`` with ``src``, atomically, without needing to own ``dst``.
 
     ``shutil.copy2`` opens the destination for writing, so it needs write
@@ -509,6 +540,7 @@ def _copy_file(src: Path, dst: Path) -> None:
 
     The destination's existing mode is preserved when there is one, so
     restoring secrets does not silently widen them to the umask default.
+    When there is none, ``new_mode`` (if given) is used instead of ``src``'s.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -530,6 +562,8 @@ def _copy_file(src: Path, dst: Path) -> None:
         shutil.copyfile(src, tmp_path)
         if existing_mode is not None:
             os.chmod(tmp_path, existing_mode)
+        elif new_mode is not None:
+            os.chmod(tmp_path, new_mode)
         else:
             shutil.copymode(src, tmp_path)
         if existing_owner is not None and hasattr(os, 'chown'):
@@ -593,7 +627,8 @@ def restore_backup(
                 result.skipped.append(section)
                 continue
             try:
-                _copy_file(tmp_dir / rel, project_root / rel)
+                _copy_file(tmp_dir / rel, project_root / rel,
+                           new_mode=_PRIVATE_FILE_MODE if rel in _PRIVATE_SECTION_RELS else None)
                 result.restored.append(section)
             except OSError as e:
                 logger.error("[Backup] Failed to restore %s: %s", rel.name, e, exc_info=True)

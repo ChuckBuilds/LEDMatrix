@@ -391,5 +391,55 @@ class TestReconcileEndpointPayload(unittest.TestCase):
         self._reconciler_instance.reconcile_state.assert_called_once_with(force=True)
 
 
+class TestNonPluginIdsAreRefused(unittest.TestCase):
+    """Uninstall and config reset key config.json by the request's plugin_id.
+
+    ``{"plugin_id": "display"}`` deleted the core display section and
+    answered success; a reset overwrote it with a plugin schema's defaults.
+    """
+
+    def setUp(self):
+        self.client, self.mod, _cleanup = _make_client()
+        self.addCleanup(_cleanup)
+        self.api_v3 = self.mod.api_v3
+        self.api_v3.plugin_manager.plugin_manifests = {'thing': {'id': 'thing'}}
+
+    def _post(self, url, body):
+        return self.client.post(url, data=json.dumps(body),
+                                content_type='application/json')
+
+    def test_uninstall_refuses_core_sections_and_traversal(self):
+        for bad in ('display', 'schedule', 'plugin_system', 'github', '../x', 'a/b', 7):
+            with self.subTest(plugin_id=bad):
+                response = self._post('/api/v3/plugins/uninstall', {'plugin_id': bad})
+                self.assertEqual(response.status_code, 400)
+        self.api_v3.config_manager.cleanup_plugin_config.assert_not_called()
+        self.api_v3.plugin_store_manager.uninstall_plugin.assert_not_called()
+
+    def test_uninstall_still_cleans_a_plugin_whose_directory_is_gone(self):
+        # Not among the discovered manifests, but a plugin-shaped id: the
+        # config cleanup must still run.
+        self.api_v3.plugin_store_manager.uninstall_plugin.return_value = True
+        response = self._post('/api/v3/plugins/uninstall', {'plugin_id': 'gone-plugin'})
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.api_v3.config_manager.cleanup_plugin_config.assert_called_once_with(
+            'gone-plugin', remove_secrets=True)
+
+    def test_secrets_only_core_key_is_allowed_when_a_plugin_has_that_id(self):
+        self.api_v3.plugin_manager.plugin_manifests = {'youtube': {'id': 'youtube'}}
+        self.api_v3.plugin_store_manager.uninstall_plugin.return_value = True
+        response = self._post('/api/v3/plugins/uninstall', {'plugin_id': 'youtube'})
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+
+    def test_reset_refuses_core_sections(self):
+        response = self._post('/api/v3/plugins/config/reset', {'plugin_id': 'display'})
+
+        self.assertEqual(response.status_code, 400)
+        self.api_v3.schema_manager.generate_default_config.assert_not_called()
+        self.api_v3.config_manager.save_raw_file_content.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

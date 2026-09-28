@@ -124,6 +124,23 @@ class TestSeparateSecrets:
         assert regular == {"accounts": [{"name": "a"}, "oddball"]}
         assert secrets == {"accounts": [{"token": "ta"}, {}]}
 
+    def test_secret_field_holding_an_object_or_array_goes_to_secrets(self):
+        # x-secret on the field itself, not its children: the dict/list type
+        # check used to win, and the whole value landed in config.json.
+        props = {
+            "oauth": {"type": "object", "x-secret": True},
+            "cookies": {"type": "array", "x-secret": True},
+            "city": {"type": "string"},
+        }
+        config = {"oauth": {"refresh": "r3fr3sh"}, "cookies": ["c1", "c2"],
+                  "city": "Austin"}
+        regular, secrets = separate_secrets(config, find_secret_fields(props))
+        assert regular == {"city": "Austin"}
+        assert secrets == {"oauth": {"refresh": "r3fr3sh"}, "cookies": ["c1", "c2"]}
+        # ...which is what the API already masks for those fields.
+        masked = mask_secret_fields(config, props)
+        assert masked["oauth"] == "" and masked["cookies"] == ""
+
     def test_array_without_secret_paths_stays_regular(self):
         config = {"teams": ["DAL", "HOU"]}
         regular, secrets = separate_secrets(config, {"api_key"})

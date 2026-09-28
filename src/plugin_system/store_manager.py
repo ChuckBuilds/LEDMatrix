@@ -1178,6 +1178,13 @@ class PluginStoreManager:
         other's freshly installed copy. The lock is reentrant because the
         rollback path already holds it when it calls in here.
         """
+        # Before anything touches the filesystem: plugin_id comes from the
+        # request body, and the set-aside below moves plugins_dir / plugin_id
+        # -- which for "../x" is a directory outside the plugins directory.
+        if not self._is_valid_plugin_id(plugin_id):
+            self.logger.error(f"Refusing to install invalid plugin id: {plugin_id!r}")
+            return False
+
         with self._get_reinstall_lock(plugin_id):
             plugin_path = self.plugins_dir / plugin_id
             if not plugin_path.exists():
@@ -1343,6 +1350,13 @@ class PluginStoreManager:
                 manifest_plugin_id = manifest.get('id')
                 if not manifest_plugin_id:
                     self.logger.error("Plugin manifest missing 'id' field")
+                    self._safe_remove_directory(plugin_path)
+                    return False
+                # The manifest id becomes a directory name below (and the old
+                # directory is removed to make room), so a downloaded manifest
+                # saying "../x" must not steer that outside plugins_dir.
+                if not self._is_valid_plugin_id(manifest_plugin_id):
+                    self.logger.error(f"Plugin manifest has an invalid 'id': {manifest_plugin_id!r}")
                     self._safe_remove_directory(plugin_path)
                     return False
                 
@@ -1523,6 +1537,14 @@ class PluginStoreManager:
                 return {
                     'success': False,
                     'error': 'No plugin ID found in manifest'
+                }
+            # plugin_id names the directory that is removed and then replaced
+            # below, and it comes from the request body or a downloaded
+            # manifest -- so "../x" would reach outside plugins_dir.
+            if not self._is_valid_plugin_id(plugin_id):
+                return {
+                    'success': False,
+                    'error': f'Invalid plugin ID: {plugin_id!r}'
                 }
             
             # Validate manifest has required fields

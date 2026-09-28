@@ -687,10 +687,21 @@ def save_main_config():
             _set_checkbox(current_config['display'], 'use_short_date_format', 'use_short_date_format')
 
             # Handle dynamic duration settings
-            if 'max_dynamic_duration_seconds' in data:
+            # The Display form posts this on every save, as "" when the box
+            # was cleared; int("") was a 500 that lost the whole save. Blank
+            # keeps the stored cap, and anything else is held to the form's
+            # 30-1800 range instead of raising.
+            max_dynamic = data.get('max_dynamic_duration_seconds')
+            if max_dynamic is None or (isinstance(max_dynamic, str) and not max_dynamic.strip()):
+                max_dynamic = None
+            else:
+                error = _hardware_int_error('max_dynamic_duration_seconds', 30, 1800)
+                if error:
+                    return error
+            if max_dynamic is not None:
                 if 'dynamic_duration' not in current_config['display']:
                     current_config['display']['dynamic_duration'] = {}
-                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(data['max_dynamic_duration_seconds'])
+                current_config['display']['dynamic_duration']['max_duration_seconds'] = int(max_dynamic)
 
         # Handle double-sided display settings
         double_sided_fields = ['double_sided_enabled', 'double_sided_copies', 'double_sided_axis']
@@ -1155,6 +1166,10 @@ def save_raw_main_config():
             return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+        # A JSON array or string parses fine and would be written over
+        # config.json as-is, leaving a file nothing can load.
+        if not isinstance(data, dict):
+            return jsonify({'status': 'error', 'message': 'Configuration must be a JSON object'}), 400
 
         was_auto_update_enabled = False
         try:
@@ -1217,6 +1232,10 @@ def save_raw_secrets_config():
             return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+        # strip_masked_values/deep_merge below expect an object; anything
+        # else was a 500 at best and a replaced secrets file at worst.
+        if not isinstance(data, dict):
+            return jsonify({'status': 'error', 'message': 'Secrets configuration must be a JSON object'}), 400
 
         # The GET above masks what it returns, and this endpoint's only client
         # reads the whole file, edits one field and posts all of it back. So
