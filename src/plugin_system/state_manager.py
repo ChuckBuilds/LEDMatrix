@@ -320,7 +320,7 @@ class PluginStateManager:
             return
         
         try:
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
                 state_data = json.load(f)
             
             with self._lock:

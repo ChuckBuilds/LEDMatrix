@@ -29,6 +29,11 @@ class TestParseSemver:
     def test_leading_v_tolerated(self):
         assert parse_semver("v3.2.1") == (3, 2, 1)
 
+    def test_non_decimal_digit_is_unparseable(self):
+        # str.isdigit() accepts "²" but int() does not: the ValueError
+        # branch is reachable and must keep returning None, not raise.
+        assert parse_semver("1.².0") is None
+
     def test_prerelease_suffix_stripped(self):
         # "3.2.0-rc1" must NOT parse as (3, 2, 1) — a release candidate must
         # not rank above its own release.

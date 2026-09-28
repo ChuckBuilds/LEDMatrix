@@ -5,11 +5,13 @@ Tracks resource usage (memory, CPU, execution time) for plugins.
 Provides resource limits and performance monitoring.
 """
 
+import math
 import time
-import logging
 import threading
 from typing import Dict, Optional, Any, Callable
 from dataclasses import dataclass, field, fields
+
+from src.logging_config import get_logger
 
 try:
     import psutil
@@ -29,6 +31,52 @@ class ResourceLimits:
     max_cpu_percent: Optional[float] = None  # Maximum CPU percentage
     max_execution_time: Optional[float] = None  # Maximum execution time in seconds
     warning_threshold: float = 0.8  # Warning at 80% of limit
+
+
+_LIMIT_FIELDS = ('max_memory_mb', 'max_cpu_percent', 'max_execution_time',
+                 'warning_threshold')
+
+
+def invalid_limit_field(data: Any) -> Optional[str]:
+    """The first field of a limits mapping that isn't a valid limit, or None.
+
+    ``"limits"`` when ``data`` isn't a mapping at all. Separate from
+    limits_from_dict so a caller can report the problem without passing an
+    exception's text back to a client.
+    """
+    if not isinstance(data, dict):
+        return 'limits'
+    for name in _LIMIT_FIELDS:
+        value = data.get(name)
+        if value is None:
+            continue
+        # bool is an int subclass; True is not a limit anyone meant.
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value < 0):
+            return name
+    return None
+
+
+def limits_from_dict(data: Any) -> ResourceLimits:
+    """Build ResourceLimits from a JSON-shaped mapping, validating each value.
+
+    A dataclass does not enforce its annotations, so ResourceLimits built from
+    raw request JSON or a cached record happily stores ``"50"`` -- and then
+    every monitored update() raises TypeError comparing a float with it. Each
+    ``max_*`` value must be absent/None (no limit) or a non-negative number;
+    ``warning_threshold`` defaults to 0.8. Unknown keys are ignored.
+
+    Raises:
+        ValueError: naming the first offending field.
+    """
+    bad = invalid_limit_field(data)
+    if bad == 'limits':
+        raise ValueError(f"limits must be an object, got {type(data).__name__}")
+    if bad:
+        raise ValueError(
+            f"{bad} must be a non-negative number or null, got {data.get(bad)!r}")
+    return ResourceLimits(**{name: data[name] for name in _LIMIT_FIELDS
+                             if data.get(name) is not None})
 
 
 @dataclass
@@ -86,11 +134,12 @@ class PluginResourceMonitor:
         """
         self.cache_manager = cache_manager
         self.enable_monitoring = enable_monitoring and PSUTIL_AVAILABLE
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
         # Resource metrics per plugin
         self._metrics: Dict[str, ResourceMetrics] = {}
         self._limits: Dict[str, ResourceLimits] = {}
+        self._bad_limits_warned: set = set()
         # When each plugin's metrics last reached the cache. Metrics change on
         # every call, so they cannot be de-duplicated the way health state can;
         # they are rate-limited instead. See _METRICS_PERSIST_INTERVAL.
@@ -230,7 +279,17 @@ class PluginResourceMonitor:
                 cache_key = self._get_limits_key(plugin_id)
                 cached = self.cache_manager.get(cache_key, max_age=None)
                 if cached:
-                    self._limits[plugin_id] = ResourceLimits(**cached)
+                    try:
+                        self._limits[plugin_id] = limits_from_dict(cached)
+                    except ValueError as e:
+                        # Treat as no limits rather than letting every update
+                        # of this plugin raise; warn once, not on every call.
+                        if plugin_id not in self._bad_limits_warned:
+                            self._bad_limits_warned.add(plugin_id)
+                            self.logger.warning(
+                                "Ignoring cached resource limits for %s: %s",
+                                plugin_id, e)
+                        return None
                 else:
                     return None
             return self._limits[plugin_id]

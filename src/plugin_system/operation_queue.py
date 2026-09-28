@@ -85,6 +85,17 @@ class PluginOperationQueue:
                         f"Plugin {plugin_id} already has an active operation: "
                         f"{active_op.operation_id} ({active_op.operation_type.value})"
                     )
+
+            # _active_operations only holds the *running* one, so a second
+            # request while the first still waits in the queue (a double-
+            # clicked Install) used to be queued too, and both ran back to
+            # back. Refuse it the same way.
+            for queued_op in self._operations.values():
+                if queued_op.plugin_id == plugin_id and queued_op.status == OperationStatus.PENDING:
+                    raise ValueError(
+                        f"Plugin {plugin_id} already has an active operation: "
+                        f"{queued_op.operation_id} ({queued_op.operation_type.value})"
+                    )
             
             # Create operation
             operation = PluginOperation(
@@ -288,7 +299,14 @@ class PluginOperationQueue:
         if len(self._operation_history) > self.max_history:
             # Remove oldest operations
             self._operation_history.sort(key=lambda op: op.created_at)
+            dropped = self._operation_history[:-self.max_history]
             self._operation_history = self._operation_history[-self.max_history:]
+            # ...and forget them in the status map too, which otherwise kept
+            # every operation ever enqueued for the life of the process. A
+            # still-pending or running one is never dropped from lookups.
+            for op in dropped:
+                if op.status not in (OperationStatus.PENDING, OperationStatus.RUNNING):
+                    self._operations.pop(op.operation_id, None)
     
     def shutdown(self) -> None:
         """Shutdown the operation queue and worker thread."""

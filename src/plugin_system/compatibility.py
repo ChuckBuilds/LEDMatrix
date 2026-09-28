@@ -97,6 +97,8 @@ def parse_semver(value: Any) -> Optional[Tuple[int, int, int]]:
     try:
         nums = [int(''.join(ch for ch in p if ch.isdigit()) or 0) for p in parts[:3]]
     except ValueError:
+        # Reachable: str.isdigit() accepts characters int() rejects, such as
+        # a superscript "\u00b2" -- "1.\u00b2.0" lands here.
         return None
     while len(nums) < 3:
         nums.append(0)

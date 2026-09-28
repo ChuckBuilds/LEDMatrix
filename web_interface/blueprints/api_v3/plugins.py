@@ -234,7 +234,13 @@ def get_plugin_health_single(plugin_id):
     })
 @api_v3.route('/plugins/health/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_health(plugin_id):
-    """Reset health state for a plugin (manual recovery)"""
+    """Reset health state for a plugin (manual recovery).
+
+    This resets the web process's tracker and the persisted record. The
+    display service runs its own tracker in another process and keeps its
+    in-memory state, so its next recorded success or failure can write that
+    state back; restart the display service for a reset it will honour.
+    """
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
@@ -307,7 +313,12 @@ def get_plugin_metrics_single(plugin_id):
     })
 @api_v3.route('/plugins/metrics/<plugin_id>/reset', methods=['POST'])
 def reset_plugin_metrics(plugin_id):
-    """Reset metrics for a plugin"""
+    """Reset metrics for a plugin.
+
+    Only the web process's copy and the persisted snapshot are cleared. The
+    display service keeps accumulating in its own process and republishes
+    its totals on its next persist, so the reset does not stick while it runs.
+    """
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
@@ -326,7 +337,13 @@ def reset_plugin_metrics(plugin_id):
     })
 @api_v3.route('/plugins/limits/<plugin_id>', methods=['GET', 'POST'])
 def manage_plugin_limits(plugin_id):
-    """Get or set resource limits for a plugin"""
+    """Get or set resource limits for a plugin.
+
+    A POST updates the web process's monitor and the persisted record. The
+    display service reads persisted limits only until it has some for a
+    plugin, so a change to existing limits takes effect there after the
+    display service restarts.
+    """
     if not api_v3.plugin_manager:
         return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
 
@@ -358,14 +375,18 @@ def manage_plugin_limits(plugin_id):
     else:
         # POST - Set limits
         data = request.get_json(silent=True) or {}
-        from src.plugin_system.resource_monitor import ResourceLimits
+        from src.plugin_system.resource_monitor import invalid_limit_field, limits_from_dict
 
-        limits = ResourceLimits(
-            max_memory_mb=data.get('max_memory_mb'),
-            max_cpu_percent=data.get('max_cpu_percent'),
-            max_execution_time=data.get('max_execution_time'),
-            warning_threshold=data.get('warning_threshold', 0.8)
-        )
+        # Validate here: a string limit stored as-is made every later update
+        # of the plugin raise TypeError inside the resource monitor. The
+        # message is built from the field name, not from an exception.
+        bad = invalid_limit_field(data)
+        if bad == 'limits':
+            return jsonify({'status': 'error', 'message': 'Limits must be a JSON object'}), 400
+        if bad:
+            return jsonify({'status': 'error',
+                            'message': f'{bad} must be a non-negative number or null'}), 400
+        limits = limits_from_dict(data)
 
         api_v3.plugin_manager.resource_monitor.set_limits(plugin_id, limits)
 
