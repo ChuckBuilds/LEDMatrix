@@ -1317,6 +1317,15 @@ class WiFiManager:
             
             if self.has_nmcli:
                 success, message = self._connect_nmcli(ssid, password)
+                # Keep the "wrong_password:" prefix on whatever failure message
+                # the recovery below returns: the web UI keys its "incorrect
+                # password" prompt off it, and the restore/AP messages would
+                # otherwise erase it.
+                wrong_password = (not success and isinstance(message, str)
+                                  and message.startswith("wrong_password:"))
+
+                def _fail(msg):
+                    return False, (f"wrong_password: {msg}" if wrong_password else msg)
                 
                 # If connection failed, try to restore original connection
                 if not success and original_connection and original_ssid:
@@ -1327,18 +1336,18 @@ class WiFiManager:
                     if restore_success:
                         logger.info(f"Successfully restored original connection: {original_ssid}")
                         self._show_led_message("Restored!", duration=3)
-                        return False, f"Failed to connect to {ssid}, restored {original_ssid}"
+                        return _fail(f"Failed to connect to {ssid}, restored {original_ssid}")
                     else:
                         logger.error(f"Failed to restore original connection: {original_ssid}")
-                        return self._failsafe_ap(
+                        return _fail(self._failsafe_ap(
                             "Connection failed and restoration failed. AP mode enabled.",
-                            "Connection failed, restoration failed, and AP mode failed")
+                            "Connection failed, restoration failed, and AP mode failed")[1])
                 
                 # If connection failed and no original connection to restore, enable AP mode
                 elif not success:
                     logger.warning(f"Connection to {ssid} failed and no original connection to restore")
-                    return self._failsafe_ap("Connection failed. AP mode enabled.",
-                                             "Connection failed and AP mode failed")
+                    return _fail(self._failsafe_ap("Connection failed. AP mode enabled.",
+                                                   "Connection failed and AP mode failed")[1])
                 
                 return success, message
             else:

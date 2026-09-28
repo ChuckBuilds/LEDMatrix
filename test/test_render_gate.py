@@ -430,3 +430,25 @@ class TestVegasWiring:
         pipeline._prefetch_thread.join(5)
         assert seen == [(True, True)]
         assert pipeline._prepared_group == ["segment"]
+
+
+class TestBindingCheck:
+    """swap_releases_gil() is frame_timing's check, not a second copy of it."""
+
+    @pytest.mark.parametrize("contents, expected", [
+        (b"...PyEval_SaveThread...", True),
+        (b"stock binding", False),
+    ])
+    def test_agrees_with_frame_timing(self, monkeypatch, tmp_path, contents, expected):
+        from types import SimpleNamespace
+        from src.common import frame_timing
+        binding = tmp_path / "core.so"
+        binding.write_bytes(contents)
+        monkeypatch.setitem(sys.modules, "rgbmatrix.core",
+                            SimpleNamespace(__file__=str(binding)))
+        assert render_gate.swap_releases_gil() is expected
+        assert frame_timing.binding_releases_gil() is expected
+
+    def test_none_without_a_binding(self, monkeypatch):
+        monkeypatch.delitem(sys.modules, "rgbmatrix.core", raising=False)
+        assert render_gate.swap_releases_gil() is None

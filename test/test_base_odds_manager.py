@@ -13,6 +13,7 @@ its requests through a session so it can identify itself to ESPN, so patching
 the module-level requests.get would no longer intercept anything.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -160,6 +161,34 @@ class TestGetOdds:
 
         assert result == {'stale': True}
         assert cache_manager.get_with_auto_strategy.call_count == 2
+
+    def test_a_bad_body_is_reported_as_a_parse_error(
+            self, manager, cache_manager, mock_get, caplog):
+        # requests' JSONDecodeError is a RequestException, so the JSON branch
+        # sat unreachable behind it and a bad body read as a failed fetch.
+        response = _make_response(None)
+        response.json.side_effect = requests.exceptions.JSONDecodeError('x', 'doc', 0)
+        mock_get.return_value = response
+        cache_manager.get_with_auto_strategy.side_effect = [None, {'stale': True}]
+
+        with caplog.at_level(logging.ERROR, logger=manager.logger.name):
+            result = manager.get_odds('football', 'nfl', '401')
+
+        assert result == {'stale': True}
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('decoding JSON' in m for m in messages), messages
+        assert not any('Error fetching odds' in m for m in messages), messages
+        # The hold-off is unchanged: a bad body still backs off like a failed
+        # fetch did.
+        assert manager._skip_network_until > 0
+
+    def test_routine_fetches_log_nothing_at_info(
+            self, manager, cache_manager, mock_get, caplog):
+        with caplog.at_level(logging.INFO, logger=manager.logger.name):
+            manager.get_odds('football', 'nfl', '401')          # miss + fetch
+            cache_manager.get_with_auto_strategy.return_value = {'spread': 1}
+            manager.get_odds('football', 'nfl', '401')          # hit
+        assert [r for r in caplog.records if r.levelno == logging.INFO] == []
 
 
 # ---------------------------------------------------------------------------

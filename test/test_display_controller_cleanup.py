@@ -49,6 +49,31 @@ def test_cleanup_without_vegas_does_not_raise():
     dc.display_manager.cleanup.assert_called_once_with()
 
 
+def test_cleanup_stops_display_sync_after_vegas():
+    # Stopping sync withdraws its status file; left behind, the web UI kept
+    # reporting a connected peer after the display service had stopped.
+    order = []
+    vegas = MagicMock()
+    vegas.cleanup.side_effect = lambda: order.append('vegas')
+    dc = _controller(vegas)
+    dc.sync_manager = MagicMock()
+    dc.sync_manager.stop.side_effect = lambda: order.append('sync')
+
+    dc.cleanup()
+
+    assert order == ['vegas', 'sync']
+
+
+def test_a_failing_sync_stop_does_not_stop_the_rest():
+    dc = _controller(None)
+    dc.sync_manager = MagicMock()
+    dc.sync_manager.stop.side_effect = OSError('boom')
+
+    dc.cleanup()
+
+    dc.display_manager.cleanup.assert_called_once_with()
+
+
 def test_a_failing_vegas_teardown_does_not_stop_the_rest():
     vegas = MagicMock()
     vegas.cleanup.side_effect = RuntimeError('boom')

@@ -172,20 +172,6 @@ class PluginOperationQueue:
             )
             return history[:limit]
     
-    def get_active_operations(self) -> List[PluginOperation]:
-        """
-        Get all currently active operations (pending or running).
-        
-        Returns:
-            List of active operations
-        """
-        with self._lock:
-            active = []
-            for operation in self._operations.values():
-                if operation.status in [OperationStatus.PENDING, OperationStatus.RUNNING]:
-                    active.append(operation)
-            return active
-    
     def _start_worker(self) -> None:
         """Start the worker thread that processes operations."""
         if self._worker_thread and self._worker_thread.is_alive():

@@ -52,6 +52,12 @@ class RenderPipeline:
     # A panel measured within this fraction of its cap is keeping up with it.
     REFRESH_TOLERANCE = 0.03
 
+    # Bumped by reset(). A prefetch thread records the value it started under
+    # and drops its group if a reset happened meanwhile, so a fetch still in
+    # flight when Vegas stops cannot land in the next run. Class-level so
+    # pipelines built without __init__ (tests) still have it.
+    _prefetch_generation = 0
+
     def __init__(
         self,
         config: VegasModeConfig,
@@ -373,6 +379,7 @@ class RenderPipeline:
                 return
             if self._prepared_group is not None:
                 return  # already have one waiting
+            generation = self._prefetch_generation
 
             def _work():
                 # Deprioritise against the render loop. Linux applies nice
@@ -394,6 +401,8 @@ class RenderPipeline:
                     logger.exception("Background prefetch failed")
                     group = []
                 with self._prefetch_lock:
+                    if generation != self._prefetch_generation:
+                        return  # Vegas was reset while this was fetching
                     self._prepared_group = group
 
             self._prefetch_thread = threading.Thread(
@@ -602,7 +611,8 @@ class RenderPipeline:
         """
         Render a single frame to the display.
 
-        Should be called at ~125 FPS (8ms intervals).
+        Called once per frame by the coordinator, which paces the calls by
+        frame_interval (see that property) rather than a fixed rate.
 
         Returns:
             True if frame was rendered, False if no content
@@ -916,6 +926,15 @@ class RenderPipeline:
         self._cycle_complete = False
         self._segments_in_scroll = []
         self._frame_times = deque(maxlen=100)
+
+        # Content lined up for the old run belongs to it. Left in place, the
+        # first extension after Vegas is switched back on appended that stale
+        # group -- including plugins disabled in the meantime -- and the
+        # deferred queue went on fetching the old run's plugins.
+        with self._prefetch_lock:
+            self._prefetch_generation += 1
+            self._prepared_group = None
+            self._deferred_queue = []
 
         self.display_manager.set_scrolling_state(False)
 

@@ -268,15 +268,21 @@ class StartupValidator:
         except Exception as e:
             self.warnings.append(f"Could not validate display configuration: {e}")
     
-    def _validate_plugins(self) -> None:
-        """Validate plugin configurations and dependencies."""
+    def _validate_plugins(self, discovered_plugins=None) -> None:
+        """Validate plugin configurations and dependencies.
+
+        ``discovered_plugins`` is a list the caller already got from
+        ``discover_plugins()``; passing it skips a second directory scan (and
+        its duplicate log lines) at startup.
+        """
         if not self.plugin_manager:
             return
         
         try:
             # Get enabled plugins from config
             config = self.config_manager.get_config()
-            discovered_plugins = self.plugin_manager.discover_plugins()
+            if discovered_plugins is None:
+                discovered_plugins = self.plugin_manager.discover_plugins()
             
             # Check for enabled plugins that don't exist
             for plugin_id, plugin_config in config.items():
@@ -294,7 +300,11 @@ class StartupValidator:
             
             # Validate plugin configurations
             for plugin_id in discovered_plugins:
-                plugin_config = config.get(plugin_id, {})
+                plugin_config = config.get(plugin_id)
+                # A null block ("my-plugin": null) is not an enabled plugin;
+                # .get() on it raised and abandoned every remaining check.
+                if not isinstance(plugin_config, dict):
+                    continue
                 if plugin_config.get('enabled', False):
                     # Check if plugin can be loaded (without actually loading it)
                     plugin_dir = self.plugin_manager.get_plugin_directory(plugin_id)

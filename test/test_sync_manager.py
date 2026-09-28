@@ -875,9 +875,50 @@ class TestWriteStatusFile:
 
     def test_write_failure_is_swallowed(self, monkeypatch):
         mgr = make_manager(role=SyncRole.STANDALONE)
-        monkeypatch.setattr("builtins.open", MagicMock(side_effect=OSError("disk full")))
+        monkeypatch.setattr(sync_manager.json, "dump",
+                            MagicMock(side_effect=OSError("disk full")))
         mgr.write_status_file()  # must not raise
         assert mgr.logger.debug.called
+        # ...and the half-written temp file is not left behind.
+        assert list(Path(sync_manager.STATUS_FILE).parent.iterdir()) == []
+
+    def test_concurrent_writers_each_use_their_own_temp_file(self):
+        """The receive loop, watchdog and hello handler all write. With one
+        fixed ".tmp" name, one writer's os.replace() could move the other's
+        half-written file into place, or find it already gone."""
+        mgr = make_manager(role=SyncRole.LEADER)
+        errors = []
+        mgr.logger.debug.side_effect = lambda *a: errors.append(a)
+
+        def hammer():
+            for _ in range(50):
+                mgr.write_status_file()
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        assert [p.name for p in Path(sync_manager.STATUS_FILE).parent.iterdir()] == [
+            Path(sync_manager.STATUS_FILE).name]
+        assert json.loads(Path(sync_manager.STATUS_FILE).read_text())["role"] == "leader"
+
+    def test_stop_withdraws_the_status_file(self):
+        """Left behind, the web UI kept reporting a connected peer after the
+        display service had stopped."""
+        mgr = make_manager(role=SyncRole.LEADER)
+        mgr.write_status_file()
+        assert Path(sync_manager.STATUS_FILE).exists()
+        mgr.stop()
+        assert not Path(sync_manager.STATUS_FILE).exists()
+        mgr.write_status_file()  # a late write from a thread still winding down
+        assert not Path(sync_manager.STATUS_FILE).exists()
+
+    def test_standalone_removes_a_stale_status_file(self):
+        Path(sync_manager.STATUS_FILE).write_text('{"role": "leader", "state": "connected"}')
+        DisplaySyncManager("standalone", {}, {}, MagicMock())
+        assert not Path(sync_manager.STATUS_FILE).exists()
 
     def test_web_status_endpoint_reads_the_file_that_was_written(self, api_v3_client):
         """GET /sync/status reads STATUS_FILE, which lives under
