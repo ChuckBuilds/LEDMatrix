@@ -219,7 +219,7 @@ def main():
     parser.add_argument(
         '--foreground',
         action='store_true',
-        help='Run in foreground (for debugging)'
+        help='Accepted for compatibility; the daemon always runs in the foreground'
     )
     
     args = parser.parse_args()

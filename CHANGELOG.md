@@ -19,6 +19,13 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Contributor tooling and docs:
+  - `mypy.ini` parses again. A multi-line `exclude` and trailing comments on values made mypy refuse the whole file, so none of its settings applied and the pre-commit hook failed with "Missing target". The mypy hook is now manual (`pre-commit run mypy --hook-stage manual`) while the ~500 existing type errors in `src/` are paid down.
+  - `.gitignore` ignores everything in `config/` except the templates; `ytm_auth.json`, `saved_repositories.json`, `wifi_status.json` and `font_overrides.json` weren't ignored.
+  - `.sh` and `.service` files are always checked out with LF line endings.
+  - The Claude code-review check is skipped on pull requests from forks, which get no secrets and always failed it.
+  - `check_system_compatibility.sh` treats Python 3.13 (what Trixie ships) as supported and anything below 3.10 as an error.
+  - Doc fixes: emulator guide (Python 3.10+, `emulator_config.json` isn't in the repo), README's nonexistent "API Metrics" feature, a stale route count, and missing index entries for the scroll-performance and offscreen-rendering docs and the frame-soak and render-bench scripts.
 - Security and input-validation fixes:
   - Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
   - Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.

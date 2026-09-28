@@ -25,7 +25,7 @@ HTML and the **real** API rather than fixtures:
 EMULATOR=true python3 web_interface/app.py         # http://localhost:5000
 
 # or point the suites at a device
-BASE=http://10.0.10.169:5000 node run_all.js
+BASE=http://<pi-ip>:5000 node run_all.js
 ```
 
 `run_all.js` skips the DOM suites (rather than failing) when jsdom is missing or

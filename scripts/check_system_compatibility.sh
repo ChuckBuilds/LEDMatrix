@@ -112,15 +112,13 @@ if command -v python3 >/dev/null 2>&1; then
     echo "Python: $PYTHON_VERSION"
     
     if [ "$PYTHON_MAJOR" -eq "3" ]; then
-        if [ "$PYTHON_MINOR" -ge "10" ] && [ "$PYTHON_MINOR" -le "12" ]; then
-            print_success "Python version is fully supported (3.10-3.12)"
-        elif [ "$PYTHON_MINOR" -eq "13" ]; then
-            print_warning "Python 3.13 detected - most packages compatible, but some may have limited testing"
-            print_warning "Please report any compatibility issues you encounter"
+        if [ "$PYTHON_MINOR" -ge "10" ] && [ "$PYTHON_MINOR" -le "13" ]; then
+            print_success "Python version is supported (3.10-3.13)"
         elif [ "$PYTHON_MINOR" -ge "14" ]; then
             print_warning "Python 3.${PYTHON_MINOR} is very new - some packages may not be compatible yet"
         else
-            print_warning "Python 3.${PYTHON_MINOR} is outdated - upgrade to 3.10+ recommended"
+            # Pillow 12 and the pinned test tools need 3.10+, so this won't install.
+            print_error "Python 3.${PYTHON_MINOR} is too old - Python 3.10+ is required"
         fi
     else
         print_error "Python 2.x detected - Python 3.10+ is required"

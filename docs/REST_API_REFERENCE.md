@@ -46,7 +46,7 @@ the entry below says so.
 > The three SSE endpoints (`/api/v3/stream/*`) are defined directly on the
 > Flask app in `app.py` (`stream_stats`, `stream_display`, `stream_logs`).
 > `test/fixtures/api_v3_url_map.json` is the canonical list of blueprint
-> routes (116 URL rules); a test fails if the code and that fixture differ.
+> routes; a test fails if the code and that fixture differ.
 
 ---
 

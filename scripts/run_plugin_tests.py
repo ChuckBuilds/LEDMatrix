@@ -299,6 +299,5 @@ def main():
 
 if __name__ == '__main__':
     import importlib.util
-    from typing import Optional
     sys.exit(main())
 
