@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Security and input-validation fixes:
+  - Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
+  - Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.
+  - A config field marked `x-secret` whose value is an object or array is saved to `config_secrets.json`, not to `config.json` in plain text.
+  - Restoring a backup onto a device without `config_secrets.json`, `wifi_config.json` or `ytm_auth.json` creates them with mode 640 instead of world-readable 644.
+  - Backup export skips a plugin `manifest.json` that isn't a JSON object instead of failing, and two exports in the same second no longer share a temp file or overwrite each other (the second gets a `-2` suffix).
+  - Every font that ships in `assets/fonts/` is protected from deletion; `MatrixChunky8X`, `MatrixLight6X`, `MatrixLight8X` and `ic8x8u` could be deleted from the Fonts tab.
+  - The raw config and secrets editors, and endpoints using `validate_request_json`, answer 400 for a JSON body that isn't an object.
+  - A blank Max Dynamic Duration keeps the stored value instead of failing the Display save with a 500; other values must be whole seconds from 30 to 1800.
+
 - Fixes found testing on a Pi:
   - Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
   - The Logs tab's "Now showing" no longer reads "unknown" when one screen stays up longer than 2 minutes.
@@ -35,6 +45,14 @@ accepts both, but the store flags the old spelling as deprecated
   - A failed store download no longer leaves its extraction directory in the temp dir.
   - Test doubles: `draw_image()` on `MockDisplayManager`, `VisualTestDisplayManager` and `BoundsCheckingDisplayManager` now emits a `DeprecationWarning` — the real `DisplayManager` has no such method; use `display_manager.image.paste(img, (x, y))`. `MockDisplayManager.draw_text` accepts the real signature's `small_font`/`centered` and default `x`/`y`, and `VisualTestDisplayManager` logs draw errors at WARNING.
   - Removed the unused `PluginOperationQueue.get_active_operations()`.
+- Display runtime:
+  - Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
+  - A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.
+  - Stopping on-demand after a second request resumes rotation where it was first interrupted, not at the first request's screen.
+  - Turning Vegas off and on no longer shows content prepared for the previous run, including plugins disabled in between.
+  - How long a Vegas iteration runs is timed with the monotonic clock, so an NTP clock step on a Pi without an RTC doesn't cut it short or stretch it.
+  - The sync status file is removed when the display service stops, and at startup in standalone mode, so the web UI no longer reports a peer from an earlier run. Concurrent writes each use their own temp file.
+  - `render_gate.swap_releases_gil()` delegates to `frame_timing.binding_releases_gil()` instead of duplicating it.
 
 - Scripts and installer:
   - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.

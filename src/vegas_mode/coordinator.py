@@ -273,6 +273,10 @@ class VegasModeCoordinator:
 
             self._is_active = True
             self._should_stop = False
+            # A pause belongs to the run it happened in; carrying it into a
+            # new run would have run_frame() refuse every frame.
+            self._is_paused = False
+            self._live_priority_active = False
             self._start_time = time.time()
             # A fresh run starts with a clean health slate: no stale
             # "was degraded" from the previous run, and a heartbeat that is
@@ -298,6 +302,8 @@ class VegasModeCoordinator:
 
             self._should_stop = True
             self._is_active = False
+            self._is_paused = False
+            self._live_priority_active = False
 
             if self._start_time:
                 self.stats['total_runtime_seconds'] += time.time() - self._start_time
@@ -473,6 +479,20 @@ class VegasModeCoordinator:
             if not self.start():
                 return False
 
+        # A live-priority pause is only ever lifted by _check_live_priority(),
+        # and run_frame() returns before reaching it while paused -- so once
+        # paused, every later iteration returned False at its first frame and
+        # the ticker never came back until a restart. The display controller
+        # only calls run_iteration() when nothing preempts Vegas (no live mode,
+        # or live content is kept in the ticker), so being called at all means
+        # the live content that paused us has ended.
+        with self._state_lock:
+            paused_for_live = self._is_paused and self._live_priority_active
+        if paused_for_live:
+            self._live_priority_active = False
+            self.resume()
+            logger.info("Live priority ended - resuming Vegas")
+
         if self.vegas_config.continuous_scroll:
             # The strip is continuously extended and trimmed, so its width says
             # nothing about how long to run. This is only how often control
@@ -481,7 +501,11 @@ class VegasModeCoordinator:
             duration = float(self.vegas_config.max_cycle_duration)
         else:
             duration = self.render_pipeline.get_dynamic_duration()
-        start_time = time.time()
+        # Monotonic for the same reason as the per-frame clock below: this
+        # bounds how long the iteration runs, and an NTP step on an RTC-less
+        # Pi would otherwise end it at once (forward) or stretch it by the
+        # size of the correction (backward).
+        start_time = time.monotonic()
         frame_count = 0
         fps_log_interval = 5.0  # Sample FPS every 5 seconds
         # Health state lives on the coordinator, not here: run_iteration() is
@@ -490,10 +514,8 @@ class VegasModeCoordinator:
         # of every iteration rather than once per interval, and a recovery
         # that crossed an iteration boundary was never reported at all --
         # was_degraded had already gone back to False.
-        # Monotonic, and deliberately not start_time: start_time is wall
-        # clock and is used below to report the iteration's duration. Mixing
-        # the two here would make every delta hugely negative and silence the
-        # frame-rate reporting altogether.
+        # Monotonic. Never mix it with a wall-clock value: every delta would
+        # be hugely negative and silence the frame-rate reporting altogether.
         last_fps_log_time = time.monotonic()
         fps_frame_count = 0
         # A mean hides stutter completely. At 120fps a five-second window is
@@ -633,7 +655,7 @@ class VegasModeCoordinator:
                 ).start()
 
             # Check elapsed time
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             if elapsed >= duration:
                 break
 
@@ -652,7 +674,7 @@ class VegasModeCoordinator:
             # cycle content multiple times within one iteration — acceptable for
             # a continuous ticker.
 
-        logger.info("Vegas iteration completed after %.1fs", time.time() - start_time)
+        logger.info("Vegas iteration completed after %.1fs", time.monotonic() - start_time)
         return True
 
     def _check_live_priority(self) -> bool:

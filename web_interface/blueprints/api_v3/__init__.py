@@ -50,7 +50,9 @@ from src.web_interface.validators import (
     validate_file_upload
 )
 from src.common.permission_utils import install_requirements_file
-from src.common.path_safety import resolve_under
+from src.common.path_safety import resolve_under, safe_path_component
+from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
+from src.backup_manager import BUNDLED_FONTS as _BUNDLED_FONTS
 from src.device_location import DeviceLocationResolver, apply_device_location
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
@@ -112,7 +114,15 @@ SYSTEM_FONTS = frozenset([
     '10x20',
     'matrixchunky8', 'matrixlight6', 'tom-thumb',
     'clr6x12', 'helvr12', 'texgyre-27'
-])
+]) | frozenset(
+    # Every font the repository ships, from the list backups already keep in
+    # sync with assets/fonts/. The hand-written names above had drifted from
+    # it (MatrixChunky8X, MatrixLight6X, MatrixLight8X and ic8x8u were
+    # missing), so DELETE /fonts/<name> removed git-tracked fonts. Keys are
+    # the lowercased file stem, which is what the catalog and delete compare.
+    os.path.splitext(_name)[0].lower() for _name in _BUNDLED_FONTS
+    if _name.lower().endswith(('.ttf', '.otf', '.bdf'))
+)
 api_v3 = Blueprint('api_v3', __name__)
 
 
@@ -592,6 +602,27 @@ def _installed_plugin_ids():
     instead of relying on the tracker's in-memory `get_all_*` view.
     """
     return list(_discovered_plugin_manifests())
+def _non_plugin_id_error(plugin_id):
+    """Error response when ``plugin_id`` cannot name a plugin, else None.
+
+    Uninstall and config reset take the id from the request body and delete
+    or overwrite ``config[plugin_id]`` -- so ``{"plugin_id": "display"}``
+    removed the core display section and reported success. Core sections are
+    never plugin ids. The secrets-only core keys (``github`` holds the Plugin
+    Store token) are refused too, unless a plugin by that id is really
+    installed. Uninstall deliberately does not require the plugin to be
+    installed: it must still clean the config of one whose directory is gone.
+    """
+    if safe_path_component(plugin_id) is None:
+        return error_response(ErrorCode.INVALID_INPUT,
+                              f'Invalid plugin id: {plugin_id!r}', status_code=400)
+    if plugin_id in CORE_CONFIG_KEYS or (
+            plugin_id in CORE_SECRETS_KEYS
+            and plugin_id not in _discovered_plugin_manifests(plugin_id)):
+        return error_response(ErrorCode.INVALID_INPUT,
+                              f"'{plugin_id}' is a core configuration section, not a plugin",
+                              status_code=400)
+    return None
 def _discovered_plugin_manifests(plugin_id=None, rescan=False):
     """The plugin manager's manifests, discovering plugins first if needed.
 
