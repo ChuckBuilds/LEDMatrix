@@ -16,6 +16,7 @@ from PIL import Image
 
 from src.common.scroll_config import solve_crisp
 from src.common.scroll_helper import ScrollHelper
+from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
@@ -199,7 +200,7 @@ class RenderPipeline:
             hz = float(getattr(self.display_manager, 'refresh_hz', 0) or 0)
         except (TypeError, ValueError):
             hz = 0.0
-        return hz if hz > 0 else 100.0
+        return hz if hz > 0 else float(DEFAULT_REFRESH_LIMIT_HZ)
 
     def _refresh_hz(self) -> float:
         """The refresh to solve the crisp speed against: measured, else the cap."""

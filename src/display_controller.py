@@ -27,6 +27,7 @@ import signal
 import json
 import threading
 import types
+from collections import deque
 from contextlib import contextmanager
 from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime
@@ -196,6 +197,12 @@ class DisplayController:
         # scroll image arrives.
         self._follower_pending_new_image = False
         self._follower_last_frame = None
+        # (image, array) from the leader, handed from the sync TCP thread to
+        # the render thread, which adopts it at the start of a follower frame
+        # (_adopt_follower_scroll_image). One append / one popleft, each
+        # atomic, so the render thread never draws from a half-swapped
+        # cached_image / cached_array / total_scroll_width.
+        self._follower_incoming_image: deque = deque(maxlen=1)
         self._follower_deadline: Optional[float] = None
         # Leader: time.time() of the last follower frame sent.
         self._last_follower_send = 0.0
@@ -559,21 +566,15 @@ class DisplayController:
             # temporarily replace the leader's correct one.
 
             # When the leader sends its scroll image (TCP), update our
-            # cached_array so both Pis have pixel-identical images.
+            # cached_array so both Pis have pixel-identical images. This runs
+            # on the sync TCP thread, so it only converts and queues the
+            # image; the render thread swaps it in between frames.
             import numpy as _np
             def _on_leader_scroll_image(image):
                 vc = self.vegas_coordinator
                 if vc and vc.render_pipeline:
-                    rp = vc.render_pipeline
                     arr = _np.asarray(image.convert("RGB"), dtype=_np.uint8)
-                    rp.scroll_helper.cached_image = image
-                    rp.scroll_helper.cached_array = arr
-                    rp.scroll_helper.total_scroll_width = image.width
-                    self._follower_pending_new_image = False
-                    logger.info(
-                        "Sync: follower adopted leader scroll image %dx%d",
-                        image.width, image.height,
-                    )
+                    self._follower_incoming_image.append((image, arr))
             self.sync_manager.set_on_scroll_image(_on_leader_scroll_image)
 
             if self.sync_manager.role == SyncRole.LEADER:
@@ -595,6 +596,29 @@ class DisplayController:
         except Exception as e:
             logger.error("Failed to initialize Vegas mode: %s", e, exc_info=True)
             self.vegas_coordinator = None
+
+    def _adopt_follower_scroll_image(self, rp) -> None:
+        """Swap in the leader's latest scroll image, on the render thread.
+
+        The sync TCP thread used to set cached_image, cached_array and
+        total_scroll_width one after another while this thread read them, so
+        a frame could slice the new array with the old width. It now queues
+        the image and this applies it between frames.
+        """
+        try:
+            image, arr = self._follower_incoming_image.popleft()
+        except IndexError:
+            return
+        if rp is None:
+            return
+        rp.scroll_helper.cached_image = image
+        rp.scroll_helper.cached_array = arr
+        rp.scroll_helper.total_scroll_width = image.width
+        self._follower_pending_new_image = False
+        logger.info(
+            "Sync: follower adopted leader scroll image %dx%d",
+            image.width, image.height,
+        )
 
     def _is_vegas_mode_active(self) -> bool:
         """Check if Vegas mode should be running."""
@@ -1667,7 +1691,10 @@ class DisplayController:
                     if plugin_instance.has_live_content():
                         live_with_content.append(live_mode)
                 except Exception:
-                    pass
+                    # Treated as no live content; logged so a plugin whose
+                    # check always raises is findable.
+                    logger.debug("has_live_content() failed for %s", live_mode,
+                                 exc_info=True)
 
         # Build mode list: live modes with content first, then other modes, then live modes without content
         if live_with_content:
@@ -1904,7 +1931,9 @@ class DisplayController:
                 if bg_service and hasattr(bg_service, 'log_memory_stats'):
                     bg_service.log_memory_stats()
             except Exception:
-                pass  # Background service may not be initialized
+                # Background service may not be initialized
+                logger.debug("Background service memory stats unavailable",
+                             exc_info=True)
             
             # Log deferred updates stats
             if hasattr(self.display_manager, '_scrolling_state'):
@@ -2106,6 +2135,7 @@ class DisplayController:
                     vc = self.vegas_coordinator
                     rp = vc.render_pipeline if (vc and vc.render_pipeline) else None
                     width = self.display_manager.width
+                    self._adopt_follower_scroll_image(rp)
 
                     local_x = self._follower_local_x
                     if local_x is None:
@@ -2876,7 +2906,8 @@ class DisplayController:
                 try:
                     self.wifi_status_file.unlink()
                 except Exception:
-                    pass
+                    logger.debug("Could not remove WiFi status file %s",
+                                 self.wifi_status_file, exc_info=True)
                 return None
             
             # Validate required fields
@@ -2909,7 +2940,8 @@ class DisplayController:
                 try:
                     self.wifi_status_file.unlink()
                 except Exception:
-                    pass
+                    logger.debug("Could not remove WiFi status file %s",
+                                 self.wifi_status_file, exc_info=True)
                 return None
             
             # Message is valid and not expired — cache for the throttle window

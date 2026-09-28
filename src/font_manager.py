@@ -498,6 +498,7 @@ class FontManager:
         self.performance_stats["cache_misses"] += 1
 
         # Load font
+        shareable = True
         font_path = self.font_catalog.get(family)
         if not font_path:
             logger.warning(f"Font family '{family}' not found")
@@ -507,6 +508,7 @@ class FontManager:
             try:
                 if font_path.endswith('.bdf'):
                     font = self._load_bdf_font(font_path, size_px)
+                    shareable = False
                 else:
                     font = load_truetype(font_path, size_px)
             except Exception as e:
@@ -516,7 +518,11 @@ class FontManager:
                 self.performance_stats["failed_loads"] += 1
                 font = ImageFont.load_default()
 
-        self.font_cache[cache_key] = font
+        # A BDF face is not cached here: font_cache is shared by every
+        # thread, and a freetype.Face must never be (see load_bdf_face, which
+        # already caches BDF faces per thread).
+        if shareable:
+            self.font_cache[cache_key] = font
         return font
 
     def _load_bdf_font(self, font_path: str, size_px: int) -> freetype.Face:
