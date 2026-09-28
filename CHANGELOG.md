@@ -19,385 +19,6 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
-- A plugin that is reloaded (switched off and on again from the web UI) imports its own modules again, not another plugin's. Plugins import their own files by bare name (`from sports import ...`), which resolves to the first plugin directory on `sys.path` that has the file; the loader only added a directory that was missing, so a reloaded plugin's directory stayed behind any loaded since. On a Pi, re-enabling UFC with hockey running failed with "cannot import name '_status_is_final' from 'sports'". A loading plugin's directory is now always moved to the front.
-- A mypy ratchet in CI. `mypy-clean.txt` lists the 71 modules under `src/` that type-check clean, and the new "Type check (mypy ratchet)" job runs `python scripts/check_types.py` (mypy 1.20.2 on exactly those files) so they stay clean; add a module when you make it clean (see CONTRIBUTING.md). The manual pre-commit `mypy` hook runs the same script. 35 modules were made clean for it with annotation-only fixes, no behaviour change. Their public signatures only widened (`declared_min_version()` now says it returns the manifest's value as-is, `Any`); `DynamicTeamResolver._rankings_cache` is annotated as the abbreviation-to-rank dict it holds. `mypy.ini` treats numpy and orjson as `Any`, so it parses with `python_version = 3.10` against numpy 2.3+ stubs and gives the same result whether orjson is installed or not.
-- CI runs the web UI's DOM test suites (jsdom against the real server-rendered pages and API) in a new **Web UI JS tests** job, with the web interface started in emulator mode; `REQUIRE_DOM=1` makes a suite that can't run fail instead of being skipped. Two suites that had gone stale were fixed: the Tools suite now installs `LEDEscape` the way `base.html` does and supplies sample Starlark apps when the server has none, and the Store suite no longer assumes the registry has 48 plugins or fewer.
-- `src/plugin_system/store_manager.py` (2,977 lines) is split into mixins: `store_registry.py` (registry, GitHub metadata, search, manifest validation), `store_install.py` (install paths and dependencies) and `store_update.py` (updates, rollback, local git state). `PluginStoreManager` is still imported from `store_manager.py` and has exactly the same methods and attributes; every method body is byte-identical.
-- `BaseOddsManager.get_odds()` no longer returns the cached "no odds" marker (`{"no_odds": True}`) as if it were odds. A game ESPN had no odds for is cached that way so it isn't re-requested every update; on the next update the cache hit handed the marker back, and callers saw a truthy dict. It now returns `None` for it, on the cache hit and in the stale-cache fallback after a failed fetch, as the plugins' bundled copies already did.
-- `web_interface/blueprints/api_v3/plugins.py` (3,285 lines) is split by area into `plugins.py` (installed list, enable/disable, plugin actions), `plugin_store.py`, `plugin_config.py`, `plugin_assets.py`, `plugin_health.py`, `plugin_operations.py` and `plugin_calendar.py`. Pure move: every function body and route decorator is byte-identical, and URLs and endpoint names are unchanged.
-
-- Background data fetches retry at one level instead of two. The session adapter retried a connection error three times inside every attempt of the service's own retry loop, so a dead network cost up to 16 connection attempts per request and held one of the few worker threads throughout; now it is the loop's `max_retries + 1` attempts. ESPN date-range chunks, which don't go through that loop and skip a chunk that fails, keep a small connection retry of their own so a brief blip doesn't drop a month from a cached season.
-- CI installs `web_interface/requirements.txt` too, so flask-limiter, flask-compress and the web floors are tested. `test_api_helper_does_not_hand_set_brotli` now checks what it meant: core doesn't add `br` itself, and `requests` may advertise it when a brotli decoder is installed.
-- All Discord links point to the LEDMatrix server's invite.
-
-- Web backend and WiFi fixes:
-  - Plugins installed as `ledmatrix-<id>` (or in a directory not named after their id) work in the installed list, the update button, recorded versions, the plugin config form and plugin web UI pages. Those routes built `plugins_dir/<id>` themselves instead of asking the plugin manager.
-  - The captive-portal checks (`/generate_204` and friends) also detect an access point brought up through NetworkManager, the fallback `enable_ap_mode` uses without hostapd; only hostapd was checked, so phones on that AP were told the internet worked.
-  - The WiFi monitor daemon re-reads `wifi_config.json` when it changes, so the "auto-enable AP mode" toggle takes effect without restarting the daemon.
-  - Disconnecting from WiFi in the web UI no longer runs an AP-mode check that could never enable the AP; it only added seconds of waiting. The daemon still enables the AP after its grace period.
-  - The WiFi status message file follows each WiFi manager's own config directory, and the config path falls back to this checkout rather than `/home/ledpi/LEDMatrix`.
-  - Fonts tab: the preview endpoint renders BDF fonts with the panel's own rasterizer instead of refusing them. (The Fonts page still skips the request for `.bdf`; enabling it there is a separate template change.)
-  - Uploading several plugin images checks every file before saving any, so a rejected file no longer leaves the others saved; the images' `.metadata.json` and the calendar plugin's `credentials.json` are written atomically, and the credentials upload no longer returns the server's absolute path.
-  - `"false"` sent as a string no longer counts as true when toggling a plugin (including Starlark apps) or starting on-demand mode (`pinned`, `start_service`); `force` on the AP-enable route is parsed like every other WiFi boolean (`"yes"` and `1` now force).
-  - The live-preview stream starts a new broadcast thread for a client that connects while the previous one is shutting down; that client got no updates.
-  - The web server's log filter no longer raises when werkzeug logs with `exc_info=True`.
-  - The raw secrets editor's save errors carry `error_code` like the main config's; the asset delete route answers 400 for a missing body instead of 415/500. Dead code removed: an unused manifest scan on each Plugins-tab load, backup routes' duplicate catch-alls, redundant imports.
-- Plugin system fixes:
-  - Unloading a plugin waits (up to 5s) for an in-flight `update()` before running `cleanup()`/`on_disable()`, and an update that finishes after the unload no longer puts the plugin back to ENABLED.
-  - A plugin whose load fails after its module was imported (constructor, `validate_config()` or `on_enable()` raising) no longer leaves that module cached: fixing the plugin and reloading it runs the new code without a restart. Its font registrations are dropped too.
-  - `POST /api/v3/plugins/limits/<id>` answers 400 for a limit that isn't a non-negative number (a string limit used to make every later update of that plugin raise). A bad cached limits record is ignored with a warning instead of raising.
-  - The config schema is found for a plugin installed as `ledmatrix-<id>` or in a directory named differently from its manifest id, resolved the way the loader resolves it (plugins/ is still searched before plugin-repos/). A plugin with no schema is logged once at DEBUG instead of a warning on every lookup.
-  - Installing from a URL over an existing install sets the old copy aside and restores it if the move fails, under the same per-plugin lock as a registry install.
-  - The operation queue refuses a second operation for a plugin whose first is still waiting (a double-clicked Install ran twice), and no longer keeps every finished operation in memory.
-  - `get_vegas_render_width()` reads `display_manager.width` first, as plugins are told to.
-  - Store and state files are read as UTF-8 regardless of the system locale.
-  - Docs: `update_interval` in `config.json` sets the scheduler's cadence only for a plugin whose manifest has none (TROUBLESHOOTING, PLUGIN_CONFIGURATION_GUIDE). The health/metrics reset and limits routes note that they only change the web process's view.
-- Web UI cleanup and dependency pins:
-  - A plugin's own config widget (`/static/plugin-widgets/<id>/<widget>.js`) is requested with `?v=<plugin version>`, so an updated plugin's widget reaches browsers instead of the copy cached as immutable for a year.
-  - A failed installed-plugins reload after a toggle, install or uninstall shows one error, not a second generic "unexpected error" toast.
-  - The timezone picker on the General tab renders again when the tab is reloaded in the same page session.
-  - Removed dead code: the plugin-action button's six plugin-id fallbacks (the button always passes its id) and its `[DEBUG]` logging, `window.currentPluginConfig` (never set to anything but `null`), the file-upload widget's JSON delete branch (its endpoint never existed), unused `PluginAPI` / `PluginInstallManager` / `PluginStateManager` helpers, `loadPluginWidgetsFromManifest`, no-longer-reachable fallbacks for a stale `install_manager.js` and a missing `LEDVisibility`, and 13 unused CSS utility rules.
-  - `pytz` may be any release before 2027, so current timezone data installs; `requirements-test.txt` caps `psutil` below 7 like the runtime requirements and allows `pytest-cov` up to 7.x (checked against pytest 9 with the CI coverage run).
-  - The Claude GitHub Actions workflows pin `anthropics/claude-code-action` to a commit SHA like the other actions.
-- Core services and `src.common` fixes:
-  - A plugin font declared as a `.zip` URL is served as the font extracted from it after a restart, instead of registering the archive itself. Font downloads time out after 30s and land in the cache only once complete, so an interrupted download is retried rather than served forever.
-  - `APIHelper`'s rate limit and the display-sync heartbeat/leader timeouts measure elapsed time with `time.monotonic()`. A wall-clock step (NTP correcting a Pi with no RTC) could stall API requests for as long as the step or fake a sync timeout. `get_request_stats()['last_request_time']` is still wall-clock time.
-  - `LogoHelper.load_logo_with_download()` sizes its placeholder to the scaled logo box, like a real logo (only differs when `scale` isn't 1).
-  - The AP Top 25 resolver remembers a failed or empty rankings fetch for 5 minutes, so an ESPN outage no longer costs every scoreboard update a 30s timeout. Its duplicate INFO log line is gone.
-  - `sudo_remove_directory()` tries each bash path the sudoers rule might name, as `install_requirements_file()` already did.
-  - An element's saved layout `scale` equal to its schema default is no longer treated as a user choice when the default is declared under an alias (`score` for `score_text`).
-  - `BackgroundDataService` runs a cache-hit callback outside its lock, as the fetch path does.
-  - Plugin config saves recombine position-keyed inputs for nullable array fields (`"type": ["array", "null"]`).
-  - A hand-edited non-object `auto_update` value reads as off instead of raising at startup, and a failed result write no longer leaves a temp file behind.
-  - `CacheError`/`ConfigError`/`PluginError`/`DisplayError` no longer write their key into the caller's `context` dict; the JSON log formatter stringifies values it can't encode instead of dropping the record.
-  - Removed `ErrorAggregator`'s unused JSON export (`export_path`, `export_to_file()`); nothing called it. Docstring fixes in `validate_file_upload`, `StartupValidator.raise_on_errors`, `DisplaySyncManager.set_on_new_cycle`, `dynamic_team_resolver` and `config_arrays`.
-- Display thread-safety and consistency fixes:
-  - `DisplayManager.defer_update()` from a plugin's update thread no longer loses queued updates while the render thread processes the queue; the queue is locked, and the queued callables still run outside the lock.
-  - BDF fonts: `FontManager.get_font()` and `element_style.load_font()` no longer hand one `freetype.Face` to every thread. BDF faces come from `load_bdf_face`, which already caches them per thread; TrueType fonts are cached as before. `element_style`'s font cache is locked (a concurrent eviction could raise `KeyError`).
-  - **Behaviour change:** when `display.hardware.limit_refresh_rate_hz` is missing from config, the panel is now capped at 100 Hz (the config template's value) instead of 90 Hz. Scroll pacing already assumed 100 Hz in that case, so it now matches what the panel does. Configs that set the key (every config migrated from the template) are unaffected.
-  - A sync follower adopts the leader's scroll image between frames on the render thread, instead of the TCP thread swapping the image, array and width while a frame is being drawn.
-  - `update_display()` errors are logged once with a traceback, then at most once a minute with a count, instead of an untraced line every frame. Several swallowed exceptions in `DisplayController` now log at DEBUG.
-  - The repo-root `display_controller.py` now runs `run.py` (the real entry point), so it gets run.py's `-e`/`-d` flags, logging setup and `sys.dont_write_bytecode`.
-- Vegas: a plugin set to `vegas_mode: "static"` pauses the scroll for its turn again. The pause was triggered by peeking at the front of a segment buffer that continuous scrolling (the default) never advances, so a static plugin paused only if it happened to be first, once, at startup, and otherwise scrolled past as ordinary content; swap mode had the same problem for any static plugin not first in its cycle. The render pipeline now marks where each static plugin's turn falls in the strip and the scroll pauses when it gets there. The pause runs the plugin's `display()` under its plugin lock, and a static plugin's content is no longer rendered for the strip.
-
-- The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
-
-- Contributor tooling and docs:
-  - `mypy.ini` parses again. A multi-line `exclude` and trailing comments on values made mypy refuse the whole file, so none of its settings applied and the pre-commit hook failed with "Missing target". The mypy hook is now manual (`pre-commit run mypy --hook-stage manual`) while the ~500 existing type errors in `src/` are paid down.
-  - `.gitignore` ignores everything in `config/` except the templates; `ytm_auth.json`, `saved_repositories.json`, `wifi_status.json` and `font_overrides.json` weren't ignored.
-  - `.sh` and `.service` files are always checked out with LF line endings.
-  - The Claude code-review check is skipped on pull requests from forks, which get no secrets and always failed it.
-  - `check_system_compatibility.sh` treats Python 3.13 (what Trixie ships) as supported and anything below 3.10 as an error.
-  - Doc fixes: emulator guide (Python 3.10+, `emulator_config.json` isn't in the repo), README's nonexistent "API Metrics" feature, a stale route count, and missing index entries for the scroll-performance and offscreen-rendering docs and the frame-soak and render-bench scripts.
-- Security and input-validation fixes:
-  - Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
-  - Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.
-  - A config field marked `x-secret` whose value is an object or array is saved to `config_secrets.json`, not to `config.json` in plain text.
-  - Restoring a backup onto a device without `config_secrets.json`, `wifi_config.json` or `ytm_auth.json` creates them with mode 640 instead of world-readable 644.
-  - Backup export skips a plugin `manifest.json` that isn't a JSON object instead of failing, and two exports in the same second no longer share a temp file or overwrite each other (the second gets a `-2` suffix).
-  - Every font that ships in `assets/fonts/` is protected from deletion; `MatrixChunky8X`, `MatrixLight6X`, `MatrixLight8X` and `ic8x8u` could be deleted from the Fonts tab.
-  - The raw config and secrets editors, and endpoints using `validate_request_json`, answer 400 for a JSON body that isn't an object.
-  - A blank Max Dynamic Duration keeps the stored value instead of failing the Display save with a 500; other values must be whole seconds from 30 to 1800.
-
-- Fixes found testing on a Pi:
-  - Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
-  - The Logs tab's "Now showing" no longer reads "unknown" when one screen stays up longer than 2 minutes.
-  - Turning Vegas on in the web UI works without a restart when it was off at startup.
-  - `configure_web_sudo.sh` run as the web user keeps the reboot/poweroff rules.
-  - `check_system_compatibility.sh` no longer reports installed packages as missing.
-  - A network failure fetching GitHub repo info logs a warning, not an error.
-
-- Web UI fixes:
-  - The Operation History plugin filter lists installed plugins (it showed one option, "plugins").
-  - Ctrl/Cmd+S submits the active tab's visible form (with its validation) instead of the first form in the page; it does nothing inside a dialog or on a tab without a form. The Ctrl/Cmd+R override (the browser's own reload) and the textarea auto-resize (no textarea exists at load) are removed.
-  - Overview "Check Updates" asks for the same confirmation as "Update Code" and shows the server's message. Both, and the Tools tab's git pull, show the restart-pending banner when the update needs a restart.
-  - Tools tab actions and diagnostics show the server's error message; only a non-JSON error falls back to `HTTP <status>`.
-  - An uninstalled plugin no longer reappears in the installed list: writes through `PluginAPI` clear its 5s GET cache, and Refresh and the post-uninstall reload bypass both list caches.
-  - Plugin widgets load from `/static/plugin-widgets/` only; the two other paths it tried have no route.
-  - The raw JSON editor escapes the parse error, and the slider widget escapes its value, min, max and step.
-  - Removed unused array-of-objects and key-value helpers from `plugins_manager.js` (about 640 lines, no callers) and a redundant `?v=` on its script tag.
-- Web UI and `src.common` fixes:
-  - A wrong Wi-Fi password is reported as one again ("Incorrect password for ..."); the fallback that restores the old network or brings up the setup AP was replacing the signal.
-  - Plugin tabs show the manifest's `icon`: `/api/v3/plugins/installed` now includes it.
-  - `POST /api/v3/starlark/apps/<id>/toggle` goes through the same code as `/plugins/toggle`: `"false"` disables, a failed save no longer leaves the running app out of step with disk, and a loaded app with no manifest entry no longer answers 500.
-  - `/api/v3/` JSON responses are sent `Cache-Control: no-store`, so a reload right after an install, toggle or Wi-Fi connect shows the new state. Non-JSON files served through the API keep the 5 s cache.
-  - `ScrollHelper.set_scrolling_image()` accepts RGBA, L and palette images (transparent pixels become black), and a new scrolling image no longer jumps ahead by the time the helper sat idle.
-  - `LogoHelper.load_logo_with_download()` waits an hour before retrying a download that failed for a missing logo, instead of retrying (with a 30 s timeout) on every call.
-  - Restamping a placeholder logo writes the file atomically.
-  - `FontManager.clear_cache()` and unregistering a plugin's fonts bump `cache_generation`, so cached layouts are rebuilt.
-  - The odds manager logs cache hits, misses and fetches at DEBUG, and a bad JSON body is logged as a parse error rather than a failed fetch.
-  - Startup plugin validation no longer gives up on a `null` plugin block, and plugins are discovered once at startup instead of twice.
-  - `src/common/README.md` lists `frame_timing`, `json_body` and `render_gate`.
-- Plugin system:
-  - A plugin whose `on_enable()` raises is no longer left registered: the next load retries it instead of reporting "already loaded" for a plugin that never ran.
-  - One plugin's `get_info()` raising no longer breaks the installed-plugins list; it is logged and shown with empty runtime info.
-  - `plugin_state.json` and the operation history are written atomically (temp file + rename) under their lock, so concurrent saves or a failed save can't leave a truncated file.
-  - Plugin dependency installs run one `pip` at a time during parallel startup loading.
-  - A failed store download no longer leaves its extraction directory in the temp dir.
-  - Test doubles: `draw_image()` on `MockDisplayManager`, `VisualTestDisplayManager` and `BoundsCheckingDisplayManager` now emits a `DeprecationWarning` — the real `DisplayManager` has no such method; use `display_manager.image.paste(img, (x, y))`. `MockDisplayManager.draw_text` accepts the real signature's `small_font`/`centered` and default `x`/`y`, and `VisualTestDisplayManager` logs draw errors at WARNING.
-  - Removed the unused `PluginOperationQueue.get_active_operations()`.
-- Display runtime:
-  - Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
-  - A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.
-  - Stopping on-demand after a second request resumes rotation where it was first interrupted, not at the first request's screen.
-  - Turning Vegas off and on no longer shows content prepared for the previous run, including plugins disabled in between.
-  - How long a Vegas iteration runs is timed with the monotonic clock, so an NTP clock step on a Pi without an RTC doesn't cut it short or stretch it.
-  - The sync status file is removed when the display service stops, and at startup in standalone mode, so the web UI no longer reports a peer from an earlier run. Concurrent writes each use their own temp file.
-  - `render_gate.swap_releases_gil()` delegates to `frame_timing.binding_releases_gil()` instead of duplicating it.
-
-- Scripts and installer:
-  - `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
-  - `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
-  - `configure_web_sudo.sh` uses a random temp file and installs its rules with mode 440.
-  - The installer prints its completion summary before the `-y` reboot, and describes the setup access point as an open network (it was shown with a password it doesn't have).
-  - `fix_cache_permissions.sh` applies `setup_cache.sh`'s `ledmatrix`-group model instead of setting 777.
-  - `check_system_compatibility.sh` reports anything but Debian 13 (Trixie) as unsupported, and reaches its summary.
-  - New `scripts/README.md` lists every script.
-- Docs:
-  - New `docs/ARCHITECTURE.md` (processes, shared state, display loop, plugin system, web UI) and `docs/PERMISSIONS.md` (owners, modes, both sudoers files, repair scripts).
-  - Deprecated plugin APIs are marked in the plugin docs.
-  - `src/common/README.md` covers every module.
-  - Stale setup, service and troubleshooting claims are corrected.
-
-- Plugin store and plugin manager fixes:
-  - Updating a plugin that was installed from a ZIP no longer tries to reinstall it from the LEDMatrix repository's own URL.
-  - Repository URLs with `.git` in the middle are no longer mangled. The URL helpers now live in `src/plugin_system/repo_urls.py`.
-  - Installing from a URL works when the repository's only branch isn't `main` or `master`.
-  - A missing required config field is reported once, by name.
-  - A plugin that went over `max_memory_mb` once is no longer refused on every call after that.
-  - `reload_plugin` reads the manifest from the plugin's discovered directory.
-  - Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
-
-- Core service fixes:
-  - `/api/v3/errors` shows each exception's real stack trace instead of `NoneType: None`.
-  - Wi-Fi disconnect takes the saved connection profile down.
-  - `wifi_config.json` is written atomically, and a save that fails now gets a 500.
-  - `plugin://` fonts load from the plugin's own install directory. `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`.
-  - `APIHelper` keeps cached responses for the `cache_ttl` it was given, instead of always 300 s.
-  - Logo scales from 0.1 to 10 are honoured everywhere; values outside that range are clamped.
-  - `LogoHelper` and `logo_downloader`: an empty ESPN logo list counts as a failed download, and the placeholder is written at the requested path.
-  - Bundled font paths no longer depend on the directory the process was started from.
-  - Backups record `src.__version__`.
-  - Removed: `BackgroundDataService`'s `queue_size` stat and `clear_completed_requests()`.
-
-- Web API fixes:
-  - A plugin save drops repeated entries in lists whose schema says `uniqueItems`, instead of failing validation.
-  - `/api/v3/health` reports the real plugin count.
-  - A malformed `vegas_plugin_order` or `vegas_excluded_plugins` is refused with a 400 and nothing is saved. It used to wipe the saved list.
-  - The per-plugin health and metrics routes return the display service's latest state.
-  - Resetting a plugin's config takes a backup first and reports a failed save.
-  - System metrics that can't be read are `null` everywhere: `cpu_temp` off a Pi, and every metric without psutil, where `/system/status` now answers 200 instead of 503.
-  - `/plugins/store/refresh` no longer claims a commit-metadata refresh it doesn't do.
-  - The plugin-config list repair code is in one place, `src/web_interface/config_arrays.py`.
-
-- Web UI:
-  - Cache tab errors no longer show up in the Logs tab.
-  - A tab that fails to load shows "Try again" instead of a skeleton that never goes away.
-  - Plugin Store search and registry errors appear as a notification, and the Plugin Manager stays on screen.
-  - The image schedule button works on uploaded images, and the editor stays open while you edit.
-  - A failed plugin toggle moves the switch back.
-  - Each save shows one notification; a failed Durations save says it failed.
-  - Stats the server can't read show `--`.
-  - New `window.LEDEscape` (`html`, `attr`, `jsStringAttr`) replaces about 30 copied escapers. `window.escapeHtml` and `window.escapeAttribute` remain as aliases for plugin pages.
-
-- Display and Vegas:
-  - Vegas `max_cycle_duration` defaults to 240 s when unset, as documented (it was 600 s). The Vegas defaults are now defined once.
-  - The display controller stops Vegas mode on shutdown.
-  - Startup validation warnings are logged once, not twice.
-  - Vegas logs one INFO line per plugin-list refresh.
-  - `run.py -d` shows `display_manager` debug output.
-  - Removed: the Vegas staging buffer that was never filled (`swap_buffers()`, and `staging_count` / `current_index` in `get_buffer_status()`), unread `ContentSegment` fields, and `geometry.find_blank_cut()`.
-
-- The web service (`ledmatrix-web`) logs through `src.logging_config` like the
-  display service, so `journalctl -p err -u ledmatrix-web` works. Successful
-  GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
-  INFO; 4xx at WARNING, 5xx at ERROR. `LEDMATRIX_DEBUG=true` shows them again.
-  `web_interface/logging_config.py` is removed. The web cache
-  (`web_interface/cache.py`) now honours the TTL a value was stored with and is
-  thread-safe.
-
-- One plugin-directory resolver, `src/plugin_system/plugin_dirs.py`, behind
-  discovery, `PluginManager.get_plugin_directory`, `PluginLoader`, the store and
-  state reconciliation. A manifest's `id` wins over a directory merely named for
-  the id; hidden and `.standalone-backup-` directories are never treated as
-  plugins (auto-update could previously try to update a backup); ids like
-  `a/b` or `..` resolve to nothing everywhere. Installs where each directory is
-  named for its manifest id, the installer's layout, behave as before.
-
-- `/api/v3` routes answer an exception they don't handle themselves from one
-  blueprint error handler, with the same `{status, message, details}` body the
-  53 removed per-route catch-alls returned. `ErrorCategory` and the
-  `error_category` key are removed from `src.web_interface.errors` (nothing read
-  them); `exception_error_response()` replaces the `from_exception` +
-  `error_response` pairs. A failing plugin action script's error now names the
-  real failure instead of `UnboundLocalError`.
-
-- `FontManager.get_font()` returns a BDF font at its native size when asked for
-  a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
-  return PIL's default font, a different typeface, so a plugin that relied on
-  that will now render the font it asked for.
-- `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
-  the display are written (`config/wifi_status.json`).
-- `src.device_location` — a blank `Location` field on a Starlark (Tidbyt) app
-  now renders at the device's City / State / Country (geocoded once via
-  Open-Meteo and cached) instead of the app author's hard-coded default,
-  usually San Francisco. A location saved on the app still wins. With no
-  device city set, or when the lookup fails or finds no match, the app keeps
-  its own default (a failed lookup is retried after 30 minutes). Clearing an
-  app's location in the web UI now actually clears it; the save used to drop
-  the blank field, so the old value stayed.
-- `src.common.bdf_font` — `load_bdf_face(path, size)` (a cached
-  `freetype.Face` plus the pixel size it really renders at, falling back to
-  the file's native strike) and `draw_bdf_text(draw, text, x, y, face, color)`.
-  `DisplayManager`, `FontManager`, `element_style` and the plugin test harness
-  now all load and draw BDF text through it; the panel's pixels are unchanged
-  and BDF text draws 10-250x faster. The plugin test harness's
-  `calendar_font` / `bdf_5x7_font` now has the panel's 7px size set: it used
-  to be an unsized face, so in golden images and `check_plugin` /
-  `dev_server` previews its text sat 6px above where the panel draws it (off
-  the canvas entirely near the top) and `get_font_height()` returned 0.
-
-- The web UI's Fonts tab has a **Used by** column: the loaded plugins that
-  registered each font with `FontManager.register_manager_font()`, published
-  by the display service to the shared cache (`src/font_usage.py`) and merged
-  into `GET /api/v3/fonts/catalog` as `used_by`. Deleting a font a plugin
-  uses now names those plugins in the confirmation (it is not blocked).
-  `FontManager.forget_manager_fonts()` is new; unloading a plugin calls it.
-
-Deprecated, removed in 3.7.0 (each logs a warning on first use; see
-`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
-core, the monorepo or the registry's third-party plugins calls them:
-
-- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
-  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
-  `get_background_cached_data`, `is_background_data_available`,
-  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
-  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`.
-- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
-  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`.
-- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
-  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
-  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
-  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
-  `unregister_plugin_fonts`.
-- `PluginManager.get_enabled_plugins`.
-
-### Config writes
-
-- A power cut or crash mid-save can no longer leave `config/config.json`
-  truncated. `ConfigManager.save_config()` wrote the file in place; it,
-  `save_config_atomic()`, `save_raw_file_content()` and backup rollback now
-  share one writer (`atomic_write_text` in `src/config_manager_atomic.py`)
-  that fsyncs a temp file, renames it into place and fsyncs the directory.
-- `save_config_atomic()` no longer rewrites `config_secrets.json` on every
-  save, only when its content changes, and rotating backups no longer re-reads
-  every backup. The backups themselves are unchanged:
-  `config/backups/config.json.backup.<version>` plus its paired secrets
-  backup, five newest kept.
-- A save by the root-run display service keeps the file's previous owner
-  instead of handing `config.json` to root, and an install path with
-  "secrets" in a directory name no longer makes `config.json` mode 0640.
-
-New names in existing modules (no new modules; a plugin importing these must
-floor on the release that ships them):
-
-- `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
-- `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
-  `shared_downloader`.
-- `src.common.sports_card.unshare_element_fonts` takes an optional third
-  argument, `element_for_font` (default: the module's `ELEMENT_FOR_FONT`, so
-  existing calls are unchanged).
-
-### Sports twins
-
-- The `SportsCoreSharedMixin` helpers that behave identically to their
-  `sports_card` twins (`_card_option`, `_vs_text`, `_format_game_time`,
-  `_coerce_rgb`, `_crisp_size`, `_unshare_element_fonts`, the colour/month/
-  weekday/font-grid tables) are now thin wrappers over the `sports_card`
-  functions, and `_format_game_date` / `_schema_font_size` share its
-  formatting body and schema parser. No method was removed or renamed and
-  nothing renders differently: `test/test_sports_twins.py` checks each pair
-  against the same inputs, and the old and new mixin agree on every input
-  there. The pairs that do differ -- favourite-result colours on nested
-  payloads, the weekday's timezone, the element-name map, per-mode colours --
-  are left as they are and pinned in that test.
-
-### Logo downloads
-
-- `download_missing_logo` / `LogoDownloader.download_logo` (the path the
-  scoreboard plugins use) now stream the logo with a 10 MB cap, accept only an
-  `image/*` response that Pillow can decode, and move the finished RGBA PNG
-  into place atomically. A failed, oversized or non-image download no longer
-  leaves a partial file behind, and no longer replaces a logo already on disk.
-  `LogoHelper._download_logo` goes through the same code. Signatures and return
-  values are unchanged; saved files are pixel-identical to before.
-- `download_missing_logo` reuses one downloader (one `requests.Session`) per
-  thread instead of building a new one for every logo.
-- Placeholder logos are written atomically, without the `test_write.tmp`
-  probe file.
-
-### HTTP headers
-
-- The logo downloader and the background data service send the real
-  `LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)` User-Agent
-  instead of a `yourusername` / `contact@example.com` placeholder, and no
-  longer set `Accept-Encoding: ... br` by hand (brotli is not installed, so a
-  `br` response could not be decoded); requests picks the encodings.
-
-### Plugin error reporting
-
-- `/api/v3/errors/summary` and `/api/v3/errors/plugin/<id>` report the errors
-  the display service recorded. They used to read the web process's own error
-  aggregator, which never records anything, so they always answered "no
-  errors". The display service now publishes a bounded snapshot to the shared
-  cache (`plugin_error_snapshot`, at most every 10 seconds and only on change;
-  `src/error_aggregator.py`, started from `DisplayController.__init__`).
-  Responses keep their shape and add `snapshot_available`, `generated_at` and
-  `clear_pending`; exception text has credentials redacted.
-- `POST /api/v3/errors/clear` records a request (`plugin_error_clear_request`)
-  the display service applies within about 5 seconds; reads hide the cleared
-  errors at once. It accepts `"all": true`, and `cleared_count` can be `null`
-  when the count is only known to the display service.
-- The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
-  errors and a Clear button.
-- Credential redaction in exception text (`src/redaction.py`) takes time
-  proportional to the text, not its square. Two patterns were quadratic: URL
-  `user:password@`, on a long unbroken run of letters or digits (a hex digest,
-  an ID), and `Authorization:` followed by a long run of whitespace. Either
-  used to stall every thread of the display service for up to seconds each
-  time the snapshot was published: about 0.5s for 20k characters of hex, 8s
-  for 20k spaces. What gets redacted is unchanged.
-
-### Removed
-
-- **The skin system.** Skins never rendered with the current scoreboard
-  plugins, so they are gone rather than "not supported yet": `src/skin_system/`,
-  `skins/`, `scripts/validate_skin.py`, `GET /api/v3/skins`, the store's
-  `"type": "skin"` handling and `docs/SKIN_SYSTEM.md` / `docs/CREATING_SKINS.md`.
-  A `skin` or `skin_options` key left in a plugin's saved config still loads
-  and saves without a validation error; it is ignored, and the next save of
-  that plugin's settings removes it (unless the plugin's own schema declares
-  the key).
-- **`src/base_classes/`** (`SportsCore`, the sport and mode classes,
-  `CelebrationMixin`, the rotation strategies, `data_sources`,
-  `api_extractors`). No known plugin imports it. A plugin that does must use
-  `src.common` or its own copy of the code.
-
-- `src.common.frame_timing` -- times every frame the display presents, whoever
-  drew it, and writes cumulative counters to `/dev/shm`. Two tools read it:
-  `scripts/frame_soak.py` judges a running service (late frames, freezes,
-  where the time goes), and `scripts/render_bench.py` judges the hardware and
-  render path alone on a synthetic strip. Both fail a run above 0.1% late
-  frames, and both call a loop that never waited for the panel NOT LOCKED. A
-  stall watchdog logs the stack of whatever holds a scroll up for 250 ms or
-  more. See `docs/SCROLL_PERFORMANCE.md`, "Soaking a rig".
-
-- `display.scan_order_compensation` (`"auto"` by default): while something
-  scrolls at one pixel per refresh, one half of each panel is shown a refresh
-  behind the other, which removes the 1px step a 1:N-scan panel shows across
-  its middle. Only for layouts whose row order is known; `"off"` disables it.
-  See `docs/SCROLL_PERFORMANCE.md`, "A tear across the middle on fast scrolls".
-
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
@@ -422,6 +43,65 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   `fetch_espn_date_chunks`, `espn_date_chunks`, `clamp_espn_limit`,
   `ESPN_MAX_LIMIT`: fetch an ESPN scoreboard date range now that ESPN rejects
   ranges (see Sports data below). Plugins bundle a copy of it.
+- `src/common/json_body.py` — `response_json(response)`: `response.json()`,
+  parsed by orjson when it is installed (an optional dependency) and by the
+  stdlib otherwise; an orjson parse error falls back to `response.json()` so
+  requests raises its usual error. Same Python objects either way; a season
+  schedule parses about 1.7x faster on a Pi 4, and the parse holds the GIL (so
+  freezes the display) for that much less time. `espn_dates` and
+  `BackgroundDataService` use it; `espn_dates` falls back to `response.json()`
+  when it is missing, so the plugins' bundled copies of `espn_dates` still load
+  on an older core.
+- `src/common/bdf_font.py` — `load_bdf_face(path, size)` (a cached
+  `freetype.Face` plus the pixel size it really renders at, falling back to
+  the file's native strike) and `draw_bdf_text(draw, text, x, y, face, color)`.
+  `DisplayManager`, `FontManager`, `element_style` and the plugin test harness
+  now all load and draw BDF text through it; the panel's pixels are unchanged
+  and BDF text draws 10-250x faster. The plugin test harness's
+  `calendar_font` / `bdf_5x7_font` now has the panel's 7px size set: it used
+  to be an unsized face, so in golden images and `check_plugin` /
+  `dev_server` previews its text sat 6px above where the panel draws it (off
+  the canvas entirely near the top) and `get_font_height()` returned 0.
+
+Also new under `src/` since 3.4.0, but internal to core rather than for plugins:
+`src/common/frame_timing.py` and `src/common/render_gate.py` (see Scrolling),
+`src/core_config_keys.py`, `src/deprecation.py`, `src/device_location.py`,
+`src/font_usage.py`, `src/matrix_support.py`, `src/pi5_matrix_support.py`,
+`src/redaction.py`, `src/scan_order.py`, `src/web_interface/config_arrays.py`,
+and in `src/plugin_system/`: `plugin_dirs.py`, `repo_urls.py`,
+`store_install.py`, `store_registry.py` and `store_update.py`.
+
+New names in existing modules (a plugin using these must floor on 3.5.0):
+
+- `src.common.api_helper`: `USER_AGENT`, `DEFAULT_HTTP_HEADERS` (read-only).
+- `src.logo_downloader`: `fetch_logo`, `save_png_atomically`,
+  `shared_downloader`.
+- `src.common.sports_card.unshare_element_fonts` takes an optional third
+  argument, `element_for_font` (default: the module's `ELEMENT_FOR_FONT`, so
+  existing calls are unchanged).
+- `src.wifi_manager.get_wifi_status_path()` — where WiFi status messages for
+  the display are written (`config/wifi_status.json`).
+- `BackgroundDataService.handles_espn_date_ranges` (see Sports data).
+- `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`, and
+  `FontManager.forget_manager_fonts()` is new (see Fonts).
+
+Deprecated, removed in 3.7.0 (each logs a warning on first use; see
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
+core, the monorepo or the registry's third-party plugins calls them:
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`.
+- `PluginManager.get_enabled_plugins`.
 
 ### Config saves and plugin config preparation
 
@@ -468,8 +148,23 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   "enabled but not found in plugins directory", and plugin ids that collide
   with any core config section are flagged: the last private copies of the
   core-key list now use `src/core_config_keys.py`.
+- Plugin config saves recombine position-keyed inputs for nullable array fields (`"type": ["array", "null"]`).
+- A blank Max Dynamic Duration keeps the stored value instead of failing the Display save with a 500; other values must be whole seconds from 30 to 1800.
+- A power cut or crash mid-save can no longer leave `config/config.json`
+  truncated. `ConfigManager.save_config()` wrote the file in place; it,
+  `save_config_atomic()`, `save_raw_file_content()` and backup rollback now
+  share one writer (`atomic_write_text` in `src/config_manager_atomic.py`)
+  that fsyncs a temp file, renames it into place and fsyncs the directory.
+- `save_config_atomic()` no longer rewrites `config_secrets.json` on every
+  save, only when its content changes, and rotating backups no longer re-reads
+  every backup. The backups themselves are unchanged:
+  `config/backups/config.json.backup.<version>` plus its paired secrets
+  backup, five newest kept.
+- A save by the root-run display service keeps the file's previous owner
+  instead of handing `config.json` to root, and an install path with
+  "secrets" in a directory name no longer makes `config.json` mode 0640.
 
-### Sports data
+### Sports data, logos and odds
 
 - Since 2026-09-15 ESPN answers `dates=YYYYMMDD-YYYYMMDD` scoreboard queries
   with `400 Bad Request` for every sport, so season schedules, the weeks window
@@ -517,6 +212,44 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   longer swallowed as a missing poll. This is the implementation the football,
   baseball and hockey boards already ship; core was the last copy on the old
   one.
+- `BaseOddsManager.get_odds()` no longer returns the cached "no odds" marker (`{"no_odds": True}`) as if it were odds. A game ESPN had no odds for is cached that way so it isn't re-requested every update; on the next update the cache hit handed the marker back, and callers saw a truthy dict. It now returns `None` for it, on the cache hit and in the stale-cache fallback after a failed fetch, as the plugins' bundled copies already did.
+- Background data fetches retry at one level instead of two. The session adapter retried a connection error three times inside every attempt of the service's own retry loop, so a dead network cost up to 16 connection attempts per request and held one of the few worker threads throughout; now it is the loop's `max_retries + 1` attempts. ESPN date-range chunks, which don't go through that loop and skip a chunk that fails, keep a small connection retry of their own so a brief blip doesn't drop a month from a cached season.
+- `LogoHelper.load_logo_with_download()` sizes its placeholder to the scaled logo box, like a real logo (only differs when `scale` isn't 1).
+- The AP Top 25 resolver remembers a failed or empty rankings fetch for 5 minutes, so an ESPN outage no longer costs every scoreboard update a 30s timeout. Its duplicate INFO log line is gone.
+- `BackgroundDataService` runs a cache-hit callback outside its lock, as the fetch path does.
+- `LogoHelper.load_logo_with_download()` waits an hour before retrying a download that failed for a missing logo, instead of retrying (with a 30 s timeout) on every call.
+- Restamping a placeholder logo writes the file atomically.
+- The odds manager logs cache hits, misses and fetches at DEBUG, and a bad JSON body is logged as a parse error rather than a failed fetch.
+- `APIHelper` keeps cached responses for the `cache_ttl` it was given, instead of always 300 s.
+- Logo scales from 0.1 to 10 are honoured everywhere; values outside that range are clamped.
+- `LogoHelper` and `logo_downloader`: an empty ESPN logo list counts as a failed download, and the placeholder is written at the requested path.
+- The `SportsCoreSharedMixin` helpers that behave identically to their
+  `sports_card` twins (`_card_option`, `_vs_text`, `_format_game_time`,
+  `_coerce_rgb`, `_crisp_size`, `_unshare_element_fonts`, the colour/month/
+  weekday/font-grid tables) are now thin wrappers over the `sports_card`
+  functions, and `_format_game_date` / `_schema_font_size` share its
+  formatting body and schema parser. No method was removed or renamed and
+  nothing renders differently: `test/test_sports_twins.py` checks each pair
+  against the same inputs, and the old and new mixin agree on every input
+  there. The pairs that do differ -- favourite-result colours on nested
+  payloads, the weekday's timezone, the element-name map, per-mode colours --
+  are left as they are and pinned in that test.
+- `download_missing_logo` / `LogoDownloader.download_logo` (the path the
+  scoreboard plugins use) now stream the logo with a 10 MB cap, accept only an
+  `image/*` response that Pillow can decode, and move the finished RGBA PNG
+  into place atomically. A failed, oversized or non-image download no longer
+  leaves a partial file behind, and no longer replaces a logo already on disk.
+  `LogoHelper._download_logo` goes through the same code. Signatures and return
+  values are unchanged; saved files are pixel-identical to before.
+- `download_missing_logo` reuses one downloader (one `requests.Session`) per
+  thread instead of building a new one for every logo.
+- Placeholder logos are written atomically, without the `test_write.tmp`
+  probe file.
+- The logo downloader and the background data service send the real
+  `LEDMatrix/1.0 (+https://github.com/ChuckBuilds/LEDMatrix)` User-Agent
+  instead of a `yourusername` / `contact@example.com` placeholder, and no
+  longer set `Accept-Encoding: ... br` by hand (brotli is not installed, so a
+  `br` response could not be decoded); requests picks the encodings.
 
 ### Scrolling
 
@@ -547,6 +280,92 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   held 20 ms frame as missed refreshes, and Vegas `frame_based_scrolling` /
   `scroll_delay` are described as the speed clamp they are rather than frame
   stepping. Scoreboard `scroll_delay` is documented as ignored for pacing.
+- `ScrollHelper.set_scrolling_image()` accepts RGBA, L and palette images (transparent pixels become black), and a new scrolling image no longer jumps ahead by the time the helper sat idle.
+- `src.common.frame_timing` -- times every frame the display presents, whoever
+  drew it, and writes cumulative counters to `/dev/shm`. Two tools read it:
+  `scripts/frame_soak.py` judges a running service (late frames, freezes,
+  where the time goes), and `scripts/render_bench.py` judges the hardware and
+  render path alone on a synthetic strip. Both fail a run above 0.1% late
+  frames, and both call a loop that never waited for the panel NOT LOCKED. A
+  stall watchdog logs the stack of whatever holds a scroll up for 250 ms or
+  more. See `docs/SCROLL_PERFORMANCE.md`, "Soaking a rig".
+- `display.scan_order_compensation` (`"auto"` by default): while something
+  scrolls at one pixel per refresh, one half of each panel is shown a refresh
+  behind the other, which removes the 1px step a 1:N-scan panel shows across
+  its middle. Only for layouts whose row order is known; `"off"` disables it.
+  See `docs/SCROLL_PERFORMANCE.md`, "A tear across the middle on fast scrolls".
+
+### Display and Vegas
+
+- Vegas scrolls in step with the panel's refresh (#628). With `smooth_scroll`
+  (on by default) the strip moves a whole number of pixels per presented
+  frame, each held for `frame_hold` refreshes and timed by `SwapOnVSync`,
+  the same pacing as the plugin tickers; it used to advance by elapsed time
+  and sleep to `target_fps`, missing a vsync every few frames. The speed is
+  solved against the panel's measured refresh when that is below its
+  `limit_refresh_rate_hz` cap. The old sub-pixel blend, which the panel shows
+  as shimmer, is kept as `vegas_scroll.sub_pixel_blend` (default off). While
+  scrolling, the web preview's PNG is encoded on a background writer instead
+  of the render thread. On a Pi 4 driving 512x64, late frames went from about
+  6.4% to 0.7%.
+- Vegas prepares plugin content off the render thread (#630). A plugin that
+  needed the shared canvas used to be fetched on the render thread, stalling
+  the scroll for as long as it took (320 ms for news, 660 ms for a hockey
+  scoreboard, measured). `DisplayManager.offscreen(width, height)` gives the
+  calling thread a canvas of its own: `image`, `draw` and `matrix` are now
+  properties that resolve to it inside the block, where `update_display()`,
+  the hardware half of `clear()` and `set_scrolling_state()` /
+  `set_frame_hold()` do nothing. Background fetches take the plugin's lock,
+  waiting up to 2 s for a running `update()` and otherwise skipping the plugin
+  that round. A GIL gate (`src/common/render_gate.py`) pauses the prefetch
+  thread outside a window around each vsync swap, so the render thread finds
+  the GIL free; it needs the rebuilt binding that releases the GIL in
+  `SwapOnVSync` and stays off (one INFO line per Vegas run) on a stock one.
+  New `vegas_scroll` keys: `offscreen_prefetch` and `prefetch_gate` (both on by
+  default) and `switch_interval_ms` (experimental, default 0, off). Design in
+  `docs/OFFSCREEN_RENDERING.md`.
+- On-demand requests, the display on/off schedule and brightness take effect
+  within about a quarter of a second instead of at the next screen (#618). A
+  screen can stay up for a minute and a Vegas iteration for 240 s, so an
+  on-demand request during Vegas waited for the iteration to end and a
+  brightness save mid-screen could be lost. Vegas now stops for an on-demand
+  request and for the display being scheduled off, and a brightness change
+  re-sends the current frame. Plugin enable/disable, screen durations and Vegas
+  settings still apply at the next screen.
+- The Rotation & Durations page takes effect (#605). A saved
+  `display.display_durations` value now wins over the plugin's own duration;
+  the plugin was asked first, and every plugin inherits
+  `get_display_duration()`, so saved values did nothing. The page shows an
+  unsaved screen blank with the plugin's own duration as the placeholder (it
+  showed 30 where the real default is 15), and saving a blank removes the
+  override. Durations saved before this now apply.
+- Vegas settings reach a running scroll (#605): they are queued when
+  `display.vegas_scroll` changes (unrelated saves don't rebuild the strip) and
+  also applied while Vegas is stopped. The sync follower's scroll-speed
+  default (75) now matches `VegasModeConfig`'s (50). The Vegas live-priority
+  scan is throttled to 4 Hz.
+- `DisplayManager.defer_update()` from a plugin's update thread no longer loses queued updates while the render thread processes the queue; the queue is locked, and the queued callables still run outside the lock.
+- **Behaviour change:** when `display.hardware.limit_refresh_rate_hz` is missing from config, the panel is now capped at 100 Hz (the config template's value) instead of 90 Hz. Scroll pacing already assumed 100 Hz in that case, so it now matches what the panel does. Configs that set the key (every config migrated from the template) are unaffected.
+- A sync follower adopts the leader's scroll image between frames on the render thread, instead of the TCP thread swapping the image, array and width while a frame is being drawn.
+- `update_display()` errors are logged once with a traceback, then at most once a minute with a count, instead of an untraced line every frame. Several swallowed exceptions in `DisplayController` now log at DEBUG.
+- The repo-root `display_controller.py` now runs `run.py` (the real entry point), so it gets run.py's `-e`/`-d` flags, logging setup and `sys.dont_write_bytecode`.
+- Vegas: a plugin set to `vegas_mode: "static"` pauses the scroll for its turn again. The pause was triggered by peeking at the front of a segment buffer that continuous scrolling (the default) never advances, so a static plugin paused only if it happened to be first, once, at startup, and otherwise scrolled past as ordinary content; swap mode had the same problem for any static plugin not first in its cycle. The render pipeline now marks where each static plugin's turn falls in the strip and the scroll pauses when it gets there. The pause runs the plugin's `display()` under its plugin lock, and a static plugin's content is no longer rendered for the strip.
+- The display loop no longer spins at 100% CPU when no enabled mode has anything to show (for example, only a sports plugin enabled in its off-season). After one full rotation of empty modes it checks one mode per second until something shows; live content still takes over at once.
+- Stopping `ledmatrix.service` runs the controller's cleanup (SIGTERM now takes the Ctrl-C path).
+- Turning Vegas on in the web UI works without a restart when it was off at startup.
+- Vegas comes back after live content interrupts it. It stayed paused, and the display fell back to normal rotation until a restart.
+- A day with dimming turned off in a per-day dim schedule stays at normal brightness. Before, brightness went back to dim for most of each minute.
+- Stopping on-demand after a second request resumes rotation where it was first interrupted, not at the first request's screen.
+- Turning Vegas off and on no longer shows content prepared for the previous run, including plugins disabled in between.
+- How long a Vegas iteration runs is timed with the monotonic clock, so an NTP clock step on a Pi without an RTC doesn't cut it short or stretch it.
+- The sync status file is removed when the display service stops, and at startup in standalone mode, so the web UI no longer reports a peer from an earlier run. Concurrent writes each use their own temp file.
+- `render_gate.swap_releases_gil()` delegates to `frame_timing.binding_releases_gil()` instead of duplicating it.
+- Vegas `max_cycle_duration` defaults to 240 s when unset, as documented (it was 600 s). The Vegas defaults are now defined once.
+- The display controller stops Vegas mode on shutdown.
+- Startup validation warnings are logged once, not twice.
+- Vegas logs one INFO line per plugin-list refresh.
+- `run.py -d` shows `display_manager` debug output.
+- Removed: the Vegas staging buffer that was never filled (`swap_buffers()`, and `staging_count` / `current_index` in `get_buffer_status()`), unread `ContentSegment` fields, and `geometry.find_blank_cut()`.
 
 ### Web interface
 
@@ -611,8 +430,142 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   discover when nothing has been discovered yet, and rescan once when a
   specific plugin id (or, for on-demand by mode, a mode) is not found, so a
   plugin installed since the last scan is found too.
+- `web_interface/blueprints/api_v3/plugins.py` (3,285 lines) is split by area into `plugins.py` (installed list, enable/disable, plugin actions), `plugin_store.py`, `plugin_config.py`, `plugin_assets.py`, `plugin_health.py`, `plugin_operations.py` and `plugin_calendar.py`. Pure move: every function body and route decorator is byte-identical, and URLs and endpoint names are unchanged.
+- Plugins installed as `ledmatrix-<id>` (or in a directory not named after their id) work in the installed list, the update button, recorded versions, the plugin config form and plugin web UI pages. Those routes built `plugins_dir/<id>` themselves instead of asking the plugin manager.
+- Uploading several plugin images checks every file before saving any, so a rejected file no longer leaves the others saved; the images' `.metadata.json` and the calendar plugin's `credentials.json` are written atomically, and the credentials upload no longer returns the server's absolute path.
+- `"false"` sent as a string no longer counts as true when toggling a plugin (including Starlark apps) or starting on-demand mode (`pinned`, `start_service`); `force` on the AP-enable route is parsed like every other WiFi boolean (`"yes"` and `1` now force).
+- The live-preview stream starts a new broadcast thread for a client that connects while the previous one is shutting down; that client got no updates.
+- The web server's log filter no longer raises when werkzeug logs with `exc_info=True`.
+- The raw secrets editor's save errors carry `error_code` like the main config's; the asset delete route answers 400 for a missing body instead of 415/500. Dead code removed: an unused manifest scan on each Plugins-tab load, backup routes' duplicate catch-alls, redundant imports.
+- A plugin's own config widget (`/static/plugin-widgets/<id>/<widget>.js`) is requested with `?v=<plugin version>`, so an updated plugin's widget reaches browsers instead of the copy cached as immutable for a year.
+- A failed installed-plugins reload after a toggle, install or uninstall shows one error, not a second generic "unexpected error" toast.
+- The timezone picker on the General tab renders again when the tab is reloaded in the same page session.
+- Removed dead code: the plugin-action button's six plugin-id fallbacks (the button always passes its id) and its `[DEBUG]` logging, `window.currentPluginConfig` (never set to anything but `null`), the file-upload widget's JSON delete branch (its endpoint never existed), unused `PluginAPI` / `PluginInstallManager` / `PluginStateManager` helpers, `loadPluginWidgetsFromManifest`, no-longer-reachable fallbacks for a stale `install_manager.js` and a missing `LEDVisibility`, and 13 unused CSS utility rules.
+- The Logs tab's "Now showing" no longer reads "unknown" when one screen stays up longer than 2 minutes.
+- A network failure fetching GitHub repo info logs a warning, not an error.
+- The Operation History plugin filter lists installed plugins (it showed one option, "plugins").
+- Ctrl/Cmd+S submits the active tab's visible form (with its validation) instead of the first form in the page; it does nothing inside a dialog or on a tab without a form. The Ctrl/Cmd+R override (the browser's own reload) and the textarea auto-resize (no textarea exists at load) are removed.
+- Tools tab actions and diagnostics show the server's error message; only a non-JSON error falls back to `HTTP <status>`.
+- An uninstalled plugin no longer reappears in the installed list: writes through `PluginAPI` clear its 5s GET cache, and Refresh and the post-uninstall reload bypass both list caches.
+- Plugin widgets load from `/static/plugin-widgets/` only; the two other paths it tried have no route.
+- The raw JSON editor escapes the parse error, and the slider widget escapes its value, min, max and step.
+- Removed unused array-of-objects and key-value helpers from `plugins_manager.js` (about 640 lines, no callers) and a redundant `?v=` on its script tag.
+- Plugin tabs show the manifest's `icon`: `/api/v3/plugins/installed` now includes it.
+- `POST /api/v3/starlark/apps/<id>/toggle` goes through the same code as `/plugins/toggle`: `"false"` disables, a failed save no longer leaves the running app out of step with disk, and a loaded app with no manifest entry no longer answers 500.
+- `/api/v3/` JSON responses are sent `Cache-Control: no-store`, so a reload right after an install, toggle or Wi-Fi connect shows the new state. Non-JSON files served through the API keep the 5 s cache.
+- Startup plugin validation no longer gives up on a `null` plugin block, and plugins are discovered once at startup instead of twice.
+- A plugin save drops repeated entries in lists whose schema says `uniqueItems`, instead of failing validation.
+- `/api/v3/health` reports the real plugin count.
+- A malformed `vegas_plugin_order` or `vegas_excluded_plugins` is refused with a 400 and nothing is saved. It used to wipe the saved list.
+- The per-plugin health and metrics routes return the display service's latest state.
+- Resetting a plugin's config takes a backup first and reports a failed save.
+- System metrics that can't be read are `null` everywhere: `cpu_temp` off a Pi, and every metric without psutil, where `/system/status` now answers 200 instead of 503.
+- `/plugins/store/refresh` no longer claims a commit-metadata refresh it doesn't do.
+- The plugin-config list repair code is in one place, `src/web_interface/config_arrays.py`.
+- Cache tab errors no longer show up in the Logs tab.
+- A tab that fails to load shows "Try again" instead of a skeleton that never goes away.
+- Plugin Store search and registry errors appear as a notification, and the Plugin Manager stays on screen.
+- The image schedule button works on uploaded images, and the editor stays open while you edit.
+- A failed plugin toggle moves the switch back.
+- Each save shows one notification; a failed Durations save says it failed.
+- Stats the server can't read show `--`.
+- New `window.LEDEscape` (`html`, `attr`, `jsStringAttr`) replaces about 30 copied escapers. `window.escapeHtml` and `window.escapeAttribute` remain as aliases for plugin pages.
+- The web service (`ledmatrix-web`) logs through `src.logging_config` like the
+  display service, so `journalctl -p err -u ledmatrix-web` works. Successful
+  GET/HEAD/OPTIONS requests (the UI's polling) are logged at DEBUG instead of
+  INFO; 4xx at WARNING, 5xx at ERROR. `LEDMATRIX_DEBUG=true` shows them again.
+  `web_interface/logging_config.py` is removed. The web cache
+  (`web_interface/cache.py`) now honours the TTL a value was stored with and is
+  thread-safe.
+- `/api/v3` routes answer an exception they don't handle themselves from one
+  blueprint error handler, with the same `{status, message, details}` body the
+  53 removed per-route catch-alls returned. `ErrorCategory` and the
+  `error_category` key are removed from `src.web_interface.errors` (nothing read
+  them); `exception_error_response()` replaces the `from_exception` +
+  `error_response` pairs. A failing plugin action script's error now names the
+  real failure instead of `UnboundLocalError`.
+- Installing a Starlark app works on a fresh install (#604). `starlark-apps/`
+  is created by whichever service reaches it first, and on a fresh install
+  that was usually the root display service, so the web interface could not
+  write to it and every install path answered "Failed to install from
+  repository". The display service now hands the directory and its contents
+  to the checkout's owner on every start (a no-op when not root or when the
+  checkout belongs to root), which also repairs devices already affected; a
+  permission error from the install routes names the directory and the fix.
+- Clicks on plugin cards reach `handlePluginAction` (#605). Every click took
+  a copied fallback that asked twice before uninstalling and sent Starlark app
+  uninstalls to `POST /plugins/uninstall` instead of
+  `DELETE /starlark/apps/<id>`. A failed plugin toggle no longer always says
+  "A plugin operation is already in progress".
+- The web interface starts with an absolute `plugin_system.plugins_directory`
+  (#616); it crashed at import with `NameError: project_root`.
+- Stopping a Pixlet editor that ignores SIGTERM restarts the display instead
+  of answering 500 and leaving the panel dark (#625).
+- Removed dead routes and files (#609): `POST /plugins/authenticate/spotify`
+  and `/ytm` (the music plugin runs its auth scripts through `web_ui_actions`),
+  `POST /plugins/of-the-day/json/upload` and `/json/delete` (they used the
+  wrong plugin id), `js/plugins/store_manager.js`, `js/config/diff_viewer.js`
+  and `js/htmx-sse.js`, and `web_interface/run.sh`. `htmx-config.js` no longer
+  replaces `console.error` / `console.warn`, which hid some real errors.
 
-### Security (request paths and inline handlers, siblings of #561)
+### Plugin error reporting
+
+- `/api/v3/errors/summary` and `/api/v3/errors/plugin/<id>` report the errors
+  the display service recorded. They used to read the web process's own error
+  aggregator, which never records anything, so they always answered "no
+  errors". The display service now publishes a bounded snapshot to the shared
+  cache (`plugin_error_snapshot`, at most every 10 seconds and only on change;
+  `src/error_aggregator.py`, started from `DisplayController.__init__`).
+  Responses keep their shape and add `snapshot_available`, `generated_at` and
+  `clear_pending`; exception text has credentials redacted.
+- `POST /api/v3/errors/clear` records a request (`plugin_error_clear_request`)
+  the display service applies within about 5 seconds; reads hide the cleared
+  errors at once. It accepts `"all": true`, and `cleared_count` can be `null`
+  when the count is only known to the display service.
+- The Logs tab has a **Plugin errors** panel: per-plugin counts, repeating
+  errors and a Clear button.
+- Credential redaction in exception text (`src/redaction.py`) takes time
+  proportional to the text, not its square. Two patterns were quadratic: URL
+  `user:password@`, on a long unbroken run of letters or digits (a hex digest,
+  an ID), and `Authorization:` followed by a long run of whitespace. Either
+  used to stall every thread of the display service for up to seconds each
+  time the snapshot was published: about 0.5s for 20k characters of hex, 8s
+  for 20k spaces. What gets redacted is unchanged.
+
+### Wi-Fi
+
+- WiFi status messages reach the panel (#605). The display controller looked
+  for `wifi_status.json` one directory above the repo; both sides now use
+  `wifi_manager.get_wifi_status_path()`, the file is written atomically, and
+  the plugin that resumes afterwards redraws the whole panel.
+- The captive-portal checks (`/generate_204` and friends) also detect an access point brought up through NetworkManager, the fallback `enable_ap_mode` uses without hostapd; only hostapd was checked, so phones on that AP were told the internet worked.
+- The WiFi monitor daemon re-reads `wifi_config.json` when it changes, so the "auto-enable AP mode" toggle takes effect without restarting the daemon.
+- Disconnecting from WiFi in the web UI no longer runs an AP-mode check that could never enable the AP; it only added seconds of waiting. The daemon still enables the AP after its grace period.
+- The WiFi status message file follows each WiFi manager's own config directory, and the config path falls back to this checkout rather than `/home/ledpi/LEDMatrix`.
+- A wrong Wi-Fi password is reported as one again ("Incorrect password for ..."); the fallback that restores the old network or brings up the setup AP was replacing the signal.
+- Wi-Fi disconnect takes the saved connection profile down.
+- `wifi_config.json` is written atomically, and a save that fails now gets a 500.
+
+### Fonts
+
+- Fonts tab: the preview endpoint renders BDF fonts with the panel's own rasterizer instead of refusing them. (The Fonts page still skips the request for `.bdf`; enabling it there is a separate template change.)
+- A plugin font declared as a `.zip` URL is served as the font extracted from it after a restart, instead of registering the archive itself. Font downloads time out after 30s and land in the cache only once complete, so an interrupted download is retried rather than served forever.
+- BDF fonts: `FontManager.get_font()` and `element_style.load_font()` no longer hand one `freetype.Face` to every thread. BDF faces come from `load_bdf_face`, which already caches them per thread; TrueType fonts are cached as before. `element_style`'s font cache is locked (a concurrent eviction could raise `KeyError`).
+- `FontManager.clear_cache()` and unregistering a plugin's fonts bump `cache_generation`, so cached layouts are rebuilt.
+- `plugin://` fonts load from the plugin's own install directory. `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`.
+- Bundled font paths no longer depend on the directory the process was started from.
+- `FontManager.get_font()` returns a BDF font at its native size when asked for
+  a size the file doesn't contain (5x7.bdf at 8 or 10px, say). It used to
+  return PIL's default font, a different typeface, so a plugin that relied on
+  that will now render the font it asked for.
+- The web UI's Fonts tab has a **Used by** column: the loaded plugins that
+  registered each font with `FontManager.register_manager_font()`, published
+  by the display service to the shared cache (`src/font_usage.py`) and merged
+  into `GET /api/v3/fonts/catalog` as `used_by`. Deleting a font a plugin
+  uses now names those plugins in the confirmation (it is not blocked).
+  `FontManager.forget_manager_fonts()` is new; unloading a plugin calls it.
+
+### Security
 
 - `POST /api/v3/plugins/assets/upload`, `GET .../assets/list` and
   `POST .../assets/delete` validate `plugin_id` with `src/common/path_safety`
@@ -631,6 +584,24 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   and add its own script. The store's View button opens only `http(s)` links.
 - The uploaded-images list escapes each file's original name, path and ids; a
   name like `<img src=x onerror=...>.png` was inserted as markup.
+- Installing from a URL (and a registry install whose manifest renames the plugin) refuses a plugin id that isn't a single safe name, so `../x` can no longer delete and replace a directory outside the plugins directory.
+- Plugin uninstall and config reset refuse core config sections (`display`, `schedule`, ...) and ids with path parts. Uninstall still cleans the config of a plugin whose directory is already gone.
+- A config field marked `x-secret` whose value is an object or array is saved to `config_secrets.json`, not to `config.json` in plain text.
+- Restoring a backup onto a device without `config_secrets.json`, `wifi_config.json` or `ytm_auth.json` creates them with mode 640 instead of world-readable 644.
+- Backup export skips a plugin `manifest.json` that isn't a JSON object instead of failing, and two exports in the same second no longer share a temp file or overwrite each other (the second gets a `-2` suffix).
+- Every font that ships in `assets/fonts/` is protected from deletion; `MatrixChunky8X`, `MatrixLight6X`, `MatrixLight8X` and `ic8x8u` could be deleted from the Fonts tab.
+- The raw config and secrets editors, and endpoints using `validate_request_json`, answer 400 for a JSON body that isn't an object.
+- `fix_web_permissions.sh` makes `safe_plugin_rm.sh` and `safe_pip_install.sh` root-owned again after resetting ownership. A web-user-owned copy of either is a root shell, since sudo lets the web user run them as root. It also restores `config_secrets.json` to mode 640.
+- Wi-Fi passwords are no longer stored in `config/wifi_config.json` (#608).
+  `WiFiManager` appended every joined network's SSID and password, in plain
+  text, to `saved_networks`, and nothing read them back (NetworkManager keeps
+  its own credentials). Loading the config now drops a `saved_networks` key and
+  rewrites the file, so passwords already on disk are removed.
+- The installers no longer grant the web user passwordless root on
+  `display_controller.py`, `start_display.sh` and `stop_display.sh` (#606).
+  Those files are owned by the user, so the web user could rewrite them and
+  run them as root; nothing ran them through sudo. Existing devices keep the
+  old rules until the installer or `configure_web_sudo.sh` is run again.
 
 ### Display hardware settings the library refuses
 
@@ -673,6 +644,38 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   (`legacy_bool_as_object` in `src/plugin_system/schema_manager.py`). Nothing
   is written at load; the next save of that plugin's settings stores the object.
   Other type mismatches still warn.
+- A plugin that is reloaded (switched off and on again from the web UI) imports its own modules again, not another plugin's. Plugins import their own files by bare name (`from sports import ...`), which resolves to the first plugin directory on `sys.path` that has the file; the loader only added a directory that was missing, so a reloaded plugin's directory stayed behind any loaded since. On a Pi, re-enabling UFC with hockey running failed with "cannot import name '_status_is_final' from 'sports'". A loading plugin's directory is now always moved to the front.
+- `src/plugin_system/store_manager.py` (2,977 lines) is split into mixins: `store_registry.py` (registry, GitHub metadata, search, manifest validation), `store_install.py` (install paths and dependencies) and `store_update.py` (updates, rollback, local git state). `PluginStoreManager` is still imported from `store_manager.py` and has exactly the same methods and attributes; every method body is byte-identical.
+- Unloading a plugin waits (up to 5s) for an in-flight `update()` before running `cleanup()`/`on_disable()`, and an update that finishes after the unload no longer puts the plugin back to ENABLED.
+- A plugin whose load fails after its module was imported (constructor, `validate_config()` or `on_enable()` raising) no longer leaves that module cached: fixing the plugin and reloading it runs the new code without a restart. Its font registrations are dropped too.
+- `POST /api/v3/plugins/limits/<id>` answers 400 for a limit that isn't a non-negative number (a string limit used to make every later update of that plugin raise). A bad cached limits record is ignored with a warning instead of raising.
+- The config schema is found for a plugin installed as `ledmatrix-<id>` or in a directory named differently from its manifest id, resolved the way the loader resolves it (plugins/ is still searched before plugin-repos/). A plugin with no schema is logged once at DEBUG instead of a warning on every lookup.
+- Installing from a URL over an existing install sets the old copy aside and restores it if the move fails, under the same per-plugin lock as a registry install.
+- The operation queue refuses a second operation for a plugin whose first is still waiting (a double-clicked Install ran twice), and no longer keeps every finished operation in memory.
+- `get_vegas_render_width()` reads `display_manager.width` first, as plugins are told to.
+- Store and state files are read as UTF-8 regardless of the system locale.
+- Docs: `update_interval` in `config.json` sets the scheduler's cadence only for a plugin whose manifest has none (TROUBLESHOOTING, PLUGIN_CONFIGURATION_GUIDE). The health/metrics reset and limits routes note that they only change the web process's view.
+- A plugin whose `on_enable()` raises is no longer left registered: the next load retries it instead of reporting "already loaded" for a plugin that never ran.
+- One plugin's `get_info()` raising no longer breaks the installed-plugins list; it is logged and shown with empty runtime info.
+- `plugin_state.json` and the operation history are written atomically (temp file + rename) under their lock, so concurrent saves or a failed save can't leave a truncated file.
+- Plugin dependency installs run one `pip` at a time during parallel startup loading.
+- A failed store download no longer leaves its extraction directory in the temp dir.
+- Test doubles: `draw_image()` on `MockDisplayManager`, `VisualTestDisplayManager` and `BoundsCheckingDisplayManager` now emits a `DeprecationWarning` — the real `DisplayManager` has no such method; use `display_manager.image.paste(img, (x, y))`. `MockDisplayManager.draw_text` accepts the real signature's `small_font`/`centered` and default `x`/`y`, and `VisualTestDisplayManager` logs draw errors at WARNING.
+- Removed the unused `PluginOperationQueue.get_active_operations()`.
+- Updating a plugin that was installed from a ZIP no longer tries to reinstall it from the LEDMatrix repository's own URL.
+- Repository URLs with `.git` in the middle are no longer mangled. The URL helpers now live in `src/plugin_system/repo_urls.py`.
+- Installing from a URL works when the repository's only branch isn't `main` or `master`.
+- A missing required config field is reported once, by name.
+- A plugin that went over `max_memory_mb` once is no longer refused on every call after that.
+- `reload_plugin` reads the manifest from the plugin's discovered directory.
+- Removed: `last_display` from plugin state info and `get_last_display()` (nothing recorded them); `PluginOperationQueue`'s `history_file` and `lazy_load` arguments; and `data/plugin_operations.json`, which nothing read.
+- One plugin-directory resolver, `src/plugin_system/plugin_dirs.py`, behind
+  discovery, `PluginManager.get_plugin_directory`, `PluginLoader`, the store and
+  state reconciliation. A manifest's `id` wins over a directory merely named for
+  the id; hidden and `.standalone-backup-` directories are never treated as
+  plugins (auto-update could previously try to update a backup); ids like
+  `a/b` or `..` resolve to nothing everywhere. Installs where each directory is
+  named for its manifest id, the installer's layout, behave as before.
 
 ### Core
 
@@ -691,6 +694,39 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   handling, so the restore stopped at `config.json` with nothing restored. The
   ownership step is now skipped where `os.chown` is missing. No behaviour
   change on the Pi.
+- `APIHelper`'s rate limit and the display-sync heartbeat/leader timeouts measure elapsed time with `time.monotonic()`. A wall-clock step (NTP correcting a Pi with no RTC) could stall API requests for as long as the step or fake a sync timeout. `get_request_stats()['last_request_time']` is still wall-clock time.
+- `sudo_remove_directory()` tries each bash path the sudoers rule might name, as `install_requirements_file()` already did.
+- An element's saved layout `scale` equal to its schema default is no longer treated as a user choice when the default is declared under an alias (`score` for `score_text`).
+- `CacheError`/`ConfigError`/`PluginError`/`DisplayError` no longer write their key into the caller's `context` dict; the JSON log formatter stringifies values it can't encode instead of dropping the record.
+- Removed `ErrorAggregator`'s unused JSON export (`export_path`, `export_to_file()`); nothing called it. Docstring fixes in `validate_file_upload`, `StartupValidator.raise_on_errors`, `DisplaySyncManager.set_on_new_cycle`, `dynamic_team_resolver` and `config_arrays`.
+- `/api/v3/errors` shows each exception's real stack trace instead of `NoneType: None`.
+- Backups record `src.__version__`.
+- Removed: `BackgroundDataService`'s `queue_size` stat and `clear_completed_requests()`.
+- `src.device_location` — a blank `Location` field on a Starlark (Tidbyt) app
+  now renders at the device's City / State / Country (geocoded once via
+  Open-Meteo and cached) instead of the app author's hard-coded default,
+  usually San Francisco. A location saved on the app still wins. With no
+  device city set, or when the lookup fails or finds no match, the app keeps
+  its own default (a failed lookup is retried after 30 minutes). Clearing an
+  app's location in the web UI now actually clears it; the save used to drop
+  the blank field, so the old value stayed.
+- Fixed a memory leak in the display service (#605): `ErrorAggregator`
+  appended every plugin in the time window to a pattern's `affected_plugins`
+  on each repeat (3,000 errors from three plugins reached 2.5 million
+  entries).
+- An expired cache record is refused without being parsed (#633).
+  `CacheManager.set` writes `timestamp` and `ttl` ahead of `data`, and
+  `DiskCache.get` reads the first 256 bytes to decide staleness, with the same
+  rules as before. A 53 MB MLB season file used to be parsed in full (about
+  1.8 s holding the GIL on a Pi 4, freezing the display) only to be thrown
+  away. Files in the old layout are parsed as before and convert when
+  rewritten.
+- Cache internals (#613): `CacheManager` delegates memory-tier cleanup and
+  stats to `MemoryCache`; `list_cache_files` no longer holds the memory lock
+  during directory I/O; `BackgroundDataService.get_sport_cache_key()` formats
+  the key instead of building a whole `CacheManager` (and probing the cache
+  directory) on every call; the unused request queue is gone, and `priority=`
+  is accepted and documented as ignored.
 
 ### Cache permissions
 
@@ -745,6 +781,8 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   timeouts with a second bash path, and all reinstalls share a 10-minute
   budget, so a rollback finishes inside the unit's 30-minute limit instead of
   being killed mid-way.
+- A hand-edited non-object `auto_update` value reads as off instead of raising at startup, and a failed result write no longer leaves a temp file behind.
+- Overview "Check Updates" asks for the same confirmation as "Update Code" and shows the server's message. Both, and the Tools tab's git pull, show the restart-pending banner when the update needs a restart.
 
 ### Installers
 
@@ -758,6 +796,22 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   `configure_web_sudo.sh` does the same before offering the rules for
   confirmation. `first_time_install.sh` also built that file at a fixed `/tmp`
   path as root; `mktemp` now picks the name.
+- `check_system_compatibility.sh` treats Python 3.13 (what Trixie ships) as supported and anything below 3.10 as an error.
+- `configure_web_sudo.sh` run as the web user keeps the reboot/poweroff rules.
+- `check_system_compatibility.sh` no longer reports installed packages as missing.
+- `configure_wifi_permissions.sh` checks its rules with `visudo -c` before installing them, and grants the NetworkManager captive-portal `cp` and `rm` commands `wifi_manager` runs.
+- `configure_web_sudo.sh` uses a random temp file and installs its rules with mode 440.
+- The installer prints its completion summary before the `-y` reboot, and describes the setup access point as an open network (it was shown with a password it doesn't have).
+- `fix_cache_permissions.sh` applies `setup_cache.sh`'s `ledmatrix`-group model instead of setting 777.
+- `check_system_compatibility.sh` reports anything but Debian 13 (Trixie) as unsupported, and reaches its summary.
+- `one-shot-install.sh`'s `retry()` retries (#606). It read `$?` after `!`,
+  which is always 0, so a failed command ran once and was reported as a
+  success. It now tries three times and returns the command's status; both
+  apt steps still warn and continue after their retries, and a clone that
+  keeps failing stops the install sooner, with its own message.
+- One generator for the web sudoers rules, `scripts/install/lib_sudoers.sh`,
+  used by `first_time_install.sh` and `configure_web_sudo.sh` (#622); the two
+  copies had drifted.
 
 ### Small fixes (update-all, plugin system settings, scripts)
 
@@ -795,7 +849,9 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   (only an explicit `web_display_autostart: false` keeps the web interface
   down), so a missing key no longer shows as disabled. The shell scripts also
   check `web_interface/blueprints/api_v3/`, which became a package, instead of
-  reporting `api_v3.py` as missing.
+  reporting `api_v3.py` as missing. (`scripts/verify_web_ui.sh`,
+  `scripts/diagnose_web_ui.sh` and `scripts/debug/debug_web_manual.py` were
+  later deleted as unreferenced; see Docs and developer tools.)
 
 ### Docs and developer tools
 
@@ -824,6 +880,63 @@ New modules a plugin may import via `src.*` (floor on 3.5.0):
   `app.py` line numbers, `api_v3.py` paths, StreamManager method names,
   nonexistent version-bump scripts and `ledmatrix` service user references
   removed.
+- A mypy ratchet in CI. `mypy-clean.txt` lists the 71 modules under `src/` that type-check clean, and the new "Type check (mypy ratchet)" job runs `python scripts/check_types.py` (mypy 1.20.2 on exactly those files) so they stay clean; add a module when you make it clean (see CONTRIBUTING.md). The manual pre-commit `mypy` hook runs the same script. 35 modules were made clean for it with annotation-only fixes, no behaviour change. Their public signatures only widened (`declared_min_version()` now says it returns the manifest's value as-is, `Any`); `DynamicTeamResolver._rankings_cache` is annotated as the abbreviation-to-rank dict it holds. `mypy.ini` treats numpy and orjson as `Any`, so it parses with `python_version = 3.10` against numpy 2.3+ stubs and gives the same result whether orjson is installed or not.
+- CI runs the web UI's DOM test suites (jsdom against the real server-rendered pages and API) in a new **Web UI JS tests** job, with the web interface started in emulator mode; `REQUIRE_DOM=1` makes a suite that can't run fail instead of being skipped. Two suites that had gone stale were fixed: the Tools suite now installs `LEDEscape` the way `base.html` does and supplies sample Starlark apps when the server has none, and the Store suite no longer assumes the registry has 48 plugins or fewer.
+- CI installs `web_interface/requirements.txt` too, so flask-limiter, flask-compress and the web floors are tested. `test_api_helper_does_not_hand_set_brotli` now checks what it meant: core doesn't add `br` itself, and `requests` may advertise it when a brotli decoder is installed.
+- All Discord links point to the LEDMatrix server's invite.
+- `pytz` may be any release before 2027, so current timezone data installs; `requirements-test.txt` caps `psutil` below 7 like the runtime requirements and allows `pytest-cov` up to 7.x (checked against pytest 9 with the CI coverage run).
+- The Claude GitHub Actions workflows pin `anthropics/claude-code-action` to a commit SHA like the other actions.
+- `mypy.ini` parses again. A multi-line `exclude` and trailing comments on values made mypy refuse the whole file, so none of its settings applied and the pre-commit hook failed with "Missing target". The mypy hook is now manual (`pre-commit run mypy --hook-stage manual`) while the ~500 existing type errors in `src/` are paid down.
+- `.gitignore` ignores everything in `config/` except the templates; `ytm_auth.json`, `saved_repositories.json`, `wifi_status.json` and `font_overrides.json` weren't ignored.
+- `.sh` and `.service` files are always checked out with LF line endings.
+- The Claude code-review check is skipped on pull requests from forks, which get no secrets and always failed it.
+- Doc fixes: emulator guide (Python 3.10+, `emulator_config.json` isn't in the repo), README's nonexistent "API Metrics" feature, a stale route count, and missing index entries for the scroll-performance and offscreen-rendering docs and the frame-soak and render-bench scripts.
+- `src/common/README.md` lists `frame_timing`, `json_body` and `render_gate`.
+- New `scripts/README.md` lists every script.
+- New `docs/ARCHITECTURE.md` (processes, shared state, display loop, plugin system, web UI) and `docs/PERMISSIONS.md` (owners, modes, both sudoers files, repair scripts).
+- Deprecated plugin APIs are marked in the plugin docs.
+- `src/common/README.md` covers every module.
+- Stale setup, service and troubleshooting claims are corrected.
+- Deleted 13 scripts nothing referenced (#607): `utils/cleanup_venv.sh`,
+  `utils/clear_python_cache.sh`, `install/migrate_config.sh`,
+  `install/debug_install.sh`, `debug/debug_web_manual.py`,
+  `diagnose_web_ui.sh`, `verify_web_ui.sh`, `fix_internet_connectivity.sh`,
+  `diagnose_plugin_permissions.sh`, `dev/validate_python.py`,
+  `download_nba_logos.py` (with `README_NBA_LOGOS.md`) and
+  `setup_plugin_repos.py`, all under `scripts/`; also `docs/archive/` and
+  `PLUGIN_IMPLEMENTATION_SUMMARY.md`. `config.template.json` no longer carries
+  `plugin_system.auto_discover`, `auto_load_enabled` or `development_mode`,
+  which nothing reads (existing configs keep them). About 20 docs had stale
+  claims corrected against the code.
+- `test/test_js_unit_suites.py` runs every `test/js/unit/*.js` suite under
+  pytest; CI used to run one of the eight (#605).
+
+### Removed
+
+- **The skin system.** Skins never rendered with the current scoreboard
+  plugins, so they are gone rather than "not supported yet": `src/skin_system/`,
+  `skins/`, `scripts/validate_skin.py`, `GET /api/v3/skins`, the store's
+  `"type": "skin"` handling and `docs/SKIN_SYSTEM.md` / `docs/CREATING_SKINS.md`.
+  A `skin` or `skin_options` key left in a plugin's saved config still loads
+  and saves without a validation error; it is ignored, and the next save of
+  that plugin's settings removes it (unless the plugin's own schema declares
+  the key).
+- **`src/base_classes/`** (`SportsCore`, the sport and mode classes,
+  `CelebrationMixin`, the rotation strategies, `data_sources`,
+  `api_extractors`). No known plugin imports it. A plugin that does must use
+  `src.common` or its own copy of the code.
+- **Unused `src.common` modules and plugin-system helpers** (#608):
+  `src/common/config_helper.py`, `display_helper.py`, `game_helper.py`,
+  `utils.py` and `error_handler.py` (its re-exports leave `src.common`'s
+  `__all__`), `src/plugin_system/health_monitor.py` (`PluginHealthMonitor`,
+  whose loop did nothing; `PluginHealthTracker` is unchanged), and
+  `src.plugin_system.get_store_manager` / `__api_version__`. Nothing in core,
+  the scripts or the plugin monorepo imported them. `APIHelper`, `TextHelper`,
+  `ScrollHelper`, `LogoHelper` and the adaptive-layout exports of `src.common`
+  are unchanged. The same change removed unused methods from `ConfigService`,
+  `PluginStateManager`, `PluginManager`, `PluginExecutor`, `PluginLoader`,
+  `PluginStoreManager`, `VegasModeConfig` and `DisplayController`; none had
+  callers in core, the scripts or the monorepo.
 
 ## 3.4.0
 
