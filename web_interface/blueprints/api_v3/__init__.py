@@ -1427,9 +1427,11 @@ def _plugin_directory(plugin_id: str) -> Optional[Path]:
     is no fallback to the legacy plugins/ directory: the loader never scans
     it, so a plugin found only there is one that never runs.
     """
-    if not api_v3.plugin_manager:
+    # getattr: the blueprint only has plugin_manager once the app has set it.
+    manager = getattr(api_v3, 'plugin_manager', None)
+    if not manager:
         return None
-    plugin_dir = api_v3.plugin_manager.get_plugin_directory(plugin_id)
+    plugin_dir = manager.get_plugin_directory(plugin_id)
     if not plugin_dir or not Path(plugin_dir).exists():
         return None
     return Path(plugin_dir)
