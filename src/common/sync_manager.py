@@ -127,6 +127,9 @@ class DisplaySyncManager:
         self._peer_ip: Optional[str] = None
         self._peer_compatible: bool = False
         self._peer_chain: int = 0
+        # time.monotonic() readings, like _last_leader_frame_time: these only
+        # feed the timeout watchdogs, and a wall-clock step (NTP correcting a
+        # Pi with no RTC) would otherwise fake or mask a timeout.
         self._last_heartbeat_time: float = 0.0
         self._leader_width: int = 0  # set by display_controller after init
         self._oversized_frame_warned: bool = False
@@ -206,7 +209,7 @@ class DisplaySyncManager:
                     self._handle_hello(msg, sender_ip)
                 elif t == "hb":
                     if self._peer_ip == sender_ip:
-                        self._last_heartbeat_time = time.time()
+                        self._last_heartbeat_time = time.monotonic()
             except socket.timeout:
                 continue
             except Exception as exc:
@@ -229,7 +232,7 @@ class DisplaySyncManager:
         self._peer_ip = sender_ip
         self._peer_compatible = compatible
         self._peer_chain = peer_chain
-        self._last_heartbeat_time = time.time()
+        self._last_heartbeat_time = time.monotonic()
 
         prev_state = self._leader_state
         if compatible:
@@ -273,7 +276,7 @@ class DisplaySyncManager:
         while self._running:
             time.sleep(1.0)
             if self._leader_state == LeaderState.CONNECTED:
-                if time.time() - self._last_heartbeat_time > PEER_TIMEOUT:
+                if time.monotonic() - self._last_heartbeat_time > PEER_TIMEOUT:
                     self.logger.info(
                         "Sync: follower heartbeat timeout — peer disconnected"
                     )
@@ -501,7 +504,7 @@ class DisplaySyncManager:
         """Note that the leader at ``sender_ip`` just sent something, and
         switch from standalone to follower mode if not already following.
         Returns True if this call made the switch."""
-        self._last_leader_frame_time = time.time()
+        self._last_leader_frame_time = time.monotonic()
         self._leader_ip = sender_ip
         if self._follower_state != FollowerState.STANDALONE:
             return False
@@ -621,11 +624,13 @@ class DisplaySyncManager:
         heartbeat = json.dumps({"t": "hb"}).encode("utf-8")
         dest = ("<broadcast>", self.port)
 
-        last_hello = 0.0
-        last_hb = 0.0
+        # -inf, not 0.0: monotonic time starts near boot, so "now - 0.0" can
+        # be under the interval and would delay the first announcement.
+        last_hello = float("-inf")
+        last_hb = float("-inf")
 
         while self._running:
-            now = time.time()
+            now = time.monotonic()
             if now - last_hello >= HELLO_INTERVAL:
                 try:
                     self._send_sock.sendto(hello, dest)
@@ -644,7 +649,7 @@ class DisplaySyncManager:
         while self._running:
             time.sleep(1.0)
             if self._follower_state == FollowerState.FOLLOWER:
-                if time.time() - self._last_leader_frame_time > LEADER_TIMEOUT:
+                if time.monotonic() - self._last_leader_frame_time > LEADER_TIMEOUT:
                     self.logger.info(
                         "Sync: leader frame timeout — returning to standalone mode"
                     )
@@ -670,7 +675,10 @@ class DisplaySyncManager:
 
     def set_on_new_cycle(self, callback: Callable[[], None]) -> None:
         """Follower: register a callback fired when the leader starts a new scroll cycle.
-        Used to trigger a local start_new_cycle() so both Pis rebuild from same fresh data.
+
+        Nothing in core registers one: display_controller follows the leader
+        through set_on_scroll_image() and the scroll position instead of
+        rebuilding locally. The hook stays for callers that want the signal.
         """
         self._on_new_cycle = callback
 

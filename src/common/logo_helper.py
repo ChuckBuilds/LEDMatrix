@@ -8,7 +8,7 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import requests
 from PIL import Image, ImageDraw
@@ -125,17 +125,7 @@ class LogoHelper:
         # Resolve the effective target size BEFORE the cache lookup so the
         # key is size-qualified — a panel-size change must not return a
         # logo resized for the old dimensions.
-        if max_width is None:
-            max_width = int(self.display_width * DEFAULT_LOGO_BOX_FACTOR)
-        if max_height is None:
-            max_height = int(self.display_height * DEFAULT_LOGO_BOX_FACTOR)
-        # Imported here: src.element_style imports src.common (for bdf_font),
-        # whose __init__ imports this module.
-        from src.element_style import coerce_scale
-        scale = coerce_scale(scale, 1.0)
-        if scale != 1.0:
-            max_width = max(1, int(round(max_width * scale)))
-            max_height = max(1, int(round(max_height * scale)))
+        max_width, max_height, scale = self._scaled_box(max_width, max_height, scale)
         # The key carries the scaled box, so two elements scaled differently
         # cannot be served each other's image.
         cache_key = f"{team_abbr}_{logo_path}_{max_width}x{max_height}"
@@ -236,8 +226,30 @@ class LogoHelper:
                 # exists to prevent.
                 self._refresh_stale_placeholder(logo_path)
         
-        # Create placeholder if all else fails
-        return self._create_placeholder_logo(team_abbr, max_width, max_height)
+        # Create placeholder if all else fails. Sized to the same scaled box
+        # a real logo gets, so a scaled element doesn't jump in size while
+        # its logo is missing.
+        box_width, box_height, _ = self._scaled_box(max_width, max_height, scale)
+        return self._create_placeholder_logo(team_abbr, box_width, box_height)
+
+    def _scaled_box(self, max_width: Optional[int], max_height: Optional[int],
+                    scale: float) -> Tuple[int, int, float]:
+        """The logo box after defaults and the user's scale are applied.
+
+        Returns ``(width, height, coerced_scale)``.
+        """
+        if max_width is None:
+            max_width = int(self.display_width * DEFAULT_LOGO_BOX_FACTOR)
+        if max_height is None:
+            max_height = int(self.display_height * DEFAULT_LOGO_BOX_FACTOR)
+        # Imported here: src.element_style imports src.common (for bdf_font),
+        # whose __init__ imports this module.
+        from src.element_style import coerce_scale
+        scale = coerce_scale(scale, 1.0)
+        if scale != 1.0:
+            max_width = max(1, int(round(max_width * scale)))
+            max_height = max(1, int(round(max_height * scale)))
+        return max_width, max_height, scale
     
     def _invalidate_cached_logo(self, team_abbr: str, logo_path: Path) -> None:
         """Drop every cached size of one logo after its file changed on disk."""

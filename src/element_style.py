@@ -1480,11 +1480,12 @@ class ElementStyleResolver:
                              mode_config, 'align')
         # scale is geometry, so it lives with the offsets rather than in the
         # element block -- a logo has a scale and no font.
-        layout_defaults = self._defaults.get('layout', {})
+        # The default is looked up through the aliases too, like the value:
+        # an exact-key lookup missed a default filed under another name, so
+        # a configured value equal to it counted as a user choice.
         scale = self._forced(
             self._layout_element(self._customization(), element_key),
-            layout_defaults.get(element_key, {})
-            if isinstance(layout_defaults, dict) else {},
+            _lookup_element(self._defaults.get('layout', {}), element_key),
             self._layout_element(self._mode_block(mode), element_key),
             'scale')
 

@@ -120,7 +120,7 @@ def raise_n_then_stop(mgr, exc, count):
     return _side_effect
 
 
-def fake_clock(monkeypatch, *, time_fn=None, sleep_fn=None):
+def fake_clock(monkeypatch, *, time_fn=None, sleep_fn=None, monotonic_fn=None):
     """Swap sync_manager's own `time` reference for a private stand-in.
 
     sync_manager.time IS the stdlib module, so patching attributes on it
@@ -129,9 +129,14 @@ def fake_clock(monkeypatch, *, time_fn=None, sleep_fn=None):
     hard-to-trace source of cross-test flakiness. Rebinding the module's
     reference keeps the patch scoped to the code under test. Anything not
     overridden falls through to the real functions.
+
+    ``time_fn`` drives both clocks unless ``monotonic_fn`` is given: the
+    timers read time.monotonic(), and a test that only needs "a frozen
+    clock" shouldn't care which one.
     """
     monkeypatch.setattr(sync_manager, "time", SimpleNamespace(
         time=time_fn or time.time,
+        monotonic=monotonic_fn or time_fn or time.monotonic,
         sleep=sleep_fn or time.sleep,
     ))
 
@@ -309,6 +314,34 @@ class TestWatchdogs:
         run_watchdog_once(monkeypatch, mgr, mgr._leader_watchdog, now=101.0)
         assert mgr._leader_state is LeaderState.CONNECTED
         assert mgr._peer_ip == "10.0.0.1"
+
+    def test_wall_clock_jump_does_not_time_out_the_peer(self, monkeypatch):
+        # A Pi has no RTC: NTP can step the wall clock by hours after the
+        # peer connected. Only elapsed (monotonic) time counts toward the
+        # heartbeat timeout.
+        mgr = make_manager(role=SyncRole.LEADER)
+        mgr._leader_state = LeaderState.CONNECTED
+        mgr._peer_ip = "10.0.0.1"
+        mgr._last_heartbeat_time = 100.0
+        fake_clock(monkeypatch,
+                   time_fn=lambda: 100.0 + 3600,
+                   monotonic_fn=lambda: 101.0,
+                   sleep_fn=lambda _: setattr(mgr, "_running", False))
+        mgr._running = True
+        mgr._leader_watchdog()
+        assert mgr._leader_state is LeaderState.CONNECTED
+
+    def test_wall_clock_jump_does_not_drop_the_leader(self, monkeypatch):
+        mgr = make_manager(role=SyncRole.FOLLOWER)
+        mgr._follower_state = FollowerState.FOLLOWER
+        mgr._last_leader_frame_time = 100.0
+        fake_clock(monkeypatch,
+                   time_fn=lambda: 100.0 + 3600,
+                   monotonic_fn=lambda: 101.0,
+                   sleep_fn=lambda _: setattr(mgr, "_running", False))
+        mgr._running = True
+        mgr._follower_watchdog()
+        assert mgr._follower_state is FollowerState.FOLLOWER
 
     def test_leader_watchdog_ignores_disconnected_state(self, monkeypatch):
         mgr = make_manager(role=SyncRole.LEADER)
@@ -496,7 +529,8 @@ class TestFollowerRecvLoop:
         mgr = make_manager(role=SyncRole.FOLLOWER)
         sleeps = MagicMock()
         with patch.object(sync_manager, "time",
-                          SimpleNamespace(time=time.time, sleep=sleeps)):
+                          SimpleNamespace(time=time.time, monotonic=time.monotonic,
+                                          sleep=sleeps)):
             self._drive(mgr, b"12345")
         assert mgr.get_latest_frame() is None
         sleeps.assert_not_called()
@@ -507,7 +541,8 @@ class TestFollowerRecvLoop:
             mgr = make_manager(role=SyncRole.FOLLOWER)
             sleeps = MagicMock()
             with patch.object(sync_manager, "time",
-                              SimpleNamespace(time=time.time, sleep=sleeps)):
+                              SimpleNamespace(time=time.time, monotonic=time.monotonic,
+                                              sleep=sleeps)):
                 self._drive(mgr, json.dumps(payload).encode())
             assert mgr.get_latest_scroll_x() is None
             sleeps.assert_not_called()

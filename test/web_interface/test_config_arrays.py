@@ -30,6 +30,22 @@ def test_element_types_are_left_to_normalization():
     assert config["color"] == ["1", "2", "3"]
 
 
+def test_a_nullable_array_union_is_still_an_array():
+    """["array", "null"] is how the per-mode style overrides are typed (null
+    means inherit); their indexed colour inputs must still recombine."""
+    config = {"text_color": {"0": 1, "1": 2, "2": 3}}
+    coerce_array_shapes(config, {"text_color": {"type": ["array", "null"]}})
+    assert config["text_color"] == [1, 2, 3]
+
+
+def test_a_nullable_object_union_is_walked_into():
+    config = {"live": {"tags": {"0": "a"}}}
+    coerce_array_shapes(config, {"live": {
+        "type": ["object", "null"],
+        "properties": {"tags": {"type": "array"}}}})
+    assert config["live"]["tags"] == ["a"]
+
+
 def test_nested_objects_and_array_items_are_walked():
     schema = {"feeds": {"type": "object", "properties": {
         "custom_feeds": {"type": "array", "items": {"type": "object", "properties": {

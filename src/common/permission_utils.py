@@ -290,6 +290,26 @@ def get_cache_dir_mode() -> int:
     return 0o2775  # rwxrwsr-x (setgid + group writable)
 
 
+def _sudo_bash_candidates() -> list:
+    """Bash paths to try, in order, when running a vetted helper via sudo.
+
+    sudoers matches the exact argv, so ``sudo -n <bash> <helper> ...`` only
+    works if <bash> is the same path configure_web_sudo.sh wrote into the
+    rule -- whatever ``command -v bash`` said on the machine that ran it.
+    On merged-/usr systems /usr/bin/bash and /bin/bash are the same file but
+    different strings to sudo, and the web user's PATH can differ from the
+    installer's, so no single guess is reliable. Callers try each in turn and
+    move on only when sudo refused the command line (SUDO_REFUSAL_PHRASES).
+    The helper is invoked through bash rather than its shebang for the same
+    reason: the rule names bash, not the script.
+    """
+    candidates = []
+    for candidate in ("/usr/bin/bash", "/bin/bash", _shutil.which("bash")):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> bool:
     """
     Remove a directory using sudo as a last resort.
@@ -350,22 +370,25 @@ def sudo_remove_directory(path: Path, allowed_bases: Optional[list] = None) -> b
         logger.error(f"Safe removal helper not found: {helper_script}")
         return False
 
-    bash_path = _shutil.which('bash') or '/bin/bash'
-
     try:
-        result = subprocess.run(
-            ['sudo', '-n', bash_path, str(helper_script), str(resolved)],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0 and not resolved.exists():
-            logger.info(f"Successfully removed {path} via sudo helper")
-            return True
-        else:
-            stderr = result.stderr.strip()
-            logger.error(f"sudo helper failed for {path}: {stderr}")
-            return False
+        for bash_path in _sudo_bash_candidates():
+            result = subprocess.run(
+                ['sudo', '-n', bash_path, str(helper_script), str(resolved)],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode == 0 and not resolved.exists():
+                logger.info(f"Successfully removed {path} via sudo helper")
+                return True
+            # Only a refused command line is worth another bash path; if the
+            # helper itself ran and failed, a retry would just repeat it.
+            if result.returncode == 0 or not any(
+                    phrase in (result.stderr or '') for phrase in SUDO_REFUSAL_PHRASES):
+                break
+        stderr = (result.stderr or '').strip()
+        logger.error(f"sudo helper failed for {path}: {stderr}")
+        return False
     except subprocess.TimeoutExpired:
         logger.error(f"sudo helper timed out for {path}")
         return False
@@ -417,16 +440,10 @@ def install_requirements_file(req_file: Path, timeout: int = 300) -> subprocess.
     wrapper = project_root / "scripts" / "fix_perms" / "safe_pip_install.sh"
 
     if wrapper.exists():
-        # See sudo_remove_directory / configure_web_sudo.sh for why bash must
-        # be invoked with an explicit, known path rather than relying on the
-        # wrapper's shebang: sudoers matches the exact command line.
-        bash_candidates = []
-        for candidate in ("/usr/bin/bash", "/bin/bash", _shutil.which("bash")):
-            if candidate and candidate not in bash_candidates:
-                bash_candidates.append(candidate)
-
+        # See _sudo_bash_candidates for why bash is invoked by explicit path
+        # and why there is more than one to try.
         result = None
-        for bash_path in bash_candidates:
+        for bash_path in _sudo_bash_candidates():
             # bash_path and wrapper are fixed, known-good paths, and
             # safe_pip_install.sh independently re-validates req_file is an
             # allowed requirements.txt before installing anything as root.

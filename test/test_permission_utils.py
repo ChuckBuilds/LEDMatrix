@@ -19,6 +19,7 @@ from src.common.permission_utils import (
     _redact_url_credentials,
     ensure_shared_group_ownership,
     install_requirements_file,
+    sudo_remove_directory,
 )
 
 
@@ -44,6 +45,42 @@ class TestRedactUrlCredentials:
         pins that assumption so a regex change can't silently break it."""
         text = "sudo: a password is required"
         assert _redact_url_credentials(text) == text
+
+
+class TestSudoRemoveDirectory:
+    """sudoers matches the exact argv, so the bash path the rule names has
+    to be found by trying each candidate, as install_requirements_file does."""
+
+    def _target(self, tmp_path):
+        target = tmp_path / "some-plugin"
+        target.mkdir()
+        return target
+
+    @patch('src.common.permission_utils.subprocess.run')
+    def test_tries_the_next_bash_path_when_sudo_refuses(self, mock_run, tmp_path):
+        target = self._target(tmp_path)
+
+        def fake_run(argv, **kwargs):
+            if mock_run.call_count == 1:
+                return MagicMock(returncode=1, stdout="",
+                                 stderr="sudo: a password is required")
+            target.rmdir()
+            return MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = fake_run
+
+        assert sudo_remove_directory(target, allowed_bases=[tmp_path]) is True
+        assert mock_run.call_count == 2
+        first, second = (c.args[0][2] for c in mock_run.call_args_list)
+        assert first != second
+
+    @patch('src.common.permission_utils.subprocess.run')
+    def test_stops_when_the_helper_itself_fails(self, mock_run, tmp_path):
+        target = self._target(tmp_path)
+        mock_run.return_value = MagicMock(returncode=1, stdout="",
+                                          stderr="refusing: not a plugin dir")
+
+        assert sudo_remove_directory(target, allowed_bases=[tmp_path]) is False
+        assert mock_run.call_count == 1
 
 
 class TestInstallRequirementsFileRedaction:

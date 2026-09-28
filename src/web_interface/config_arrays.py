@@ -2,11 +2,27 @@
 
 A list reaches a plugin-config save keyed by position more often than as a
 list. The settings form posts one field per element (``feeds.custom_feeds.0.name``),
-which ``_set_nested_value`` stores as ``{"0": {"name": ...}}``, and the JSON
-path's dotToNested() in the browser builds the same dict. Validation expects
-an array there, so the save converts them first.
+which ``_set_nested_value`` stores as ``{"0": {"name": ...}}``, and a JSON
+save built by flattening then re-nesting dotted keys carries the same dict.
+Validation expects an array there, so the save converts them first.
 """
 from typing import Any, Dict
+
+
+def _schema_type_is(prop: Any, wanted: str) -> bool:
+    """Whether a schema property is of ``wanted`` type, unions included.
+
+    Mirrors ``_schema_type_is`` in ``web_interface/blueprints/api_v3`` (kept
+    here so src/ doesn't import the Flask blueprint). A union such as
+    ``["array", "null"]`` -- the per-element style overrides, where null means
+    "inherit" -- is still an array for recombining position-keyed inputs.
+    """
+    if not isinstance(prop, dict):
+        return False
+    declared = prop.get('type')
+    if isinstance(declared, list):
+        return wanted in declared
+    return declared == wanted
 
 
 def _is_index_dict(value: Any) -> bool:
@@ -35,10 +51,9 @@ def coerce_array_shapes(config: Dict[str, Any], schema_props: Dict[str, Any],
     for key, prop_schema in schema_props.items():
         if key not in config or not isinstance(prop_schema, dict):
             continue
-        prop_type = prop_schema.get('type')
         value = config[key]
 
-        if prop_type == 'array':
+        if _schema_type_is(prop_schema, 'array'):
             if _is_index_dict(value):
                 value = config[key] = [value[k] for k in sorted(value, key=lambda k: int(str(k)))]
             if not isinstance(value, list):
@@ -50,11 +65,11 @@ def coerce_array_shapes(config: Dict[str, Any], schema_props: Dict[str, Any],
                     and isinstance(default, list) and len(default) >= min_items):
                 value = config[key] = list(default)
             items_schema = prop_schema.get('items')
-            if (isinstance(items_schema, dict) and items_schema.get('type') == 'object'
+            if (_schema_type_is(items_schema, 'object')
                     and 'properties' in items_schema):
                 for element in value:
                     coerce_array_shapes(element, items_schema['properties'],
                                         short_lists_take_default)
 
-        elif prop_type == 'object' and 'properties' in prop_schema:
+        elif _schema_type_is(prop_schema, 'object') and 'properties' in prop_schema:
             coerce_array_shapes(value, prop_schema['properties'], short_lists_take_default)
