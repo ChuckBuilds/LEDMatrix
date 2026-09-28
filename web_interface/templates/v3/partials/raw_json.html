@@ -156,7 +156,7 @@ function manualValidateJson(editorId, validationDivId) {
                     <div>
                         <div class="font-semibold text-red-800">✗ Invalid JSON syntax</div>
                         <div class="text-sm text-red-700 mt-1">
-                            <strong>Error:</strong> ${e.message}
+                            <strong>Error:</strong> ${window.LEDEscape.html(e.message)}
                         </div>
                     </div>
                 </div>

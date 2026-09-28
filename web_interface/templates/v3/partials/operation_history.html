@@ -282,7 +282,7 @@
             if (data.status === 'success' && data.data) {
                 const select = document.getElementById('history-plugin-filter');
                 if (select) {
-                    const plugins = Object.keys(data.data);
+                    const plugins = (data.data.plugins || []).map(p => p.id).filter(Boolean);
                     plugins.forEach(pluginId => {
                         const option = document.createElement('option');
                         option.value = pluginId;
