@@ -8,7 +8,7 @@ import os
 import time
 import threading
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 # Historical fixed ceiling, kept as the fallback when RAM cannot be read.
 DEFAULT_MAX_SIZE = 1000
@@ -70,13 +70,15 @@ class MemoryCache:
         """
         self.logger = logging.getLogger(__name__)
         self._cache: Dict[str, Dict[str, Any]] = {}
-        self._timestamps: Dict[str, float] = {}
+        # Values are time.time() floats; get()/cleanup also accept a numeric
+        # string, as a timestamp may have been restored from serialized data.
+        self._timestamps: Dict[str, Union[float, str]] = {}
         self._lock = threading.Lock()
         self._max_size = max_size
         self._cleanup_interval = cleanup_interval
         self._last_cleanup = time.time()
     
-    def get(self, key: str, max_age: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def get(self, key: str, max_age: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
         Get value from memory cache.
         
@@ -200,6 +202,7 @@ class MemoryCache:
             max_age_for_cleanup = 3600  # 1 hour
             
             expired_keys = []
+            timestamp: Optional[Union[float, str]]
             for key, timestamp in list(self._timestamps.items()):
                 if isinstance(timestamp, str):
                     try:

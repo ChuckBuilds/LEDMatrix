@@ -32,7 +32,7 @@
 │    • masks x-secret fields                                         │
 │    • renders partials/plugin_config.html (render_field macros)     │
 │                                                                    │
-│  api_v3 blueprint (blueprints/api_v3/plugins.py)                   │
+│  api_v3 blueprint (blueprints/api_v3/plugin_config.py)             │
 │   save_plugin_config()   POST /api/v3/plugins/config               │
 │   get_plugin_config()    GET  /api/v3/plugins/config               │
 │   get_plugin_schema()    GET  /api/v3/plugins/schema               │
@@ -91,7 +91,7 @@ validatePluginConfigForm() (client-side checks)
 POST /api/v3/plugins/config?plugin_id=<id>   (form data, all fields of the form)
         │
         ▼
-save_plugin_config()                          (api_v3/plugins.py)
+save_plugin_config()                          (api_v3/plugin_config.py)
         ├─→ Start from the stored config.json[<id>]
         ├─→ Apply form fields: dotted names → nested keys, "[]" checkbox
         │   groups → lists, values coerced to the schema's types
@@ -175,7 +175,7 @@ Implement `on_config_change(new_config)` in the plugin (see
 |---------|------|
 | Tab partial loader | `web_interface/blueprints/pages_v3.py` (`_load_plugin_config_partial`) |
 | Form template and field macros | `web_interface/templates/v3/partials/plugin_config.html` |
-| Save / get / schema / reset handlers | `web_interface/blueprints/api_v3/plugins.py` |
+| Save / get / schema / reset handlers | `web_interface/blueprints/api_v3/plugin_config.py` |
 | Schema loading, defaults, validation | `src/plugin_system/schema_manager.py` |
 | Secret masking and splitting | `src/web_interface/secret_helpers.py` |
 | Widgets | `web_interface/static/v3/js/widgets/` |

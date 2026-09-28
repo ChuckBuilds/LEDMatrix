@@ -8,7 +8,7 @@ on:
   # needs a re-run or didn't get created.
   workflow_dispatch:
 
-# Both jobs only check out the repo and run pytest.
+# The jobs only check out the repo and run the tests.
 permissions:
   contents: read
 
@@ -73,3 +73,70 @@ jobs:
             --cov=src --cov=web_interface \
             --cov-report=term \
             --cov-fail-under=52
+
+  js-tests:
+    name: Web UI JS tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r web_interface/requirements.txt
+          npm install --no-audit --no-fund --prefix test/js
+
+      # The DOM suites test the real server-rendered pages and API, so they
+      # need the web interface running. REQUIRE_DOM turns "couldn't reach it"
+      # into a failure instead of a silent skip.
+      - name: Start the web interface
+        run: |
+          EMULATOR=true python -c "from web_interface.app import app; app.run(host='127.0.0.1', port=5000, threaded=True)" > web.log 2>&1 &
+          for i in $(seq 60); do curl -sf -o /dev/null http://127.0.0.1:5000/ && exit 0; sleep 1; done
+          cat web.log
+          exit 1
+
+      - name: Run JS suites
+        env:
+          BASE: http://127.0.0.1:5000
+          REQUIRE_DOM: "1"
+        run: node test/js/run_all.js
+
+  type-check:
+    name: Type check (mypy ratchet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The runtime requirements are installed so mypy sees the real types of
+      # PIL, requests, psutil and friends -- missing, they'd be Any and the
+      # result would differ from a developer's machine. mypy and the stubs are
+      # pinned so a new release can't turn this red without a code change.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r web_interface/requirements.txt
+          pip install mypy==1.20.2 types-requests==2.33.0.20260906 types-pytz==2026.4.0.20260926
+
+      # mypy on exactly the modules in mypy-clean.txt; fails on any error in
+      # them, or if a listed file is missing. See CONTRIBUTING.md.
+      - name: Run mypy on the ratchet list
+        run: python scripts/check_types.py

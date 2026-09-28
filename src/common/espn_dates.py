@@ -37,7 +37,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 try:
     from src.common.json_body import response_json
@@ -159,7 +159,7 @@ def espn_date_chunks(start: date, end: date) -> List[str]:
     return chunks
 
 
-def merge_scoreboard_payloads(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+def merge_scoreboard_payloads(payloads: List[Any]) -> Dict[str, Any]:
     """Fold chunk responses into one scoreboard payload.
 
     Events are de-duplicated by id and keep first-seen order. Non-event keys
@@ -202,7 +202,7 @@ def _fetch_one_chunk(
             timeout=timeout,
         )
         response.raise_for_status()
-        return response_json(response)
+        return cast(Optional[Dict[str, Any]], response_json(response))
     except Exception as exc:  # noqa: BLE001 - see docstring
         if logger:
             logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
@@ -379,4 +379,4 @@ def fetch_espn_scoreboard(
         if data is not None:
             return data
     response.raise_for_status()
-    return response_json(response)
+    return cast(Dict[str, Any], response_json(response))

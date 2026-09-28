@@ -24,7 +24,7 @@ next render. A location saved on the app itself always wins.
 import json
 import logging
 import time
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, cast
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 GEOCODE_TIMEOUT = 10
@@ -112,6 +112,7 @@ def parse_location(value: Any) -> Optional[Dict[str, Any]]:
     ``{"timezone": ...}`` when only the timezone box is filled) all mean the
     user has not given the app a place.
     """
+    loc: Any
     if isinstance(value, dict):
         loc = value
     elif isinstance(value, str) and value.strip():
@@ -162,10 +163,10 @@ def geocode(city: str, state: Any = None, country: Any = None,
     """Look the city up on Open-Meteo. Raises on a network/HTTP failure."""
     import requests
 
-    response = requests.get(GEOCODE_URL, params={
+    response = requests.get(GEOCODE_URL, params=cast(Dict[str, Any], {
         "name": city, "count": GEOCODE_RESULT_COUNT,
         "language": "en", "format": "json",
-    }, timeout=timeout)
+    }), timeout=timeout)
     response.raise_for_status()
     best = pick_geocode_result(response.json().get("results") or [], state, country)
     if best is None:

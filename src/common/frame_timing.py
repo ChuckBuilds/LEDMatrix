@@ -93,7 +93,7 @@ import tempfile
 import threading
 import time
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -483,7 +483,13 @@ class FrameTimingRecorder:
             raise
 
 
-def watchdog_settings() -> Dict[str, float]:
+class _WatchdogSettings(TypedDict, total=False):
+    """The StallWatchdog keyword arguments watchdog_settings() may set."""
+    threshold: float
+    poll: float
+
+
+def watchdog_settings() -> _WatchdogSettings:
     """StallWatchdog arguments from ``LEDMATRIX_STALL_WATCHDOG_MS``, if set.
 
     The poll comes down with the threshold, or a stall shorter than one poll

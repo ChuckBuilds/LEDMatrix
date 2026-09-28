@@ -9,7 +9,7 @@ Detects and fixes inconsistencies between:
 """
 
 import json
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Set, cast
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -237,7 +237,7 @@ class StateReconciliation:
             state_manager_state = self._get_state_manager_state()
             
             # Find all unique plugin IDs
-            all_plugin_ids = set()
+            all_plugin_ids: Set[str] = set()
             all_plugin_ids.update(config_state.keys())
             all_plugin_ids.update(disk_state.keys())
             all_plugin_ids.update(manager_state.keys())
@@ -380,7 +380,7 @@ class StateReconciliation:
         state_manager_state: Dict[str, Dict[str, Any]]
     ) -> List[Inconsistency]:
         """Check consistency for a single plugin."""
-        inconsistencies = []
+        inconsistencies: List[Inconsistency] = []
 
         if plugin_id in CORE_CONFIG_KEYS:
             # A plugin whose id is a core setting's key ('display', 'sync',
@@ -496,7 +496,8 @@ class StateReconciliation:
                 # Bring the state manager in sync with config rather than the reverse,
                 # so that manual config edits (or the state left behind after an
                 # uninstall+reinstall cycle) don't silently override the user's intent.
-                config_enabled = inconsistency.expected_state.get('enabled')
+                # Always set for this type (see _check_plugin_consistency).
+                config_enabled = cast(bool, inconsistency.expected_state.get('enabled'))
                 success = self.state_manager.set_plugin_enabled(inconsistency.plugin_id, config_enabled)
                 if success:
                     self.logger.info(

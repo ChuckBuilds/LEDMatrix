@@ -7,7 +7,7 @@ plugin discovery / manifest / config-default logic lives in exactly one place.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union, cast
 
 
 def find_plugin_dir(plugin_id: str, search_dirs: Sequence[Union[str, Path]]) -> Optional[Path]:
@@ -39,7 +39,7 @@ def load_manifest(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
     if not manifest_path.exists():
         raise FileNotFoundError(f"No manifest.json in {plugin_dir}")
     with open(manifest_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        return cast(Dict[str, Any], json.load(f))
 
 
 def merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -64,7 +64,7 @@ def load_schema(plugin_dir: Union[str, Path]) -> Optional[Dict[str, Any]]:
     if not schema_path.exists():
         return None
     with open(schema_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+        return cast(Optional[Dict[str, Any]], json.load(f))
 
 
 def load_config_defaults(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
@@ -124,7 +124,7 @@ def load_harness_spec(plugin_dir: Union[str, Path]) -> Dict[str, Any]:
     if not spec_path.exists():
         return {}
     with open(spec_path, 'r', encoding='utf-8') as f:
-        spec = json.load(f)
+        spec: Dict[str, Any] = json.load(f)
 
     # Resolve mock_data path and inline its contents for convenience.
     mock_rel = spec.get('mock_data')

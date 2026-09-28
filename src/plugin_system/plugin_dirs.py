@@ -45,7 +45,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Union, cast
 
 from src.common.path_safety import safe_path_component
 
@@ -91,7 +91,7 @@ class PluginDirEntry:
     """One candidate directory and its manifest, read once."""
     path: Path
     status: str
-    manifest: Optional[Any] = None
+    manifest: Any = None
     error: Optional[BaseException] = None
 
     @property
@@ -103,7 +103,8 @@ class PluginDirEntry:
         """The manifest's ``id`` when the manifest is usable, else None."""
         if self.status != ManifestStatus.OK:
             return None
-        return self.manifest['id']
+        # OK means a dict whose "id" is a non-empty string (_read_entry).
+        return cast(str, self.manifest['id'])
 
     @property
     def manifest_parses(self) -> bool:
@@ -240,7 +241,7 @@ class PluginDirectoryIndex:
 
     # -- lookup -----------------------------------------------------------
 
-    def find(self, plugin_id: str, *, prefix: bool, case_insensitive: bool,
+    def find(self, plugin_id: Any, *, prefix: bool, case_insensitive: bool,
              by_manifest: bool = True) -> Optional[Path]:
         """Resolve ``plugin_id`` within this directory (rules in the module doc)."""
         plugin_id = _lookup_id(plugin_id)
@@ -270,7 +271,7 @@ def _lookup_id(plugin_id: Any) -> Optional[str]:
     plugin_id = safe_path_component(plugin_id)
     if plugin_id is None or is_ignored_dir_name(plugin_id):
         return None
-    return plugin_id
+    return cast(str, plugin_id)  # safe_path_component returned a str
 
 
 def _candidate_names(plugin_id: str, prefix: bool) -> List[str]:

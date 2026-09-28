@@ -8,7 +8,7 @@ Provides resource limits and performance monitoring.
 import math
 import time
 import threading
-from typing import Dict, Optional, Any, Callable
+from typing import Dict, Optional, Any, Callable, cast
 from dataclasses import dataclass, field, fields
 
 from src.logging_config import get_logger
@@ -209,7 +209,7 @@ class PluginResourceMonitor:
         # (not \"int\") to str"). Coerce here, where there is still a cache
         # key to name in the warning.
         declared = {f.name: f.type for f in fields(ResourceMetrics)}
-        usable = {}
+        usable: Dict[str, Any] = {}
         for key, value in cached.items():
             if key not in known:
                 continue
@@ -299,7 +299,7 @@ class PluginResourceMonitor:
         if not self.enable_monitoring or self._process is None:
             return 0.0
         try:
-            return self._process.memory_info().rss / 1024 / 1024
+            return cast(float, self._process.memory_info().rss / 1024 / 1024)
         except Exception:
             return 0.0
 
@@ -313,7 +313,7 @@ class PluginResourceMonitor:
         if not self.enable_monitoring or self._process is None:
             return 0.0
         try:
-            return self._process.cpu_percent(interval=None)
+            return cast(float, self._process.cpu_percent(interval=None))
         except Exception:
             return 0.0
     

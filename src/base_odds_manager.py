@@ -16,10 +16,15 @@ import time
 
 import requests
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, cast
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 
+
+
+def _is_no_odds_marker(data: Any) -> bool:
+    """Whether a cached odds entry is the "ESPN had none" marker, not odds."""
+    return isinstance(data, dict) and bool(data.get("no_odds"))
 
 class BaseOddsManager:
     """
@@ -100,7 +105,7 @@ class BaseOddsManager:
     _FAILURE_COOLDOWN = 60.0
 
     def get_odds(self, sport: str | None, league: str | None, event_id: str,
-                 update_interval_seconds: int = None) -> Optional[Dict[str, Any]]:
+                 update_interval_seconds: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         Fetch odds data for a specific game.
         
@@ -121,11 +126,19 @@ class BaseOddsManager:
         cache_key = f"odds_espn_{sport}_{league}_{event_id}"
 
         # Check cache first
-        cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
+        cached_data: Optional[Dict[str, Any]] = self.cache_manager.get_with_auto_strategy(cache_key)
 
         # Per-game chatter, logged on every update of every game on the
         # slate: debug, not the journal.
         if cached_data:
+            # A game ESPN had no odds for is cached as {"no_odds": True} so it
+            # isn't re-requested every update. That marker is a cache hit --
+            # its ttl decides when to ask again -- but it is not odds: returned
+            # as-is, a caller saw a truthy dict and treated the game as having
+            # odds. The plugins' bundled copies already did this.
+            if _is_no_odds_marker(cached_data):
+                self.logger.debug("Cached no-odds marker for %s", cache_key)
+                return None
             self.logger.debug(f"Using cached odds from ESPN for {cache_key}")
             return cached_data
 
@@ -189,8 +202,9 @@ class BaseOddsManager:
                 "Error fetching odds from ESPN API for %s: %s. Holding off on odds "
                 "for %.0fs so a slate of games does not pay this timeout each.",
                 cache_key, e, self._FAILURE_COOLDOWN)
-        
-        return self.cache_manager.get_with_auto_strategy(cache_key)
+
+        cached = self.cache_manager.get_with_auto_strategy(cache_key)
+        return None if _is_no_odds_marker(cached) else cast(Optional[Dict[str, Any]], cached)
 
     def _extract_espn_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

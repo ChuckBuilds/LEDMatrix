@@ -277,6 +277,7 @@ class PluginLoader:
             Path to plugin directory or None if not found. An id that is not
             one plain path segment finds nothing.
         """
+        plugin_dir: Optional[Path]
         # Strategy 1: Use mapping from discovery
         if plugin_directories and plugin_id in plugin_directories:
             plugin_dir = plugin_directories[plugin_id]

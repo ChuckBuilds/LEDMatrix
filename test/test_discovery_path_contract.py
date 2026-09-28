@@ -210,7 +210,11 @@ class TestStandaloneBackupContract:
         from src.plugin_system import plugin_dirs
         assert plugin_dirs.BACKUP_MARKER == '.standalone-backup-'
         root = Path(__file__).resolve().parents[1]
-        sm_text = (root / "src/plugin_system/store_manager.py").read_text(encoding="utf-8")
+        # PluginStoreManager's methods are spread over store_manager.py and
+        # its store_*.py mixins.
+        sm_text = "".join(
+            p.read_text(encoding="utf-8")
+            for p in sorted((root / "src/plugin_system").glob("store_*.py")))
         assert "{BACKUP_MARKER}preinstall" in sm_text
         assert "{BACKUP_MARKER}migrating" in sm_text
         assert plugin_dirs.is_ignored_dir_name(

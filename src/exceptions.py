@@ -5,11 +5,13 @@ Provides specific exception types for different error categories,
 enabling better error handling and debugging.
 """
 
+from typing import Optional
+
 
 class LEDMatrixError(Exception):
     """Base exception for all LEDMatrix errors."""
     
-    def __init__(self, message: str, context: dict = None):
+    def __init__(self, message: str, context: Optional[dict] = None):
         """
         Initialize the exception.
         
@@ -32,7 +34,7 @@ class LEDMatrixError(Exception):
 class CacheError(LEDMatrixError):
     """Exception raised for cache-related errors."""
     
-    def __init__(self, message: str, cache_key: str = None, context: dict = None):
+    def __init__(self, message: str, cache_key: Optional[str] = None, context: Optional[dict] = None):
         """
         Initialize cache error.
         
@@ -53,7 +55,7 @@ class CacheError(LEDMatrixError):
 class ConfigError(LEDMatrixError):
     """Exception raised for configuration-related errors."""
     
-    def __init__(self, message: str, config_path: str = None, field: str = None, context: dict = None):
+    def __init__(self, message: str, config_path: Optional[str] = None, field: Optional[str] = None, context: Optional[dict] = None):
         """
         Initialize config error.
         
@@ -79,7 +81,7 @@ class ConfigError(LEDMatrixError):
 class PluginError(LEDMatrixError):
     """Exception raised for plugin-related errors."""
     
-    def __init__(self, message: str, plugin_id: str = None, context: dict = None):
+    def __init__(self, message: str, plugin_id: Optional[str] = None, context: Optional[dict] = None):
         """
         Initialize plugin error.
         
@@ -100,7 +102,7 @@ class PluginError(LEDMatrixError):
 class DisplayError(LEDMatrixError):
     """Exception raised for display-related errors."""
     
-    def __init__(self, message: str, display_mode: str = None, context: dict = None):
+    def __init__(self, message: str, display_mode: Optional[str] = None, context: Optional[dict] = None):
         """
         Initialize display error.
         

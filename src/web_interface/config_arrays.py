@@ -30,7 +30,7 @@ def _is_index_dict(value: Any) -> bool:
     return isinstance(value, dict) and all(str(k).isdigit() for k in value)
 
 
-def coerce_array_shapes(config: Dict[str, Any], schema_props: Dict[str, Any],
+def coerce_array_shapes(config: Any, schema_props: Dict[str, Any],
                         short_lists_take_default: bool = False) -> None:
     """Turn position-keyed dicts into lists wherever the schema has an array.
 
@@ -64,7 +64,7 @@ def coerce_array_shapes(config: Dict[str, Any], schema_props: Dict[str, Any],
                     and len(value) < min_items
                     and isinstance(default, list) and len(default) >= min_items):
                 value = config[key] = list(default)
-            items_schema = prop_schema.get('items')
+            items_schema: Any = prop_schema.get('items')
             if (_schema_type_is(items_schema, 'object')
                     and 'properties' in items_schema):
                 for element in value:

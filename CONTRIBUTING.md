@@ -61,10 +61,15 @@ integration tests.
    `flake8` (E9, F63, F7, F82 plus bugbear `B` checks), `bandit`,
    and `gitleaks` — install the CLI with
    `python -m pip install pre-commit`, then run
-   `pre-commit install` so they run on every commit. `mypy` on
-   `src/` is a manual hook while existing type errors are paid down
-   (`pre-commit run mypy --hook-stage manual`): please don't add new
-   errors in the files you touch. HTML/JS in
+   `pre-commit install` so they run on every commit. Type checking
+   is a ratchet while the existing mypy errors in `src/` are paid
+   down: `mypy-clean.txt` lists the modules that type-check clean, and
+   CI runs `python scripts/check_types.py` (also the manual hook
+   `pre-commit run mypy --hook-stage manual`) to keep every listed
+   module clean. When you make another module clean, add it to the
+   list (sorted); don't take one off to get CI green. Keep type fixes
+   annotation-only where you can -- widen a hint rather than delete a
+   defensive runtime check mypy calls unreachable. HTML/JS in
    `web_interface/` follows the patterns already in `templates/v3/`
    and `static/v3/`.
 5. **Update documentation** alongside code changes. If you add a

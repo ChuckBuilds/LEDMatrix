@@ -14,7 +14,7 @@ Supports three display modes:
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
+from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING, cast
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -698,7 +698,7 @@ class StreamManager:
         if plugin is None:
             return False
         try:
-            return plugin.get_vegas_display_mode() == VegasDisplayMode.STATIC
+            return cast(bool, plugin.get_vegas_display_mode() == VegasDisplayMode.STATIC)
         except Exception:
             logger.debug("[%s] get_vegas_display_mode() failed; treating as not STATIC",
                          plugin_id, exc_info=True)

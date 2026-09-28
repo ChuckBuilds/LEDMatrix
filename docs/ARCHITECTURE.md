@@ -127,7 +127,7 @@ then normal rotation.
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |
 | Resource metrics | [`resource_monitor.py`](../src/plugin_system/resource_monitor.py) |
 | Config schemas and defaults | [`schema_manager.py`](../src/plugin_system/schema_manager.py) |
-| Install, update, uninstall | [`store_manager.py`](../src/plugin_system/store_manager.py) (`PluginStoreManager`) |
+| Install, update, uninstall | [`store_manager.py`](../src/plugin_system/store_manager.py) (`PluginStoreManager`), with its methods split across [`store_registry.py`](../src/plugin_system/store_registry.py) (registry, GitHub), [`store_install.py`](../src/plugin_system/store_install.py) and [`store_update.py`](../src/plugin_system/store_update.py) |
 | Core-version gate | [`compatibility.py`](../src/plugin_system/compatibility.py) |
 
 Discovery scans only `plugin_system.plugins_directory` (default
@@ -158,8 +158,13 @@ everything else through `_reinstall_with_rollback()`.
 - **API.** [`blueprints/api_v3/`](../web_interface/blueprints/api_v3/) is one
   blueprint at `/api/v3`, split by area: `backup.py`, `config.py`,
   `display.py`, `fonts.py`, `misc.py` (health, logs, errors, cache, sync),
-  `plugins.py`, `starlark.py`, `system.py` (service actions, updates, git),
-  `wifi.py`. `__init__.py` defines the blueprint and shared helpers and
+  `starlark.py`, `system.py` (service actions, updates, git), `wifi.py`, and
+  the plugin routes: `plugins.py` (installed list, enable/disable, plugin
+  actions), `plugin_store.py` (install, update, uninstall, store),
+  `plugin_config.py` (config, schema, reset), `plugin_assets.py` (uploads,
+  plugin static files), `plugin_health.py` (health, metrics, limits),
+  `plugin_operations.py` (operation history, state reconciliation) and
+  `plugin_calendar.py`. `__init__.py` defines the blueprint and shared helpers and
   imports the modules so their routes register. Endpoints are listed in
   [REST_API_REFERENCE.md](REST_API_REFERENCE.md).
 - **Front end.** HTMX loads each tab's partial on first open
