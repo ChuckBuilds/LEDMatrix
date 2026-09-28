@@ -20,7 +20,7 @@ unsorted, or empty).
 """
 
 import argparse
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
 from pathlib import Path
 
@@ -81,7 +81,8 @@ def main(argv=None) -> int:
         *entries,
     ]
     print(f"check_types: mypy on {len(entries)} modules from {LIST_FILE.name}", flush=True)
-    result = subprocess.run(cmd, cwd=REPO_ROOT)
+    # This interpreter's mypy, fixed flags, and paths from the checked-in list.
+    result = subprocess.run(cmd, cwd=REPO_ROOT)  # nosec B603 - list-form argv, no shell  # nosemgrep
     if result.returncode > 1:  # mypy itself failed (bad config, crash)
         return result.returncode
     if result.returncode != 0:
