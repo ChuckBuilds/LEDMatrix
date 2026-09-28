@@ -592,11 +592,21 @@ class PluginLoader:
             raise PluginError(error_msg, plugin_id=plugin_id, context={'entry_file': str(entry_file)})
 
         with self._module_load_lock:
-            # Add plugin directory to sys.path if not already there
+            # Put this plugin's directory first on sys.path -- moving it there
+            # if it is already present. Plugins import their own modules by
+            # bare name (``from sports import ...``), and those resolve to the
+            # first directory that has the file. A directory added on an
+            # earlier load stays where it was, so reloading a plugin (a live
+            # re-enable from the web UI) after another scoreboard had loaded
+            # found that one's sports.py first and failed on a name only its
+            # own copy has.
             plugin_dir_str = str(plugin_dir)
-            if plugin_dir_str not in sys.path:
-                sys.path.insert(0, plugin_dir_str)
-                self.logger.debug("Added plugin %s's directory to sys.path", plugin_id)
+            try:
+                sys.path.remove(plugin_dir_str)
+            except ValueError:
+                pass
+            sys.path.insert(0, plugin_dir_str)
+            self.logger.debug("Put plugin %s's directory first on sys.path", plugin_id)
 
             # Import the plugin module
             module_name = f"plugin_{plugin_id.replace('-', '_')}"
