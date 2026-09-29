@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixes
+
+- Re-saving unchanged data through `CacheManager.set` no longer rewrites its
+  cache file. The disk cache already skipped a payload identical to the last
+  one written, but `set()` stamps every record with the current time, so the
+  skip never fired and every plugin rewrote its unchanged API data to the SD
+  card on every update cycle. Records are now compared without that
+  timestamp, and a skipped write moves the file's mtime to it instead; reads
+  treat a record as fresh from the later of the two, so it expires exactly
+  when the rewrite would have. Changed data or a changed `ttl` still writes,
+  and so does a file another process has replaced since.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core
