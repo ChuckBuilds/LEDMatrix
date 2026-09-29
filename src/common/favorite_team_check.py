@@ -199,13 +199,25 @@ class FavoriteTeamCheck:
         # has no events at all to roll forward to: events that exist but are
         # all in the past mean the season is over, and an offseason calendar
         # phase must not be dressed up as its next game.
+        #
+        # The exception is a calendar of match days. With calendarType "day"
+        # and calendarIsWhitelist true, every entry is a day that has games,
+        # so a future entry is a real next fixture. Soccer needs it: between
+        # matchdays the scoreboard keeps showing the last one, so on
+        # 2026-09-29 every Premier League event was from 20 September and the
+        # next games (10 October) were only in the calendar. A day calendar
+        # that is not a whitelist (MLB's) lists days *without* games.
         if any(event_dates):
             upcoming = future(event_dates)
+            if not upcoming and cls._calendar_is_match_days(payload):
+                upcoming = future(calendar_dates)
         else:
             upcoming = future(calendar_dates)
         if not upcoming:
             if not any(event_dates) and not any(calendar_dates):
                 return None  # Nothing published either way; draw no conclusion.
+            if cls._moved_to_later_phase(payload):
+                return None  # e.g. postseason under way; see the method.
             return ("the season has finished and the next one's fixtures are "
                     "not published yet")
 
@@ -214,6 +226,38 @@ class FavoriteTeamCheck:
             return None
         return "the league has nothing on until {}".format(
             upcoming[0].strftime('%d %B %Y'))
+
+    @staticmethod
+    def _calendar_is_match_days(payload) -> bool:
+        """Whether the league calendar lists the days that have games."""
+        league = (payload.get('leagues') or [{}])[0] or {}
+        return (league.get('calendarType') == 'day'
+                and league.get('calendarIsWhitelist') is True)
+
+    @staticmethod
+    def _moved_to_later_phase(payload) -> bool:
+        """
+        Whether the league is in a later in-season phase than its events.
+
+        ESPN does not roll the scoreboard forward into a postseason. The day
+        after MLB's regular season ended, the default scoreboard still returned
+        that last regular-season day, while ``leagues[0].season`` already said
+        Postseason and the wild-card games were two days out. Past events alone
+        then read as a finished season while the same process's upcoming
+        manager was showing the favourite's playoff games.
+
+        Only regular season (2) and postseason (3) count as "later". The
+        offseason (4) follows the postseason too, and there past events really
+        do mean the season is over.
+        """
+        season = ((payload.get('leagues') or [{}])[0] or {}).get('season') or {}
+        league_type = (season.get('type') or {}).get('type')
+        if league_type not in (2, 3):
+            return False
+        event_types = [(e.get('season') or {}).get('type')
+                       for e in payload.get('events') or []]
+        known = [t for t in event_types if isinstance(t, int)]
+        return bool(known) and all(t < league_type for t in known)
 
     @staticmethod
     def _parse_date(raw) -> Optional[datetime]:
