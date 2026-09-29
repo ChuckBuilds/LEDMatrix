@@ -72,7 +72,7 @@ def build(config_manager, api_v3_module, ap_mode=False, limiter=True):
 
     @pages.route('/partials/<name>')
     def load_partial(name):
-        return f'partial {name}'
+        return 'a partial'
 
     @pages.route('/setup')
     def captive_setup():
@@ -196,6 +196,36 @@ class TestTurnedOn:
         assert lan_client(app).get('/api/v3/no-such-thing').status_code == 401
 
 
+#: next= values that must never send the browser anywhere but '/'.
+OFFSITE_NEXT_TARGETS = [
+    '//evil.example/x',
+    '/\\evil.example',
+    '/\\/evil.example',
+    '\\\\evil.example',
+    'http://evil.example/',
+    'https:evil.example',
+    'HTTP://evil.example',
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    '/logout',
+    '/login?next=//evil.example',
+    # Percent-encoded: a later decode must not turn them into the above.
+    '/%2F%2Fevil.example',
+    '/%2fevil.example',
+    '/%5Cevil.example',
+    '/%5cevil.example',
+    '%2F%2Fevil.example',
+    '%252F%252Fevil.example',
+    # Browsers drop tabs and newlines inside URLs, so '/\t/' would be '//'.
+    '/\t/evil.example',
+    '/\n/evil.example',
+    '/%09/evil.example',
+    '/%0D%0A/evil.example',
+    '/\x7f/evil.example',
+    ' //evil.example',
+]
+
+
 class TestLogin:
     def test_the_right_password_logs_in_and_returns_to_next(self, config_manager, api_v3_module):
         app = build(config_manager, api_v3_module)
@@ -218,13 +248,40 @@ class TestLogin:
         assert 'not right' in r.get_data(as_text=True)
         assert c.get('/api/v3/auth/tokens').status_code == 401
 
-    @pytest.mark.parametrize('target', ['//evil.example/x', 'http://evil.example/',
-                                        '/\\evil.example', 'javascript:alert(1)', '/logout'])
+    @pytest.mark.parametrize('target', OFFSITE_NEXT_TARGETS)
     def test_next_never_leaves_the_interface(self, config_manager, api_v3_module, target):
         app = build(config_manager, api_v3_module)
         enable(app)
         r = lan_client(app).post('/login', data={'password': PASSWORD, 'next': target})
         assert r.status_code == 302 and r.headers['Location'] == '/'
+
+    @pytest.mark.parametrize('target', OFFSITE_NEXT_TARGETS)
+    def test_a_get_with_an_offsite_next_redirects_home(self, config_manager, api_v3_module,
+                                                       target):
+        # Already signed in: GET /login redirects straight to next.
+        app = build(config_manager, api_v3_module)
+        c = enable(app)
+        c.post('/login', data={'password': PASSWORD})
+        r = c.get('/login', query_string={'next': target})
+        assert r.status_code == 302 and r.headers['Location'] == '/'
+
+
+@pytest.mark.parametrize('target', OFFSITE_NEXT_TARGETS)
+def test_safe_next_refuses_anything_off_this_server(target):
+    assert web_auth.safe_next(target) == '/'
+
+
+@pytest.mark.parametrize('target', [
+    '/', '/partials/plugins', '/?tab=general', '/v3?tab=plugins&x=1',
+    '/partials/general?x%3D1', '/a%20b',
+])
+def test_safe_next_keeps_a_local_path(target):
+    assert web_auth.safe_next(target) == target
+
+
+@pytest.mark.parametrize('target', [None, 42, '', 'partials/plugins'])
+def test_safe_next_refuses_a_non_path(target):
+    assert web_auth.safe_next(target) == '/'
 
     def test_logout_ends_the_session(self, config_manager, api_v3_module):
         app = build(config_manager, api_v3_module)
@@ -370,6 +427,34 @@ class TestTokens:
         admin = enable(build(config_manager, api_v3_module))
         assert admin.delete('/api/v3/auth/tokens/nope').status_code == 404
 
+    @pytest.mark.parametrize('name, expected', [
+        ('', 'Give the token a name'),
+        ('x' * (web_auth.MAX_TOKEN_NAME_LENGTH + 1), 'at most'),
+    ])
+    def test_a_bad_token_name_gets_the_fixed_message(self, config_manager, api_v3_module,
+                                                     name, expected):
+        admin = enable(build(config_manager, api_v3_module))
+        r = admin.post('/api/v3/auth/tokens', json={'name': name})
+        assert r.status_code == 400
+        assert expected in r.get_json()['message']
+
+    def test_the_log_never_holds_a_password_token_or_hash(
+            self, config_manager, api_v3_module, caplog):
+        app = build(config_manager, api_v3_module)
+        with caplog.at_level('DEBUG'):
+            admin = enable(app)
+            admin.post('/api/v3/auth/password', json={
+                'current_password': PASSWORD, 'new_password': 'another fine phrase'})
+            created = admin.post('/api/v3/auth/tokens', json={'name': 'Home Assistant'})
+            token = created.get_json()['data']['token']
+            record = created.get_json()['data']['record']
+            admin.delete(f"/api/v3/auth/tokens/{record['id']}")
+        logged = caplog.text
+        assert 'Home Assistant' in logged and record['id'] in logged
+        for secret in (PASSWORD, 'another fine phrase', token,
+                       web_auth._token_digest(token)):
+            assert secret not in logged
+
 
 # --- Exemptions -----------------------------------------------------------------
 
@@ -513,6 +598,21 @@ class TestRecovery:
         admin.post('/api/v3/auth/tokens', json={'name': 'ha'})
         self._script().reset(Path(config_manager.get_secrets_path()), revoke_tokens=True)
         assert 'web_auth' not in secrets_on_disk(config_manager)
+
+    def test_the_script_prints_nothing_from_the_file(self, config_manager, api_v3_module,
+                                                    capsys):
+        app = build(config_manager, api_v3_module)
+        admin = enable(app)
+        token = admin.post('/api/v3/auth/tokens', json={'name': 'ha'}).get_json()['data']['token']
+        secrets_before = json.dumps(secrets_on_disk(config_manager))
+        assert self._script().main(['--secrets', config_manager.get_secrets_path()]) == 0
+        out = capsys.readouterr()
+        printed = out.out + out.err
+        assert 'off' in printed
+        section = json.loads(secrets_before)['web_auth']
+        for secret in (PASSWORD, token, section['password_hash'], section['session_secret'],
+                       'ghp_realtoken'):
+            assert secret not in printed
 
     def test_nothing_to_do_writes_nothing(self, config_manager):
         path = Path(config_manager.get_secrets_path())

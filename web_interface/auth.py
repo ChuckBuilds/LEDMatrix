@@ -47,7 +47,7 @@ import secrets
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from flask import (Blueprint, Flask, current_app, g, jsonify, redirect,
                    render_template, request, session, url_for)
@@ -66,7 +66,7 @@ MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 256
 MAX_TOKENS = 50
 MAX_TOKEN_NAME_LENGTH = 60
-TOKEN_PREFIX = 'lmx_'
+TOKEN_PREFIX = 'lmx_'  # nosec B105 - token prefix, not a credential
 SESSION_KEY = 'ledmatrix_auth'
 SESSION_LIFETIME = timedelta(days=30)
 
@@ -99,7 +99,16 @@ _AP_SETUP_ENDPOINTS = frozenset({
 
 
 class AuthError(Exception):
-    """A request to change auth settings that cannot be applied as asked."""
+    """A request to change auth settings that cannot be applied as asked.
+
+    ``user_message`` is a fixed sentence written in this module for the
+    person on the settings page; it never carries data from anywhere else,
+    so it is what the routes return (never ``str()`` of an exception).
+    """
+
+    def __init__(self, user_message: str):
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
 def _now_iso() -> str:
@@ -196,9 +205,10 @@ class AuthStore:
             return False
         try:
             return check_password_hash(stored, password)
-        except (ValueError, TypeError):
-            logger.error("The stored web password hash is not usable; reset it "
-                         "with scripts/reset_web_password.py", exc_info=True)
+        except (ValueError, TypeError) as err:
+            # The type only: the message could quote part of the stored value.
+            logger.error("The stored web login is not usable (%s); reset it "
+                         "with scripts/reset_web_password.py", type(err).__name__)
             return False
 
     def _raw_tokens(self) -> List[Dict[str, Any]]:
@@ -379,22 +389,39 @@ def sign_in_this_session() -> None:
     session.permanent = True
 
 
+def _leaves_this_server(path: str) -> bool:
+    """Whether a browser could read ``path`` as another site, or it is not
+    plainly printable.
+
+    ``//host`` and ``/\\host`` are protocol-relative (browsers treat ``\\``
+    as ``/``), so no backslash is accepted anywhere; control characters are
+    stripped or mangled by browsers and can smuggle either form past a
+    prefix check.
+    """
+    if path.startswith('//') or '\\' in path:
+        return True
+    return any(ord(c) < 32 or ord(c) == 127 for c in path)
+
+
 def safe_next(target: Any) -> str:
     """``target`` if it is a local path to return to after login, else ``/``.
 
-    Only a path on this server is accepted: no scheme, no host, and not
-    ``//host`` or ``/\\host``, which browsers read as another site.
+    Only a path on this server is accepted: it starts with a single ``/``,
+    has no scheme or host, and is not ``//host`` or ``/\\host`` (which
+    browsers read as another site) either as sent or once percent-decoded.
     """
     if not isinstance(target, str) or not target.startswith('/'):
         return '/'
-    if target.startswith(('//', '/\\')) or any(ord(c) < 32 for c in target):
+    if _leaves_this_server(target) or _leaves_this_server(unquote(target)):
         return '/'
     parts = urlsplit(target)
     if parts.scheme or parts.netloc:
         return '/'
     if parts.path.rstrip('/') in ('/login', '/logout', '/v3/login', '/v3/logout'):
         return '/'
-    return target
+    # Rebuilt behind a constant '/': with the checks above, what follows it
+    # cannot start another authority, so the result is a path on this server.
+    return '/' + target[1:]
 
 
 def _return_path() -> str:

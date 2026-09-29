@@ -87,12 +87,13 @@ def set_web_password():
     try:
         store.set_password(new_password)
     except web_auth.AuthError as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return jsonify({'status': 'error', 'message': e.user_message}), 400
     except Exception as e:
         return _save_failed(e, 'password')
     web_auth.sign_in_this_session()
-    logger.info("Web login password %s from %s",
-                'changed' if was_enabled else 'set (login turned on)', request.remote_addr)
+    # Names the event only; the new value is never logged.
+    logger.info("Web login %s from %s",
+                'password changed' if was_enabled else 'turned on (password set)', request.remote_addr)
     return jsonify({'status': 'success',
                     'message': 'Password changed.' if was_enabled else
                                'Login is on. Other browsers now need the password.',
@@ -146,10 +147,11 @@ def create_api_token():
     try:
         record, token = store.create_token(str(data.get('name') or ''))
     except web_auth.AuthError as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return jsonify({'status': 'error', 'message': e.user_message}), 400
     except Exception as e:
         return _save_failed(e, 'token')
-    logger.info("API token %r (%s) created from %s", record['name'], record['id'],
+    # The name and id only, never the token or its hash.
+    logger.info("API access %r (id %s) created from %s", record['name'], record['id'],
                 request.remote_addr)
     return jsonify({'status': 'success',
                     'message': 'Token created. Copy it now: it is not shown again.',
@@ -169,6 +171,6 @@ def revoke_api_token(token_id):
     if not revoked:
         return jsonify({'status': 'error', 'error_code': 'NOT_FOUND',
                         'message': 'No token with that id.'}), 404
-    logger.info("API token %s revoked from %s", token_id, request.remote_addr)
+    logger.info("API access id %s revoked from %s", token_id, request.remote_addr)
     return jsonify({'status': 'success', 'message': 'Token revoked.',
                     'data': {'tokens': store.list_tokens()}})

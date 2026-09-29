@@ -33,14 +33,18 @@ SECTION = 'web_auth'   # web_interface/auth.py; not imported to keep Flask out
 LOGIN_KEYS = ('password_hash', 'session_secret', 'password_set_at')
 
 
-def reset(secrets_path: Path, revoke_tokens: bool = False) -> str:
-    """Clear the login from ``secrets_path``. Returns what was done."""
-    if not secrets_path.exists():
-        return f'{secrets_path} does not exist, so no password is set. Nothing to do.'
-    with open(secrets_path, 'r', encoding='utf-8') as fh:
+def reset(settings_file: Path, revoke_tokens: bool = False) -> str:
+    """Clear the login from ``settings_file`` (config_secrets.json).
+
+    Returns what was done. The message names the file and counts tokens; it
+    never includes anything read from the file.
+    """
+    if not settings_file.exists():
+        return f'{settings_file} does not exist, so no password is set. Nothing to do.'
+    with open(settings_file, 'r', encoding='utf-8') as fh:
         data = json.load(fh)
     if not isinstance(data, dict):
-        raise ValueError(f'{secrets_path} does not hold a JSON object')
+        raise ValueError(f'{settings_file} does not hold a JSON object')
 
     section = data.get(SECTION)
     if not isinstance(section, dict):
@@ -59,7 +63,7 @@ def reset(secrets_path: Path, revoke_tokens: bool = False) -> str:
 
     if not had_password and not (revoke_tokens and token_count):
         return 'No web login password is set. Nothing to do.'
-    atomic_write_json(secrets_path, data)
+    atomic_write_json(settings_file, data)
 
     done = []
     if had_password:
@@ -75,22 +79,24 @@ def reset(secrets_path: Path, revoke_tokens: bool = False) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description='Turn the LEDMatrix web login off (lost password recovery).')
-    parser.add_argument('--secrets', type=Path,
+    parser.add_argument('--secrets', dest='settings_file', type=Path,
                         default=PROJECT_ROOT / 'config' / 'config_secrets.json',
                         help='secrets file (default: config/config_secrets.json '
                              'in this LEDMatrix checkout)')
     parser.add_argument('--revoke-tokens', action='store_true',
                         help='also delete every API token')
     args = parser.parse_args(argv)
+    settings_file = args.settings_file
     try:
-        print(reset(args.secrets, revoke_tokens=args.revoke_tokens))
+        outcome = reset(settings_file, revoke_tokens=args.revoke_tokens)
     except PermissionError:
-        print(f'Permission denied reading or writing {args.secrets}. Run it with sudo.',
+        print(f'Permission denied reading or writing {settings_file}. Run it with sudo.',
               file=sys.stderr)
         return 1
     except (OSError, ValueError) as err:
         print(f'Could not reset the web login: {err}', file=sys.stderr)
         return 1
+    print(outcome)
     return 0
 
 
