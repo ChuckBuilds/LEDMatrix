@@ -14,6 +14,7 @@ from web_interface.blueprints.api_v3 import (
     subprocess, success_response, tempfile,
 )
 from src.common.path_safety import safe_path_component
+from src import display_watchdog
 from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
 from web_interface import display_preview
@@ -92,6 +93,34 @@ def get_health():
                 'error': 'see logs for details'
             }
 
+        # Is the render loop still going round? The display rewrites this
+        # heartbeat every few seconds from the render thread itself, so a
+        # thread stuck inside a plugin lets it go stale even though the
+        # service is "active". No heartbeat at all (the dev server, an older
+        # display) is not a failure: the preview-frame check below is then
+        # the only signal, as it always was.
+        try:
+            heartbeat = display_watchdog.read_heartbeat(display_watchdog.HEARTBEAT_PATH)
+            age = display_watchdog.heartbeat_age(heartbeat) if heartbeat else None
+            if age is None:
+                health_status['checks']['display_loop'] = {
+                    'status': 'not_reported',
+                    'note': 'The display is not writing a heartbeat (not started yet, '
+                            'or a version or setup without one)',
+                }
+            else:
+                fresh = age < display_watchdog.HEARTBEAT_STALE_SECONDS
+                health_status['checks']['display_loop'] = {
+                    'status': 'running' if fresh else 'stalled',
+                    'heartbeat_age_seconds': round(age, 1),
+                }
+        except Exception:
+            logger.warning("Health check could not read the display heartbeat", exc_info=True)
+            health_status['checks']['display_loop'] = {
+                'status': 'unknown',
+                'error': 'see logs for details'
+            }
+
         # Check hardware connectivity (if display manager available)
         try:
             snapshot_path = display_preview.SNAPSHOT_PATH
@@ -116,8 +145,10 @@ def get_health():
             }
 
         # Determine overall health
+        # 'not_reported' is the absence of a signal, not a bad one.
         all_healthy = all(
-            check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active']
+            check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active',
+                                    'not_reported']
             for check in health_status['checks'].values()
         )
 

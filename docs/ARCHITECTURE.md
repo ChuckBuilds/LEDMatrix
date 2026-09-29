@@ -51,6 +51,7 @@ each other. They share three things:
 | Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py) | web: display SSE stream, `/api/v3/health` (file age) |
 | Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, while a preview is open | display: writes full-rate snapshots only while it is fresh |
 | Hardware init status | `/tmp/led_matrix_hw_status.json` | display | web: `/api/v3/hardware/status` |
+| Render-loop heartbeat | `/run/ledmatrix/display-heartbeat.json` (tmpfs) | display: the render thread, via [`display_watchdog`](../src/display_watchdog.py) | web: `/api/v3/health` (`checks.display_loop`); the update health check |
 
 The on-demand start route starts `ledmatrix.service` when it is not running
 (`start_service`, on by default) but never restarts a running one: the display
@@ -118,6 +119,43 @@ then normal rotation.
   ([`src/common/sync_manager.py`](../src/common/sync_manager.py)), enabled by
   `sync.role`: a leader sends a follower its share of each frame over UDP
   (port 5765).
+
+### Liveness
+
+A render thread stuck inside a plugin leaves the service "active" and the
+panel frozen, so liveness is reported by the render thread itself
+([`src/display_watchdog.py`](../src/display_watchdog.py), standard library
+only). `beat()` from any other thread is ignored: the update worker, Vegas's
+tick thread and the prefetcher keep running while the render thread is stuck,
+and must not vouch for it.
+
+- **Check-in points.** The top of `run()`'s loop (`loop_pass()`), every
+  dwell second (`_sleep_with_plugin_updates`), every frame of the per-screen
+  loops (`_display_once`), every frame of Vegas's own loop and static pause
+  (`coordinator.run_iteration`), each plugin fetched for a Vegas cycle
+  (`StreamManager._fetch_plugin_content`), each update on the
+  `synchronous_updates` path, and every frame pushed
+  (`DisplayManager.update_display` -> `note_frame()`). Beats are
+  rate-limited to one ping and one heartbeat write every 5 s.
+- **systemd watchdog.** `ledmatrix.service` is `Type=simple` with
+  `WatchdogSec=120` and `NotifyAccess=main`. `run.py` sends
+  `WATCHDOG_USEC` = 15 minutes before importing anything heavy (start-up loads
+  plugins and runs the 20 s update budget, and the watchdog clock starts with
+  the process). After the first frame -- or the first full pass, when there is
+  nothing to draw -- the loop sends `READY=1`, restores the unit's 120 s and
+  pings. `PluginManager.load_plugin()` on the render thread (a plugin enabled
+  from the web UI, or loaded for on-demand) gets 15 minutes again, since it
+  can run pip. A missed deadline is a SIGABRT; faulthandler, enabled on
+  arming, dumps every thread's stack to the journal.
+- **Heartbeat.** `/run/ledmatrix/display-heartbeat.json`
+  (`{"pid", "mono", "wall"}`; `RuntimeDirectory=ledmatrix`, 0755, file 0644 so
+  the web user can read it). Readers compare `mono` with their own
+  `time.monotonic()` -- CLOCK_MONOTONIC is shared by every process and does not
+  jump when NTP first sets an RTC-less Pi's clock. `/api/v3/health` calls it
+  `stalled` past 60 s; no file is `not_reported` and changes nothing. A clean
+  stop removes it. Without `RuntimeDirectory=` (an older unit) the display,
+  as root, creates the directory itself; off Linux, or without root, there
+  is no heartbeat.
 
 ## Plugin system
 
@@ -199,7 +237,9 @@ everything else through `_reinstall_with_rollback()`.
   `ledmatrix-update-verify.path`, which runs the verifier as a separate unit
   (so restarting the web service does not kill it). The verifier restarts
   both services, waits for the web API to answer and the display service to
-  stay up, and on failure resets to the previous commit and restarts again.
+  stay up -- and, when the display wrote a heartbeat before the update, to
+  keep one fresh from the restarted process (see Liveness) -- and on failure
+  resets to the previous commit and restarts again.
   Plugin updates run only after a verified core update. State is in
   `data/auto_update_state.json` and `data/auto_update_pending.json`.
 - **Startup validator.** `StartupValidator`
@@ -207,7 +247,9 @@ everything else through `_reinstall_with_rollback()`.
   `DisplayController.__init__`: config and cache directory first, then
   enabled plugins once the plugin manager exists. It also warns when an
   installed systemd unit differs from its template in `systemd/`. Results
-  are logged; startup continues either way.
+  are logged; startup continues either way. Nothing rewrites installed units
+  on update: a unit change such as the watchdog reaches an existing install
+  only when `install_service.sh` is re-run.
 
 ## Where to start reading
 

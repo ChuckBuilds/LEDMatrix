@@ -27,6 +27,49 @@ ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/run.py
 # that a successful outcome and never bringing it back.
 Restart=always
 RestartSec=10
+# Back off when it keeps failing: 10s after the first failure, growing to two
+# minutes by the fourth, so a plugin that crashes or hangs the display on
+# every start retries a couple of dozen times an hour instead of hundreds.
+# Deliberately not StartLimitBurst=: once that trips the unit stays failed --
+# the panel dark until someone reboots -- and every start is refused until the
+# interval passes, including the web UI's Start button and the automatic
+# update's rollback, neither of which may run "systemctl reset-failed".
+# systemd before 254 (Debian Bookworm has 252) ignores these two lines with an
+# "Unknown key name" warning and keeps the flat RestartSec.
+RestartSteps=4
+RestartMaxDelaySec=2min
+# Render-loop watchdog (src/display_watchdog.py). The render thread itself
+# pings systemd every few seconds, so a render loop stuck inside a plugin --
+# service still "active", panel frozen -- stops the pings, and systemd kills
+# the process (SIGABRT: faulthandler writes every thread's stack to the
+# journal) and restarts it.
+#
+# Type=simple, not Type=notify. Type=notify would hold "systemctl start" and
+# "restart" until READY=1, i.e. until plugins have loaded -- minutes on a slow
+# board -- and the web interface, the installer and the update health check all
+# call those with timeouts well short of that. The process still sends READY=1
+# (harmless here); NotifyAccess=main is what lets systemd hear it at all, and
+# only from run.py itself, not from pip or anything else it starts.
+#
+# 120s is the steady-state limit, four times the longest gap a healthy loop
+# has: a screen's first display() call runs under PluginExecutor's 30s
+# timeout. Everything else the loop blocks on checks in between steps (Vegas
+# frames, each plugin fetched for a Vegas cycle, each dwell second). Start-up
+# is longer than this and happens before the loop exists, so the process
+# widens the limit to 15 minutes as it starts and narrows it back to this
+# value after its first frame; loading a plugin enabled from the web UI, which
+# can run pip on the render thread, gets the same 15 minutes. Raise it with a
+# drop-in (systemctl edit ledmatrix) if a plugin legitimately needs longer;
+# WatchdogSec=0 turns it off.
+WatchdogSec=120
+NotifyAccess=main
+# /run/ledmatrix, for the render loop's heartbeat (display-heartbeat.json),
+# which /api/v3/health and the update health check read. /run is tmpfs, so a
+# write every few seconds never touches the SD card. 0755 and root-owned: the
+# web interface runs as another user and only needs to read it. Removed when
+# the service stops, so a stopped display leaves no stale heartbeat behind.
+RuntimeDirectory=ledmatrix
+RuntimeDirectoryMode=0755
 # Memory ceiling as a share of physical RAM, so one unit file suits a 512 MB
 # Pi Zero 2 W and an 8 GB Pi 5 alike. This is a backstop, not a tuning knob: it
 # turns "the board runs out of memory, stops being able to fork, and takes sshd

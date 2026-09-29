@@ -59,10 +59,15 @@ class FakeHost:
 
     Services run whatever commit was checked out when they were last
     restarted; ``failure`` says how they misbehave on the new commit
-    ("display_down", "web_down", "crash_loop") or on any commit ("always").
+    ("display_down", "web_down", "crash_loop", "frozen": active but the
+    render loop stuck after its first frame) or on any commit ("always").
+
+    ``heartbeat`` is whether the display writes one: never (``None``, code
+    from before the heartbeat), or on every commit (``"always"``).
     """
 
-    def __init__(self, repo, bad_head, failure=None, pip_ok=True, restart_failures=0, count_readable=True):
+    def __init__(self, repo, bad_head, failure=None, pip_ok=True, restart_failures=0, count_readable=True,
+                 heartbeat=None):
         self.repo, self.bad_head, self.failure, self.pip_ok = repo, bad_head, failure, pip_ok
         self.restart_failures = restart_failures  # how many restart commands fail, first to last
         self.count_readable = count_readable
@@ -73,6 +78,8 @@ class FakeHost:
         self.pip = None  # optional (args, host) -> result, or raises, instead of pip_ok
         self.now = 0.0
         self.nrestarts = 0
+        self.heartbeat = heartbeat
+        self.display_started_at = -1000.0  # the pre-update display, long running
 
     def broken(self, kind):
         if self.running_head is None:
@@ -102,28 +109,43 @@ class FakeHost:
                 return done(args, rc=1)  # the old process keeps running
             self.running_head = git(self.repo, 'rev-parse', 'HEAD')
             self.restarts.append((args[4], self.running_head))
+            if args[4] == 'ledmatrix.service':
+                self.display_started_at = self.now
             return done(args)
         raise AssertionError(f'unexpected command: {args}')
 
     def web_responds(self):
         return not self.broken('web_down')
 
+    def read_heartbeat(self):
+        if self.heartbeat is None:
+            return None
+        first_frame = self.display_started_at + 10  # plugins load, then it draws
+        if self.now < first_frame:
+            # Nothing from this process yet. A display whose unit predates
+            # RuntimeDirectory= leaves its predecessor's file behind.
+            return {'mono': self.display_started_at - 1}
+        if self.broken('frozen'):
+            return {'mono': first_frame}  # drew once, then stuck
+        return {'mono': self.now}
+
     def sleep(self, seconds):
         self.now += seconds
 
     def verifier(self):
         return av.Verifier(self.repo, run=self.run, sleep=self.sleep, clock=lambda: self.now,
-                           web_responds=self.web_responds, log=lambda msg: None)
+                           web_responds=self.web_responds, log=lambda msg: None,
+                           read_heartbeat=self.read_heartbeat)
 
 
 def check(tmp_path, failure=None, new_requirements=False, pip_ok=True, restart_failures=0,
-          count_readable=True, **pending):
+          count_readable=True, heartbeat=None, **pending):
     repo, old, new = updated_repo(tmp_path, new_requirements)
     fields = {'status': 'pending', 'old_head': old, 'new_head': new,
               'display_was_active': True, 'dependency_failures': []}
     fields.update(pending)
     av.write_pending(av.pending_path(repo), fields)
-    host = FakeHost(repo, new, failure, pip_ok, restart_failures, count_readable)
+    host = FakeHost(repo, new, failure, pip_ok, restart_failures, count_readable, heartbeat)
     code = host.verifier().verify()
     result = av.read_pending(av.pending_path(repo))
     return code, result, host, git(repo, 'rev-parse', 'HEAD'), old, new
@@ -323,3 +345,63 @@ def test_units_installers_and_updater_agree():
     for sudoers in ('scripts/install/configure_web_sudo.sh', 'first_time_install.sh',
                     'scripts/install/lib_sudoers.sh'):
         assert not re.search(r'NOPASSWD:.*update-verify', (ROOT / sudoers).read_text(encoding='utf-8')), sudoers
+
+
+# -- the display's heartbeat -------------------------------------------------------
+#
+# "Service active" plus one HTTP 200 passed a panel frozen by a render loop
+# stuck in a plugin. Where the display writes a heartbeat, the restarted
+# display has to keep it fresh too.
+
+FROZEN_REASON = ('the display service is running but its panel is not being drawn '
+                 '(no fresh heartbeat)')
+
+
+def test_a_display_that_keeps_drawing_passes(tmp_path):
+    code, result, host, head, old, new = check(tmp_path, heartbeat='always')
+    assert result['status'] == 'success' and head == new
+
+
+def test_a_frozen_panel_is_rolled_back(tmp_path):
+    code, result, host, head, old, new = check(tmp_path, 'frozen', heartbeat='always')
+    assert result['status'] == 'rolled_back' and result['reason'] == FROZEN_REASON
+    assert head == old
+
+
+def test_the_previous_processs_heartbeat_does_not_count(tmp_path):
+    """Under a unit without RuntimeDirectory= the old file outlives the old
+    process; a restarted display that never draws must not pass on it."""
+    repo, old, new = updated_repo(tmp_path)
+    host = FakeHost(repo, new, heartbeat='always')
+    verifier = host.verifier()
+    verifier.expect_heartbeat = True
+    host.display_started_at = host.now = 100.0
+    verifier.display_restarted_at = 100.0
+    host.now = 101.0  # the new process has not drawn yet
+    assert verifier.display_drawing() is False
+    host.now = 115.0
+    assert verifier.display_drawing() is True
+
+
+def test_without_a_heartbeat_the_check_is_what_it_was(tmp_path):
+    """Code from before the heartbeat (or a display that cannot write one)
+    never wrote one, so it cannot be asked for -- a frozen panel then passes,
+    exactly as it did."""
+    code, result, host, head, old, new = check(tmp_path, 'frozen', heartbeat=None)
+    assert result['status'] == 'success'
+
+
+def test_a_stopped_display_is_not_asked_for_a_heartbeat(tmp_path):
+    code, result, host, head, old, new = check(tmp_path, 'frozen', heartbeat='always',
+                                               display_was_active=False)
+    assert result['status'] == 'success'
+
+
+def test_the_heartbeat_location_and_freshness_match_the_display():
+    """A copy, not an import: the verifier must not depend on the code it checks."""
+    from src import display_watchdog
+    assert av.HEARTBEAT_PATH == display_watchdog.HEARTBEAT_PATH
+    # A display frozen right after its first frame must go stale inside the
+    # window it has to stay healthy for.
+    assert av.HEARTBEAT_FRESH_SECONDS + av.POLL_SECONDS < av.STABLE_SECONDS
+    assert av.HEARTBEAT_FRESH_SECONDS > display_watchdog.BEAT_INTERVAL_SECONDS * 2

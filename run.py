@@ -14,6 +14,14 @@ project_dir = os.path.dirname(os.path.abspath(__file__))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
+# Under systemd the watchdog clock is already running, and start-up (plugin
+# loads, initial updates) takes far longer than the render loop's limit. Widen
+# it before anything slow is imported; the render loop narrows it again once
+# its first frame is on the panel. A no-op outside systemd. Standard library
+# only -- see src/display_watchdog.py.
+from src import display_watchdog
+display_watchdog.watchdog.begin_startup()
+
 # Parse command-line arguments BEFORE any imports
 parser = argparse.ArgumentParser(description='LEDMatrix Display Controller')
 parser.add_argument('-e', '--emulator', action='store_true',

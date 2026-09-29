@@ -18,6 +18,7 @@ import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
+from src import display_watchdog
 from src.common import render_gate
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
@@ -540,6 +541,9 @@ class VegasModeCoordinator:
             # the whole budget -- the render loop stalls for the size of the
             # correction. A forward jump inflates p99 and worst-frame instead.
             frame_started = time.monotonic()
+            # An iteration runs for minutes (max_cycle_duration) without
+            # returning to the display controller's loop.
+            display_watchdog.beat()
 
             # Check for STATIC mode plugin that should pause scroll
             static_plugin = self._check_static_plugin_trigger()
@@ -921,6 +925,7 @@ class VegasModeCoordinator:
 
                 # Sleep in small increments to remain responsive
                 time.sleep(0.1)
+                display_watchdog.beat()
 
             logger.info(
                 "Static pause completed for %s after %.1fs",

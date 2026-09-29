@@ -34,6 +34,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
 
+from src import display_watchdog
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
@@ -1034,6 +1035,8 @@ class DisplayController:
             the plugin's update() holds its lock (the panel keeps the last
             frame; that is not a failure).
         """
+        # Every frame of both per-screen render loops comes through here.
+        display_watchdog.watchdog.beat()
         with self._display_lock_or_skip(getattr(plugin, 'plugin_id', None)) as can_display:
             if not can_display:
                 return True
@@ -1123,6 +1126,9 @@ class DisplayController:
 
             sleep_time = min(tick_interval, remaining)
             time.sleep(sleep_time)
+            # A dwell can be a minute long (sixty seconds while scheduled
+            # off); the watchdog must hear from this thread throughout.
+            display_watchdog.watchdog.beat()
             self._tick_plugin_updates()
             self._service_pending_changes()
             if (self.current_display_mode != mode
@@ -2213,6 +2219,11 @@ class DisplayController:
                 "plugin is enabled via the web UI."
             )
 
+        # This thread is the one the systemd watchdog and the heartbeat
+        # vouch for: beats from any other thread are ignored, so a render
+        # thread stuck inside a plugin stops them.
+        display_watchdog.watchdog.bind_render_thread()
+
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
@@ -2221,6 +2232,11 @@ class DisplayController:
             self._publish_current_mode_state()
             
             while True:
+                # Arms the watchdog after the first frame -- or after the
+                # first full pass, when there is nothing to draw -- and pings
+                # it from then on.
+                display_watchdog.watchdog.loop_pass()
+
                 # Apply plugin enable/disable edits saved via the web UI. The
                 # config-watcher thread only sets the flag; loading/unloading and
                 # rebuilding available_modes happens here on the render thread so
@@ -3574,6 +3590,9 @@ class DisplayController:
 
     def cleanup(self):
         """Clean up resources."""
+        # First: a clean stop is not a hang, and a heartbeat left behind
+        # would read as a frozen panel to the web interface.
+        display_watchdog.watchdog.stopping()
         # Stop the async update worker first so no in-flight update() call
         # is still touching display/cache-backed resources while they're
         # torn down below.

@@ -1949,6 +1949,12 @@ Health of the web interface, display service, config file, plugin system and
 display snapshot. `data.status` is `healthy` or `degraded`, with
 `data.services` and `data.checks`.
 
+`data.checks.display_loop` is the display's render-loop heartbeat: `running`
+(with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
+frozen even if the service is active; the status turns `degraded`), or
+`not_reported` when the display writes none (not started yet, the dev server,
+Windows), which does not affect the status.
+
 ### Hardware Status
 
 **GET** `/api/v3/hardware/status`

@@ -57,6 +57,7 @@ import zlib
 import freetype
 
 from src.common import snapshot_policy
+from src import display_watchdog
 from src.common.frame_timing import FrameTimingRecorder
 
 if TYPE_CHECKING:
@@ -928,6 +929,9 @@ class DisplayManager:
                 # the fallback branch, so captured content never reaches the
                 # web preview either.
                 return
+            # The render loop's watchdog arms on the first frame to reach
+            # the panel (or the emulator/fallback path standing in for it).
+            display_watchdog.note_frame()
             with self._update_lock:
                 if self.matrix is None:
                     # Fallback mode - no actual hardware to update

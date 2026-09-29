@@ -19,6 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
 
+from src import display_watchdog
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.plugin_system.base_plugin import VegasDisplayMode
@@ -570,6 +571,9 @@ class StreamManager:
         Returns:
             ContentSegment or None if fetch failed
         """
+        # Composing a cycle fetches plugin after plugin on the render thread
+        # (on the prefetch thread this is ignored), so check in between.
+        display_watchdog.beat()
         try:
             if not hasattr(self.plugin_manager, 'plugins'):
                 logger.warning("[%s] plugin_manager has no plugins attribute", plugin_id)

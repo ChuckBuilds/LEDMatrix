@@ -19,6 +19,45 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Frozen-panel detection
+
+A render loop stuck inside a plugin's `display()` left `ledmatrix.service`
+"active" with the panel frozen, and nothing noticed: `/api/v3/health` judged
+the display by the preview PNG's age, and the automatic update's health check
+passed "service active plus one HTTP 200".
+
+- **systemd watchdog.** `ledmatrix.service` now has `WatchdogSec=120` and
+  `NotifyAccess=main` (still `Type=simple`). The render thread itself pings
+  systemd over `$NOTIFY_SOCKET` (`src/display_watchdog.py`, standard library
+  only), so a stuck render thread stops the pings even while the update
+  worker and Vegas's tick thread carry on. systemd then kills the display with
+  SIGABRT -- faulthandler writes every thread's stack to the journal, which
+  names the plugin -- and restarts it. The process widens the limit to 15
+  minutes while it starts and while it loads a plugin enabled from the web UI
+  (either can run pip), and sends `READY=1` and narrows it back after its
+  first frame.
+- **Heartbeat.** The render loop writes `/run/ledmatrix/display-heartbeat.json`
+  every 5 seconds (`RuntimeDirectory=ledmatrix`; tmpfs, so no SD-card
+  writes). `/api/v3/health` reports it as `checks.display_loop`: `running`,
+  `stalled` (older than 60s; the overall status turns `degraded`) or
+  `not_reported` when there is no heartbeat (dev server, emulator, Windows),
+  which leaves the verdict to the older checks as before.
+- **Update health check.** When the display wrote a heartbeat before an
+  automatic update, the restarted display must keep one fresh (30s) for the
+  update to pass; a frozen panel is rolled back. Code that never wrote one is
+  checked as before. The check runs as the copy taken before the update, so
+  this takes effect from the update after the one that installs it.
+- **Crash loops back off.** `RestartSteps=4` and `RestartMaxDelaySec=2min`
+  stretch the delay between automatic restarts from 10s to two minutes, instead
+  of retrying every 10s forever. systemd before 254 (Bookworm) ignores the two
+  lines with a warning. A start limit was ruled out: once tripped it leaves the
+  panel dark and refuses the web UI's Start button and the update rollback.
+- **Existing installs** keep their old unit until `sudo
+  ./scripts/install/install_service.sh` is re-run (an update never rewrites
+  units; the startup validator warns about the drift). Until then there is no
+  watchdog, but the display creates `/run/ledmatrix` itself, so the heartbeat,
+  the health check and the update check work straight away.
+
 ### Fixes
 
 - On-demand no longer restarts a running display. `POST
