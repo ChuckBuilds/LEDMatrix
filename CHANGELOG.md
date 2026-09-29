@@ -22,9 +22,8 @@ accepts both, but the store flags the old spelling as deprecated
 ### Plugin store
 
 - The store reads three optional registry fields that ledmatrix-plugins'
-  `update_registry.py` now publishes (ChuckBuilds/ledmatrix-plugins
-  `claude/registry-pin-fields`). An older `plugins.json` without them behaves
-  as before.
+  `update_registry.py` now publishes (ChuckBuilds/ledmatrix-plugins#579). An
+  older `plugins.json` without them behaves as before.
   - `ledmatrix_min_version`: an install or update this core cannot run is
     refused before anything is downloaded, pulled or moved aside, and the web
     UI says why ("requires LEDMatrix X or newer…", HTTP 409) instead of "check
