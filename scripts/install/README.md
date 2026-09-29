@@ -34,6 +34,9 @@ Libraries (sourced, not run):
   script that renders a unit from `systemd/*.service`
 - **`lib_lowmem.sh`** - Build-job sizing and temporary swap for the C++
   build on low-memory Pis (`first_time_install.sh` Step 6)
+- **`lib_os.sh`** - Which releases (Bookworm, Trixie) and Python versions
+  (3.11-3.13) the installer accepts, and which service runs the network;
+  shared by `first_time_install.sh` and `scripts/check_system_compatibility.sh`
 
 ## Usage
 

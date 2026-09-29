@@ -15,6 +15,12 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 - Power supply (5V, 4A minimum recommended)
 - MicroSD card (16GB minimum)
 
+**Software:**
+- Raspberry Pi OS Lite, Trixie (Debian 13) or Bookworm (Debian 12). Trixie
+  is the current release; Bookworm is listed as Legacy in Raspberry Pi
+  Imager. No other system is supported, and the installer says so up front.
+- The OS's own Python: 3.13 on Trixie, 3.11 on Bookworm
+
 **Network:**
 - WiFi network (or Ethernet cable)
 - Computer with web browser on same network
@@ -28,7 +34,8 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 There is no prebuilt SD card image — you install LEDMatrix onto stock
 Raspberry Pi OS Lite yourself:
 
-1. Flash Raspberry Pi OS Lite to the MicroSD card (Raspberry Pi Imager)
+1. Flash Raspberry Pi OS Lite (Trixie, or Bookworm) to the MicroSD card
+   (Raspberry Pi Imager)
 2. Connect the LED matrix to your Raspberry Pi, insert the card, and
    power on
 3. SSH into the Pi and run the one-shot installer:

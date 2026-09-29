@@ -4,13 +4,14 @@ Alternative dependency installer that tries apt packages first,
 then falls back to pip with --break-system-packages
 """
 
+import re
 import subprocess
 import sys
 import tempfile
 import warnings
 from collections import deque
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 # How many trailing lines of a failed command's output to keep for the
 # end-of-run failure summary. Keeps the root cause near the end of the log,
@@ -81,6 +82,8 @@ def install_via_pip(package_name: str) -> Tuple[bool, str]:
 
     Returns (success, output).
     """
+    # pip knows PIL as Pillow; the others are asked for by their own name.
+    package_name = _dist_name(package_name)
     print(f"Installing {package_name} via pip...")
     success, output = _run([
         sys.executable, '-m', 'pip', 'install',
@@ -99,26 +102,66 @@ IMPORT_NAME_MAP = {
     'freetype-py': 'freetype',
 }
 
-# Minimum versions that must be met for an already-installed package to count
-# as satisfied. Debian Bookworm's python3-freetype is 2.3.0, below the
-# freetype-py>=2.5.1 pin in requirements.txt, so an import-only check would
-# wrongly skip the pip upgrade.
-MIN_VERSIONS = {
-    'freetype-py': (2, 5, 1),
+# The packages above are keyed by what main() lists; these are the ones whose
+# pip distribution name differs from that key.
+DIST_NAME_MAP = {
+    'PIL': 'Pillow',
 }
+
+REQUIREMENTS_FILE = Path(__file__).resolve().parent.parent / 'web_interface' / 'requirements.txt'
+
+
+def _version_tuple(text: str) -> tuple:
+    parts = []
+    for part in text.split('.'):
+        digits = ''.join(ch for ch in part if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _requirement_floors(path: Path = REQUIREMENTS_FILE) -> Dict[str, tuple]:
+    """``>=`` floors from a requirements file, keyed by lower-cased name.
+
+    The apt copies of these packages are older than the pins on both
+    supported releases -- Bookworm ships Flask and Werkzeug 2.2.2, Pillow 9.4,
+    requests 2.28, psutil 5.9, pytz 2022.7 and freetype-py 2.3; Trixie ships
+    Flask 3.1.1, Werkzeug 3.1.3, Pillow 11.1 and requests 2.32 --
+    so a package that merely imports is not enough. Read from the file rather
+    than copied here so the two cannot drift.
+    """
+    floors: Dict[str, tuple] = {}
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except OSError:
+        return floors
+    for line in lines:
+        match = re.match(r'\s*([A-Za-z0-9][A-Za-z0-9._-]*)[^#]*?>=\s*([0-9][0-9.]*)', line)
+        if match:
+            floors[match.group(1).lower()] = _version_tuple(match.group(2))
+    return floors
+
+
+def _dist_name(package_name: str) -> str:
+    return DIST_NAME_MAP.get(package_name, package_name)
+
+
+def _minimum_version(package_name: str) -> tuple:
+    """The required floor for ``package_name``, or () when there is none."""
+    return MIN_VERSIONS.get(_dist_name(package_name).lower(), ())
+
+
+# Minimum versions that must be met for an already-installed package to count
+# as satisfied.
+MIN_VERSIONS = _requirement_floors()
 
 
 def _installed_version_tuple(dist_name: str) -> tuple:
     """Return the installed distribution version as an int tuple, or () if unknown."""
     try:
         from importlib.metadata import version
-        parts = []
-        for part in version(dist_name).split('.'):
-            digits = ''.join(ch for ch in part if ch.isdigit())
-            if not digits:
-                break
-            parts.append(int(digits))
-        return tuple(parts)
+        return _version_tuple(version(dist_name))
     except Exception:
         return ()
 
@@ -134,9 +177,9 @@ def check_package_installed(package_name: str) -> bool:
             __import__(import_name)
         except ImportError:
             return False
-    minimum = MIN_VERSIONS.get(package_name)
+    minimum = _minimum_version(package_name)
     if minimum:
-        installed = _installed_version_tuple(package_name)
+        installed = _installed_version_tuple(_dist_name(package_name))
         if not installed or installed < minimum:
             print(f"{package_name} is installed but below the required "
                   f"{'.'.join(map(str, minimum))}; will upgrade via pip")
@@ -188,10 +231,11 @@ def main():
             continue
 
         # Try apt first, then pip. An apt install only counts if it also
-        # satisfies any minimum version (Debian's python3-freetype can be
-        # older than the freetype-py pin), otherwise fall through to pip.
+        # satisfies the requirements floor (the apt copies of most of these
+        # are older than the pins on both Bookworm and Trixie), otherwise
+        # fall through to pip.
         ok, apt_output = install_via_apt(package)
-        if ok and package in MIN_VERSIONS and not check_package_installed(package):
+        if ok and _minimum_version(package) and not check_package_installed(package):
             ok = False
             apt_output = f"apt version of {package} is below the required minimum"
         if not ok:

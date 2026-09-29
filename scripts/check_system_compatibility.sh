@@ -53,26 +53,35 @@ else
 fi
 echo ""
 
-# Check OS version
+# Check OS version. The supported releases come from the same library the
+# installer uses, so the two cannot disagree.
 echo "2. Checking Operating System Version..."
 echo "---------------------------------------"
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    echo "OS: $PRETTY_NAME"
-    echo "Version ID: ${VERSION_ID:-unknown}"
-    
-    # first_time_install.sh refuses anything but Raspberry Pi OS / Debian 13
-    # (Trixie), so anything else is an error here too, not a warning.
-    if [[ "$ID" == "raspbian" ]] || [[ "$ID" == "debian" ]]; then
-        if [ "${VERSION_ID:-0}" = "13" ]; then
-            print_success "Detected Debian 13 Trixie - supported"
-        elif [ "${VERSION_ID:-0}" = "12" ]; then
-            print_error "Debian 12 Bookworm is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
-        else
-            print_error "Debian/Raspbian ${VERSION_ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
-        fi
+OS_LIB="$(cd "$(dirname "$0")" && pwd)/install/lib_os.sh"
+OS_LIB_LOADED=0
+OS_RELEASE=""
+if [ -f "$OS_LIB" ]; then
+    # shellcheck source=scripts/install/lib_os.sh
+    . "$OS_LIB"
+    OS_LIB_LOADED=1
+fi
+
+if [ "$OS_LIB_LOADED" = "0" ]; then
+    print_error "$OS_LIB is missing - download LEDMatrix again"
+elif [ -r "$LM_OS_RELEASE_FILE" ]; then
+    OS_ID=$(lm_os_field ID)
+    OS_VERSION_ID=$(lm_os_field VERSION_ID)
+    echo "OS: $(lm_os_field PRETTY_NAME)"
+    echo "Version ID: ${OS_VERSION_ID:-unknown}"
+
+    # first_time_install.sh refuses anything else, so this is an error here
+    # too, not a warning.
+    if OS_RELEASE=$(lm_os_release); then
+        print_success "Detected $(lm_release_label "$OS_RELEASE") - supported"
+    elif [[ "$OS_ID" == "raspbian" ]] || [[ "$OS_ID" == "debian" ]]; then
+        print_error "Debian/Raspbian ${OS_VERSION_ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite, Trixie (Debian 13) or Bookworm (Debian 12)"
     else
-        print_error "${ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite (Trixie), Debian 13"
+        print_error "${OS_ID:-unknown} is not supported - the installer requires Raspberry Pi OS Lite, Trixie (Debian 13) or Bookworm (Debian 12)"
     fi
 else
     print_error "Could not detect OS version"
@@ -92,7 +101,7 @@ if [ "$KERNEL_MAJOR" -ge "6" ]; then
     print_success "Kernel version is compatible (6.x or newer)"
     
     if [ "$KERNEL_MAJOR" -eq "6" ] && [ "$KERNEL_MINOR" -ge "12" ]; then
-        print_success "Running latest Trixie kernel (6.12 LTS)"
+        print_success "Running a 6.12 LTS or newer kernel"
     fi
 elif [ "$KERNEL_MAJOR" -eq "5" ] && [ "$KERNEL_MINOR" -ge "10" ]; then
     print_success "Kernel version is compatible (5.10+)"
@@ -104,25 +113,34 @@ echo ""
 # Check Python version
 echo "4. Checking Python Version..."
 echo "-----------------------------"
-if command -v python3 >/dev/null 2>&1; then
-    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')
-    PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
-    PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
-    
+if [ "$OS_LIB_LOADED" = "1" ] && command -v python3 >/dev/null 2>&1; then
+    PYTHON_VERSION=$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')
+    PYTHON_MINOR_VERSION=$(lm_python_version) || PYTHON_MINOR_VERSION=""
+    PYTHON_RANGE="3.${LM_PYTHON_MIN_MINOR}-3.${LM_PYTHON_MAX_MINOR}"
+
     echo "Python: $PYTHON_VERSION"
-    
-    if [ "$PYTHON_MAJOR" -eq "3" ]; then
-        if [ "$PYTHON_MINOR" -ge "10" ] && [ "$PYTHON_MINOR" -le "13" ]; then
-            print_success "Python version is supported (3.10-3.13)"
-        elif [ "$PYTHON_MINOR" -ge "14" ]; then
-            print_warning "Python 3.${PYTHON_MINOR} is very new - some packages may not be compatible yet"
-        else
-            # Pillow 12 and the pinned test tools need 3.10+, so this won't install.
-            print_error "Python 3.${PYTHON_MINOR} is too old - Python 3.10+ is required"
-        fi
-    else
-        print_error "Python 2.x detected - Python 3.10+ is required"
+
+    case "$(lm_python_check "$PYTHON_MINOR_VERSION")" in
+        ok)
+            print_success "Python version is supported ($PYTHON_RANGE)"
+            ;;
+        too-old)
+            # The rgbmatrix bindings declare requires-python >=3.11, so the
+            # display cannot be built on anything older.
+            print_error "Python $PYTHON_MINOR_VERSION is too old - Python 3.${LM_PYTHON_MIN_MINOR}+ is required"
+            ;;
+        too-new)
+            print_warning "Python $PYTHON_MINOR_VERSION is newer than LEDMatrix has been tested with ($PYTHON_RANGE)"
+            ;;
+        *)
+            print_warning "Could not read the Python version"
+            ;;
+    esac
+    if [ -n "$OS_RELEASE" ] && [ "$PYTHON_MINOR_VERSION" != "$(lm_release_python "$OS_RELEASE")" ]; then
+        print_warning "$(lm_release_label "$OS_RELEASE") ships Python $(lm_release_python "$OS_RELEASE"), but python3 runs $PYTHON_MINOR_VERSION"
     fi
+elif command -v python3 >/dev/null 2>&1; then
+    print_warning "Cannot check the Python version without $OS_LIB"
 else
     print_error "Python 3 not found - installation required"
 fi
@@ -267,6 +285,22 @@ if command -v ping >/dev/null 2>&1; then
     fi
 else
     print_warning "Ping command not available - cannot verify network"
+fi
+
+# WiFi setup from the web page and the LEDMatrix-Setup hotspot drive
+# NetworkManager, the default on both Bookworm and Trixie.
+if [ "$OS_LIB_LOADED" = "1" ]; then
+    case "$(lm_network_stack)" in
+        networkmanager)
+            print_success "NetworkManager manages the network (needed for WiFi setup)"
+            ;;
+        dhcpcd)
+            print_warning "dhcpcd manages the network - WiFi setup from the web page and the setup hotspot need NetworkManager (sudo raspi-config -> Advanced Options -> Network Config)"
+            ;;
+        *)
+            print_warning "Could not tell which service manages the network - WiFi setup from the web page needs NetworkManager"
+            ;;
+    esac
 fi
 echo ""
 

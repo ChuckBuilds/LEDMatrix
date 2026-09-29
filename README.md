@@ -151,6 +151,11 @@ The system supports live, recent, and upcoming game information for multiple spo
   - **1GB models (Pi 3B / 3B+), the 512MB Pi Zero 2 W and other low-memory boards**: supported, but the `rpi-rgb-led-matrix` C++ build needs more memory than the Pi has. The installer detects this automatically, compiles with fewer parallel jobs, and adds a temporary swapfile for the build which it removes afterwards. Expect that step to take 15-25 minutes instead of 2-5, and leave at least **3GB free** on the SD card. If you manage swap yourself, opt out with `--skip-swap`. To pin the compiler down further, use `--build-jobs 1`. Once running, keep an eye on memory: see [docs/LOW_MEMORY_BOARDS.md](docs/LOW_MEMORY_BOARDS.md).
 
 
+### Operating system
+- **Raspberry Pi OS Lite, Trixie (Debian 13) or Bookworm (Debian 12)**, 64-bit recommended. Trixie is the current release and the one to pick for a new SD card; an existing Bookworm install works as it is, no upgrade needed. The installer checks this first and stops with directions on anything else (Bullseye and older, the desktop edition, other distributions).
+- **Python**: whatever the OS ships, 3.13 on Trixie and 3.11 on Bookworm. Don't install a different Python; the installer and the services use the system `python3`.
+- **Networking**: NetworkManager, the default on both. Choosing a WiFi network from the web page and the `LEDMatrix-Setup` hotspot need it; if you switched to dhcpcd in `raspi-config`, switch back (Advanced Options → Network Config → NetworkManager).
+
 ### RGB Matrix Bonnet / HAT
 - [Adafruit RGB Matrix Bonnet/HAT](https://www.adafruit.com/product/3211) – supports one “chain” of horizontally connected displays  
 - [Adafruit Triple LED Matrix Bonnet](https://www.adafruit.com/product/6358) – supports up to 3 vertical “chains” of horizontally connected displays *(use `regular` as hardware mapping)*  
@@ -249,7 +254,7 @@ These are not required and you can probably rig up something basic with stuff yo
 
 <img width="512" height="361" alt="Step 2 Other " src="https://github.com/user-attachments/assets/166a22e8-8067-48df-9f80-50c91f573356" />
 
-5. Then choose Raspbian OS (64-bit) Lite (Trixie)
+5. Then choose Raspbian OS (64-bit) Lite (Trixie). Bookworm Lite (listed as Legacy) also works; see [Operating system](#operating-system) below
 
 <img width="512" height="361" alt="Step 4 Trixie Lite 64" src="https://github.com/user-attachments/assets/3b8590ce-b810-4dfe-9253-26e0d4f8ed1e" />
 
