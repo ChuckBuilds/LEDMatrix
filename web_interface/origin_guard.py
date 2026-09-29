@@ -29,14 +29,18 @@ it follows whatever name or address the user typed: ``ledpi.local:5000``,
 portal's port 80 -> 5000 redirect keeps the Host the browser sent, and the
 setup page's fetches go back to that same host).
 
-The scheme is deliberately not compared, only host and port (with each side's
-default port filled in from its own scheme). A TLS-terminating reverse proxy
-that passes ``Host`` through makes the browser say ``https://pi.example`` while
-Flask sees ``http``; an attacker cannot use that gap, because to match they
-would need to serve a page from this same host and port. The app does not use
-``ProxyFix`` and so does not trust ``X-Forwarded-Host``: a proxy that rewrites
-``Host`` to the upstream address (nginx's default ``proxy_pass`` does) must
-be configured to pass the original one (``proxy_set_header Host $host;``).
+The scheme is deliberately not compared, only host and port. The claimed
+value's default port comes from its own scheme. A ``Host`` without a port
+means "the default port of whatever scheme the browser used", and that scheme
+is not always the one Flask sees: a TLS-terminating reverse proxy makes the
+browser say ``https://pi.example`` (443) while Flask sees ``http`` (80). So a
+portless ``Host`` accepts either default. An attacker cannot use that gap,
+because to match they would need to serve a page from this same host on its
+standard port. The app does not use ``ProxyFix`` and so does not trust
+``X-Forwarded-Host`` or ``X-Forwarded-Proto``: a proxy that rewrites ``Host``
+to the upstream address (nginx's default ``proxy_pass`` does) must be
+configured to pass the original one, port included
+(``proxy_set_header Host $http_host;`` -- nginx's ``$host`` drops the port).
 
 Not covered: DNS rebinding (an attacker's hostname re-pointed at the Pi is
 "same origin" to the browser), and anyone who can reach the port directly.
@@ -55,14 +59,14 @@ STATE_CHANGING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
 
 
-def _host_port(scheme: str, netloc: str):
-    """``(hostname, port)`` for a URL's authority, or None if it has none.
+def _authority(netloc: str):
+    """``(hostname, port)`` for an authority; port is None when it has none.
 
-    Lower-cases the host and fills in the scheme's default port, so
-    ``http://Pi.local`` and a ``Host: pi.local:80`` header compare equal.
+    Lower-cases the host and drops a trailing dot, so ``Pi.local.`` and
+    ``pi.local`` compare equal. None if the authority is unreadable.
     """
     try:
-        parts = urlsplit(f'{scheme}://{netloc}')
+        parts = urlsplit(f'//{netloc}')
         hostname = parts.hostname
         port = parts.port
     except ValueError:
@@ -70,25 +74,63 @@ def _host_port(scheme: str, netloc: str):
         return None
     if not hostname:
         return None
-    if port is None:
-        port = _DEFAULT_PORTS.get(scheme.lower())
     return hostname.lower().rstrip('.'), port
 
 
 def _url_host_port(url: str):
-    """``(hostname, port)`` for an Origin or Referer value, or None."""
+    """``(hostname, port, default_port)`` for an Origin or Referer, or None.
+
+    ``port`` is the explicit port or, failing that, the URL scheme's default,
+    which is also returned as ``default_port``.
+    """
     try:
         parts = urlsplit(url.strip())
     except ValueError:
         return None
-    if parts.scheme.lower() not in _DEFAULT_PORTS or not parts.netloc:
+    scheme = parts.scheme.lower()
+    if scheme not in _DEFAULT_PORTS or not parts.netloc:
         return None
-    return _host_port(parts.scheme.lower(), parts.netloc.rsplit('@', 1)[-1])
+    authority = _authority(parts.netloc.rsplit('@', 1)[-1])
+    if authority is None:
+        return None
+    hostname, port = authority
+    default_port = _DEFAULT_PORTS[scheme]
+    return hostname, default_port if port is None else port, default_port
 
 
-def _request_host_port():
-    """``(hostname, port)`` this request was addressed to, per its Host."""
-    return _host_port(request.scheme, request.host)
+def _names_this_server(claimed) -> bool:
+    """Whether a claimed ``(hostname, port, default_port)`` is this request's
+    own ``Host``."""
+    own = _authority(request.host)
+    if own is None:
+        return False
+    hostname, port = own
+    claimed_host, claimed_port, claimed_default = claimed
+    if claimed_host != hostname:
+        return False
+    if port is not None:
+        return claimed_port == port
+    # A portless Host is the default port of the scheme the browser used.
+    # Behind a TLS-terminating proxy that is https/443 while Flask sees
+    # http/80, so accept the default of either scheme.
+    return claimed_port in (claimed_default,
+                            _DEFAULT_PORTS.get(request.scheme))
+
+
+def _loggable(value: str) -> str:
+    """Just the ``scheme://host[:port]`` of an Origin/Referer, for the log.
+
+    A Referer's path and query can carry tokens or other private data, and
+    only the site matters when reading a refusal.
+    """
+    try:
+        parts = urlsplit(value.strip())
+        netloc = parts.netloc.rsplit('@', 1)[-1]
+    except ValueError:
+        return '<unreadable>'
+    if not parts.scheme or not netloc:
+        return '<unreadable>'
+    return f'{parts.scheme}://{netloc}'
 
 
 def check_request_origin():
@@ -115,7 +157,7 @@ def check_request_origin():
     claimed = _url_host_port(value)
     if claimed is None:
         return f'{header} header is not a valid http(s) URL'
-    if claimed != _request_host_port():
+    if not _names_this_server(claimed):
         # The claimed value is attacker-chosen: the hook logs it, but the
         # reason (echoed in the 403 body) never repeats it.
         return header + ' names a different host than this interface'
@@ -130,10 +172,14 @@ def init_app(app: Flask) -> None:
         reason = check_request_origin()
         if reason is None:
             return None
-        logger.warning("Refused cross-site %s %s: %s (Origin=%r, Referer=%r)",
+        # Only the site each header names, never a Referer's path or query
+        # (which can carry tokens); %r keeps CR/LF from forging log lines.
+        origin = request.headers.get('Origin')
+        referer = request.headers.get('Referer')
+        logger.warning("Refused cross-site %s %r: %s (Origin=%r, Referer=%r)",
                        request.method, request.path, reason,
-                       request.headers.get('Origin'),
-                       request.headers.get('Referer'))
+                       None if origin is None else _loggable(origin),
+                       None if referer is None else _loggable(referer))
         return jsonify({
             'status': 'error',
             'error_code': 'CROSS_SITE_REQUEST',

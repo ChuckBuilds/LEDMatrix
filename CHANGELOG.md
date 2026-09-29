@@ -38,8 +38,10 @@ accepts both, but the store flags the old spelling as deprecated
   dashboard or userscript on another host) can no longer call the mutating
   API; call it server-side instead. Anyone posting a form body to
   `system/action` must switch to JSON. Behind a reverse proxy, forward the
-  original `Host` (`proxy_set_header Host $host;`); `X-Forwarded-Host` is
-  not trusted.
+  original `Host`, port included (`proxy_set_header Host $http_host;`;
+  nginx's `$host` drops the port); `X-Forwarded-Host` is not trusted. A
+  TLS-terminating proxy needs nothing more: a portless `Host` matches an
+  `https://` page.
 
 ### Optional web login
 

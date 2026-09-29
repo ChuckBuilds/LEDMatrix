@@ -463,7 +463,8 @@ Scripts running on the Pi itself need no token.
   (403 `CROSS_SITE_REQUEST`), so use the interface from its own address.
 - Scripts, curl, Home Assistant and the MQTT bridge send no such header and
   keep working. Behind a reverse proxy, forward the original `Host` header
-  (nginx: `proxy_set_header Host $host;`).
+  with its port (nginx: `proxy_set_header Host $http_host;` -- `$host`
+  drops the port).
 
 **Best Practices:**
 1. Run on a private network (not exposed to internet)

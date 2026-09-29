@@ -26,8 +26,8 @@ driving the Pi through a LAN user's browser. Scripts, curl, Home Assistant and
 the MQTT bridge send neither header and are unaffected. A browser page on
 another origin (a dashboard you host elsewhere, say) can no longer call the
 API; call it server-side instead. Behind a reverse proxy, pass the original
-`Host` through (nginx: `proxy_set_header Host $host;`) -- `X-Forwarded-Host`
-is not read.
+`Host` through, port included (nginx: `proxy_set_header Host $http_host;`;
+`$host` drops the port) -- `X-Forwarded-Host` is not read.
 
 **Authentication (optional, off by default).** With no web password set,
 nothing below needs credentials. Once one is set (General > Security, or
