@@ -43,6 +43,23 @@ accepts both, but the store flags the old spelling as deprecated
   `/display/on-demand/status` kept reporting `status: error` for up to two
   minutes even after a stop.
 
+### Deprecations
+
+- The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
+  not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
+  "will be removed in LEDMatrix 3.7.0". The warning, the docs and
+  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+- New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
+  scans core, the plugin monorepo and the registry's third-party plugins for
+  calls and overrides, telling real uses from unrelated methods of the same
+  name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
+  `CacheManager.get_memory_cache_stats` is still called by core's own
+  `log_memory_cache_stats()`, so it stays until that call migrates.
+- `test/test_deprecation.py` fails while any `@deprecated` marker names a
+  release at or below `src.__version__`, so a release can no longer ship
+  warning about a removal it has already passed.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core
@@ -190,7 +207,8 @@ New names in existing modules (a plugin using these must floor on 3.5.0):
 - `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`, and
   `FontManager.forget_manager_fonts()` is new (see Fonts).
 
-Deprecated, removed in 3.7.0 (each logs a warning on first use; see
+Deprecated for removal in 3.7.0, later moved to 3.8.0 (each logs a warning
+on first use; see
 `docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
 core, the monorepo or the registry's third-party plugins calls them:
 

@@ -187,7 +187,7 @@ class FontManager:
         if removed:
             self.manager_fonts_version += 1
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_manager_fonts(self, manager_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get registered fonts for a specific manager or all managers.
@@ -202,7 +202,7 @@ class FontManager:
             return self.manager_fonts.get(manager_id, {})
         return self.manager_fonts.copy()
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_detected_fonts(self) -> Dict[str, Dict[str, Any]]:
         """Get all detected font usage across managers."""
         return self.detected_fonts.copy()
@@ -433,7 +433,7 @@ class FontManager:
         search_dirs = [Path(resolve_asset_path(configured)), Path(resolve_asset_path("plugins"))]
         return resolve_plugin_dir(plugin_id, search_dirs, prefix=True)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def unregister_plugin_fonts(self, plugin_id: str) -> bool:
         """Unregister all fonts for a plugin."""
         try:
@@ -471,7 +471,7 @@ class FontManager:
             # Font objects someone may hold were dropped; see cache_generation.
             self.cache_generation += 1
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_plugin_fonts(self, plugin_id: str) -> List[str]:
         """Get list of font families registered by a plugin."""
         if plugin_id in self.plugin_font_catalogs:
@@ -670,7 +670,7 @@ class FontManager:
 
     # ==================== Override Management ====================
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def set_override(self, element_key: str, family: str = None, size_px: int = None):
         """Set font override for a specific element."""
         if element_key not in self.font_overrides:
@@ -690,7 +690,7 @@ class FontManager:
         self.clear_cache()
         logger.info(f"Font override set for {element_key}: {self.font_overrides.get(element_key, {})}")
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def remove_override(self, element_key: str):
         """Remove font override for a specific element."""
         if element_key in self.font_overrides:
@@ -699,7 +699,7 @@ class FontManager:
             self.clear_cache()
             logger.info(f"Font override removed for {element_key}")
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_overrides(self) -> Dict[str, Dict[str, str]]:
         """Get current font overrides."""
         return self.font_overrides.copy()
@@ -787,17 +787,17 @@ class FontManager:
         self.cache_generation += 1
         logger.info("Font cache cleared")
 
-    @deprecated("3.7.0", "read font_catalog")
+    @deprecated("3.8.0", "read font_catalog")
     def get_available_fonts(self) -> Dict[str, str]:
         """Get dictionary of available font families and their paths."""
         return self.font_catalog.copy()
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_size_tokens(self) -> Dict[str, int]:
         """Get available size tokens."""
         return self.size_tokens.copy()
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics."""
         uptime = time.time() - self.performance_stats["start_time"]
@@ -819,12 +819,12 @@ class FontManager:
             "detected_fonts": len(self.detected_fonts)
         }
 
-    @deprecated("3.7.0", "read font_catalog")
+    @deprecated("3.8.0", "read font_catalog")
     def get_font_catalog(self) -> Dict[str, str]:
         """Get the current font catalog."""
         return self.font_catalog.copy()
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def add_font(self, font_file_path: str, family_name: str) -> bool:
         """Add ``font_file_path`` to the catalog as ``family_name``. The file
         stays where it is; only assets/fonts is created if it is missing."""
@@ -852,7 +852,7 @@ class FontManager:
             logger.error(f"Error adding font {family_name}: {e}")
             return False
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def remove_font(self, family_name: str) -> bool:
         """Remove a font from the catalog."""
         try:
@@ -880,7 +880,7 @@ class FontManager:
             logger.error(f"Error removing font {family_name}: {e}")
             return False
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def validate_font(self, font_path: str) -> Dict[str, Any]:
         """Validate a font file."""
         try:

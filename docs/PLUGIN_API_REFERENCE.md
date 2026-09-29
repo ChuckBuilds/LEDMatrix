@@ -479,7 +479,7 @@ This is the canonical way to render arbitrary images.
 
 ### Weather Icons (deprecated)
 
-> Deprecated, removed in 3.7.0 — draw your own icons (the weather plugin
+> Deprecated, removed in 3.8.0 — draw your own icons (the weather plugin
 > ships `WeatherIcons`). See [Deprecated APIs](#deprecated-apis).
 
 - `draw_weather_icon(condition, x, y, size=16)` — icon for a condition
@@ -581,7 +581,7 @@ Process any deferred updates if not currently scrolling. Called automatically by
 
 #### `get_scrolling_stats() -> dict`
 
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0. See [Deprecated APIs](#deprecated-apis).
 
 Get current scrolling statistics for debugging.
 
@@ -724,7 +724,7 @@ data = self.cache_manager.get_with_auto_strategy("nhl_live_scores")
 
 #### `get_background_cached_data(key: str, sport_key: Optional[str] = None) -> Optional[Dict[str, Any]]`
 
-> Deprecated, removed in 3.7.0 — use `get()`. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0 — use `get()`. See [Deprecated APIs](#deprecated-apis).
 
 Get background service cached data with sport-specific intervals.
 
@@ -763,7 +763,7 @@ max_age = strategy['max_age']  # Get configured max age
 
 #### `get_sport_live_interval(sport_key: str) -> int`
 
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0. See [Deprecated APIs](#deprecated-apis).
 
 Get the live_update_interval for a specific sport from config.
 
@@ -789,7 +789,7 @@ Extract data type from cache key to determine appropriate cache strategy.
 
 #### `get_sport_key_from_cache_key(key: str) -> Optional[str]`
 
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0. See [Deprecated APIs](#deprecated-apis).
 
 Extract sport key from cache key for sport-specific strategies.
 
@@ -839,7 +839,7 @@ for file_info in files:
 
 #### `get_cache_metrics() -> Dict[str, Any]`
 
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0. See [Deprecated APIs](#deprecated-apis).
 
 Get cache performance metrics.
 
@@ -853,7 +853,7 @@ self.logger.info(f"Cache hit rate: {metrics['cache_hit_rate']:.2%}")
 
 #### `get_memory_cache_stats() -> Dict[str, Any]`
 
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0. See [Deprecated APIs](#deprecated-apis).
 
 Get memory cache statistics.
 
@@ -899,7 +899,7 @@ for plugin_id, plugin in all_plugins.items():
 
 #### `get_enabled_plugins() -> List[str]`
 
-> Deprecated, removed in 3.7.0 — check `enabled` on the instances in `plugin_manager.plugins`. See [Deprecated APIs](#deprecated-apis).
+> Deprecated, removed in 3.8.0 — check `enabled` on the instances in `plugin_manager.plugins`. See [Deprecated APIs](#deprecated-apis).
 
 Get list of enabled plugin IDs.
 
@@ -1070,10 +1070,13 @@ if weather is not None and weather.enabled:
 
 ## Deprecated APIs
 
-These still work in 3.6 but log a warning the first time they are called
-(`journalctl -u ledmatrix` shows which one), and are **removed in 3.7.0**.
-Nothing in core, the official plugins or the third-party plugins in the
-registry calls them.
+These still work but log a warning the first time they are called
+(`journalctl -u ledmatrix` shows which one), and are **removed in 3.8.0**
+(first announced for 3.7.0, which shipped with them still in place).
+[DEPRECATIONS_3.8.md](DEPRECATIONS_3.8.md) is the usage scan behind that
+decision: which of these the official plugins, the registry's third-party
+plugins and core still call or override. Only methods that scan reports unused
+are removed in 3.8.0; the rest stay until their callers migrate.
 
 | Object | Methods | Instead |
 |---|---|---|
