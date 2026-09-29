@@ -1139,19 +1139,14 @@ class PluginManager:
                      err: Exception) -> None:
         """Record a hang in plugin health: a failure to the circuit breaker.
 
-        Goes through PluginHealthTracker.record_hang when the tracker has it
-        (it also counts the hang separately), else plain record_failure. Never
+        PluginHealthTracker.record_hang also counts the hang separately. Never
         raises: this runs on the update worker and the render thread.
         """
         tracker = self.health_tracker
         if tracker is None:
             return
         try:
-            record_hang = getattr(tracker, 'record_hang', None)
-            if callable(record_hang):
-                record_hang(plugin_id, operation, seconds, err)
-            else:
-                tracker.record_failure(plugin_id, err)
+            tracker.record_hang(plugin_id, operation, seconds, err)
         except Exception as e:  # pylint: disable=broad-except
             self.logger.debug("Could not record hang for %s: %s", plugin_id, e)
 
