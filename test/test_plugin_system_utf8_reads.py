@@ -1,8 +1,8 @@
 """Plugin-system JSON files are read as UTF-8, whatever the locale says.
 
-store_manager (install_from_url's manifest, the secrets file) and
-state_manager (plugin_state.json) opened text files without an encoding, so
-the platform default applied. A manifest written in UTF-8 with a non-ASCII
+store_manager (install_from_url's manifest, the secrets file) opened text
+files without an encoding, so the platform default applied. (So did the
+retired plugin_state.json reader.) A manifest written in UTF-8 with a non-ASCII
 name then read as mojibake -- or raised UnicodeDecodeError -- on a host
 whose locale encoding is not UTF-8 (Windows' cp1252; a Pi with LANG=C).
 On a UTF-8 host these pass either way; they fail on old code where the
@@ -13,7 +13,6 @@ import json
 
 import pytest
 
-from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.store_manager import PluginStoreManager
 
 NAME = "Météo Á"  # "Á" is C3 81 in UTF-8; 0x81 is undefined in cp1252
@@ -48,15 +47,3 @@ def test_install_from_url_reads_a_utf8_manifest(store):
     written = json.loads(
         (store.plugins_dir / "meteo" / "manifest.json").read_bytes().decode("utf-8"))
     assert written["name"] == NAME
-
-
-def test_state_manager_loads_a_utf8_state_file(tmp_path):
-    state_file = tmp_path / "plugin_state.json"
-    state_file.write_bytes(json.dumps({
-        "version": 1,
-        "states": {"meteo": {"plugin_id": "meteo", "status": "installed",
-                             "enabled": True, "metadata": {"label": NAME}}},
-    }, ensure_ascii=False).encode("utf-8"))
-
-    mgr = PluginStateManager(state_file=str(state_file))
-    assert mgr.get_plugin_state("meteo").metadata["label"] == NAME

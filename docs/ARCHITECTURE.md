@@ -48,6 +48,7 @@ each other. They share three things:
 | Error clear | cache `plugin_error_clear_request` | web | display |
 | Font usage | cache `font_usage_snapshot` | display: `FontUsagePublisher` ([`src/font_usage.py`](../src/font_usage.py)) | web: Fonts tab |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
+| Plugin runtime (loaded, state, last error, version) | cache `plugin_runtime_snapshot` | display: `PluginRuntimePublisher` ([`src/plugin_system/plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)) | web: `read_plugin_runtime()` for `/api/v3/plugins/installed`, `/plugins/state`, reconciliation |
 | Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py) | web: display SSE stream, `/api/v3/health` (file age) |
 | Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, while a preview is open | display: writes full-rate snapshots only while it is fresh |
 | Hardware init status | `/tmp/led_matrix_hw_status.json` | display | web: `/api/v3/hardware/status` |
@@ -85,12 +86,10 @@ routes return it as `restart_required` (with the banner's wording in
 `static/v3/app.js` raises the banner for any response that carries it,
 `POST /api/v3/config/main` included.
 
-Runtime state shown in the UI comes from what the display publishes (the
-table above): health and metrics (`/api/v3/plugins/health`,
-`/plugins/metrics`), errors (`/api/v3/errors/*`) and the current mode. The
-display does not publish which plugins it has loaded or its plugin state
-machine, so `/api/v3/plugins/installed` reports `loaded`, `state` and
-`error_info` as `null` rather than guessing; `enabled` is read from
+Runtime state shown in the UI comes from what the display publishes to the
+shared cache: health and metrics (`/api/v3/plugins/health`,
+`/plugins/metrics`), errors (`/api/v3/errors/*`), the current mode, and the
+plugin runtime snapshot described below. `enabled` is read from
 `config.json` by the display's rule (a missing flag is disabled).
 
 Plugin code still runs in the web process in one place,
@@ -103,14 +102,68 @@ other web-UI action runs its script as a subprocess. A later, explicit
 **plugin web-entry contract** -- a declared entry point for plugin web code
 -- replaces that function.
 
-Remaining plugin state outside the display: `data/plugin_state.json`
-(`PluginStateManager` in `state_manager.py`, written by the web process),
-a second class also named `PluginStateManager` in `plugin_state.py` (the
-display's in-memory state machine), and `state_reconciliation.py`, which
-compares config, disk and `plugin_state.json` at web startup. These are the
-next stages: retire `plugin_state.json`, merge the two state classes, and
-give the web process a control socket to the display (reload one plugin,
-report the loaded set) in place of `restart_required`.
+Next stages: a **control socket** from the web process to the display
+(reload one plugin, ask for its state) in place of `restart_required` and
+the cache-key mailboxes, and the plugin web-entry contract above.
+
+### Plugin state: desired, observed, and who owns it
+
+There is one plugin state machine, and the display owns it:
+`PluginStateManager` in
+[`plugin_state.py`](../src/plugin_system/plugin_state.py) (unloaded →
+loaded → enabled ⇄ running, error, disabled), held by the display's
+`PluginManager`. It also records, per loaded plugin, the manifest version it
+loaded and when. Nothing else keeps plugin state:
+
+| Question | Answered by |
+|---|---|
+| Is it installed, at which version? | the plugins directory (`manifest.json`) |
+| Should it run? | `config.json` (`<id>.enabled`, missing = disabled) |
+| Has the user uninstalled it for good? | the store's uninstalled-plugins record |
+| Is the display running it, at which version, and why not? | the display's runtime snapshot |
+
+**The runtime snapshot.** `PluginRuntimePublisher`
+([`plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)), started by
+`DisplayController` right after it creates the `PluginManager`, writes the
+cache key `plugin_runtime_snapshot`: per plugin `loaded`, `state`, `error`
+(type, a redacted message of at most 200 characters, when, recoverable),
+`version` and `loaded_at`, plus `published_at`, `stale_after` and `running`.
+The cache is on disk, usually the SD card, so it writes when something a
+reader sees changes -- throttled to once per 10 s -- and otherwise once a
+minute as a heartbeat. RUNNING, which every `update()` passes through, is
+published as ENABLED, so plugin updates alone never cause a write.
+`cleanup()` publishes `running: false`.
+
+**Reading it.** `read_plugin_runtime()` judges the snapshot before anyone
+uses it: `live` (fresh, from a running display), `stale` (older than
+`stale_after`, 3 minutes: a hung or crashed display), `stopped` or
+`unknown` (none, unreadable, or another schema). Only a live view reports
+per-plugin facts; every other status answers `null` for them, so stale
+truth cannot leak into a response. `/api/v3/plugins/installed` returns
+`loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` per
+plugin and `data.runtime` (`status`, `published_at`, `age_seconds`);
+`/api/v3/plugins/state` returns the same beside the desired state.
+
+**Reconciliation**
+([`state_reconciliation.py`](../src/plugin_system/state_reconciliation.py))
+compares desired state (config + disk) with observed state (the snapshot).
+It fixes desired-state gaps -- a plugin on disk with no config section gets
+`{"enabled": false}`, a configured plugin missing from disk is reinstalled
+unless the user uninstalled it -- and only reports observed-state gaps
+(enabled but not loaded, loaded at an older version): the display loads and
+unloads by config on its own, and a version gap needs a restart.
+
+**`data/plugin_state.json` is retired.** The web process used to keep a
+second `PluginStateManager` (`state_manager.py`) persisted to that file:
+per plugin an enabled flag copied from config, a version copied from the
+manifest (when set at all), a status derived from those, and install/update
+timestamps. Reconciliation mostly synced it back to config and backups
+merged it into their plugin list. Every field is derivable (the timestamps
+from the operation history), so nothing is migrated: no code reads or
+writes the file, and a copy left on a device is inert and safe to delete.
+The two classes shared a name but not a concern -- a persisted install
+record versus the live lifecycle -- so they were not merged; the persisted
+one had nothing left to hold and was removed.
 
 ## Display loop
 

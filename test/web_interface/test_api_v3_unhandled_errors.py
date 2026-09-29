@@ -41,7 +41,7 @@ EXPECTED = {
 
 MANAGERS = ("config_manager", "plugin_catalog", "plugin_store_manager",
             "saved_repositories_manager", "schema_manager", "operation_queue",
-            "plugin_state_manager", "operation_history", "cache_manager")
+            "operation_history", "cache_manager")
 
 
 class Boom:

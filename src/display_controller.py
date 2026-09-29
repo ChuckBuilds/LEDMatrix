@@ -218,6 +218,7 @@ class DisplayController:
         # Initialize Plugin System
         plugin_time = time.time()
         self.plugin_manager = None
+        self._plugin_runtime_publisher = None
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
@@ -317,6 +318,13 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
+
+            # The web UI's loaded / state / error_info for each plugin read
+            # what this publishes. Started before loading, so the loads that
+            # follow are published as they land.
+            from src.plugin_system.plugin_runtime import start_plugin_runtime_publisher
+            self._plugin_runtime_publisher = start_plugin_runtime_publisher(
+                self.cache_manager, self.plugin_manager.state_manager)
 
             # Activate the plugin health/metrics subsystem. PluginManager leaves
             # health_tracker/resource_monitor as None by default; wiring real
@@ -444,6 +452,12 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
+            # Its state machine no longer describes what runs; let the last
+            # snapshot go stale (readers then say unknown) rather than keep
+            # refreshing it.
+            if self._plugin_runtime_publisher is not None:
+                self._plugin_runtime_publisher.stop(publish_stopped=False)
+                self._plugin_runtime_publisher = None
 
         # The web UI's Fonts tab ("Used by") reads what this publishes.
         from src.font_usage import start_font_usage_publisher
@@ -3429,6 +3443,12 @@ class DisplayController:
                 logger.warning("Error shutting down config service: %s", e)
         if getattr(self, '_font_usage_publisher', None) is not None:
             self._font_usage_publisher.stop()
+        # Publishes "stopped", so the web UI stops reporting what was loaded.
+        if getattr(self, '_plugin_runtime_publisher', None) is not None:
+            try:
+                self._plugin_runtime_publisher.stop()
+            except Exception as e:
+                logger.warning("Error stopping the plugin runtime publisher: %s", e)
         logger.info("Cleaning up display controller...")
         if hasattr(self, 'display_manager'):
             self.display_manager.cleanup()

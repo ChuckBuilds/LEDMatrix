@@ -87,7 +87,6 @@ class TestUpdateRoute:
         api.plugin_store_manager.update_plugin = MagicMock(return_value=True)
         api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
         api.schema_manager = None
-        api.plugin_state_manager = None
         api.operation_history = None
         return client.post("/api/v3/plugins/update", json={"plugin_id": "demo"})
 

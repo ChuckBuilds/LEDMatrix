@@ -73,7 +73,7 @@ STORED = {
 }
 
 _ATTRS = ('config_manager', 'plugin_catalog', 'plugin_store_manager',
-          'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+          'saved_repositories_manager', 'schema_manager',
           'operation_queue', 'operation_history', 'cache_manager')
 
 

@@ -68,7 +68,6 @@ def client(mock_config_manager, mock_plugin_catalog):
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.schema_manager = MagicMock()
     api_v3.operation_queue = MagicMock()
-    api_v3.plugin_state_manager = MagicMock()
     api_v3.operation_history = MagicMock()
     api_v3.cache_manager = MagicMock()
     # Readers of what the display publishes (app.py wires real ones).
@@ -87,9 +86,6 @@ def client(mock_config_manager, mock_plugin_catalog):
         'type': 'object',
         'properties': {'enabled': {'type': 'boolean'}}
     }
-    
-    # Setup state manager mocks
-    api_v3.plugin_state_manager.get_all_states.return_value = {}
     
     test_app.register_blueprint(api_v3, url_prefix='/api/v3')
     
@@ -664,7 +660,6 @@ class TestPluginsAPI:
         from web_interface.blueprints.api_v3 import api_v3
         api_v3.config_manager = mock_config_manager
         api_v3.plugin_catalog = mock_plugin_catalog
-        api_v3.plugin_state_manager = MagicMock()
         api_v3.operation_history = MagicMock()
         
         # Setup plugin manifests

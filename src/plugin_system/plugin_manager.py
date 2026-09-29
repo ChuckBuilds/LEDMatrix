@@ -455,7 +455,13 @@ class PluginManager:
                         raise
             else:
                 self.state_manager.set_state(plugin_id, PluginState.DISABLED)
-            
+
+            # The version this instance runs, for the runtime snapshot the
+            # web UI reads: the manifest on disk can move on after an update.
+            version = manifest.get('version')
+            self.state_manager.record_loaded(
+                plugin_id, version if isinstance(version, str) else None)
+
             self.logger.info("Loaded plugin: %s", plugin_id)
             
             return True
@@ -704,6 +710,9 @@ class PluginManager:
         except Exception as e:
             self.logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+            if plugin_id not in self.plugins:
+                # Failed after the instance was dropped: it is not loaded.
+                self.state_manager.record_unloaded(plugin_id)
             return False
     
     def reload_plugin(self, plugin_id: str) -> bool:

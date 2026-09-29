@@ -46,6 +46,41 @@ accepts both, but the store flags the old spelling as deprecated
     process still imports plugin code -- the Starlark helper modules and an
     `oauth_flow` action script -- is `_import_plugin_code_in_web_process()`,
     until a plugin web-entry contract replaces it.
+- The display publishes its plugin runtime state, and the web interface
+  reads it (web plugin catalog, stage 2). A new snapshot in the shared cache
+  (`plugin_runtime_snapshot`, `src/plugin_system/plugin_runtime.py`) lists,
+  per plugin, whether the display has it loaded, its lifecycle state, a
+  short redacted summary of its last error, the version it loaded and when.
+  It is written when something changes (at most every 10 s; an ordinary
+  plugin update is not a change) and otherwise once a minute, carries its
+  publish time, and says `running: false` when the display stops.
+  - `/api/v3/plugins/installed` fills `loaded`, `state` and `error_info`
+    again, from that snapshot, and adds `loaded_version` and `loaded_at`.
+    Only a live snapshot counts: when the display is stopped, has not
+    published, or has not refreshed for 3 minutes, those fields are `null`
+    and the new `data.runtime.status` says `stopped`, `unknown` or `stale`.
+  - `data/plugin_state.json` is retired: nothing reads or writes it. It held
+    copies of config.json's enabled flags and the manifests' versions, plus
+    install timestamps only `GET /api/v3/plugins/state` returned, so nothing
+    in it is migrated; an existing file is left in place and can be deleted.
+    The web-side `PluginStateManager` (`src/plugin_system/state_manager.py`)
+    that wrote it is removed; the display's state machine in
+    `plugin_state.py` is now the only `PluginStateManager`.
+  - `GET /api/v3/plugins/state` is built per request from config.json, the
+    plugins on disk and the display's snapshot (`installed`, `in_config`,
+    `enabled`, `version`, `status`, the runtime fields, and `installed_at` /
+    `last_updated` from the operation history), with a top-level `runtime`.
+    It no longer returns `config_version` or `metadata`.
+  - State reconciliation compares desired state (config.json plus disk) with
+    the display's snapshot. New findings -- enabled but not loaded (with the
+    load error), and loaded at an older version than is installed -- are
+    reported with `fix_action: no_action`; the unresolved-issues banner is
+    unchanged. `StateReconciliation` takes `config_manager`, `plugins_dir`,
+    `store_manager` and `runtime_source` as keywords.
+  - Backups list the installed plugins from disk, with `enabled` from
+    config.json, instead of merging in `plugin_state.json`. A plugin that
+    only that file still named (not installed, not configured) is no longer
+    listed. Restores are unchanged.
 
 ### Fixes
 
