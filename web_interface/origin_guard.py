@@ -47,7 +47,7 @@ Not covered: DNS rebinding (an attacker's hostname re-pointed at the Pi is
 Neither is new; the interface is still meant for a trusted network.
 """
 import logging
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from flask import Flask, jsonify, request
 
@@ -130,7 +130,7 @@ def _loggable(value: str) -> str:
         return '<unreadable>'
     if not parts.scheme or not netloc:
         return '<unreadable>'
-    return f'{parts.scheme}://{netloc}'
+    return urlunsplit((parts.scheme, netloc, '', '', ''))
 
 
 def check_request_origin():
