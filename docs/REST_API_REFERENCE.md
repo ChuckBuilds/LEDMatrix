@@ -390,7 +390,7 @@ Request a specific plugin to display on-demand.
 - `mode` (string, optional): Display mode name (plugin_id inferred if not provided)
 - `duration` (number, optional): Duration in seconds (0 = until stopped)
 - `pinned` (boolean, optional): Pin display (pause rotation)
-- `start_service` (boolean, optional): (Re)start the display service so it picks the request up (default: true)
+- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within about a quarter of a second. When false and the service is stopped, the route returns 400.
 
 **Response**:
 ```json

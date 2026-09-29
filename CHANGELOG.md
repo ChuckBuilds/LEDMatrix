@@ -21,6 +21,15 @@ accepts both, but the store flags the old spelling as deprecated
 
 ### Fixes
 
+- On-demand no longer restarts a running display. `POST
+  /display/on-demand/start` treated `start_service` (on by default, and what
+  "Preview on display", the on-demand dialog and the MQTT bridge all send) as
+  "restart": it stopped the service, waited 1.5s and started it again, so
+  every request reloaded every plugin and left the panel blank for seconds.
+  The running display already reads the request within a quarter of a second,
+  mid-screen and mid-Vegas included, so the route now only starts the service
+  when it is not running. `POST /display/on-demand/stop` reads
+  `stop_service` as a boolean, so `"false"` no longer stops the service.
 - Re-saving unchanged data through `CacheManager.set` no longer rewrites its
   cache file. The disk cache already skipped a payload identical to the last
   one written, but `set()` stamps every record with the current time, so the
