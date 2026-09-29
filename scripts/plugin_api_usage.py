@@ -54,7 +54,7 @@ import ast
 import json
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
 import tempfile
 from collections import defaultdict
@@ -427,8 +427,9 @@ def _git(*args: str, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     # Never stop to ask for credentials: a deleted or private plugin repo
     # should be reported as not scanned, not hang the scan.
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=300, env=env)
+    return subprocess.run(  # nosec B603 B607 - list-form git argv, no shell; URLs follow "--"  # nosemgrep
+        ["git", *args], cwd=cwd, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=300, env=env)
 
 
 def _rmtree(path: Path) -> None:
@@ -459,9 +460,12 @@ def shallow_clone(url: str, branch: Optional[str], dest: Path, reuse: bool) -> O
     args = ["-c", "core.longpaths=true", "clone", "--quiet", "--depth", "1"]
     if branch:
         args += ["--branch", branch]
-    result = _git(*args, url, str(dest))
+    # "--" ends option parsing: a registry URL starting with "-" (for example
+    # "--upload-pack=...") is then only ever a repository argument.
+    result = _git(*args, "--", url, str(dest))
     if result.returncode != 0 and branch:
-        result = _git("-c", "core.longpaths=true", "clone", "--quiet", "--depth", "1", url, str(dest))
+        result = _git("-c", "core.longpaths=true", "clone", "--quiet", "--depth", "1",
+                      "--", url, str(dest))
     if result.returncode != 0:
         lines = (result.stderr or result.stdout).strip().splitlines()
         return lines[-1] if lines else "git clone failed"
