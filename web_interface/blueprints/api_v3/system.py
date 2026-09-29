@@ -123,15 +123,15 @@ def set_update_channel():
     _update_check_cache['result'] = None
     status, _ = channel_status(fetch=False)
     if channel == 'beta':
-        message = (f'Update channel set to beta. Updates now follow {update_channel.BETA_BRANCH}, '
+        message = (f'Switched to the beta channel. Updates now follow {update_channel.BETA_BRANCH}, '
                    'the newest code, before it is released.')
     elif status.action == update_channel.ACTION_CHECKOUT_TAG:
-        message = (f'Update channel set to stable. The next update moves this device to release '
+        message = (f'Switched to the stable channel. The next update moves this device to release '
                    f'{status.newest_release}.')
     else:
         # On the newest release already, or waiting for one that includes
         # this commit; status.message says which.
-        message = f'Update channel set to stable. {status.message}'
+        message = f'Switched to the stable channel. {status.message}'
     if channel == 'beta' or status.action == update_channel.ACTION_CHECKOUT_TAG:
         message += ' Use Update Code on the Overview tab to apply it now.'
     return jsonify({'status': 'success', 'message': message, 'data': _channel_payload(status)})
