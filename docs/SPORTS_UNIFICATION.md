@@ -275,8 +275,12 @@ a floor can be trusted against, and today it is not:
   the update path that re-downloads.
   `update_plugin`'s git branch pulls in place and re-downloads nothing, so it
   stayed ungated until `_gate_pulled_commit` closed it — checked after the pull
-  (the registry carries no floor field, so the incoming floor is unknowable
-  before it) and undone with `git reset --hard` to the pre-pull commit. That
+  (the registry then carried no floor field, so the incoming floor was
+  unknowable before it) and undone with `git reset --hard` to the pre-pull
+  commit. The registry now publishes `ledmatrix_min_version`, and install and
+  update refuse on it before downloading or pulling; both post-download gates
+  remain as the fallback for older registries, other branches and
+  `compatible_versions`. That
   route is rare in practice, since monorepo plugins install as archives; it was
   closed because the sunset rule in the plugins repo's
   `08-shared-sports-code.md` states as **condition 3** that the core enforces

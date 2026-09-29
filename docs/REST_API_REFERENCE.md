@@ -641,6 +641,12 @@ Install a plugin from the plugin store.
 When the operation queue is unavailable the install runs synchronously and
 the response has only a `message`.
 
+A plugin whose registry entry (or downloaded manifest) needs a newer
+LEDMatrix is refused: the synchronous install answers `409` with a message
+such as `Failed to install plugin x: X requires LEDMatrix 3.8.0 or newer…`,
+and a queued one fails with that message. Nothing already installed is
+changed.
+
 ### Uninstall Plugin
 
 **POST** `/api/v3/plugins/uninstall`
@@ -688,6 +694,9 @@ Update a plugin to the latest version. Runs synchronously.
   }
 }
 ```
+
+An update this core cannot run answers `409` with `Plugin update refused:`
+and the reason; the installed version is left as it was.
 
 ### Install Plugin from URL
 
@@ -1189,12 +1198,21 @@ searches.
         "version": "1.2.3",
         "branch": "main",
         "default_branch": "main",
-        "plugin_path": "plugins/football-scoreboard"
+        "plugin_path": "plugins/football-scoreboard",
+        "commit": "843588025a81197056f8d96779ccb2be19337ab8",
+        "ledmatrix_min_version": "3.7.0",
+        "aliases": [],
+        "incompatible_reason": null
       }
     ]
   }
 }
 ```
+
+`commit` (the monorepo commit that introduced `version`),
+`ledmatrix_min_version` and `aliases` come from the registry entry and are
+`null` / `[]` when an older registry lacks them. `incompatible_reason` is the
+message an install would be refused with on this core, or `null`.
 
 ### Get GitHub Status
 

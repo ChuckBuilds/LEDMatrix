@@ -13,9 +13,56 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 from jsonschema import Draft7Validator, ValidationError
+from src.plugin_system.plugin_dirs import PLUGIN_DIR_PREFIX
 from src.plugin_system.repo_urls import (
     github_api_headers, github_owner_repo, normalize_repo_url,
 )
+
+
+# Registry entry fields the plugin monorepo's update_registry.py added after
+# 3.7.0. All optional: an older plugins.json has none of them, and every
+# reader here treats a missing or malformed one as "not stated".
+#
+# - ``ledmatrix_min_version``: the floor the plugin's manifest declares, so an
+#   incompatible install or update is refused before the download
+#   (`registry_incompatibility`). The post-download gate stays as the fallback.
+# - ``aliases``: other ids the plugin goes by (the manifest id when it differs
+#   from the registry id, e.g. ``ledmatrix-weather`` for ``weather``).
+# - ``commit``: the monorepo commit that introduced ``latest_version``.
+#   Informational only -- installs still come from the branch head.
+
+
+def declared_aliases(entry: Dict[str, Any]) -> Optional[List[str]]:
+    """The entry's ``aliases``, or None when it carries no such list.
+
+    None (an older registry) and ``[]`` (a registry that says "no other
+    names") are different answers: only the first falls back to guessing.
+    """
+    aliases = entry.get('aliases')
+    if not isinstance(aliases, list):
+        return None
+    own = entry.get('id')
+    return [a for a in aliases if isinstance(a, str) and a and a != own]
+
+
+def alternate_ids(entry: Dict[str, Any]) -> List[str]:
+    """Ids other than the registry id that an installed copy may carry.
+
+    The entry's ``aliases`` when it has them. Otherwise -- a registry from
+    before the field -- the two names the monorepo is known to have used:
+    the ``plugin_path`` directory name, then ``ledmatrix-<id>``.
+    """
+    declared = declared_aliases(entry)
+    if declared is not None:
+        return declared
+    own = entry.get('id')
+    guesses: List[str] = []
+    path = entry.get('plugin_path')
+    if isinstance(path, str) and path.strip('/'):
+        guesses.append(path.rstrip('/').rsplit('/', 1)[-1])
+    if isinstance(own, str) and own and not own.startswith(PLUGIN_DIR_PREFIX):
+        guesses.append(PLUGIN_DIR_PREFIX + own)
+    return [g for i, g in enumerate(guesses) if g and g != own and g not in guesses[:i]]
 
 
 class _RegistryMixin:
@@ -821,7 +868,9 @@ class _RegistryMixin:
         Matching ``plugin_path`` fixes it without renaming any published id,
         which would orphan ``plugin_state.json`` entries keyed on the old ones.
         Exact id always wins, so an entry whose *path* happens to collide with
-        another entry's id cannot shadow it.
+        another entry's id cannot shadow it. An entry's ``aliases`` (registries
+        from after 3.7.0) come next, then ``plugin_path``, which is what an
+        older registry has to go on.
         """
         if not plugin_id:
             return None
@@ -829,10 +878,105 @@ class _RegistryMixin:
         if exact is not None:
             return exact
         for entry in plugins:
+            if plugin_id in (declared_aliases(entry) or ()):
+                return entry
+        for entry in plugins:
             path = (entry.get('plugin_path') or '').rstrip('/')
             if path and path.rsplit('/', 1)[-1] == plugin_id:
                 return entry
         return None
+
+    def registry_incompatibility(self, plugin_id: str,
+                                 entry: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Why the registry says this core cannot run the plugin's latest
+        release, or None when it says nothing against it.
+
+        Reads the entry's ``ledmatrix_min_version`` and asks
+        ``compatibility.check`` -- the same function, and so the same wording
+        and the same leniency (an untrustworthy or unparseable core version
+        allows), as the gate that runs on the downloaded manifest. That gate
+        stays: it also sees ``compatible_versions``, and an older registry
+        without the field says nothing here.
+
+        ``entry`` defaults to the registry entry for ``plugin_id``. Any
+        failure to read the registry answers None: the pre-check exists to
+        refuse early on evidence, never to block on a guess.
+        """
+        if entry is None:
+            try:
+                entry = self.get_registry_info(plugin_id)
+            except Exception as e:  # noqa: BLE001 - never block an install on this
+                self.logger.debug("Registry lookup for %s failed: %s", plugin_id, e)
+                return None
+        if not isinstance(entry, dict):
+            return None
+        floor = entry.get('ledmatrix_min_version')
+        if not isinstance(floor, str) or not floor.strip():
+            return None
+        from src.plugin_system import compatibility
+        compatible, reason = compatibility.check(
+            {'id': entry.get('id') or plugin_id, 'name': entry.get('name'),
+             'min_ledmatrix_version': floor.strip()},
+            compatibility.current_core_version())
+        return None if compatible else reason
+
+    def _refuse_if_registry_incompatible(self, plugin_id: str, entry: Optional[Dict[str, Any]],
+                                         action: str, record_as: Optional[str] = None) -> bool:
+        """Log and record a registry-based refusal; True when refused.
+
+        ``record_as`` is the id the caller will ask `pop_refusal` about (the
+        id it was handed, which may be an alias of ``plugin_id``).
+        """
+        reason = self.registry_incompatibility(plugin_id, entry)
+        if reason is None:
+            return False
+        self.logger.error("Refusing to %s %s before downloading it: %s",
+                          action, plugin_id, reason)
+        self._note_refusal(record_as or plugin_id, reason)
+        return True
+
+    def _note_refusal(self, plugin_id: str, reason: str) -> None:
+        """Remember why an install or update of ``plugin_id`` was refused, so
+        the web route can say so instead of "check logs for details"."""
+        refusals = self.__dict__.setdefault('_refusals', {})
+        refusals[plugin_id] = reason
+
+    def pop_refusal(self, *plugin_ids: str) -> Optional[str]:
+        """The compatibility refusal recorded for any of ``plugin_ids`` since
+        the last call, clearing them all; None when there was none."""
+        refusals = self.__dict__.get('_refusals') or {}
+        found = None
+        for plugin_id in plugin_ids:
+            reason = refusals.pop(plugin_id, None)
+            if found is None and reason:
+                found = reason
+        return found
+
+    def _installed_id_candidates(self, plugin_id: str) -> List[str]:
+        """``plugin_id`` and the other ids its installed copy may carry.
+
+        From the registry already in memory -- no fetch, because uninstall
+        and the update lookup must work offline. With an entry: its id and
+        `alternate_ids`. Without one (no registry loaded yet, or a plugin
+        that isn't in it): ``ledmatrix-<id>``, the one legacy name.
+        """
+        ids: List[str] = [plugin_id]
+        cache = getattr(self, 'registry_cache', None)
+        plugins = cache.get('plugins') if isinstance(cache, dict) else None
+        entry = None
+        if isinstance(plugins, list) and isinstance(plugin_id, str):
+            entry = self._match_registry_entry(
+                [p for p in plugins if isinstance(p, dict)], plugin_id)
+        if entry is not None:
+            ids.append(entry.get('id'))
+            ids.extend(alternate_ids(entry))
+        elif isinstance(plugin_id, str) and not plugin_id.startswith(PLUGIN_DIR_PREFIX):
+            ids.append(PLUGIN_DIR_PREFIX + plugin_id)
+        unique: List[str] = []
+        for candidate in ids:
+            if isinstance(candidate, str) and candidate and candidate not in unique:
+                unique.append(candidate)
+        return unique
 
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """

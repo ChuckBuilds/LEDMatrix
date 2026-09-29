@@ -407,13 +407,18 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         alone reported such a plugin as not installed, so update_plugin()
         silently did nothing.
 
-        No ``ledmatrix-`` prefix and no case folding here, unlike the loader:
-        a store operation may delete what this returns, so it only accepts a
-        directory that names the id exactly or declares it. So a registry id
-        such as `stocks` does not resolve to an installed `ledmatrix-stocks/`
-        declaring `ledmatrix-stocks` (the monorepo's leaderboard, music,
-        stocks and weather); callers pass the installed id, and
-        update_plugin() maps it back to the registry id itself.
+        When nothing answers to the id itself, the plugin's other ids are
+        tried the same way (`_installed_id_candidates`): the registry entry's
+        own id and its ``aliases`` -- or, for a registry without that field,
+        its ``plugin_path`` name and ``ledmatrix-<id>``. So the registry id
+        `stocks` finds an installed `ledmatrix-stocks/` declaring
+        `ledmatrix-stocks` (the monorepo's leaderboard, music, stocks and
+        weather), and uninstalling by the registry id no longer reports
+        success while leaving the plugin on disk.
+
+        Still no case folding, and every candidate must be declared by a
+        manifest or be a directory's exact name: a store operation may delete
+        what this returns.
 
         Args:
             plugin_id: Plugin identifier
@@ -421,9 +426,20 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         Returns:
             Path to plugin directory if found, None otherwise
         """
-        return resolve_plugin_dir(
-            plugin_id, self._candidate_plugin_dirs(), prefix=False,
-            case_insensitive=False)
+        return self._resolve_installed(plugin_id, self._candidate_plugin_dirs())
+
+    def _resolve_installed(self, plugin_id: str, search_dirs: List[Path]) -> Optional[Path]:
+        """The first of ``plugin_id``'s candidate ids found in ``search_dirs``.
+
+        The id itself is looked for in every directory before any alias is,
+        so an exact install anywhere beats an alias in the configured one.
+        """
+        for candidate in self._installed_id_candidates(plugin_id):
+            found = resolve_plugin_dir(
+                candidate, search_dirs, prefix=False, case_insensitive=False)
+            if found is not None:
+                return found
+        return None
 
     def _candidate_plugin_dirs(self) -> List[Path]:
         """Directories that may hold installed plugins, configured one first."""

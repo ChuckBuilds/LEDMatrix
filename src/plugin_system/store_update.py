@@ -195,10 +195,12 @@ class _UpdateMixin:
         surfaces as one line in the journal and a scoreboard that silently
         stopped appearing.
 
-        Checked after the pull rather than before it, for the same reason
-        ``_install_plugin_impl`` checks after the download: the registry
-        carries no compatibility field, so the incoming floor is only knowable
-        once the new commit is on disk.
+        The registry's ``ledmatrix_min_version`` refuses most of these before
+        the pull (``update_plugin``). This is the fallback, for the same cases
+        ``_install_plugin_impl``'s post-download gate covers: a registry
+        without the field, a checkout on another branch than the registry's,
+        and ``compatible_versions`` -- all only knowable once the new commit
+        is on disk.
 
         Undone with ``git reset --hard`` rather than by removing the directory.
         This is a live checkout, the previous commit is still in the object
@@ -233,6 +235,7 @@ class _UpdateMixin:
             return True
 
         self.logger.error("Refusing the update to %s: %s", plugin_id, reason)
+        self._note_refusal(plugin_id, reason)
 
         if not previous_sha:
             self.logger.error(
@@ -368,12 +371,25 @@ class _UpdateMixin:
                             f"Plugin {resolved_id} git remote ({local_remote}) differs from registry ({registry_repo}). "
                             f"Reinstalling from registry to migrate to new source."
                         )
+                        # Before the old copy is moved aside: the reinstall
+                        # would only refuse after a download and a restore.
+                        if self._refuse_if_registry_incompatible(
+                                resolved_id, plugin_info_remote, "update", record_as=plugin_id):
+                            return False
                         return self._reinstall_with_rollback(resolved_id, plugin_path)
 
                     # Check if already up to date
                     if remote_sha and local_sha and remote_sha.startswith(local_sha):
                         self.logger.info(f"Plugin {plugin_id} already matches remote commit {remote_sha[:7]}")
                         return True
+
+                    # The registry's floor describes its branch; a checkout
+                    # on another branch pulls another release, and the gate
+                    # after the pull (_gate_pulled_commit) still covers it.
+                    if (not remote_branch or remote_branch == local_branch) and \
+                            self._refuse_if_registry_incompatible(
+                                resolved_id, plugin_info_remote, "update", record_as=plugin_id):
+                        return False
 
                 # Update via git pull
                 self.logger.info(f"Updating {plugin_id} via git pull (local branch: {local_branch})...")
@@ -717,6 +733,12 @@ class _UpdateMixin:
                         return True
             except Exception as e:
                 self.logger.debug(f"Could not compare versions for {plugin_id}: {e}")
+
+            # A newer version this core cannot run: refuse now, while the
+            # installed copy is untouched, rather than after a download.
+            if self._refuse_if_registry_incompatible(
+                    registry_id, plugin_info_remote, "update", record_as=plugin_id):
+                return False
 
             # Plugin is not a git repo but is in registry and has a newer version - reinstall
             self.logger.info(f"Plugin {plugin_id} not installed via git; re-installing latest archive (registry id: {registry_id})")

@@ -63,7 +63,15 @@ class _InstallMixin:
             return False
 
         with self._get_reinstall_lock(plugin_id):
-            plugin_path = self.plugins_dir / plugin_id
+            # The copy to protect is wherever this plugin is installed, not
+            # necessarily plugins_dir/<id>: asked for the registry id
+            # `weather`, the install lives in `ledmatrix-weather/`, the
+            # manifest's id. Backing up only `weather/` protected nothing,
+            # and _install_plugin_impl then deleted `ledmatrix-weather/` to
+            # make room for the download -- so a refusal after that point
+            # (the post-download compatibility gate) left no plugin at all.
+            plugin_path = (self._resolve_installed(plugin_id, [self.plugins_dir])
+                           or self.plugins_dir / plugin_id)
             if not plugin_path.exists():
                 return self._install_plugin_impl(plugin_id, branch)
 
@@ -162,6 +170,16 @@ class _InstallMixin:
         repo_url = plugin_info.get('repo')
         if not repo_url:
             self.logger.error(f"Plugin {plugin_id} missing repository URL")
+            return False
+
+        # The registry's floor describes the release on the entry's branch.
+        # Checked here, before anything is removed or downloaded; the gate on
+        # the downloaded manifest below stays as the fallback (older
+        # registries, compatible_versions ranges). A different branch asked
+        # for by name is a different release, so only the fallback applies.
+        registry_branch = plugin_info.get('branch') or plugin_info.get('default_branch')
+        if (not branch or not registry_branch or branch == registry_branch) and \
+                self._refuse_if_registry_incompatible(plugin_id, plugin_info, "install"):
             return False
 
         plugin_subpath = plugin_info.get('plugin_path')
@@ -280,9 +298,11 @@ class _InstallMixin:
                     return False
 
                 # Refuse a plugin that needs a newer core than this one. The
-                # registry carries no compatibility field, so the floor is only
-                # knowable once the files are down — checking here, before
-                # dependency installation, is the earliest possible point.
+                # registry's `ledmatrix_min_version` already refused the
+                # common case before the download (above); this is the
+                # fallback for a registry without it, a branch other than the
+                # registry's, and `compatible_versions`, which only the
+                # manifest carries. Before dependency installation, still.
                 #
                 # Refusing costs the user nothing: on an update this returns
                 # False and _reinstall_with_rollback restores the version they
@@ -299,6 +319,7 @@ class _InstallMixin:
                 if not compatible:
                     self.logger.error(
                         "Refusing to install %s: %s", plugin_id, reason)
+                    self._note_refusal(requested_id, reason)
                     self._safe_remove_directory(plugin_path)
                     return False
 
