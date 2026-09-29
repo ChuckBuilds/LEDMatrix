@@ -51,7 +51,9 @@ def test_a_cross_site_origin_is_refused_for_every_changing_method(probe, method)
     body = resp.get_json()
     assert body['status'] == 'error'
     assert body['error_code'] == 'CROSS_SITE_REQUEST'
-    assert 'evil.example' in body['details']
+    assert body['details'].startswith('Origin ')
+    # The attacker-chosen origin is logged, never echoed back in the body.
+    assert 'evil.example' not in resp.get_data(as_text=True)
 
 
 @pytest.mark.parametrize('origin', [

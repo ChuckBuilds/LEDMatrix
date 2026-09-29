@@ -116,7 +116,9 @@ def check_request_origin():
     if claimed is None:
         return f'{header} header is not a valid http(s) URL'
     if claimed != _request_host_port():
-        return f'{header} {value!r} is not this interface ({request.host!r})'
+        # The claimed value is attacker-chosen: the hook logs it, but the
+        # reason (echoed in the 403 body) never repeats it.
+        return header + ' names a different host than this interface'
     return None
 
 
@@ -128,8 +130,10 @@ def init_app(app: Flask) -> None:
         reason = check_request_origin()
         if reason is None:
             return None
-        logger.warning("Refused cross-site %s %s: %s",
-                       request.method, request.path, reason)
+        logger.warning("Refused cross-site %s %s: %s (Origin=%r, Referer=%r)",
+                       request.method, request.path, reason,
+                       request.headers.get('Origin'),
+                       request.headers.get('Referer'))
         return jsonify({
             'status': 'error',
             'error_code': 'CROSS_SITE_REQUEST',
