@@ -353,3 +353,37 @@ class ScheduleNoteUsesGameDatesTests(unittest.TestCase):
             "events": [{"date": self.iso(base, 1)}],
             "leagues": [{"calendar": [{"startDate": self.iso(base, 6)}]}],
         }))
+
+
+class ScheduleNotePostseasonTests(unittest.TestCase):
+    """Past regular-season events are not a finished season once the postseason starts.
+
+    Captured from ESPN's MLB scoreboard on 2026-09-29, two days after the
+    regular season ended: the default scoreboard still returned the last
+    regular-season day (event ``season.type`` 2), while ``leagues[0].season``
+    had already moved to Postseason (type 3). The check told a Rays fan the
+    season was over while their upcoming manager listed TB's wild-card games.
+    """
+
+    note = ScheduleNoteTests.note
+
+    @staticmethod
+    def payload(league_type, event_type, days=-2):
+        date = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+        return {
+            "events": [{"date": date, "season": {"year": 2026, "type": event_type}}],
+            "leagues": [{"season": {"year": 2026, "type": {"type": league_type}},
+                         "calendar": [date]}],
+        }
+
+    def test_postseason_after_regular_season_events_is_not_finished(self):
+        self.assertIsNone(self.note(self.payload(league_type=3, event_type=2)))
+
+    def test_a_finished_postseason_is_still_reported_as_finished(self):
+        # AFL the week after its grand final: league and events both postseason.
+        note = self.note(self.payload(league_type=3, event_type=3, days=-4))
+        self.assertIn("season has finished", note)
+
+    def test_offseason_after_the_postseason_is_still_finished(self):
+        note = self.note(self.payload(league_type=4, event_type=3, days=-40))
+        self.assertIn("season has finished", note)
