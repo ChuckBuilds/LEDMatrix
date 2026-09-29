@@ -21,6 +21,15 @@ accepts both, but the store flags the old spelling as deprecated
 
 ### Fixes
 
+- On-demand no longer restarts a running display. `POST
+  /display/on-demand/start` treated `start_service` (on by default, and what
+  "Preview on display", the on-demand dialog and the MQTT bridge all send) as
+  "restart": it stopped the service, waited 1.5s and started it again, so
+  every request reloaded every plugin and left the panel blank for seconds.
+  The running display already reads the request within a quarter of a second,
+  mid-screen and mid-Vegas included, so the route now only starts the service
+  when it is not running. `POST /display/on-demand/stop` reads
+  `stop_service` as a boolean, so `"false"` no longer stops the service.
 - One hung plugin no longer stops every plugin from updating. The single
   update worker waited on each plugin's lock with no time limit, and the
   render thread holds that lock while it runs the plugin's display(); a
