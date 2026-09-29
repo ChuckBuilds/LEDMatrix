@@ -19,9 +19,12 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
-New modules a plugin may import via `src.*` (floor on the release that ships
-them). Both are promoted from files the scoreboard plugins carry as copies;
-the plugins keep their copies as a fallback until they floor on that release.
+## 3.6.0
+
+New modules a plugin may import via `src.*` (floor on 3.6.0). Both are
+promoted from files the scoreboard plugins carry as copies; the plugins keep
+their copies as a fallback until they floor on 3.6.0. No other change since
+3.5.0.
 
 - `src/common/favorite_team_check.py` — `FavoriteTeamCheck(logger, leagues)`:
   checks configured favourite team codes against ESPN once per league, on a
