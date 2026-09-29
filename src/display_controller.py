@@ -29,7 +29,7 @@ import threading
 import types
 from collections import deque
 from contextlib import contextmanager
-from typing import Dict, Any, List, Optional, Callable, Tuple
+from typing import Dict, Any, List, Optional, Callable, Set, Tuple
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
@@ -266,6 +266,10 @@ class DisplayController:
         self.on_demand_last_error: Optional[str] = None
         self.on_demand_last_event: Optional[str] = None
         self.on_demand_schedule_override = False
+        # Plugins that are disabled in config and loaded only because an
+        # on-demand request named them. The main loop unloads each one once
+        # on-demand has moved off it (_release_on_demand_plugins).
+        self._on_demand_loaded_plugins: Set[str] = set()
         self.rotation_resume_index: Optional[int] = None
         # Saved rotation position when a live-priority plugin preempts the
         # rotation, so it resumes where it left off (not after the live plugin)
@@ -369,7 +373,11 @@ class DisplayController:
                 """Load a single plugin and return result."""
                 plugin_load_start = time.time()
                 try:
-                    if self.plugin_manager.load_plugin(plugin_id):
+                    if plugin_id in self._on_demand_loaded_plugins:
+                        loaded = self.plugin_manager.load_plugin(plugin_id, force_enabled=True)
+                    else:
+                        loaded = self.plugin_manager.load_plugin(plugin_id)
+                    if loaded:
                         plugin_load_time = time.time() - plugin_load_start
                         return {
                             'success': True,
@@ -1486,8 +1494,13 @@ class DisplayController:
         On-demand still resumes on its saved mode; this only widens what gets
         loaded, so normal rotation has somewhere to return to when it ends.
         A plugin that is disabled in config but named by the on-demand request
-        is still enabled and added, since otherwise the mode being resumed
-        would have nothing behind it.
+        is still loaded, since otherwise the mode being resumed would have
+        nothing behind it. It is tracked as loaded for on-demand only, the
+        same as one loaded live by _activate_on_demand, so it is unloaded
+        when the session ends instead of staying loaded until the next
+        restart. Its config section is not touched: setting ``enabled`` in
+        self.config wrote into the dict config_manager caches and returns to
+        every later load_config() in this process.
         """
         enabled_plugins = [p for p in discovered_plugins
                            if self.config.get(p, {}).get('enabled', False)]
@@ -1502,11 +1515,10 @@ class DisplayController:
             logger.warning("Falling back to normal mode (all enabled plugins)")
             return enabled_plugins
 
-        if not self.config.get(on_demand_plugin_id, {}).get('enabled', False):
-            logger.info("Temporarily enabling plugin '%s' for on-demand mode", on_demand_plugin_id)
-            self.config.setdefault(on_demand_plugin_id, {})['enabled'] = True
-            if on_demand_plugin_id not in enabled_plugins:
-                enabled_plugins.append(on_demand_plugin_id)
+        if on_demand_plugin_id not in enabled_plugins:
+            logger.info("Loading disabled plugin '%s' for on-demand mode only", on_demand_plugin_id)
+            self._on_demand_loaded_plugins.add(on_demand_plugin_id)
+            enabled_plugins.append(on_demand_plugin_id)
 
         # Restore on-demand state from the cached request so it resumes.
         self.on_demand_active = True
@@ -1602,6 +1614,11 @@ class DisplayController:
                 logger.debug("Stop request %s received but on-demand is not active", request_id)
                 # Still update request_id to acknowledge the request
                 self.on_demand_request_id = request_id
+                if self.on_demand_status == 'error':
+                    # A failed request left status 'error' published, and
+                    # without this the status route kept reporting it until
+                    # the state aged out (120s) or another request came in.
+                    self._clear_on_demand(reason='requested-stop')
             # Stop requests are deliberately exempt from the request_id/
             # processed_id guards above, so that a second click stops a mode
             # that a race left running. Consuming the mailbox is therefore the
@@ -1768,10 +1785,136 @@ class DisplayController:
                    plugin_id, ordered_modes, self.on_demand_mode_index, 
                    ordered_modes[self.on_demand_mode_index] if ordered_modes else 'N/A')
 
+    def _load_plugin_for_on_demand(self, plugin_id: str) -> bool:
+        """Load an installed plugin that isn't running so on-demand can show it.
+
+        This process only loads the plugins enabled in config, so a request
+        for a disabled one -- the config page's "Preview on display" button
+        offers it on every plugin -- failed with "invalid-mode" while the UI
+        said the plugin would be enabled for the session. Nothing did that
+        short of a restart, and restarts no longer happen on a request.
+
+        Loads through the same path as a live enable (load_plugin, then
+        _register_loaded_plugin), with force_enabled so the instance runs
+        enabled while config.json keeps saying disabled. The plugin is
+        recorded in _on_demand_loaded_plugins, and the main loop unloads it
+        once on-demand moves off it (_release_on_demand_plugins).
+
+        Returns False after publishing an error when the load fails. A
+        plugin that isn't installed returns True without loading anything:
+        the mode checks that follow report it as they always have.
+        """
+        if self.plugin_manager is None:
+            return True
+        try:
+            known = self.plugin_manager.discovered_plugin_ids()
+        except AttributeError:
+            known = set(getattr(self.plugin_manager, 'plugin_manifests', ()) or ())
+        if plugin_id not in known:
+            # Installed after this process scanned: the web process checked
+            # its own, fresher list before posting the request.
+            try:
+                known = set(self.plugin_manager.discover_plugins())
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("On-demand: plugin discovery failed")
+                known = set()
+            if plugin_id not in known:
+                return True
+
+        logger.info("On-demand: loading disabled plugin '%s' for this session only", plugin_id)
+        self._on_demand_loaded_plugins.add(plugin_id)
+        try:
+            loaded = self.plugin_manager.load_plugin(plugin_id, force_enabled=True)
+            if loaded:
+                modes = self._register_loaded_plugin(plugin_id)
+                logger.info("On-demand: loaded plugin '%s' (modes: %s)", plugin_id, modes)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("On-demand: error loading plugin '%s'", plugin_id)
+            loaded = False
+        if not loaded:
+            # Stays in _on_demand_loaded_plugins so the main loop removes
+            # whatever part of it did get registered.
+            logger.error("On-demand: could not load plugin '%s'", plugin_id)
+            self._set_on_demand_error("load-failed")
+            return False
+        return True
+
+    def _release_on_demand_plugins(self) -> None:
+        """Unload plugins loaded only for on-demand that it has moved off.
+
+        Runs from the main loop, right after its own on-demand poll, not
+        where on-demand ends: a stop, an expiry or the next request is often
+        read from inside a render loop or a dwell sleep, where the plugin
+        being released may still be on the stack mid-display(). Unloading
+        goes through _unregister_plugin, as a live disable does, and nothing
+        is written to config.json.
+
+        A plugin the user enabled in the meantime stays loaded and takes its
+        place in the rotation, which is what the reconcile that the enable
+        queued would have done.
+        """
+        if self.plugin_manager is None:  # plugin system failed after startup restore
+            self._on_demand_loaded_plugins.clear()
+            return
+        keep = self.on_demand_plugin_id if self.on_demand_active else None
+        releasable = [p for p in self._on_demand_loaded_plugins if p != keep]
+        if not releasable:
+            return
+        try:
+            config = self.config_service.get_config()
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("On-demand release: falling back to cached config: %s", e)
+            config = self.config
+        previous_mode = self.current_display_mode
+        for plugin_id in releasable:
+            self._on_demand_loaded_plugins.discard(plugin_id)
+            section = config.get(plugin_id)
+            if isinstance(section, dict) and section.get('enabled', False):
+                logger.info("On-demand: keeping plugin '%s' loaded; it was enabled "
+                            "while on-demand showed it", plugin_id)
+                continue
+            if (plugin_id in self.plugin_display_modes
+                    or self.plugin_manager.get_plugin(plugin_id) is not None):
+                logger.info("On-demand: unloading plugin '%s'; it is disabled in config",
+                            plugin_id)
+                self._unregister_plugin(plugin_id)
+        if not self.on_demand_active:
+            # Only outside a session: rotation_resume_index points into
+            # available_modes until the session ends.
+            self._apply_plugin_rotation_order()
+        self._resync_mode_index_after_change(previous_mode)
+        if self.current_display_mode != previous_mode:
+            self.force_change = True
+
+    def _rotation_index_outside_on_demand(self, start: int) -> Optional[int]:
+        """First index from `start` (wrapping) whose mode is not owned by a
+        plugin loaded only for on-demand, or None if every mode is.
+
+        Ending a session must not resume the rotation onto the plugin that
+        is about to be unloaded. A live load appends that plugin's modes
+        after the saved resume index, but a session restored after a
+        restart has no saved index and its plugin was ordered in with the
+        rest -- the rotation resumed onto it, and a stop read during its own
+        screen changed nothing on the panel until that screen ended.
+        """
+        if not self._on_demand_loaded_plugins:
+            return start
+        on_demand_only = {mode for plugin_id in self._on_demand_loaded_plugins
+                          for mode in self.plugin_display_modes.get(plugin_id, [])}
+        count = len(self.available_modes)
+        for step in range(count):
+            index = (start + step) % count
+            if self.available_modes[index] not in on_demand_only:
+                return index
+        return None
+
     def _activate_on_demand(self, request: Dict[str, Any]) -> None:
         """Activate on-demand mode for a specific plugin display."""
         plugin_id = request.get('plugin_id')
         mode = request.get('mode')
+        if (plugin_id and plugin_id not in self.plugin_display_modes
+                and not self._load_plugin_for_on_demand(plugin_id)):
+            return
         resolved_mode = self._resolve_mode_for_plugin(plugin_id, mode)
 
         if not resolved_mode:
@@ -1877,6 +2020,15 @@ class DisplayController:
                 self.on_demand_last_event = 'stop-request-ignored'  # Already idle
                 self._publish_on_demand_state()
             return
+        if not self.on_demand_active and self.on_demand_status == 'error':
+            # _set_on_demand_error already ended any session and dropped
+            # rotation_resume_index; the full clear below would only move
+            # the rotation and force a redraw. Just drop the error.
+            self.on_demand_status = 'idle'
+            self.on_demand_last_error = None
+            self.on_demand_last_event = reason or 'cleared'
+            self._publish_on_demand_state()
+            return
 
         self._reset_on_demand_fields()
         self.on_demand_status = 'idle'
@@ -1886,17 +2038,27 @@ class DisplayController:
         # Clear on-demand configuration from cache
         self.cache_manager.clear_cache('display_on_demand_config')
 
-        if self.rotation_resume_index is not None and self.available_modes:
-            self.current_mode_index = self.rotation_resume_index % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
-            logger.info("Resuming rotation from saved index %d: mode '%s'", 
-                       self.rotation_resume_index, self.current_display_mode)
-        elif self.available_modes:
-            # Default to first mode if no resume index
-            self.current_mode_index = self.current_mode_index % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
-            logger.info("Resuming rotation to mode '%s' (index %d)", 
-                       self.current_display_mode, self.current_mode_index)
+        if self.available_modes:
+            saved = self.rotation_resume_index
+            # Default to the current index if no resume index
+            start = saved if saved is not None else self.current_mode_index
+            index = self._rotation_index_outside_on_demand(start % len(self.available_modes))
+            if index is None:
+                # Every mode belongs to a plugin loaded only for on-demand,
+                # which the main loop is about to unload; it then idles.
+                self.current_mode_index = 0
+                self.current_display_mode = None
+                logger.info("No enabled mode to resume rotation to")
+            elif saved is not None:
+                self.current_mode_index = index
+                self.current_display_mode = self.available_modes[index]
+                logger.info("Resuming rotation from saved index %d: mode '%s'",
+                            saved, self.current_display_mode)
+            else:
+                self.current_mode_index = index
+                self.current_display_mode = self.available_modes[index]
+                logger.info("Resuming rotation to mode '%s' (index %d)",
+                            self.current_display_mode, self.current_mode_index)
         else:
             logger.warning("No available modes to resume rotation to")
 
@@ -2093,6 +2255,14 @@ class DisplayController:
                 # Handle on-demand commands before rendering
                 self._poll_on_demand_requests()
                 self._check_on_demand_expiration()
+                # Unload plugins loaded only to show them on-demand once it
+                # has moved off them. Here, where no display() is on the
+                # stack; one ended from inside a screen is caught here on
+                # the next pass.
+                if self._on_demand_loaded_plugins:
+                    self._release_on_demand_plugins()
+                    if not self.available_modes:
+                        continue  # it was all there was; idle as above
                 self._tick_plugin_updates()
                 
                 # Clean up expired WiFi status messages
@@ -3126,6 +3296,11 @@ class DisplayController:
                     prepared = prepare(_pid, new_config) if callable(prepare) else None
                     if isinstance(prepared, dict):
                         new_config = prepared
+                    if _pid in self._on_demand_loaded_plugins:
+                        # Saved while on-demand shows it: config.json still
+                        # says disabled, and on_config_change would switch
+                        # the instance off mid-session.
+                        new_config = {**new_config, 'enabled': True}
                     # Runs on ConfigService's watcher thread. Under the
                     # plugin's lock, so it cannot interleave with update()
                     # on the worker or display() on the render thread; a

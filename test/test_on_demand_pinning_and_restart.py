@@ -164,12 +164,14 @@ class TestRestartDoesNotStarveTheOtherPlugins:
         assert controller.on_demand_mode == 'app_a'
         assert controller.on_demand_pinned is True
 
-    def test_a_disabled_on_demand_plugin_is_enabled_and_loaded(self, controller):
-        """Otherwise the mode being resumed has nothing behind it."""
+    def test_a_disabled_on_demand_plugin_is_still_loaded(self, controller):
+        """Otherwise the mode being resumed has nothing behind it. It loads
+        for on-demand only; its config section is left disabled."""
         selected = controller._select_startup_plugins(
             self.DISCOVERED, {'plugin_id': 'disabled-one', 'mode': 'x'})
         assert 'disabled-one' in selected
-        assert controller.config['disabled-one']['enabled'] is True
+        assert controller._on_demand_loaded_plugins == {'disabled-one'}
+        assert controller.config['disabled-one']['enabled'] is False
 
     def test_an_unknown_on_demand_plugin_falls_back_to_normal(self, controller):
         selected = controller._select_startup_plugins(

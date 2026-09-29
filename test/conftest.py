@@ -16,7 +16,54 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
+class _DisarmStartupReconciliation:
+    """Import hook: every ``web_interface.app`` this process builds starts disarmed.
+
+    app.py wires itself to the checkout's real config/config.json and
+    plugin-repos/ at import, and its before_request hook launches startup
+    reconciliation on the first request any test sends. Reconciliation
+    reinstalls every configured plugin missing on disk from the live store,
+    so a full run downloaded basketball-scoreboard, calendar,
+    football-scoreboard, leaderboard and ledmatrix-stocks into the real
+    plugin-repos/ (not gitignored), minutes in, from a daemon thread no test
+    waits on. Setting ``_reconciliation_started`` is the app's own run-once
+    latch; doing it as the module finishes executing covers fixtures that
+    import the app lazily and send a request at once, and ``importlib.reload``.
+    StateReconciliation itself stays fully testable.
+    """
+
+    _MODULE = "web_interface.app"
+
+    def find_spec(self, fullname, path, target=None):
+        if fullname != self._MODULE:
+            return None
+        import importlib.machinery
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if spec is None or spec.loader is None:
+            return spec
+        exec_module = spec.loader.exec_module
+
+        def exec_disarmed(module):
+            exec_module(module)
+            module._reconciliation_started = True
+
+        spec.loader.exec_module = exec_disarmed
+        return spec
+
+
+_DISARM_HOOK = _DisarmStartupReconciliation()
+
+
 def pytest_configure(config):
+    sys.meta_path.insert(0, _DISARM_HOOK)
+    app_module = sys.modules.get(_DisarmStartupReconciliation._MODULE)
+    if app_module is not None:
+        app_module._reconciliation_started = True
+
+    _point_emulator_at_raw_adapter(config)
+
+
+def _point_emulator_at_raw_adapter(config):
     """Point the emulator at a per-process config that binds no socket.
 
     Six test modules set EMULATOR=true and build a real DisplayManager. The
@@ -63,7 +110,9 @@ def pytest_configure(config):
 
 
 def pytest_unconfigure(config):
-    """Remove the throwaway emulator config written by pytest_configure."""
+    """Undo pytest_configure: the import hook and the throwaway emulator config."""
+    if _DISARM_HOOK in sys.meta_path:
+        sys.meta_path.remove(_DISARM_HOOK)
     tmp_dir = getattr(config, "_ledmatrix_emulator_tmp", None)
     if tmp_dir is not None:
         import shutil
