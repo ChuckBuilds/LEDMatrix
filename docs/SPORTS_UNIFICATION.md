@@ -274,8 +274,9 @@ Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
 bodies. Everything still identical adds up to about 5,200 duplicated lines;
 the rest of the ~65,000 method lines is drifted, one outlier away from
 identical, or unique to one plugin. Drifted code cannot move unchanged, so
-consolidation stalls unless the copies are made identical first. `manager.py`, the largest copy of all and the layer the
-display controller and Vegas talk to, was in no plan before this one.
+consolidation stalls unless the copies are made identical first.
+`manager.py`, the largest copy of all and the layer the display controller and
+Vegas talk to, was in no plan before this one.
 
 ### The method: reconcile, then promote
 
@@ -327,7 +328,7 @@ A family is only reconciled when *all nine* agree. Leaving one plugin behind
 recreates the drift the report exists to measure.
 
 Soaks: pixel diffs prove the drawing, not the timing. A family that changes
-when data arrives or which games are live (1, 3, 5, 9 and 10 below) needs a
+when data arrives or which games are live (5, 7, 9, 13 and 14 below) needs a
 live-game soak on a rig, and out-of-season sports wait for their season.
 Before a soak, check the rig's `*_display_mode`: a board in `switch` mode tells
 you nothing about the scroll path.
@@ -358,8 +359,8 @@ method. The plan is a host class in core, `SportsScoreboardPlugin(BasePlugin)`,
 that takes the plugin's leagues as data (key, label, ESPN path, Live, Recent
 and Upcoming classes: basketball's `manager.py` already describes its leagues
 as such a table) and a typed mode key instead of the mode-name string parsing
-(`endswith('_live')`, `split('_')`) every copy repeats. Order within it: stage 4's identical helpers
-first; then dynamic duration, then live priority (`has_live_content`,
+(`endswith('_live')`, `split('_')`) every copy repeats. Order within it:
+stage 4's identical helpers first; then dynamic duration, then live priority (`has_live_content`,
 `get_live_modes`, `has_live_priority`), then Vegas content, then mode
 resolution, then the lifecycle methods. Pilot the whole host on nrl or afl,
 the smallest copies (about 1,850 lines each), with a frame soak and a
