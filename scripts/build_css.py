@@ -36,7 +36,7 @@ import os
 import platform
 import shutil
 import stat
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import sys
 import tempfile
 import urllib.request
@@ -139,11 +139,13 @@ def ensure_cli() -> Path:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     url = DOWNLOAD_URL.format(version=TAILWIND_VERSION, asset=name)
+    if not url.startswith("https://"):
+        raise SystemExit(f"Refusing to download the Tailwind CLI over a non-https URL: {url}")
     print(f"Downloading Tailwind CLI v{TAILWIND_VERSION} ({name})...")
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-")
     tmp = Path(tmp_name)
     try:
-        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(url, timeout=120) as resp:
+        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(url, timeout=120) as resp:  # nosec B310 - https only, checked above
             shutil.copyfileobj(resp, out)
         actual = sha256_of(tmp)
         if actual != expected:
@@ -180,9 +182,10 @@ def run_build(
     # NODE_ENV=production and no browserslist lookup keep the output the
     # same on every machine.
     env = dict(os.environ, NODE_ENV="production", BROWSERSLIST_IGNORE_OLD_DATA="1")
-    result = subprocess.run(
-        cmd, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True
-    )
+    # The CLI path is computed here (cache dir + pinned asset name) and the
+    # binary was SHA-256-verified by ensure_cli(); env is os.environ plus two
+    # fixed values.
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True)  # nosec B603 - list-form argv, no shell  # nosemgrep
     if result.returncode != 0:
         sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"Tailwind build failed for {input_css}")

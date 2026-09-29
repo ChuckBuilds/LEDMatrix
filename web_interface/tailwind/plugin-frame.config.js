@@ -9,13 +9,13 @@
  * common utility families at the values the v2 CDN had. A fragment that
  * needs something rarer should ship it in its own <style>.
  *
+ * Patterns are regex literals, so the colour families (gray red yellow green
+ * blue indigo purple pink) and the spacing scale are spelled out in each
+ * pattern that uses them; change every copy together.
+ *
  * Rebuild with `python3 scripts/build_css.py` after changing this file.
  */
 const colors = require('tailwindcss/colors');
-
-const PALETTE = 'gray|red|yellow|green|blue|indigo|purple|pink';
-const SHADE = '50|100|200|300|400|500|600|700|800|900';
-const SPACE = '0|0\\.5|1|1\\.5|2|2\\.5|3|4|5|6|8|10|12|16|20|24';
 
 module.exports = {
   content: {
@@ -26,19 +26,19 @@ module.exports = {
   safelist: [
     // Colour
     {
-      pattern: new RegExp(`^(bg|text|border)-(${PALETTE})-(${SHADE})$`),
+      pattern: /^(bg|text|border)-(gray|red|yellow|green|blue|indigo|purple|pink)-(50|100|200|300|400|500|600|700|800|900)$/,
       variants: ['hover'],
     },
     { pattern: /^(bg|text|border)-(white|black|transparent|current)$/, variants: ['hover'] },
-    { pattern: new RegExp(`^(ring|placeholder)-(${PALETTE})-(300|400|500|600)$`), variants: ['focus'] },
-    { pattern: new RegExp(`^border-(${PALETTE})-(300|400|500|600)$`), variants: ['focus'] },
+    { pattern: /^(ring|placeholder)-(gray|red|yellow|green|blue|indigo|purple|pink)-(300|400|500|600)$/, variants: ['focus'] },
+    { pattern: /^border-(gray|red|yellow|green|blue|indigo|purple|pink)-(300|400|500|600)$/, variants: ['focus'] },
     { pattern: /^bg-opacity-(0|25|50|75|100)$/ },
     { pattern: /^opacity-(0|25|50|75|100)$/, variants: ['hover', 'disabled'] },
 
     // Spacing and sizing
-    { pattern: new RegExp(`^(p|px|py|pt|pr|pb|pl|m|mx|my|mt|mr|mb|ml)-(${SPACE})$`) },
+    { pattern: /^(p|px|py|pt|pr|pb|pl|m|mx|my|mt|mr|mb|ml)-(0|0\.5|1|1\.5|2|2\.5|3|4|5|6|8|10|12|16|20|24)$/ },
     { pattern: /^(m|mx|my|mt|mr|mb|ml)-auto$/ },
-    { pattern: new RegExp(`^(space-x|space-y|gap|gap-x|gap-y)-(${SPACE})$`) },
+    { pattern: /^(space-x|space-y|gap|gap-x|gap-y)-(0|0\.5|1|1\.5|2|2\.5|3|4|5|6|8|10|12|16|20|24)$/ },
     { pattern: /^(w|h)-(0|1|2|3|4|5|6|8|10|12|16|20|24|32|40|48|56|64|72|80|96|auto|full|screen|px|1\/2|1\/3|2\/3|1\/4|3\/4)$/ },
     { pattern: /^min-(w|h)-(0|full|screen)$/ },
     { pattern: /^max-w-(xs|sm|md|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|full|screen-sm|screen-md|screen-lg|none)$/ },
@@ -75,7 +75,7 @@ module.exports = {
     { pattern: /^border(-0|-2|-4|-t|-b|-l|-r|-t-0|-b-0|-t-2|-b-2|-l-4)?$/ },
     { pattern: /^border-(solid|dashed|dotted|none)$/ },
     { pattern: /^divide-(x|y)$/ },
-    { pattern: new RegExp(`^divide-(${PALETTE})-(100|200|300)$`) },
+    { pattern: /^divide-(gray|red|yellow|green|blue|indigo|purple|pink)-(100|200|300)$/ },
     { pattern: /^rounded(-none|-sm|-md|-lg|-xl|-2xl|-full)?$/ },
     { pattern: /^rounded-(t|b|l|r)(-md|-lg)?$/ },
     { pattern: /^shadow(-sm|-md|-lg|-xl|-2xl|-inner|-none)?$/, variants: ['hover'] },

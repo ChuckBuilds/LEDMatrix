@@ -113,3 +113,17 @@ def test_a_corrupt_cached_cli_is_replaced(tmp_path, monkeypatch):
         build_css.ensure_cli()
     assert not cached.exists()
     assert not any(p.name.startswith(".download-") for p in cached.parent.iterdir())
+
+
+def test_the_cli_is_only_downloaded_over_https(tmp_path, monkeypatch):
+    """urlopen would also follow file:// and custom schemes; the download
+    refuses anything but https before it opens the URL."""
+    monkeypatch.setenv("LEDMATRIX_TAILWIND_CACHE", str(tmp_path))
+    monkeypatch.setattr(build_css, "DOWNLOAD_URL", "file:///etc/{version}/{asset}")
+
+    def fail(*args, **kwargs):
+        raise AssertionError("urlopen must not be called for a non-https URL")
+
+    monkeypatch.setattr(build_css.urllib.request, "urlopen", fail)
+    with pytest.raises(SystemExit, match="non-https"):
+        build_css.ensure_cli()
