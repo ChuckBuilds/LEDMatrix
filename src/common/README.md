@@ -26,6 +26,7 @@ Rules for the package:
 | [`api_helper`](#api_helper) | HTTP GET/POST with caching and rate limiting | Yes | — |
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | Unreleased |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
+| [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | Unreleased |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
 | [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
 | [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | Unreleased |
@@ -41,6 +42,7 @@ Rules for the package:
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
+| [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | Unreleased |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
 
@@ -99,6 +101,17 @@ splits a range into month and day requests ESPN accepts and merges the
 results; `espn_date_chunks()`, `fetch_espn_date_chunks()`,
 `clamp_espn_limit()` and `merge_scoreboard_payloads()` are the pieces.
 Scoreboard plugins also bundle a copy for older cores.
+
+### favorite_team_check
+
+[`favorite_team_check.py`](favorite_team_check.py).
+`FavoriteTeamCheck(logger, leagues)`, where `leagues` maps a league key to
+`(display name, ESPN sport/league path)`. `schedule(league_key, favorites)`
+checks the configured favourite team codes against ESPN's team list once per
+league, on a daemon thread, and logs a bad code with the nearest real one, or
+says the league has nothing on yet; `reset()` re-arms it after a config edit.
+Diagnostics only: every failure is swallowed. Scoreboard plugins also bundle
+a copy for older cores.
 
 ### font_layout
 
@@ -236,6 +249,18 @@ that were identical in every scoreboard (game selection and rotation,
 fonts, colours, dates, the switch-mode upcoming card). The docstring lists
 the attributes the host class must have and the three methods deliberately
 left out.
+
+### sports_timezone
+
+[`sports_timezone.py`](sports_timezone.py).
+`resolve_timezone_name(config, plugin_manager, cache_manager, log, *,
+plugin_label, writeback_fixed_in=None)` and `resolve_timezone(...)` (the same
+as a pytz zone): the plugin's own `timezone`, then the global one via either
+manager's `config_manager`, then the host's zone (`system_timezone_name()`),
+then UTC. `plugin_label` names the plugin in the warning logged when nothing
+resolves; `writeback_fixed_in` is for a plugin that once wrote `"UTC"` into
+the saved config (a bare plugin-level `"UTC"` is then ignored when another
+source disagrees). Scoreboard plugins also bundle a copy for older cores.
 
 ### sync_manager
 
