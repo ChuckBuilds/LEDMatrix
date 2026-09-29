@@ -439,3 +439,101 @@ class ScheduleNoteMatchdayTests(unittest.TestCase):
         # without games, so a future entry there is not a next fixture.
         note = self.note(self.payload([-9], [11], whitelist=False))
         self.assertIn("season has finished", note)
+
+
+class ScheduleNoteListCalendarTests(unittest.TestCase):
+    """A round still to start in a "list" calendar is not a finished season.
+
+    Shapes captured from ESPN on 2026-09-29, with dates kept relative to that
+    day. The Europa League scoreboard still showed the 17 September matchday
+    and its calendar is a ``"list"`` of rounds, not match days, so the check
+    said the season had finished -- with the knockout rounds, and the next
+    league-phase matchday, still to come. PLL, the World Cup and AFL really had
+    finished and must still say so, although each has a season or round
+    ``endDate`` in the future.
+    """
+
+    note = ScheduleNoteTests.note
+
+    @staticmethod
+    def iso(days):
+        return (datetime.now(timezone.utc) + timedelta(days=days)).strftime(
+            "%Y-%m-%dT%H:%MZ")
+
+    @classmethod
+    def list_league(cls, event_days, rounds, league_type=14540,
+                    event_type=14540, phase_label="UEFA Europa League",
+                    extra_phases=()):
+        """``rounds`` is ``[(label, start_day, end_day), ...]`` for one phase."""
+        return {
+            "events": [{"date": cls.iso(d), "season": {"type": event_type}}
+                       for d in event_days],
+            "leagues": [{
+                "season": {"type": {"type": league_type}},
+                "calendarType": "list",
+                "calendarIsWhitelist": True,
+                "calendar": [{
+                    "label": phase_label,
+                    "startDate": cls.iso(-90), "endDate": cls.iso(275),
+                    "entries": [{"label": label, "startDate": cls.iso(start),
+                                 "endDate": cls.iso(end)}
+                                for label, start, end in rounds],
+                }] + list(extra_phases),
+            }],
+        }
+
+    def test_europa_between_matchdays_is_not_finished(self):
+        note = self.note(self.list_league([-12], [
+            ("League Phase", -31, 123),
+            ("Knockout Round Playoffs", 123, 151),
+            ("Rd of 16", 151, 172),
+            ("Quarterfinals", 172, 200),
+            ("Semifinals", 200, 221),
+            ("Final", 222, 275),
+        ]))
+        self.assertIsNone(note)
+
+    def test_world_cup_after_the_final_is_still_finished(self):
+        # The competition runs to 31 December, and the last round ended 12
+        # days after the final; no round is still to start.
+        note = self.note(self.list_league([-72], [
+            ("Group", -110, -93),
+            ("Semifinals", -77, -72),
+            ("Final", -72, -59),
+        ], league_type=13803, event_type=13803, phase_label="FIFA World Cup"))
+        self.assertIn("season has finished", note)
+
+    def test_afl_after_the_grand_final_is_still_finished(self):
+        # The Grand Final round had started but had not ended yet.
+        note = self.note(self.list_league([-3], [
+            ("Preliminary Finals", -13, -6),
+            ("Grand Final", -6, 1),
+        ], league_type=3, event_type=3, phase_label="Postseason"))
+        self.assertIn("season has finished", note)
+
+    def test_an_offseason_round_does_not_count(self):
+        # College football's "Off Season" phase holds the All-Star week.
+        offseason = {"label": "Off Season", "startDate": self.iso(2),
+                     "endDate": self.iso(6),
+                     "entries": [{"label": "All-Star", "startDate": self.iso(2),
+                                  "endDate": self.iso(6)}]}
+        note = self.note(self.list_league(
+            [-3], [("CFP", -40, 1)], league_type=3, event_type=3,
+            phase_label="Postseason", extra_phases=[offseason]))
+        self.assertIn("season has finished", note)
+
+    def test_pll_with_a_season_end_date_in_the_future_is_still_finished(self):
+        # A "day" whitelist whose last match day is past; the season's own
+        # endDate (1 January) is ignored.
+        note = self.note({
+            "events": [{"date": self.iso(-9), "season": {"type": 2}}],
+            "leagues": [{
+                "season": {"type": {"type": 2}, "startDate": self.iso(-271),
+                           "endDate": self.iso(94)},
+                "calendarType": "day",
+                "calendarIsWhitelist": True,
+                "calendarEndDate": self.iso(94),
+                "calendar": [self.iso(-30), self.iso(-22), self.iso(-9)],
+            }],
+        })
+        self.assertIn("season has finished", note)

@@ -218,6 +218,8 @@ class FavoriteTeamCheck:
                 return None  # Nothing published either way; draw no conclusion.
             if cls._moved_to_later_phase(payload):
                 return None  # e.g. postseason under way; see the method.
+            if cls._later_round_scheduled(payload, now):
+                return None  # e.g. Europa League between matchdays.
             return ("the season has finished and the next one's fixtures are "
                     "not published yet")
 
@@ -258,6 +260,44 @@ class FavoriteTeamCheck:
                        for e in payload.get('events') or []]
         known = [t for t in event_types if isinstance(t, int)]
         return bool(known) and all(t < league_type for t in known)
+
+    @classmethod
+    def _later_round_scheduled(cls, payload, now: datetime) -> bool:
+        """
+        Whether a "list" calendar has a round that has not started yet.
+
+        Competitions with a list calendar (the UEFA club competitions, the
+        World Cup, AFL, NFL) give each phase its rounds as ``entries`` with
+        start and end dates. Between matchdays the Europa League scoreboard
+        keeps showing the last one: on 2026-09-29 every event was from 17
+        September, the next matchday was only days away, and the rounds from
+        the knockout play-offs to the final were all still to come. A round
+        that starts later means the season is not over, even though the
+        date of the next fixture is not known.
+
+        Only a round's *start* counts. End dates are padded well past the
+        last game -- the World Cup's final round ran to 1 August for a 19 July
+        final -- so a future end date is also true of a finished season.
+        Rounds in an offseason phase (the college football All-Star week)
+        are not games for the favourites and do not count either.
+        """
+        league = (payload.get('leagues') or [{}])[0] or {}
+        for phase in league.get('calendar') or []:
+            if not isinstance(phase, dict) or cls._is_offseason(phase.get('label')):
+                continue
+            for entry in phase.get('entries') or []:
+                if not isinstance(entry, dict) or cls._is_offseason(entry.get('label')):
+                    continue
+                start = cls._parse_date(entry.get('startDate'))
+                if start and start > now:
+                    return True
+        return False
+
+    @staticmethod
+    def _is_offseason(label) -> bool:
+        """'Off Season', 'Offseason', 'Off-season' ..."""
+        return isinstance(label, str) and 'offseason' in re.sub(
+            r'[^a-z]', '', label.lower())
 
     @staticmethod
     def _parse_date(raw) -> Optional[datetime]:
