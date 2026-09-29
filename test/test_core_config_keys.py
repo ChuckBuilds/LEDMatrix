@@ -241,7 +241,7 @@ class TestTheStatusEndpoint:
             pm = MagicMock()
             pm.plugins_dir = str(plugins_dir)
             monkeypatch.setattr(api_v3, "config_manager", cm, raising=False)
-            monkeypatch.setattr(api_v3, "plugin_manager", pm, raising=False)
+            monkeypatch.setattr(api_v3, "plugin_catalog", pm, raising=False)
             app = Flask(__name__)
             app.config["TESTING"] = True
             app.register_blueprint(api_v3, url_prefix="/api/v3")

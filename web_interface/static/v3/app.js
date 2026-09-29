@@ -27,8 +27,9 @@
  * the display" banner; the floating live preview; aria-current on the nav;
  * the mobile nav drawer's keyboard handling; header widget placement.
  *
- * Globals: showSaveResult, showRestartPending, dismissRestartPending,
- * restartPendingNow, toggleFloatingPreview, applyFloatingPreviewSize,
+ * Globals: showSaveResult, showRestartPending, noteRestartRequired,
+ * dismissRestartPending, restartPendingNow, toggleFloatingPreview,
+ * applyFloatingPreviewSize,
  * cycleFloatingPreviewSize, updateFloatingPreviewVisibility,
  * previewPluginNow, updateNavAriaCurrent, placeHeaderWidgets.
  */
@@ -72,18 +73,30 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
         }
     }
 
-    // Main-config saves (display hardware, rotation/durations, general) only
-    // take effect after a display-service restart — surface the reminder
-    // banner. Plugin config saves apply live and are deliberately excluded.
+    // A response that needs a display restart to take effect says so with
+    // restart_required (main-config saves, store operations the display
+    // cannot pick up live); surface the reminder banner for it.
     try {
-        const cfg = event.detail.requestConfig;
-        if (cfg && cfg.verb === 'post' &&
-            (cfg.path || '').includes('/api/v3/config/main') &&
-            response && response.status >= 200 && response.status < 300) {
-            window.showRestartPending();
+        if (response && response.status >= 200 && response.status < 300 && response.responseText) {
+            window.noteRestartRequired(JSON.parse(response.responseText));
         }
-    } catch { /* banner is best-effort */ }
+    } catch { /* not JSON; the banner is best-effort */ }
 });
+
+/**
+ * Shows the restart-pending banner when an API response says the change
+ * needs a display restart (`restart_required: true`), with the response's
+ * `restart_message` as its wording when there is one. Every caller of an
+ * endpoint that can answer this way passes the parsed body here, so the
+ * server alone decides when the banner appears.
+ * @param {Object} data - a parsed JSON response body (or an operation result)
+ * @returns {boolean} whether the banner was shown
+ */
+window.noteRestartRequired = function(data) {
+    if (!data || data.restart_required !== true) return false;
+    window.showRestartPending(typeof data.restart_message === 'string' ? data.restart_message : undefined);
+    return true;
+};
 
 /**
  * Shows the outcome of a settings form save as one notification. Used by the

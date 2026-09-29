@@ -79,11 +79,10 @@ def env(tmp_path):
     plugin_manager = MagicMock()
     plugin_manager.plugin_manifests = {PLUGIN_ID: {"id": PLUGIN_ID}}
     plugin_manager.plugins_dir = plugins_dir
-    plugin_manager.get_plugin.return_value = None
 
     api_v3.config_manager = config_manager
     api_v3.schema_manager = schema_manager
-    api_v3.plugin_manager = plugin_manager
+    api_v3.plugin_catalog = plugin_manager
     api_v3.plugin_store_manager = MagicMock()
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.operation_queue = MagicMock()

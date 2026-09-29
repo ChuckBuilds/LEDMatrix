@@ -148,6 +148,26 @@ const PluginInstallManager = {
             text: parts.join(', '),
             type
         };
+    },
+
+    /**
+     * The first update answer that says the display needs a restart, or null.
+     *
+     * The display keeps running the code it loaded until it restarts, so an
+     * update of a plugin it runs answers `restart_required: true` (with the
+     * banner's wording in `restart_message`). One restart covers every
+     * plugin in the run, so one answer is enough; pass it to
+     * window.noteRestartRequired.
+     *
+     * @param {Array} results - updateAll()'s results
+     * @returns {Object|null}
+     */
+    restartRequest(results) {
+        for (const entry of (Array.isArray(results) ? results : [])) {
+            const body = entry && entry.success ? entry.result : null;
+            if (body && body.restart_required === true) return body;
+        }
+        return null;
     }
 };
 

@@ -43,18 +43,15 @@ def mock_config_manager():
 
 
 @pytest.fixture
-def mock_plugin_manager():
-    """Create a mock plugin manager."""
+def mock_plugin_catalog():
+    """Create a mock plugin catalog."""
     mock = MagicMock()
-    mock.plugins = {}
     mock.discover_plugins.return_value = []
-    mock.health_tracker = MagicMock()
-    mock.health_tracker.get_health_status.return_value = {'healthy': True}
     return mock
 
 
 @pytest.fixture
-def client(mock_config_manager, mock_plugin_manager):
+def client(mock_config_manager, mock_plugin_catalog):
     """Create a Flask test client with mocked dependencies."""
     # Create a minimal Flask app for testing
     test_app = Flask(__name__)
@@ -66,7 +63,7 @@ def client(mock_config_manager, mock_plugin_manager):
     
     # Mock the managers on the blueprint
     api_v3.config_manager = mock_config_manager
-    api_v3.plugin_manager = mock_plugin_manager
+    api_v3.plugin_catalog = mock_plugin_catalog
     api_v3.plugin_store_manager = MagicMock()
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.schema_manager = MagicMock()
@@ -74,7 +71,10 @@ def client(mock_config_manager, mock_plugin_manager):
     api_v3.plugin_state_manager = MagicMock()
     api_v3.operation_history = MagicMock()
     api_v3.cache_manager = MagicMock()
-    
+    # Readers of what the display publishes (app.py wires real ones).
+    api_v3.health_tracker = MagicMock()
+    api_v3.resource_monitor = MagicMock()
+
     # Setup operation queue mocks
     mock_operation = MagicMock()
     mock_operation.operation_id = 'test-op-123'
@@ -128,7 +128,7 @@ class TestConfigAPI:
         mock_config_manager.save_config_atomic.assert_called_once()
     
     def test_save_main_config_fails_closed_when_schema_path_is_unresolvable(
-        self, client, mock_config_manager, mock_plugin_manager
+        self, client, mock_config_manager, mock_plugin_catalog
     ):
         """A plugin id whose schema path fails safe-resolution must not have
         its config saved with secret_fields left empty.
@@ -140,7 +140,7 @@ class TestConfigAPI:
         the plugin's submitted config -- credentials included -- as
         ordinary, unencrypted configuration instead of refusing the request.
         """
-        mock_plugin_manager.plugin_manifests = {'evil': {}}
+        mock_plugin_catalog.plugin_manifests = {'evil': {}}
 
         with patch('web_interface.blueprints.api_v3.config.resolve_under', return_value=None):
             response = client.post(
@@ -545,38 +545,35 @@ class TestDisplayAPI:
 class TestPluginsAPI:
     """Test plugins API endpoints."""
     
-    def test_get_installed_plugins(self, client, mock_plugin_manager):
+    def test_get_installed_plugins(self, client, mock_plugin_catalog):
         """Test getting list of installed plugins."""
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
+        api_v3.plugin_catalog = mock_plugin_catalog
         
-        mock_plugin_manager.plugins = {
-            'weather': MagicMock(plugin_id='weather'),
-            'clock': MagicMock(plugin_id='clock')
-        }
-        mock_plugin_manager.get_plugin_metadata.return_value = {
-            'id': 'weather',
-            'name': 'Weather Plugin'
-        }
-        
+        mock_plugin_catalog.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_catalog.get_plugin_directory.return_value = None
+        mock_plugin_catalog.get_all_plugin_info.return_value = [
+            {'id': 'weather', 'name': 'Weather Plugin'}
+        ]
+        api_v3.plugin_store_manager.get_registry_info.return_value = None
+
         response = client.get('/api/v3/plugins/installed')
 
         assert response.status_code == 200
         data = json.loads(response.data)
-        assert isinstance(data, (list, dict))
+        names = [p['name'] for p in data['data']['plugins']]
+        assert 'Weather Plugin' in names
 
-    def test_installed_plugins_report_update_available(self, client, mock_plugin_manager):
+    def test_installed_plugins_report_update_available(self, client, mock_plugin_catalog):
         """Installed-plugin entries surface latest_version + update_available
         by comparing the on-disk manifest version to the registry."""
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
+        api_v3.plugin_catalog = mock_plugin_catalog
         # No on-disk manifest to merge — keep the version we hand in below.
-        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
-        mock_plugin_manager.get_all_plugin_info.return_value = [
+        mock_plugin_catalog.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_catalog.get_all_plugin_info.return_value = [
             {'id': 'weather', 'name': 'Weather', 'version': '1.0.0'}
         ]
-        # Avoid touching plugin instances (Vegas hooks, enabled fallback).
-        mock_plugin_manager.get_plugin.return_value = None
         # Registry advertises a newer version than the installed one.
         api_v3.plugin_store_manager.get_registry_info.return_value = {
             'verified': True, 'latest_version': '1.2.0'
@@ -591,15 +588,14 @@ class TestPluginsAPI:
         assert entry['latest_version'] == '1.2.0'
         assert entry['update_available'] is True
 
-    def test_installed_plugins_no_update_when_current(self, client, mock_plugin_manager):
+    def test_installed_plugins_no_update_when_current(self, client, mock_plugin_catalog):
         """No update is flagged when installed version matches the registry."""
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
-        mock_plugin_manager.plugins_dir = '/nonexistent-plugins-dir'
-        mock_plugin_manager.get_all_plugin_info.return_value = [
+        api_v3.plugin_catalog = mock_plugin_catalog
+        mock_plugin_catalog.plugins_dir = '/nonexistent-plugins-dir'
+        mock_plugin_catalog.get_all_plugin_info.return_value = [
             {'id': 'weather', 'name': 'Weather', 'version': '1.2.0'}
         ]
-        mock_plugin_manager.get_plugin.return_value = None
         api_v3.plugin_store_manager.get_registry_info.return_value = {
             'verified': True, 'latest_version': '1.2.0'
         }
@@ -625,17 +621,17 @@ class TestPluginsAPI:
         # mismatch rather than hiding a possible update.
         assert _is_plugin_update_available('1.0.0', 'not-a-semver') is True
 
-    def test_get_plugin_health(self, client, mock_plugin_manager):
+    def test_get_plugin_health(self, client, mock_plugin_catalog):
         """Test getting plugin health information."""
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
+        api_v3.plugin_catalog = mock_plugin_catalog
         
         # Setup health tracker
         mock_health_tracker = MagicMock()
         mock_health_tracker.get_all_health_summaries.return_value = {
             'weather': {'healthy': True}
         }
-        mock_plugin_manager.health_tracker = mock_health_tracker
+        api_v3.health_tracker = mock_health_tracker
         
         response = client.get('/api/v3/plugins/health')
         
@@ -643,10 +639,10 @@ class TestPluginsAPI:
         data = json.loads(response.data)
         assert isinstance(data, (list, dict))
     
-    def test_get_plugin_health_single(self, client, mock_plugin_manager):
+    def test_get_plugin_health_single(self, client, mock_plugin_catalog):
         """Test getting health for single plugin."""
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
+        api_v3.plugin_catalog = mock_plugin_catalog
         
         # Setup health tracker with proper method (endpoint calls get_health_summary)
         mock_health_tracker = MagicMock()
@@ -655,7 +651,7 @@ class TestPluginsAPI:
             'failures': 0,
             'last_success': '2024-01-01T00:00:00'
         }
-        mock_plugin_manager.health_tracker = mock_health_tracker
+        api_v3.health_tracker = mock_health_tracker
         
         response = client.get('/api/v3/plugins/health/weather')
         
@@ -663,16 +659,16 @@ class TestPluginsAPI:
         data = json.loads(response.data)
         assert 'healthy' in data.get('data', {}) or 'data' in data
     
-    def test_toggle_plugin(self, client, mock_config_manager, mock_plugin_manager):
+    def test_toggle_plugin(self, client, mock_config_manager, mock_plugin_catalog):
         """Test toggling plugin enabled state."""
         from web_interface.blueprints.api_v3 import api_v3
         api_v3.config_manager = mock_config_manager
-        api_v3.plugin_manager = mock_plugin_manager
+        api_v3.plugin_catalog = mock_plugin_catalog
         api_v3.plugin_state_manager = MagicMock()
         api_v3.operation_history = MagicMock()
         
         # Setup plugin manifests
-        mock_plugin_manager.plugin_manifests = {'weather': {}}
+        mock_plugin_catalog.plugin_manifests = {'weather': {}}
         
         request_data = {
             'plugin_id': 'weather',
@@ -1006,15 +1002,15 @@ class TestPluginHealthRoutes:
     """Phase 1: /plugins/health and /plugins/metrics build per-installed-id so
     they surface cross-process data persisted by the display service."""
 
-    def test_health_route_builds_per_installed_id(self, client, mock_plugin_manager):
+    def test_health_route_builds_per_installed_id(self, client, mock_plugin_catalog):
         from web_interface.blueprints.api_v3 import api_v3
         from src.plugin_system.plugin_health import PluginHealthTracker
 
         cache = MagicMock()
         cache.get.return_value = None
-        api_v3.plugin_manager = mock_plugin_manager
-        mock_plugin_manager.plugin_manifests = {'p1': {}, 'p2': {}}
-        mock_plugin_manager.health_tracker = PluginHealthTracker(cache)
+        api_v3.plugin_catalog = mock_plugin_catalog
+        mock_plugin_catalog.plugin_manifests = {'p1': {}, 'p2': {}}
+        api_v3.health_tracker = PluginHealthTracker(cache)
 
         resp = client.get('/api/v3/plugins/health')
         assert resp.status_code == 200
@@ -1023,10 +1019,10 @@ class TestPluginHealthRoutes:
         assert data['p1']['is_healthy'] is True
         assert data['p1']['degraded'] is False
 
-    def test_health_route_reports_not_available_without_tracker(self, client, mock_plugin_manager):
+    def test_health_route_reports_not_available_without_tracker(self, client, mock_plugin_catalog):
         from web_interface.blueprints.api_v3 import api_v3
-        api_v3.plugin_manager = mock_plugin_manager
-        mock_plugin_manager.health_tracker = None
+        api_v3.plugin_catalog = mock_plugin_catalog
+        api_v3.health_tracker = None
 
         resp = client.get('/api/v3/plugins/health')
         assert resp.status_code == 200
@@ -1034,15 +1030,15 @@ class TestPluginHealthRoutes:
         assert body['data'] == {}
         assert 'not available' in body['message'].lower()
 
-    def test_metrics_route_builds_per_installed_id(self, client, mock_plugin_manager):
+    def test_metrics_route_builds_per_installed_id(self, client, mock_plugin_catalog):
         from web_interface.blueprints.api_v3 import api_v3
         from src.plugin_system.resource_monitor import PluginResourceMonitor
 
         cache = MagicMock()
         cache.get.return_value = None
-        api_v3.plugin_manager = mock_plugin_manager
-        mock_plugin_manager.plugin_manifests = {'p1': {}}
-        mock_plugin_manager.resource_monitor = PluginResourceMonitor(
+        api_v3.plugin_catalog = mock_plugin_catalog
+        mock_plugin_catalog.plugin_manifests = {'p1': {}}
+        api_v3.resource_monitor = PluginResourceMonitor(
             cache, enable_monitoring=False
         )
 

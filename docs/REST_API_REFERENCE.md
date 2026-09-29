@@ -120,9 +120,16 @@ there an unchecked checkbox — which the browser omits — is saved as
 ```json
 {
   "status": "success",
-  "message": "Configuration saved successfully"
+  "message": "Configuration saved successfully",
+  "restart_required": true
 }
 ```
+
+`restart_required` is always true here: display hardware, rotation,
+durations and general settings take effect when the display restarts, and
+the web UI shows its restart banner on the flag. (Plugin sections saved
+through this route reach the running plugin live, like
+`POST /plugins/config`.)
 
 Invalid values (e.g. an out-of-range `target_fps`, a hardware option the
 Raspberry Pi 5 driver cannot use) are rejected with `400` and nothing is
@@ -464,8 +471,8 @@ List all installed plugins with their status and metadata.
         "tags": ["sports", "football", "nfl"],
         "enabled": true,
         "verified": true,
-        "loaded": true,
-        "state": "loaded",
+        "loaded": null,
+        "state": null,
         "error_info": null,
         "last_updated": "2025-01-15T10:30:00Z",
         "last_commit": "abc1234",
@@ -479,6 +486,14 @@ List all installed plugins with their status and metadata.
   }
 }
 ```
+
+Metadata comes from each plugin's files on disk; `enabled` is the plugin's
+`enabled` flag in `config.json` (missing means disabled, as the display
+reads it). `loaded`, `state` and `error_info` are always `null`: the web
+process runs no plugin code, and the display does not publish which plugins
+it has loaded. What the display does publish is at
+[`/plugins/health`](#get-plugin-health), `/plugins/metrics` and `/errors/*`.
+`vegas_mode` is the plugin's configured `vegas_mode`, or `null`.
 
 ### Get Plugin Configuration
 
@@ -639,7 +654,13 @@ Install a plugin from the plugin store.
 ```
 
 When the operation queue is unavailable the install runs synchronously and
-the response has only a `message`.
+the response has only a `message` and the restart fields below.
+
+The finished operation's `result` (from `/plugins/operation/<operation_id>`)
+carries `restart_required`: true when the plugin is already enabled in
+`config.json`, because the running display does not load newly installed
+files by itself; `restart_message` then holds the restart banner's wording.
+A plugin that is not enabled needs no restart: enabling it loads it.
 
 ### Uninstall Plugin
 
@@ -664,6 +685,11 @@ Remove an installed plugin.
 }
 ```
 
+The finished operation's `result` carries `restart_required`. Removing the
+plugin's config (the default) lets the display unload it by itself, so it is
+false; with `preserve_config: true` an enabled plugin keeps running until
+the display restarts, and it is true.
+
 ### Update Plugin
 
 **POST** `/api/v3/plugins/update`
@@ -684,10 +710,17 @@ Update a plugin to the latest version. Runs synchronously.
   "message": "Plugin football-scoreboard updated ...",
   "data": {
     "last_updated": "2025-01-15T10:30:00Z",
-    "commit": "abc1234..."
-  }
+    "commit": "abc1234...",
+    "update_status": "updated"
+  },
+  "restart_required": true,
+  "restart_message": "Plugin updated — restart the display to run the new version"
 }
 ```
+
+`update_status` is `updated`, `up_to_date` or `local_only`.
+`restart_required` is true when the plugin changed and is enabled: the
+running display keeps the code it loaded until it restarts.
 
 ### Install Plugin from URL
 
@@ -717,9 +750,12 @@ Install a plugin directly from a GitHub repository URL. Runs synchronously.
   "message": "Plugin my-plugin installed successfully",
   "plugin_id": "my-plugin",
   "name": "My Plugin",
-  "branch": "main"
+  "branch": "main",
+  "restart_required": false
 }
 ```
+
+`restart_required` follows the same rule as `/plugins/install`.
 
 ### Load Registry from URL
 

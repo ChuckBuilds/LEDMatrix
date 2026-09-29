@@ -6,7 +6,8 @@ so their endpoint names do not depend on which module they live in.
 """
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, Path, _do_transactional_uninstall,
-    _non_plugin_id_error, _get_plugin_version, _plugin_directory, api_v3,
+    _non_plugin_id_error, _get_plugin_version, _plugin_directory,
+    _plugin_enabled_in_config, _store_restart_fields, api_v3,
     datetime, error_response, exception_error_response, json, jsonify, logger,
     request, success_response, validate_request_json,
 )
@@ -199,11 +200,12 @@ def update_plugin():
             if api_v3.schema_manager:
                 api_v3.schema_manager.invalidate_cache(plugin_id)
 
-            # Rediscover plugins
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
-                if plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.reload_plugin(plugin_id)
+            # Rediscover plugins. The web process runs no plugin code, so
+            # there is nothing here to reload: the display keeps running the
+            # version it loaded until it restarts, which restart_required
+            # below asks for.
+            if api_v3.plugin_catalog:
+                api_v3.plugin_catalog.discover_plugins()
 
             # Update state and history
             if api_v3.plugin_state_manager:
@@ -232,7 +234,10 @@ def update_plugin():
                     'commit': updated_commit,
                     'update_status': update_status
                 },
-                message=message
+                message=message,
+                extra=_store_restart_fields(
+                    'update', _plugin_enabled_in_config(plugin_id),
+                    changed=update_status == 'updated'),
             )
         else:
             if plugin_dir is None or not plugin_dir.exists():
@@ -307,6 +312,8 @@ def uninstall_plugin():
         if api_v3.operation_queue:
             def uninstall_callback(operation):
                 """Callback to execute plugin uninstallation via transactional helper."""
+                # Read before the uninstall removes the config section.
+                was_enabled = _plugin_enabled_in_config(plugin_id)
                 success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
                 if not success:
                     if api_v3.operation_history:
@@ -324,7 +331,9 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                return {'success': True, 'message': 'Plugin uninstalled successfully'}
+                return {'success': True, 'message': 'Plugin uninstalled successfully',
+                        **_store_restart_fields('uninstall', was_enabled,
+                                                preserve_config=preserve_config)}
 
             # Enqueue operation
             operation_id = api_v3.operation_queue.enqueue_operation(
@@ -339,6 +348,7 @@ def uninstall_plugin():
             )
         else:
             # Direct (non-queued) transactional uninstall
+            was_enabled = _plugin_enabled_in_config(plugin_id)
             success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
 
             if success:
@@ -349,7 +359,10 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                return success_response(message='Plugin uninstalled successfully')
+                return success_response(
+                    message='Plugin uninstalled successfully',
+                    extra=_store_restart_fields('uninstall', was_enabled,
+                                                preserve_config=preserve_config))
             else:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
@@ -413,10 +426,11 @@ def install_plugin():
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
 
-                # Discover and load the new plugin
-                if api_v3.plugin_manager:
-                    api_v3.plugin_manager.discover_plugins()
-                    api_v3.plugin_manager.load_plugin(plugin_id)
+                # List the new plugin. The display loads it, from disk, when
+                # it is enabled; see restart_required below for one that
+                # already is.
+                if api_v3.plugin_catalog:
+                    api_v3.plugin_catalog.discover_plugins()
 
                 # Update state manager
                 if api_v3.plugin_state_manager:
@@ -433,7 +447,9 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
+                return {'success': True,
+                        'message': f'Plugin {plugin_id} installed successfully{branch_msg}',
+                        **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
@@ -473,9 +489,8 @@ def install_plugin():
         if success:
             if api_v3.schema_manager:
                 api_v3.schema_manager.invalidate_cache(plugin_id)
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
-                api_v3.plugin_manager.load_plugin(plugin_id)
+            if api_v3.plugin_catalog:
+                api_v3.plugin_catalog.discover_plugins()
             if api_v3.plugin_state_manager:
                 api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
             if api_v3.operation_history:
@@ -488,7 +503,9 @@ def install_plugin():
                 )
 
             branch_msg = f" (branch: {branch})" if branch else ""
-            return success_response(message=f'Plugin installed successfully{branch_msg}')
+            return success_response(
+                message=f'Plugin installed successfully{branch_msg}',
+                extra=_store_restart_fields('install', _plugin_enabled_in_config(plugin_id)))
         else:
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:
@@ -547,10 +564,9 @@ def install_plugin_from_url():
         if api_v3.schema_manager and installed_plugin_id:
             api_v3.schema_manager.invalidate_cache(installed_plugin_id)
 
-        # Discover and load the new plugin
-        if api_v3.plugin_manager and installed_plugin_id:
-            api_v3.plugin_manager.discover_plugins()
-            api_v3.plugin_manager.load_plugin(installed_plugin_id)
+        # List the new plugin; the display loads it when it is enabled.
+        if api_v3.plugin_catalog and installed_plugin_id:
+            api_v3.plugin_catalog.discover_plugins()
 
         branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
         response_data = {
@@ -561,6 +577,9 @@ def install_plugin_from_url():
         }
         if result.get('branch'):
             response_data['branch'] = result.get('branch')
+        if installed_plugin_id:
+            response_data.update(_store_restart_fields(
+                'install', _plugin_enabled_in_config(installed_plugin_id)))
         return jsonify(response_data)
     else:
         return jsonify({

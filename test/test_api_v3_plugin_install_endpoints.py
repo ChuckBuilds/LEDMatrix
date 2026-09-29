@@ -5,6 +5,11 @@ Both were only ever tested at the PluginStoreManager layer, so the route
 logic — the queue-vs-direct branch, schema invalidation, plugin discovery,
 state and history recording — was unexercised.
 
+Neither route loads the plugin: the web process only lists it (the catalog
+has no load_plugin, so calling one fails these tests). The display loads it
+when it is enabled; restart_required says when that won't happen by itself
+(test/web_interface/test_web_process_runs_no_plugin_code.py).
+
 /plugins/install carries the same install logic twice: once inside the
 operation-queue callback and once in the direct fallback. The paired
 tests below assert both branches produce the same side effects, so the
@@ -44,8 +49,7 @@ def side_effects(module):
     api = module.api_v3
     return {
         "schema_invalidated": api.schema_manager.invalidate_cache.call_args_list,
-        "discovered": api.plugin_manager.discover_plugins.call_count,
-        "loaded": api.plugin_manager.load_plugin.call_args_list,
+        "discovered": api.plugin_catalog.discover_plugins.call_count,
         "state_set": api.plugin_state_manager.set_plugin_installed.call_args_list,
         "history": api.operation_history.record_operation.call_args_list,
     }
@@ -83,7 +87,6 @@ class TestInstallDirectPath:
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == [(("clock",), {})]
         assert effects["discovered"] == 1
-        assert effects["loaded"] == [(("clock",), {})]
         assert effects["state_set"] == [(("clock",), {})]
         assert effects["history"][0].kwargs["status"] == "success"
 
@@ -130,7 +133,7 @@ class TestInstallDirectPath:
         api_v3_client.post(INSTALL, json={"plugin_id": "clock"})
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == []
-        assert effects["loaded"] == []
+        assert effects["discovered"] == 0
         assert effects["state_set"] == []
 
 
@@ -154,7 +157,6 @@ class TestInstallQueuedPath:
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == [(("clock",), {})]
         assert effects["discovered"] == 1
-        assert effects["loaded"] == [(("clock",), {})]
         assert effects["state_set"] == [(("clock",), {})]
         assert effects["history"][0].kwargs["status"] == "success"
 
@@ -196,7 +198,7 @@ class TestInstallPathsAgree:
 
         # Reset and re-run through the queue.
         for mock in (api_v3_module.api_v3.schema_manager,
-                     api_v3_module.api_v3.plugin_manager,
+                     api_v3_module.api_v3.plugin_catalog,
                      api_v3_module.api_v3.plugin_state_manager,
                      api_v3_module.api_v3.operation_history):
             mock.reset_mock()
@@ -208,7 +210,6 @@ class TestInstallPathsAgree:
 
         assert direct["schema_invalidated"] == queued["schema_invalidated"]
         assert direct["discovered"] == queued["discovered"]
-        assert direct["loaded"] == queued["loaded"]
         assert direct["state_set"] == queued["state_set"]
         assert (direct["history"][0].kwargs["status"]
                 == queued["history"][0].kwargs["status"])
@@ -260,21 +261,22 @@ class TestInstallFromUrl:
             branch="dev",
         )
 
-    def test_success_invalidates_schema_and_loads_plugin(self, api_v3_client, api_v3_module):
+    def test_success_invalidates_schema_and_lists_plugin(self, api_v3_client, api_v3_module):
         api_v3_module.api_v3.plugin_store_manager.install_from_url.return_value = {
             "success": True, "plugin_id": "clock"}
-        api_v3_client.post(FROM_URL, json={"repo_url": "http://x"})
+        response = api_v3_client.post(FROM_URL, json={"repo_url": "http://x"})
+        assert response.status_code == 200, response.get_json()
         api_v3_module.api_v3.schema_manager.invalidate_cache.assert_called_once_with("clock")
-        api_v3_module.api_v3.plugin_manager.load_plugin.assert_called_once_with("clock")
+        api_v3_module.api_v3.plugin_catalog.discover_plugins.assert_called_once_with()
 
     def test_success_without_plugin_id_skips_discovery(self, api_v3_client, api_v3_module):
         # install_from_url can succeed without naming the plugin; there is
-        # then nothing to invalidate or load.
+        # then nothing to invalidate or list.
         api_v3_module.api_v3.plugin_store_manager.install_from_url.return_value = {
             "success": True, "plugin_id": None}
         api_v3_client.post(FROM_URL, json={"repo_url": "http://x"})
         api_v3_module.api_v3.schema_manager.invalidate_cache.assert_not_called()
-        api_v3_module.api_v3.plugin_manager.load_plugin.assert_not_called()
+        api_v3_module.api_v3.plugin_catalog.discover_plugins.assert_not_called()
 
     def test_branch_from_result_included(self, api_v3_client, api_v3_module):
         api_v3_module.api_v3.plugin_store_manager.install_from_url.return_value = {

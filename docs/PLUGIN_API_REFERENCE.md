@@ -149,15 +149,21 @@ Clean up resources when plugin is unloaded. Override to close connections, stop 
 
 #### `on_config_change(new_config: Dict[str, Any]) -> None`
 
-Called after plugin configuration is updated via web API.
+Called after the plugin's section of `config.json` changes -- a save in the
+web UI, say. Every lifecycle hook runs in the display process, which is the
+only process that runs plugins: the web interface writes `config.json`, and
+the display's config watcher calls this with the prepared section. See
+[ARCHITECTURE.md](ARCHITECTURE.md#web-and-display-processes-who-runs-plugins).
 
 #### `on_enable() -> None`
 
-Called when plugin is enabled.
+Called when the display loads the plugin enabled: at startup, or when it is
+switched on in the web UI.
 
 #### `on_disable() -> None`
 
-Called when plugin is disabled.
+Called when the display unloads the plugin, e.g. when it is switched off in
+the web UI.
 
 #### `get_update_interval() -> Optional[float]`
 

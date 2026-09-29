@@ -495,7 +495,7 @@ def execute_system_action():
                 'output': "\n".join(outputs)
             })
         elif action == 'install_plugin_requirements':
-            active_pm = getattr(api_v3, 'plugin_manager', None)
+            active_pm = getattr(api_v3, 'plugin_catalog', None)
             if active_pm:
                 plugins_dir = Path(active_pm.plugins_dir)
             else:

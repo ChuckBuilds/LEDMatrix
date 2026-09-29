@@ -57,6 +57,61 @@ The on-demand start route starts `ledmatrix.service` when it is not running
 reads the mailbox every `ON_DEMAND_POLL_INTERVAL` (0.25s), from its dwell
 sleep, its render loops and Vegas's interrupt check as well as the main loop.
 
+### Web and display processes: who runs plugins
+
+Only the display process imports plugin code, instantiates plugins and calls
+their lifecycle hooks (`update`, `display`, `on_config_change`, `on_enable`,
+`on_disable`). The web process is metadata-only: it reads plugins as files
+through `PluginCatalog`
+([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py))
+-- manifests, config schemas (through `SchemaManager`), each plugin's
+section of `config.json`, and installed versions. The catalog keeps the
+read-only method names of `PluginManager` and has nothing that can run a
+plugin (no `load_plugin`, `get_plugin` or `plugins`).
+
+How a web-side change reaches the running plugins:
+
+| Change | How the display picks it up |
+|---|---|
+| Plugin settings saved, config reset | `ConfigService` sees the new `config.json` and calls the plugin's `on_config_change` with the prepared section |
+| Plugin enabled or disabled | `ConfigService` → `_controller_config_change` flags a reconcile; `_reconcile_enabled_plugins` loads it (fresh from disk) or unloads it on the render thread |
+| Plugin uninstalled (config removed) | the removed section flips its `enabled` flag, and the reconcile unloads it |
+| Plugin installed, not enabled | nothing to do until it is enabled, which loads it |
+| Plugin installed while already enabled, updated while enabled, or uninstalled with its config kept | **not picked up**: the display keeps running what it loaded. The route answers `restart_required: true` and the UI shows its restart banner |
+
+`display_restart_required()` in `plugin_catalog.py` holds that last rule;
+routes return it as `restart_required` (with the banner's wording in
+`restart_message`), and `window.noteRestartRequired()` in
+`static/v3/app.js` raises the banner for any response that carries it,
+`POST /api/v3/config/main` included.
+
+Runtime state shown in the UI comes from what the display publishes (the
+table above): health and metrics (`/api/v3/plugins/health`,
+`/plugins/metrics`), errors (`/api/v3/errors/*`) and the current mode. The
+display does not publish which plugins it has loaded or its plugin state
+machine, so `/api/v3/plugins/installed` reports `loaded`, `state` and
+`error_info` as `null` rather than guessing; `enabled` is read from
+`config.json` by the display's rule (a missing flag is disabled).
+
+Plugin code still runs in the web process in one place,
+`_import_plugin_code_in_web_process()` in
+[`api_v3/__init__.py`](../web_interface/blueprints/api_v3/__init__.py): the
+Starlark routes import the starlark-apps plugin's `tronbyte_repository` and
+`pixlet_renderer` helper modules (never the plugin class), and a web-UI
+action with `oauth_flow` imports its script for `get_auth_url()`. Every
+other web-UI action runs its script as a subprocess. A later, explicit
+**plugin web-entry contract** -- a declared entry point for plugin web code
+-- replaces that function.
+
+Remaining plugin state outside the display: `data/plugin_state.json`
+(`PluginStateManager` in `state_manager.py`, written by the web process),
+a second class also named `PluginStateManager` in `plugin_state.py` (the
+display's in-memory state machine), and `state_reconciliation.py`, which
+compares config, disk and `plugin_state.json` at web startup. These are the
+next stages: retire `plugin_state.json`, merge the two state classes, and
+give the web process a control socket to the display (reload one plugin,
+report the loaded set) in place of `restart_required`.
+
 ## Display loop
 
 [`src/display_controller.py`](../src/display_controller.py), class
@@ -123,7 +178,8 @@ then normal rotation.
 |---|---|
 | Base class plugins implement | [`base_plugin.py`](../src/plugin_system/base_plugin.py) (`BasePlugin`, `VegasDisplayMode`) |
 | Finding a plugin's directory | [`plugin_dirs.py`](../src/plugin_system/plugin_dirs.py): manifest `id` first, then directory `<id>` or `ledmatrix-<id>` |
-| Discovery, load, unload, scheduled updates | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
+| Discovery, load, unload, scheduled updates (display process) | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
+| Manifest, schema, config and version reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
 | Import and instantiate | [`plugin_loader.py`](../src/plugin_system/plugin_loader.py) (`PluginLoader.load_plugin()`: dependencies, module, class) |
 | Timeouts | [`plugin_executor.py`](../src/plugin_system/plugin_executor.py) (`PluginExecutor`, 30 s default; a timed-out thread is abandoned, not killed) |
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |
@@ -150,8 +206,9 @@ everything else through `_reinstall_with_rollback()`.
 ## Web interface
 
 - **App.** [`web_interface/app.py`](../web_interface/app.py) builds the
-  Flask `app` at import time, creates the managers, and registers two
-  blueprints. `web_interface/start.py` runs it on port 5000.
+  Flask `app` at import time, creates the managers -- a `PluginCatalog`,
+  never a `PluginManager` -- and registers two blueprints.
+  `web_interface/start.py` runs it on port 5000.
 - **Pages.** [`blueprints/pages_v3.py`](../web_interface/blueprints/pages_v3.py)
   serves the shell `templates/v3/base.html` at `/` and each tab as a
   partial at `/partials/<name>` (templates in

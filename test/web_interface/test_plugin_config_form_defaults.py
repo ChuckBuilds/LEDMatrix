@@ -115,19 +115,17 @@ def app_client(tmp_path):
     cm.save_config_atomic.side_effect = _save
 
     pm = MagicMock()
-    pm.plugins = {}
     pm.plugins_dir = plugins_dir
-    pm.get_plugin.return_value = None
     pm.get_plugin_info.return_value = {"name": "Demo", "version": "1.0.0"}
     sm = SchemaManager(plugins_dir=plugins_dir, project_root=tmp_path)
 
-    names = ("config_manager", "schema_manager", "plugin_manager")
+    names = ("config_manager", "schema_manager", "plugin_catalog")
     originals = {(bp, k): getattr(bp, k, None)
                  for bp in (api.api_v3, pages.pages_v3) for k in names}
     for bp in (api.api_v3, pages.pages_v3):
         bp.config_manager = cm
         bp.schema_manager = sm
-        bp.plugin_manager = pm
+        bp.plugin_catalog = pm
 
     base = Path(pages.__file__).resolve().parent.parent
     app = Flask(__name__, template_folder=str(base / "templates"),

@@ -71,7 +71,7 @@ def render(tmp_path):
     from web_interface.blueprints import pages_v3 as pv
     from src.plugin_system.schema_manager import SchemaManager
 
-    orig_pm = getattr(pv.pages_v3, "plugin_manager", None)
+    orig_pm = getattr(pv.pages_v3, "plugin_catalog", None)
     orig_cm = getattr(pv.pages_v3, "config_manager", None)
     orig_sm = getattr(pv.pages_v3, "schema_manager", None)
 
@@ -86,8 +86,7 @@ def render(tmp_path):
         pm = MagicMock()
         pm.plugins_dir = str(tmp_path / "plugins")
         pm.get_plugin_info.return_value = {"id": plugin_id, "name": plugin_id}
-        pm.get_plugin.return_value = None
-        pv.pages_v3.plugin_manager = pm
+        pv.pages_v3.plugin_catalog = pm
 
         cm = MagicMock()
         cm.load_config.return_value = {plugin_id: {"enabled": True}}
@@ -111,7 +110,7 @@ def render(tmp_path):
     try:
         yield _render
     finally:
-        pv.pages_v3.plugin_manager = orig_pm
+        pv.pages_v3.plugin_catalog = orig_pm
         pv.pages_v3.config_manager = orig_cm
         pv.pages_v3.schema_manager = orig_sm
 

@@ -19,6 +19,34 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Changes
+
+- The web interface no longer loads or runs plugins (web plugin catalog,
+  stage 1). It built its own `PluginManager` and loaded plugins into the web
+  process: store installs and updates loaded or reloaded a web-side copy, and
+  config saves and enable/disable called `on_config_change`, `on_enable` and
+  `on_disable` on it. None of that reached the panel. The web process now
+  reads plugins as files through the new `PluginCatalog`
+  (`src/plugin_system/plugin_catalog.py`); only the display runs them, and
+  config changes reach them through its config watcher, as they already did.
+  - A plugin update, an install of a plugin that is already enabled, or an
+    uninstall that keeps an enabled plugin's config now answers
+    `restart_required: true` and shows the restart banner, because the
+    running display keeps the code it loaded until it restarts. Before, the
+    update looked applied and the panel kept the old version.
+  - The restart banner follows `restart_required` in any response
+    (`POST /api/v3/config/main` sends it) rather than the URL that was
+    called.
+  - `/api/v3/plugins/installed` reports `loaded`, `state` and `error_info`
+    as `null`: the display does not publish them, and the old values
+    described web-side copies. `enabled` follows the display's rule, so a
+    plugin whose config has no `enabled` flag shows as disabled (it never
+    ran). `vegas_mode` is the configured value only.
+  - Starlark routes always use their on-disk path. The one place the web
+    process still imports plugin code -- the Starlark helper modules and an
+    `oauth_flow` action script -- is `_import_plugin_code_in_web_process()`,
+    until a plugin web-entry contract replaces it.
+
 ### Fixes
 
 - On-demand no longer restarts a running display. `POST

@@ -17,7 +17,7 @@ from web_interface.blueprints import pages_v3 as module  # noqa: E402
 def client(tmp_path, monkeypatch):
     plugin_manager = MagicMock()
     plugin_manager.plugins_dir = tmp_path
-    monkeypatch.setattr(module.pages_v3, "plugin_manager", plugin_manager, raising=False)
+    monkeypatch.setattr(module.pages_v3, "plugin_catalog", plugin_manager, raising=False)
     monkeypatch.setattr(module.pages_v3, "config_manager",
                         MagicMock(load_config=lambda: {}), raising=False)
     app = Flask(__name__, template_folder=str(

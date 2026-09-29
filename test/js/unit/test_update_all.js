@@ -229,6 +229,24 @@ const noSleep = { sleep: async () => {} };
        allNoop.type === 'success' && allNoop.text === '2 already up to date', allNoop);
   }
 
+  console.log('\nrestart banner: driven by the server\'s restart_required');
+  {
+    const body = (restart_required, restart_message) => ({
+      success: true,
+      result: { status: 'success', data: { update_status: 'updated' }, restart_required, restart_message },
+    });
+    const needed = body(true, 'Plugin updated — restart the display to run the new version');
+    ok('an update the display is running asks for the banner, with its wording',
+       Manager.restartRequest([body(false), needed, body(true, 'second')]) === needed.result);
+    ok('updates the display does not run need no restart',
+       Manager.restartRequest([body(false), body(false)]) === null);
+    ok('a failed request never raises the banner',
+       Manager.restartRequest([{ success: false, error: { restart_required: true } }]) === null);
+    ok('an older server that sends no flag raises nothing',
+       Manager.restartRequest([{ success: true, result: { status: 'success' } }]) === null);
+    ok('no results, no banner', Manager.restartRequest(undefined) === null);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

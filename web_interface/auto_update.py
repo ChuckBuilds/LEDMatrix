@@ -329,7 +329,7 @@ class AutoUpdater:
     """Decides when an automatic update is due and runs it."""
 
     def __init__(self, config_manager, core_update, store_manager=None,
-                 plugin_manager=None, schema_manager=None, operation_history=None,
+                 plugin_catalog=None, schema_manager=None, operation_history=None,
                  project_root=PROJECT_ROOT, state_file=None, clock=time.time,
                  restart=restart_service, run=subprocess.run,
                  service_active=_service_active, helper_ready=helper_ready,
@@ -337,7 +337,10 @@ class AutoUpdater:
         self.config_manager = config_manager
         self.core_update = core_update
         self.store_manager = store_manager
-        self.plugin_manager = plugin_manager
+        # The web process's PluginCatalog: rescanned after plugin updates.
+        # The display picks the new code up when _run_deferred_plugins
+        # restarts it.
+        self.plugin_catalog = plugin_catalog
         self.schema_manager = schema_manager
         self.operation_history = operation_history
         self.project_root = Path(project_root)
@@ -658,9 +661,9 @@ class AutoUpdater:
         for plugin_id in updated:
             if self.schema_manager:
                 self.schema_manager.invalidate_cache(plugin_id)
-        if updated and self.plugin_manager:
+        if updated and self.plugin_catalog:
             try:
-                self.plugin_manager.discover_plugins()
+                self.plugin_catalog.discover_plugins()
             except Exception:
                 logger.debug("discover_plugins after auto-update failed", exc_info=True)
         return updated, failed
