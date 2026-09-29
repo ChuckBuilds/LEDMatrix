@@ -19,6 +19,24 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+New modules a plugin may import via `src.*` (floor on the release that ships
+them). Both are promoted from files the scoreboard plugins carry as copies;
+the plugins keep their copies as a fallback until they floor on that release.
+
+- `src/common/favorite_team_check.py` — `FavoriteTeamCheck(logger, leagues)`:
+  checks configured favourite team codes against ESPN once per league, on a
+  daemon thread, and logs why a league shows nothing (a wrong code, with the
+  nearest real one, or a season that has not started). The seven copies
+  (`<sport>_favorite_check.py`) were byte-identical; this is the same code,
+  with type annotations added.
+- `src/common/sports_timezone.py` — `resolve_timezone_name()` /
+  `resolve_timezone()` (plus `system_timezone_name()`): the timezone a
+  scoreboard draws start times in. The ten copies (`<sport>_timezone.py`)
+  differed only in two values, which are keyword-only arguments here:
+  `plugin_label` (named in the warning logged when nothing resolves) and
+  `writeback_fixed_in` (for a plugin that once wrote `"UTC"` back into the
+  saved config; `None` otherwise). Same resolution order and log messages.
+
 ## 3.5.0
 
 New modules a plugin may import via `src.*` (floor on 3.5.0):
