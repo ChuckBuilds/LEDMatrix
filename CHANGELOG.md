@@ -19,7 +19,27 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
-### Fixes
+### Update channels
+
+- Devices no longer pick up every merge to `main`. A new setting,
+  `auto_update.channel`, picks what Update Code and the weekly automatic
+  update install: `stable` follows the newest release tag (`vX.Y.Z` by
+  semantic version; pre-releases and other tags are ignored) and checks it
+  out with a detached HEAD, and `beta` follows `main` as every device did
+  before. New installs default to `stable` (config template and installer).
+- Nobody is moved backwards. A device running code newer than the newest
+  release, which is any device that pulled `main` since that release, keeps
+  following `main` until a release contains its commit, then moves to it and
+  follows releases. A config written before channels existed behaves the
+  same way and is saved as `stable` when that move happens. Switching from
+  beta to stable says so instead of installing an older version.
+- Switch channels on the General tab (Update Channel, under Automatic
+  Updates) or with `GET`/`POST /api/v3/system/update-channel`. The Overview
+  update banner compares release tags on stable ("LEDMatrix v3.8.0 is
+  available") rather than commits on `main`.
+- A move between `main` and a release tag carries local edits across as the
+  pull's `--autostash` does, and the automatic update's health check rolls
+  it back to where HEAD was: the branch, or the detached release.
 
 - On-demand no longer restarts a running display. `POST
   /display/on-demand/start` treated `start_service` (on by default, and what

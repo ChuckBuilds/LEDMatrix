@@ -78,7 +78,9 @@ The Overview tab provides at-a-glance information and quick actions:
 - **Start Display** / **Stop Display** — control the display service
 - **Restart Display Service** — apply configuration changes
 - **Restart Web Service** — restart the web UI itself
-- **Update Code** — `git pull` the latest version (stashes local changes)
+- **Update Code** — update to the newest version on the update channel (the
+  newest release on Stable, the newest code on `main` on Beta; stashes local
+  changes). The channel is set on the General tab.
 - **Reboot System** / **Shutdown System** — confirm-gated power controls
 
 **Display Preview:**
@@ -90,6 +92,11 @@ The Overview tab provides at-a-glance information and quick actions:
 
 Configure basic system settings:
 
+- **Automatic Updates** — weekly updates with a health check and rollback
+- **Update Channel** — **Stable** (default) installs releases; **Beta**
+  installs the newest code on `main` before it is released. Switching to
+  Stable never installs an older version: a device ahead of the newest
+  release keeps following `main` until a release includes it
 - **Timezone** — used by all time/date displays
 - **Location** — city/state/country for weather and other location-aware
   plugins

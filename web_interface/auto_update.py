@@ -10,6 +10,9 @@ Nothing here is allowed to leave a device broken without saying so:
   the checkout has local edits or commits, a rebase or merge is in progress,
   the branch has no upstream, disk is low, the newest commit was already
   rolled back once, or the health check is not set up.
+* **On its channel.** ``auto_update.channel`` picks the newest release tag
+  (stable) or main (beta); web_interface/update_channel.py decides, and never
+  moves a device to an older commit than the one it runs.
 * **Verified, and rolled back.** The pull itself is the Overview "Update Code"
   path (``perform_core_update``). Restarting and checking the result is handed
   to ledmatrix-update-verify.service (scripts/utils/auto_update_verify.py),
@@ -38,6 +41,8 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+from web_interface import update_channel
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +162,12 @@ def _local_datetime(ts, tz_name):
 
 def _short(sha):
     return (sha or 'unknown')[:7]
+
+
+def _label(pending):
+    """The new version for messages: its release tag when it is one, else the short commit."""
+    release, new = pending.get('release'), pending.get('new_head')
+    return f'{release} ({_short(new)})' if release else _short(new)
 
 
 def is_due(now, next_due, local_hour):
@@ -480,10 +491,6 @@ class AutoUpdater:
             return 'blocked', ('A git merge is in progress in the LEDMatrix folder. '
                                'Finish or abort it; automatic updates will not touch it.'), {}
 
-        if self._git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').returncode != 0:
-            return 'blocked', ('The current branch has no upstream to update from (or HEAD is detached). '
-                               'Use Update Code once, or Tools -> Switch branch.'), {}
-
         # The same predicate perform_core_update refuses on when called from
         # here, so what passes this check is never stashed by the pull.
         changed = local_changes(self.project_root, run=self.run_command)
@@ -495,24 +502,64 @@ class AutoUpdater:
             return 'blocked', (f'Only {free // (1024 * 1024)} MB of disk space is free; an update '
                                f'needs at least {MIN_FREE_BYTES // (1024 * 1024)} MB.'), {}
 
-        fetch = self._git('fetch', '--quiet', timeout=120)
+        fetch = update_channel.fetch(self.project_root, run=self.run_command)
         if fetch.returncode != 0:
             detail = next((ln.strip() for ln in (fetch.stderr or '').splitlines() if ln.strip()), '')
             return 'error', f'Could not check for LEDMatrix updates: {detail or "git fetch failed"}.', {}
 
-        ahead = self._count('@{u}..HEAD')
-        if ahead:
-            return 'blocked', (f'This checkout has {ahead} local commit(s) that are not upstream. '
-                               'Automatic updates will not rebase them; update manually with Update Code.'), {}
-        if not self._count('HEAD..@{u}'):
-            return 'up_to_date', 'LEDMatrix is already up to date.', {}
-
-        upstream = self._git('rev-parse', '@{u}').stdout.strip()
-        if upstream and upstream == state.get('rolled_back_head'):
-            return 'up_to_date', (f'The newest LEDMatrix version ({_short(upstream)}) failed its health '
-                                  'check and was rolled back before; waiting for a newer one.'), {}
+        # Where the update goes: the newest release (stable) or main (beta).
+        channel = update_channel.resolve(self.project_root, self._config(), run=self.run_command)
+        if channel.migrate and channel.action == update_channel.ACTION_NONE:
+            # Already on the newest release: nothing to update, but a config
+            # from before channels existed now says stable.
+            self._persist_stable_channel()
         head = self._git('rev-parse', 'HEAD').stdout.strip()
-        return 'ready', '', {'old_head': head, 'upstream_head': upstream}
+        old_ref = update_channel.current_branch(self.project_root, run=self.run_command)
+        if channel.action == update_channel.ACTION_NONE:
+            return 'up_to_date', channel.message, {}
+        if channel.action == update_channel.ACTION_CHECKOUT_TAG:
+            target, label = channel.target_sha, channel.newest_release
+        elif channel.action == update_channel.ACTION_SWITCH_TO_BETA:
+            beta = f'{update_channel.REMOTE}/{update_channel.BETA_BRANCH}'
+            if self._count(f'{beta}..HEAD'):
+                return 'blocked', (f'This checkout has local commits that are not on {beta}. Automatic '
+                                   'updates will not leave them behind; update manually with Update Code.'), {}
+            target, label = self._git('rev-parse', beta).stdout.strip(), update_channel.BETA_BRANCH
+            if target == head:
+                return 'up_to_date', 'LEDMatrix is already up to date.', {}
+        else:
+            if self._git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').returncode != 0:
+                return 'blocked', ('The current branch has no upstream to update from (or HEAD is detached). '
+                                   'Use Update Code once, or Tools -> Switch branch.'), {}
+            ahead = self._count('@{u}..HEAD')
+            if ahead:
+                return 'blocked', (f'This checkout has {ahead} local commit(s) that are not upstream. '
+                                   'Automatic updates will not rebase them; update manually with Update Code.'), {}
+            if not self._count('HEAD..@{u}'):
+                return 'up_to_date', 'LEDMatrix is already up to date.', {}
+            target = self._git('rev-parse', '@{u}').stdout.strip()
+            label = _short(target)
+
+        if target and target == state.get('rolled_back_head'):
+            return 'up_to_date', (f'The newest LEDMatrix version ({label}) failed its health '
+                                  'check and was rolled back before; waiting for a newer one.'), {}
+        return 'ready', '', {'old_head': head, 'upstream_head': target, 'old_ref': old_ref,
+                             'release': channel.newest_release
+                             if channel.action == update_channel.ACTION_CHECKOUT_TAG else None}
+
+    def _config(self):
+        try:
+            return self.config_manager.load_config() or {}
+        except Exception:
+            logger.debug("Auto-update could not load config for the channel", exc_info=True)
+            return {}
+
+    def _persist_stable_channel(self):
+        try:
+            update_channel.set_channel(self.config_manager, 'stable')
+            logger.info("Update channel set to stable: this device is on a release now")
+        except Exception:
+            logger.warning("Could not save the stable update channel", exc_info=True)
 
     def update_core(self, state):
         try:
@@ -546,6 +593,11 @@ class AutoUpdater:
             'status': 'pending',
             'old_head': old_head,
             'new_head': new_head,
+            # Where HEAD was: a branch name, or '' when detached on a release.
+            # The rollback returns there, not just to the commit, so a move
+            # between main and a release tag is undone completely.
+            'old_ref': info.get('old_ref'),
+            'release': info.get('release') if new_head == info.get('upstream_head') else None,
             'display_was_active': display_was_active,
             'dependency_failures': list(core.get('dependency_failures') or []),
             'created_at': self.clock(),
@@ -567,7 +619,7 @@ class AutoUpdater:
             return {'outcome': 'up_to_date', 'message': core.get('message') or 'LEDMatrix is already up to date.'}
 
         handoff = {'outcome': 'verifying',
-                   'message': (f'Updated LEDMatrix from {_short(old_head)} to {_short(new_head)}; '
+                   'message': (f'Updated LEDMatrix from {_short(old_head)} to {_label(pending)}; '
                                'restarting and checking the services.')}
         # Recorded before the handoff: the health check restarts this process.
         self._store_run(state, handoff, [], [])
@@ -623,11 +675,11 @@ class AutoUpdater:
                        f'See "journalctl -u {VERIFY_UNIT}".')
         elif status == 'success':
             outcome = 'updated'
-            message = (f'Updated LEDMatrix from {_short(old)} to {_short(new)}; '
+            message = (f'Updated LEDMatrix from {_short(old)} to {_label(pending)}; '
                        'the services restarted and stayed healthy.')
         elif status == 'rolled_back':
             outcome = 'rolled_back'
-            message = (f'The LEDMatrix update to {_short(new)} was rolled back to {_short(old)} because '
+            message = (f'The LEDMatrix update to {_label(pending)} was rolled back to {_short(old)} because '
                        f'{reason or "it failed its health check"}.' + (f' Note: {detail}.' if detail else ''))
             state['rolled_back_head'] = new
         else:

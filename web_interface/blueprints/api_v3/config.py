@@ -30,7 +30,7 @@ FORM_SECTION_FIELD = '__form_section'
 #: Fields of the General tab. Any one of them in a /config/main post means the
 #: General form was submitted, so its unchecked checkboxes read as False.
 GENERAL_FIELDS = ('timezone', 'city', 'state', 'country', 'web_display_autostart',
-                  'plugins_directory', 'auto_update_enabled')
+                  'plugins_directory', 'auto_update_enabled', 'auto_update_channel')
 
 #: Top-level fields save_main_config stores somewhere of its own (location,
 #: plugin_system, ...), never as a config key of the same name.
@@ -512,6 +512,20 @@ def save_main_config():
                 if not isinstance(current_config.get('auto_update'), dict):
                     current_config['auto_update'] = {}
                 _set_checkbox(current_config['auto_update'], 'enabled', 'auto_update_enabled')
+            if 'auto_update_channel' in data:
+                # stable/beta (web_interface/update_channel.py). Only stored
+                # here; the next update applies it, never moving backwards.
+                from web_interface import update_channel
+                channel = update_channel.normalize_channel(data['auto_update_channel'])
+                if channel is None:
+                    return jsonify({'status': 'error',
+                                    'message': "auto_update_channel must be 'stable' or 'beta'"}), 400
+                if not isinstance(current_config.get('auto_update'), dict):
+                    current_config['auto_update'] = {}
+                if current_config['auto_update'].get('channel') != channel:
+                    current_config['auto_update']['channel'] = channel
+                    # The Overview banner compares against the channel's target.
+                    _pkg._update_check_cache['result'] = None
 
         if 'timezone' in data:
             current_config['timezone'] = data['timezone']

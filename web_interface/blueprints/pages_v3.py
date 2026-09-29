@@ -473,9 +473,17 @@ def _load_general_partial():
         except Exception:
             logger.debug("Could not read auto-update status", exc_info=True)
             auto_update_status = None
+        try:
+            # Local refs only: a page load must not wait on the network.
+            from web_interface import update_channel
+            update_channel_status = update_channel.resolve(update_channel.PROJECT_ROOT, main_config)
+        except Exception:
+            logger.debug("Could not read the update channel", exc_info=True)
+            update_channel_status = None
         return render_template('v3/partials/general.html',
                              main_config=main_config,
-                             auto_update_status=auto_update_status)
+                             auto_update_status=auto_update_status,
+                             update_channel_status=update_channel_status)
 
 def _load_display_partial():
     """Load display settings partial"""

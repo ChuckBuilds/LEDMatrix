@@ -80,18 +80,85 @@ def dismiss_auto_update_alert():
     return jsonify({'status': 'success'})
 
 
+def _channel_payload(channel, fetch_error=''):
+    from web_interface import update_channel
+    data = dict(channel)
+    data['channels'] = list(update_channel.CHANNELS)
+    data['fetch_error'] = fetch_error or None
+    return data
+
+
+@api_v3.route('/system/update-channel', methods=['GET'])
+def get_update_channel():
+    """The update channel: configured, in effect, and what the next update does.
+
+    Reads local refs only, unless ``?fetch=1`` asks it to check origin first.
+    No local except: failures reach the blueprint-wide handler, which logs the
+    traceback and returns the redacted detail.
+    """
+    fetch = str(request.args.get('fetch', '')).lower() in ('1', 'true', 'yes')
+    channel, fetch_error = channel_status(fetch=fetch)
+    return jsonify({'status': 'success', 'data': _channel_payload(channel, fetch_error)})
+
+
+@api_v3.route('/system/update-channel', methods=['POST'])
+def set_update_channel():
+    """Switch between the stable and beta update channels: ``{"channel": "stable"}``.
+
+    Only the setting changes here; the next Update Code or weekly update
+    applies it. Switching to stable never moves a device backwards: one
+    running code newer than the newest release keeps following main until a
+    release includes it, and the response says so.
+    """
+    from web_interface import update_channel
+    payload = request.get_json(silent=True)
+    channel = update_channel.normalize_channel(payload.get('channel')) if isinstance(payload, dict) else None
+    if channel is None:
+        return jsonify({'status': 'error',
+                        'message': "channel must be 'stable' or 'beta'"}), 400
+    cm = getattr(api_v3, 'config_manager', None)
+    if not cm:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 503
+    update_channel.set_channel(cm, channel)
+    _update_check_cache['result'] = None
+    status, _ = channel_status(fetch=False)
+    if channel == 'beta':
+        message = (f'Update channel set to beta. Updates now follow {update_channel.BETA_BRANCH}, '
+                   'the newest code, before it is released.')
+    elif status.action == update_channel.ACTION_CHECKOUT_TAG:
+        message = (f'Update channel set to stable. The next update moves this device to release '
+                   f'{status.newest_release}.')
+    else:
+        # On the newest release already, or waiting for one that includes
+        # this commit; status.message says which.
+        message = f'Update channel set to stable. {status.message}'
+    if channel == 'beta' or status.action == update_channel.ACTION_CHECKOUT_TAG:
+        message += ' Use Update Code on the Overview tab to apply it now.'
+    return jsonify({'status': 'success', 'message': message, 'data': _channel_payload(status)})
+
+
 @api_v3.route('/system/check-update', methods=['GET'])
 def check_for_update():
-    """Check whether a newer LEDMatrix commit is available on origin/main."""
+    """Check whether newer LEDMatrix code is available on this device's update channel.
+
+    stable compares HEAD with the newest release tag; beta (and stable while
+    it waits for a release newer than this commit) with origin/main. The
+    response carries ``channel``, ``waiting``, ``newest_release`` and, when
+    the update is a release, ``target_version``.
+    """
     now = _pkg.time.time()
     if _update_check_cache['result'] and now - _update_check_cache['ts'] < _UPDATE_CHECK_TTL:
         return jsonify(_update_check_cache['result'])
 
+    from web_interface import update_channel
     _safe: Dict[str, Any] = {'update_available': False, 'remote_sha': 'unknown', 'commits_behind': 0}
     try:
         cwd = str(PROJECT_ROOT)
         fetch_result = subprocess.run(
-            ['git', 'fetch', 'origin', 'main', '--quiet'],
+            # main and the release tags only: this runs on page loads, with
+            # a short timeout, and other branches are not needed to answer.
+            ['git', 'fetch', '--quiet', '--tags', '--force', update_channel.REMOTE,
+             update_channel.BETA_BRANCH],
             capture_output=True, timeout=10, cwd=cwd,
         )
         if fetch_result.returncode != 0:
@@ -102,6 +169,28 @@ def check_for_update():
             _update_check_cache['result'] = failed
             _update_check_cache['ts'] = now
             return jsonify(failed)
+
+        channel, _ = channel_status(cwd, fetch=False)
+        channel_fields = {'channel': channel.channel, 'configured_channel': channel.configured,
+                          'waiting': channel.waiting, 'newest_release': channel.newest_release,
+                          'current_release': channel.current_release,
+                          'channel_message': channel.message}
+        if channel.channel == 'stable':
+            # On a release (or about to move to one): compare tags, not
+            # branch commits -- main is always ahead of the newest release.
+            result = {'update_available': False, 'remote_sha': channel.newest_release_sha or 'unknown',
+                      'commits_behind': 0, **channel_fields}
+            if channel.action == update_channel.ACTION_CHECKOUT_TAG:
+                count_str = subprocess.run(
+                    ['git', 'rev-list', '--count', f'HEAD..{channel.newest_release_sha}'],
+                    capture_output=True, text=True, timeout=5, cwd=cwd,
+                ).stdout.strip()
+                result.update(update_available=True, target_version=channel.newest_release,
+                              commits_behind=int(count_str) if count_str.isdigit() else 0)
+            _update_check_cache['result'] = result
+            _update_check_cache['ts'] = now
+            return jsonify(result)
+
         local = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],
             capture_output=True, text=True, timeout=5, cwd=cwd,
@@ -112,7 +201,7 @@ def check_for_update():
         ).stdout.strip()
 
         if not local or not remote:
-            return jsonify(_safe)
+            return jsonify({**_safe, **channel_fields})
 
         if local == remote:
             result: Dict[str, Any] = {'update_available': False, 'remote_sha': remote, 'commits_behind': 0}
@@ -123,6 +212,7 @@ def check_for_update():
             ).stdout.strip()
             count = int(count_str) if count_str.isdigit() else 0
             result = {'update_available': count > 0, 'remote_sha': remote, 'commits_behind': count}
+        result.update(channel_fields)
 
         _update_check_cache['result'] = result
         _update_check_cache['ts'] = now
@@ -190,16 +280,76 @@ def perform_core_update(stash_local_changes=True):
         _core_update_lock.release()
 
 
+def _load_config_quietly():
+    # getattr: the blueprint only has a config_manager once the app wired one.
+    cm = getattr(api_v3, 'config_manager', None)
+    if not cm:
+        return {}
+    try:
+        return cm.load_config() or {}
+    except Exception:
+        logger.warning("Could not load config to read the update channel", exc_info=True)
+        return {}
+
+
+def _persist_stable_channel():
+    """A config that predates channels moves to stable once it is on a release."""
+    cm = getattr(api_v3, 'config_manager', None)
+    if not cm:
+        return
+    from web_interface import update_channel
+    try:
+        update_channel.set_channel(cm, 'stable')
+        logger.info("Update channel set to stable: this device is on a release now")
+    except Exception:
+        logger.warning("Could not save the stable update channel", exc_info=True)
+
+
+def channel_status(project_dir=None, fetch=True):
+    """The update channel's plan for this checkout (update_channel.resolve).
+
+    Returns ``(status, fetch_error)``; ``fetch_error`` is git's first line
+    when fetching failed, else ''.
+    """
+    from web_interface import update_channel
+    project_dir = str(project_dir or PROJECT_ROOT)
+    fetch_error = ''
+    if fetch:
+        fetched = update_channel.fetch(project_dir)
+        if fetched.returncode != 0:
+            stderr = fetched.stderr.decode(errors='replace') if isinstance(fetched.stderr, bytes) else (fetched.stderr or '')
+            fetch_error = next((ln.strip() for ln in stderr.splitlines() if ln.strip()), 'git fetch failed')
+    return update_channel.resolve(project_dir, _load_config_quietly()), fetch_error
+
+
 def _perform_core_update_locked(stash_local_changes=True):
     project_dir = str(PROJECT_ROOT)
+    from web_interface import update_channel
+
+    # Which code to move to: the newest release (stable) or main (beta).
+    # See web_interface/update_channel.py; it never picks an older commit.
+    channel, fetch_error = channel_status(project_dir)
+    if fetch_error:
+        logger.warning("git fetch failed before update: %s", fetch_error)
+        return {'status': 'error', 'message': f"Update failed: {fetch_error}",
+                'restart_required': False, 'dependency_failures': []}
+    action = channel.action
+    if action == update_channel.ACTION_NONE:
+        if channel.migrate:
+            _persist_stable_channel()
+        return {'status': 'success', 'restart_required': False, 'dependency_failures': [],
+                'channel': channel.channel,
+                'message': f"LEDMatrix is already up to date. {channel.message}"}
 
     # Decide how to pull BEFORE stashing. If this checkout cannot be
     # updated at all, stashing first would put the user's local changes
     # away for an update that was never going to run.
-    pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
-    if pull_error:
-        logger.warning("git pull not attempted: %s", pull_error)
-        return {'status': 'error', 'message': pull_error, 'restart_required': False}
+    pull_args, upstream_note = None, ''
+    if action == update_channel.ACTION_PULL:
+        pull_args, upstream_note, pull_error = resolve_pull_command(project_dir)
+        if pull_error:
+            logger.warning("git pull not attempted: %s", pull_error)
+            return {'status': 'error', 'message': pull_error, 'restart_required': False}
 
     # Local changes, counted exactly as the automatic update's preflight
     # counts them (auto_update.local_changes): mode-only changes and the
@@ -261,15 +411,30 @@ def _perform_core_update_locked(stash_local_changes=True):
     # to restart onto code whose dependencies did not install.
     dependency_failures = []
 
-    # Perform the git pull. Branches without an upstream were given
-    # an explicit "origin <branch>" above so the update still works.
-    result = subprocess.run(
-        pull_args,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=project_dir
-    )
+    # Move the checkout. A pull on beta; branches without an upstream were
+    # given an explicit "origin <branch>" above so the update still works.
+    # Stable checks out the release tag, carrying edits across the way the
+    # pull's --autostash does.
+    channel_note = ''
+    if action == update_channel.ACTION_CHECKOUT_TAG:
+        result, autostash_note = update_channel.checkout_release(project_dir, channel.newest_release)
+        channel_note = f"Now on release {channel.newest_release} (stable channel). {autostash_note}".strip()
+    elif action == update_channel.ACTION_SWITCH_TO_BETA:
+        result, autostash_note = update_channel.checkout_beta_branch(project_dir)
+        if result.returncode == 0:
+            result = subprocess.run(['git', 'pull', '--rebase', '--autostash'],
+                                    capture_output=True, text=True, timeout=60, cwd=project_dir)
+        channel_note = f"Now following {update_channel.BETA_BRANCH} (beta channel). {autostash_note}".strip()
+    else:
+        result = subprocess.run(
+            pull_args,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=project_dir
+        )
+        if channel.waiting and channel.newest_release:
+            channel_note = channel.message
 
     # Give the branch tracking information so the next pull is a plain
     # `git pull` — otherwise every update repeats the fallback.
@@ -288,10 +453,16 @@ def _perform_core_update_locked(stash_local_changes=True):
         pull_message = "Code updated successfully."
         if has_changes:
             pull_message = f"Code updated successfully. Local changes were automatically stashed.{stash_info}"
-        if result.stdout and "Already up to date" not in result.stdout:
+        # A checkout (a channel move) prints nothing; it always moved.
+        if (action != update_channel.ACTION_PULL
+                or (result.stdout and "Already up to date" not in result.stdout)):
             pull_message = f"Code updated successfully.{stash_info}"
         if upstream_note:
             pull_message = f"{pull_message} {upstream_note}"
+        if channel_note:
+            pull_message = f"{pull_message} {channel_note}"
+        if channel.migrate and action == update_channel.ACTION_CHECKOUT_TAG:
+            _persist_stable_channel()
 
         # Keep Python dependencies in sync automatically: if the pull
         # changed a requirements file, install it now — users updating
@@ -376,6 +547,7 @@ def _perform_core_update_locked(stash_local_changes=True):
         'message': pull_message,
         'restart_required': bool(result.returncode == 0 and code_changed),
         'dependency_failures': dependency_failures,
+        'channel': channel.channel,
     }
 
 
@@ -610,6 +782,9 @@ def get_git_info():
         upstream = _git_upstream(d)
         return jsonify({
             'branch': branch_name,
+            # No branch: the stable update channel checks out release tags.
+            'detached': not branch_name,
+            'version': get_git_version(),
             'dirty': bool(status.stdout.strip()),
             'status': status.stdout.strip(),
             'recent_commits': log.stdout.strip() if log.returncode == 0 else '',

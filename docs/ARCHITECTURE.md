@@ -187,8 +187,19 @@ everything else through `_reinstall_with_rollback()`.
 - **Update Code** on the Overview tab and the automatic updater both call
   `perform_core_update()` in
   [`api_v3/system.py`](../web_interface/blueprints/api_v3/system.py):
-  `git pull --rebase`, reinstall changed requirement files, report whether a
-  restart is needed.
+  fetch branches and tags, move the checkout for the update channel, reinstall
+  changed requirement files, report whether a restart is needed.
+- **Update channels** (`auto_update.channel`):
+  [`web_interface/update_channel.py`](../web_interface/update_channel.py)
+  decides the move. `stable` checks out the newest `vX.Y.Z` tag (detached
+  HEAD) when it contains the current commit; `beta` is
+  `git pull --rebase --autostash` on the current branch, and leaves a
+  detached release for `main` first. A stable device newer than the newest
+  release keeps pulling `main` until a release contains its commit, so no
+  update ever moves backwards; a config without the key is written as
+  `stable` once the device reaches a release. Checkouts carry uncommitted
+  edits across with `git stash create`/`apply`, and keep them in the stash
+  list if they no longer apply.
 - **Automatic updates** (`auto_update.enabled`, off by default):
   `AutoUpdater` in [`web_interface/auto_update.py`](../web_interface/auto_update.py)
   runs in the web process, checks every 30 minutes, and updates at most
@@ -199,7 +210,9 @@ everything else through `_reinstall_with_rollback()`.
   `ledmatrix-update-verify.path`, which runs the verifier as a separate unit
   (so restarting the web service does not kill it). The verifier restarts
   both services, waits for the web API to answer and the display service to
-  stay up, and on failure resets to the previous commit and restarts again.
+  stay up, and on failure returns to where HEAD was (the branch, or detached
+  on the previous release; `old_ref` in the pending file), resets to the
+  previous commit and restarts again.
   Plugin updates run only after a verified core update. State is in
   `data/auto_update_state.json` and `data/auto_update_pending.json`.
 - **Startup validator.** `StartupValidator`

@@ -1,7 +1,8 @@
 {
     "web_display_autostart": true,
     "auto_update": {
-        "enabled": false
+        "enabled": false,
+        "channel": "stable"
     },
     "schedule": {
         "enabled": false,
