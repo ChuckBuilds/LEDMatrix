@@ -192,8 +192,9 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
-    # Set the on-demand request in cache FIRST (before starting service)
-    # This ensures the request is available when the service starts/restarts
+    # Post the request to the mailbox the display process polls
+    # (DisplayController._poll_on_demand_requests). Written before any
+    # service start, so a freshly started display finds it on its first poll.
     cache = _cache_manager()
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
@@ -207,18 +208,7 @@ def start_on_demand_display():
     }
     cache.set('display_on_demand_request', request_payload)
 
-    # Check if display service is running (or will be started)
     service_status = _get_display_service_status()
-    service_was_running = service_status.get('active', False)
-        
-    # Stop the display service first to ensure clean state when we will restart it
-    if service_was_running and start_service:
-        import time as time_module
-        logger.debug("Stopping display service before starting on-demand mode")
-        _stop_display_service()
-        # Wait a brief moment for the service to fully stop
-        time_module.sleep(1.5)
-        logger.debug("Display service stopped, now starting with on-demand request")
 
     if not service_status.get('active') and not start_service:
         return jsonify({
@@ -227,6 +217,18 @@ def start_on_demand_display():
             'service_status': service_status
         }), 400
 
+    # start_service means "start it if it is not running", as the UI's
+    # checkbox says; _ensure_display_service_running leaves a running service
+    # alone. This used to stop a running service, sleep 1.5s and start it
+    # again, so every on-demand or "Preview on display" click -- and every
+    # MQTT on-demand command, which posts here with the default -- cold-
+    # restarted the display process: every plugin reloaded and the panel was
+    # blank for seconds. The restart bought nothing. The running process
+    # reads this mailbox every ON_DEMAND_POLL_INTERVAL (0.25s), from its
+    # dwell sleep, its render loops and Vegas's interrupt check as well as
+    # the main loop, and a restarted one got the request the same way: the
+    # startup path only restores a session the display itself saved
+    # (display_on_demand_config), so it loaded nothing it would not have had.
     service_result = None
     if start_service:
         service_result = _ensure_display_service_running()
@@ -237,9 +239,6 @@ def start_on_demand_display():
                 'message': 'Failed to start display service. Please check service logs or start it manually.',
                 'service_result': service_result
             }), 500
-            
-        # Service was restarted (or started fresh) with on-demand request in cache
-        # The display controller will read the request during initialization or when it polls
 
     response_data = {
         'request_id': request_id,
@@ -254,10 +253,12 @@ def start_on_demand_display():
 def stop_on_demand_display():
     """Request the display controller to stop on-demand mode."""
     data = request.get_json(silent=True) or {}
-    stop_service = data.get('stop_service', False)
+    # _coerce_to_bool: bool("false") is True, which stopped the service.
+    stop_service = _coerce_to_bool(data.get('stop_service', False))
 
-    # Set the stop request in cache FIRST
-    # The display controller will poll this and restart without the on-demand filter
+    # The running display reads the stop from the mailbox within
+    # ON_DEMAND_POLL_INTERVAL and resumes normal rotation in place
+    # (_clear_on_demand); nothing is restarted.
     cache = _cache_manager()
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
@@ -266,10 +267,7 @@ def stop_on_demand_display():
         'timestamp': _pkg.time.time()
     }
     cache.set('display_on_demand_request', request_payload)
-        
-    # Note: The display controller's _clear_on_demand() will handle the restart
-    # to restore normal operation with all plugins
-        
+
     service_result = None
     if stop_service:
         service_result = _stop_display_service()
