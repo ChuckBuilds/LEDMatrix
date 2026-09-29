@@ -296,7 +296,7 @@ class PluginManager:
 
         return plugin_ids
 
-    def load_plugin(self, plugin_id: str) -> bool:
+    def load_plugin(self, plugin_id: str, force_enabled: bool = False) -> bool:
         """
         Load a plugin by ID.
         
@@ -310,6 +310,10 @@ class PluginManager:
         
         Args:
             plugin_id: Plugin identifier
+            force_enabled: Run the plugin enabled even though config.json has
+                it disabled. On-demand uses this to show a disabled plugin
+                (DisplayController._load_plugin_for_on_demand). Only the
+                instance's config says enabled; config.json is not written.
             
         Returns:
             True if loaded successfully, False otherwise
@@ -376,6 +380,12 @@ class PluginManager:
             # (prepare_plugin_config). In memory only: config.json is written
             # by saves, never by loading a plugin.
             config = self.prepare_plugin_config(plugin_id, config, schema=schema)
+            if force_enabled:
+                # A copy: prepare_plugin_config can hand back the section from
+                # config_manager's cached config, and setting the flag there
+                # would read as enabled to everything else in this process.
+                config = dict(config)
+                config['enabled'] = True
             
             # Use PluginLoader to load plugin
             plugin_instance, _module = self.plugin_loader.load_plugin(
