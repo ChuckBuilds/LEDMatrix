@@ -30,6 +30,18 @@ accepts both, but the store flags the old spelling as deprecated
   mid-screen and mid-Vegas included, so the route now only starts the service
   when it is not running. `POST /display/on-demand/stop` reads
   `stop_service` as a boolean, so `"false"` no longer stops the service.
+- On-demand works for a disabled plugin. The display only loads enabled
+  plugins, so "Preview on display" on a disabled plugin's config page (which
+  says the plugin will be enabled for the preview) failed with
+  `invalid-mode`. The display now loads the plugin live for the session,
+  without writing `enabled` to `config.json`, and unloads it when on-demand
+  is stopped, expires or moves to another plugin. A plugin that fails to
+  load reports on-demand status `error` with `load-failed`. A session
+  restored after a restart unloads its disabled plugin the same way; it used
+  to stay loaded until the next restart.
+- A stop request now clears an on-demand error. After a failed request,
+  `/display/on-demand/status` kept reporting `status: error` for up to two
+  minutes even after a stop.
 - Re-saving unchanged data through `CacheManager.set` no longer rewrites its
   cache file. The disk cache already skipped a payload identical to the last
   one written, but `set()` stamps every record with the current time, so the
