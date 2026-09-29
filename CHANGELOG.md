@@ -33,8 +33,12 @@ accepts both, but the store flags the old spelling as deprecated
   - `aliases`: the entry's other ids. Update, uninstall and reinstall by the
     registry id now find a plugin installed under its manifest id
     (`weather` → `ledmatrix-weather/`; likewise leaderboard, music, stocks).
-    Without the field the store tries the entry's `plugin_path` name and
-    `ledmatrix-<id>`; with no registry loaded, `ledmatrix-<id>`.
+    Only registry proof counts: the entry's `aliases` or its `plugin_path`
+    name, or a folder whose manifest declares one of those ids. A
+    `ledmatrix-<id>/` folder with no such proof is never replaced or removed;
+    uninstall and update report "not installed" and log the folder's path.
+    Install and update fetch the registry first when such a folder exists
+    and none is loaded; uninstall stays offline.
   - `commit`: the monorepo commit that introduced the listed version, shown
     on the store card and linked to the plugin's source at that commit.
     Informational only; installs still come from the branch head.

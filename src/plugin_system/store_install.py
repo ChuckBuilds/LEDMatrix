@@ -70,8 +70,7 @@ class _InstallMixin:
             # and _install_plugin_impl then deleted `ledmatrix-weather/` to
             # make room for the download -- so a refusal after that point
             # (the post-download compatibility gate) left no plugin at all.
-            plugin_path = (self._resolve_installed(plugin_id, [self.plugins_dir])
-                           or self.plugins_dir / plugin_id)
+            plugin_path = self._existing_install(plugin_id) or self.plugins_dir / plugin_id
             if not plugin_path.exists():
                 return self._install_plugin_impl(plugin_id, branch)
 
@@ -98,6 +97,26 @@ class _InstallMixin:
 
             self._restore_backup(plugin_id, plugin_path, backup_path, "Install")
             return False
+
+    def _existing_install(self, plugin_id: str) -> Optional[Path]:
+        """The installed copy of ``plugin_id`` in plugins_dir, by the id or an
+        alias the registry proves (`_installed_id_candidates`).
+
+        When nothing matches but a ``ledmatrix-<id>`` folder exists and no
+        registry is loaded yet, the registry is fetched first -- the install
+        fetches it anyway -- because without it that folder can be neither
+        protected nor trusted: the download may be renamed onto it.
+        """
+        dirs = [self.plugins_dir]
+        found = self._resolve_installed(plugin_id, dirs)
+        if (found is None and not getattr(self, 'registry_cache', None)
+                and self._unproven_prefix_folder(plugin_id, dirs) is not None):
+            try:
+                self.fetch_registry()
+            except Exception as e:  # noqa: BLE001 - proceed as before without proof
+                self.logger.debug("Registry fetch before installing %s failed: %s", plugin_id, e)
+            found = self._resolve_installed(plugin_id, dirs)
+        return found
 
     def _set_aside(self, plugin_path: Path, backup_path: Path) -> Optional[str]:
         """Rename an installed plugin to ``backup_path`` so a failed

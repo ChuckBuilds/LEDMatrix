@@ -313,8 +313,10 @@ class _UpdateMixin:
         """
         Update a plugin to the latest commit on its upstream branch.
         """
-        plugin_path = self._find_plugin_path(plugin_id)
-        
+        # fetch=True: an update needs the registry anyway, and only it can
+        # prove a ledmatrix-<id>/ folder is this plugin.
+        plugin_path = self._find_with_proof(plugin_id, fetch=True)
+
         if plugin_path is None or not plugin_path.exists():
             self.logger.error(f"Plugin not installed: {plugin_id}")
             return False

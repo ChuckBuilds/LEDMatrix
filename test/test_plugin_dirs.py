@@ -11,8 +11,8 @@ Callers:
   discovery  PluginManager._scan_directory_for_plugins -> plugin_directories
   pm_get     PluginManager.get_plugin_directory before discovery has run
   loader     PluginLoader.find_plugin_directory (no discovery mapping)
-  store      PluginStoreManager._find_plugin_path (which also tries the
-             registry's aliases for the id, or ``ledmatrix-<id>`` without one)
+  store      PluginStoreManager._find_plugin_path (which also tries the ids the
+             registry proves: aliases, plugin_path name; never a bare prefix)
 """
 
 import json
@@ -145,10 +145,10 @@ TABLE = [
     # manifest id != dir name: the manifest finds it; pm_get by prefix
     ("stocks",                    R + "ledmatrix-stocks", R + "ledmatrix-stocks",
                                   R + "ledmatrix-stocks", R + "ledmatrix-stocks"),
-    # ledmatrix- prefix: name-only callers with prefix=True, and the store as
-    # an alias (no registry loaded here; see test_store_registry_fields.py)
-    ("legacy",                    None,              R + "ledmatrix-legacy", R + "ledmatrix-legacy",
-                                  R + "ledmatrix-legacy"),
+    # ledmatrix- prefix: name-only callers with prefix=True. The store only
+    # with registry proof (aliases / plugin_path), and none is loaded here;
+    # see test_store_registry_fields.py
+    ("legacy",                    None,              R + "ledmatrix-legacy", R + "ledmatrix-legacy", None),
     ("ledmatrix-legacy",          R + "ledmatrix-legacy", R + "ledmatrix-legacy",
                                   R + "ledmatrix-legacy", R + "ledmatrix-legacy"),
     # case: only the loader folds case

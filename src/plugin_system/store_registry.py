@@ -27,17 +27,15 @@ from src.plugin_system.repo_urls import (
 #   incompatible install or update is refused before the download
 #   (`registry_incompatibility`). The post-download gate stays as the fallback.
 # - ``aliases``: other ids the plugin goes by (the manifest id when it differs
-#   from the registry id, e.g. ``ledmatrix-weather`` for ``weather``).
+#   from the registry id, e.g. ``ledmatrix-weather`` for ``weather``). With
+#   ``plugin_path``'s name, the only proof the store accepts that a folder
+#   under another name is this plugin (`alternate_ids`).
 # - ``commit``: the monorepo commit that introduced ``latest_version``.
 #   Informational only -- installs still come from the branch head.
 
 
 def declared_aliases(entry: Dict[str, Any]) -> Optional[List[str]]:
-    """The entry's ``aliases``, or None when it carries no such list.
-
-    None (an older registry) and ``[]`` (a registry that says "no other
-    names") are different answers: only the first falls back to guessing.
-    """
+    """The entry's ``aliases``, or None when it carries no such list."""
     aliases = entry.get('aliases')
     if not isinstance(aliases, list):
         return None
@@ -46,23 +44,29 @@ def declared_aliases(entry: Dict[str, Any]) -> Optional[List[str]]:
 
 
 def alternate_ids(entry: Dict[str, Any]) -> List[str]:
-    """Ids other than the registry id that an installed copy may carry.
+    """Ids other than the registry id that the registry *proves* an installed
+    copy may carry: the entry's ``aliases``, then its ``plugin_path``
+    directory name (all an older registry has).
 
-    The entry's ``aliases`` when it has them. Otherwise -- a registry from
-    before the field -- the two names the monorepo is known to have used:
-    the ``plugin_path`` directory name, then ``ledmatrix-<id>``.
+    Never ``ledmatrix-<id>`` on its own say-so. Store operations delete and
+    replace what these ids resolve to, and an unrelated plugin can live in a
+    folder of that name (owner decision on #686). A guess is only a hint:
+    see `prefix_hint`.
     """
-    declared = declared_aliases(entry)
-    if declared is not None:
-        return declared
     own = entry.get('id')
-    guesses: List[str] = []
+    ids: List[str] = list(declared_aliases(entry) or [])
     path = entry.get('plugin_path')
     if isinstance(path, str) and path.strip('/'):
-        guesses.append(path.rstrip('/').rsplit('/', 1)[-1])
-    if isinstance(own, str) and own and not own.startswith(PLUGIN_DIR_PREFIX):
-        guesses.append(PLUGIN_DIR_PREFIX + own)
-    return [g for i, g in enumerate(guesses) if g and g != own and g not in guesses[:i]]
+        ids.append(path.rstrip('/').rsplit('/', 1)[-1])
+    return [g for i, g in enumerate(ids) if g and g != own and g not in ids[:i]]
+
+
+def prefix_hint(plugin_id: Any) -> Optional[str]:
+    """``ledmatrix-<id>``: the legacy folder name worth *mentioning* when
+    ``plugin_id`` is not found -- never one to act on without registry proof."""
+    if isinstance(plugin_id, str) and plugin_id and not plugin_id.startswith(PLUGIN_DIR_PREFIX):
+        return PLUGIN_DIR_PREFIX + plugin_id
+    return None
 
 
 class _RegistryMixin:
@@ -953,12 +957,15 @@ class _RegistryMixin:
         return found
 
     def _installed_id_candidates(self, plugin_id: str) -> List[str]:
-        """``plugin_id`` and the other ids its installed copy may carry.
+        """``plugin_id`` and the other ids the registry proves its installed
+        copy may carry.
 
         From the registry already in memory -- no fetch, because uninstall
         and the update lookup must work offline. With an entry: its id and
-        `alternate_ids`. Without one (no registry loaded yet, or a plugin
-        that isn't in it): ``ledmatrix-<id>``, the one legacy name.
+        `alternate_ids` (``aliases``, ``plugin_path`` name). Without one (no
+        registry loaded yet, or a plugin that isn't in it): the id alone.
+        A folder whose manifest declares one of these ids is found by the
+        resolver's manifest pass whatever it is called.
         """
         ids: List[str] = [plugin_id]
         cache = getattr(self, 'registry_cache', None)
@@ -970,8 +977,6 @@ class _RegistryMixin:
         if entry is not None:
             ids.append(entry.get('id'))
             ids.extend(alternate_ids(entry))
-        elif isinstance(plugin_id, str) and not plugin_id.startswith(PLUGIN_DIR_PREFIX):
-            ids.append(PLUGIN_DIR_PREFIX + plugin_id)
         unique: List[str] = []
         for candidate in ids:
             if isinstance(candidate, str) and candidate and candidate not in unique:

@@ -117,15 +117,14 @@ class TestAliasHelpers:
         assert declared_aliases({"id": "a", "aliases": ["a", "", 3, None, "b"]}) == ["b"]
         assert declared_aliases({"id": "a", "aliases": "b"}) is None
 
-    def test_old_registry_falls_back_to_path_name_then_prefix(self):
+    def test_only_registry_proof_counts(self):
+        """aliases and the plugin_path name; never a bare ledmatrix-<id>."""
         assert alternate_ids(OLD_WEATHER) == ["ledmatrix-weather"]
-        assert alternate_ids({"id": "clock", "plugin_path": "plugins/clock-simple"}) == [
-            "clock-simple", "ledmatrix-clock"]
-        assert alternate_ids({"id": "ext", "plugin_path": ""}) == ["ledmatrix-ext"]
-
-    def test_declared_aliases_replace_the_guesses(self):
-        assert alternate_ids({**OLD_WEATHER, "aliases": []}) == []
         assert alternate_ids(NEW_WEATHER) == ["ledmatrix-weather"]
+        assert alternate_ids({"id": "clock", "plugin_path": "plugins/clock-simple"}) == ["clock-simple"]
+        assert alternate_ids({"id": "ext", "plugin_path": ""}) == []
+        assert alternate_ids({"id": "foo", "plugin_path": "plugins/foo", "aliases": []}) == []
+        assert alternate_ids({"id": "m", "plugin_path": "plugins/m", "aliases": ["x"]}) == ["x"]
 
 
 class TestRegistryLookup:
@@ -152,10 +151,19 @@ class TestFindInstalledPlugin:
         fake.store.fetch_registry()
         assert fake.store._find_plugin_path("weather") == path
 
-    def test_no_registry_loaded_uses_the_prefix(self, make):
+    def test_no_registry_loaded_is_no_proof(self, make):
+        """Offline, a ledmatrix-weather/ folder is only named in the log."""
         fake = make([])
         path = write_install(fake.plugins_dir, "ledmatrix-weather", manifest("1.0.0"), "old")
         assert fake.store.registry_cache is None
+        assert fake.store._find_plugin_path("weather") is None
+        hint = " ".join(str(a) for c in fake.store.logger.warning.call_args_list for a in c.args)
+        assert str(path) in hint and "ledmatrix-weather" in hint
+
+    def test_a_folder_whose_manifest_declares_the_id_needs_no_proof(self, make):
+        fake = make([])
+        path = write_install(fake.plugins_dir, "ledmatrix-weather",
+                             manifest("1.0.0", plugin_id="weather"), "old")
         assert fake.store._find_plugin_path("weather") == path
 
     def test_an_empty_aliases_list_means_no_guessing(self, make):
@@ -177,6 +185,47 @@ class TestFindInstalledPlugin:
         fake.store.fetch_registry()
         assert fake.store.uninstall_plugin("weather") is True
         assert markers(fake.plugins_dir) == {}
+
+
+# An unrelated plugin that happens to live in ledmatrix-foo/ (its manifest id
+# is ledmatrix-foo) and that no registry entry names. Owner decision on #686:
+# without registry proof the store must never replace or remove it.
+FOO = {"id": "foo", "name": "Foo", "repo": REPO, "branch": "main", "plugin_path": "plugins/foo",
+       "latest_version": "2.0.0"}
+
+
+class TestUnprovenPrefixFolderIsLeftAlone:
+    @pytest.fixture(params=["old registry", "empty aliases", "no registry"])
+    def fake(self, request, make):
+        entries = {"old registry": [FOO], "empty aliases": [{**FOO, "aliases": []}],
+                   "no registry": []}[request.param]
+        fake = make(entries, downloaded=manifest("2.0.0", plugin_id="foo"))
+        write_install(fake.plugins_dir, "ledmatrix-foo",
+                      manifest("1.0.0", plugin_id="ledmatrix-foo"), "unrelated")
+        return fake
+
+    def test_uninstall_foo_leaves_it(self, fake):
+        if fake.registry["plugins"]:
+            fake.store.fetch_registry()
+        assert fake.store.uninstall_plugin("foo") is True  # "already uninstalled"
+        assert markers(fake.plugins_dir) == {"ledmatrix-foo": "unrelated"}
+
+    def test_install_foo_does_not_replace_it(self, fake):
+        if fake.registry["plugins"]:
+            fake.store.fetch_registry()
+        else:
+            # Nothing loaded when install_plugin looks for a copy to protect;
+            # the entry to install from is fetched afterwards.
+            fake.registry["plugins"] = [FOO]
+        assert fake.store.install_plugin("foo") is True
+        assert markers(fake.plugins_dir) == {"foo": "new", "ledmatrix-foo": "unrelated"}
+
+    def test_update_foo_finds_nothing_to_update(self, fake):
+        if fake.registry["plugins"]:
+            fake.store.fetch_registry()
+        assert fake.store.update_plugin("foo") is False
+        assert markers(fake.plugins_dir) == {"ledmatrix-foo": "unrelated"}
+        assert fake.downloads == []
 
 
 class TestInstall:
