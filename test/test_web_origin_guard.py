@@ -90,6 +90,57 @@ def test_the_same_host_on_another_port_is_another_site(probe):
     assert resp.status_code == 403
 
 
+def test_an_https_page_behind_a_tls_terminating_proxy_passes(probe):
+    # nginx terminates TLS and forwards a portless Host to the plain-http
+    # upstream: the browser's Origin is https (443), Flask sees http (80).
+    resp = probe.post('/change', headers={
+        'Host': 'pi.example', 'Origin': 'https://pi.example'})
+    assert resp.status_code == 200
+    resp = probe.post('/change', headers={
+        'Host': 'pi.example', 'Referer': 'https://pi.example/v3'})
+    assert resp.status_code == 200
+
+
+def test_a_portless_host_still_refuses_a_nondefault_port(probe):
+    # Only the standard port of either scheme counts as "no port".
+    for origin in ('https://pi.example:8443', 'http://pi.example:5000',
+                   'http://pi.example:443', 'https://evil.example'):
+        resp = probe.post('/change', headers={
+            'Host': 'pi.example', 'Origin': origin})
+        assert resp.status_code == 403, origin
+
+
+def test_an_explicit_host_port_must_match_exactly(probe):
+    # A Host with a port (the proxy forwards $http_host) is compared as is.
+    assert probe.post('/change', headers={
+        'Host': 'pi.example:8443',
+        'Origin': 'https://pi.example:8443'}).status_code == 200
+    assert probe.post('/change', headers={
+        'Host': 'pi.example:8443',
+        'Origin': 'https://pi.example'}).status_code == 403
+
+
+def test_a_refusal_logs_only_the_site_never_the_referer_path(probe, caplog):
+    # A Referer's path and query can carry tokens.
+    with caplog.at_level('WARNING', logger='web_interface.origin_guard'):
+        resp = probe.post('/change', headers={
+            'Referer': EVIL + '/page?token=s3cret#frag'})
+    assert resp.status_code == 403
+    logged = caplog.text
+    assert 'evil.example' in logged
+    assert 's3cret' not in logged
+    assert '/page' not in logged
+
+
+def test_a_refusal_log_cannot_be_forged_with_newlines(probe, caplog):
+    with caplog.at_level('WARNING', logger='web_interface.origin_guard'):
+        probe.post('/change%0D%0AFAKE', headers={'Origin': EVIL})
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert '\n' not in message and '\r' not in message
+    assert 'FAKE' in message  # the path was logged, escaped
+
+
 def test_no_origin_and_no_referer_passes(probe):
     # curl, Home Assistant, the MQTT bridge: not a browser.
     assert probe.post('/change').status_code == 200
