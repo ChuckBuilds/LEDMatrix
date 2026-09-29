@@ -38,6 +38,9 @@ Rules for the package:
 | [`scroll_helper`](#scroll_helper) | Pre-rendered horizontal scrolling | Yes | — |
 | [`snapshot_policy`](#snapshot_policy) | When to write the web preview frame | No, core-internal | n/a |
 | [`sports_card`](#sports_card) | Scoreboard card settings, colours, fonts, dates | Yes (scoreboards) | 3.3.0 |
+| [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | Unreleased |
+| [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | Unreleased |
+| [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | Unreleased |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
@@ -46,7 +49,7 @@ Rules for the package:
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
 
-The four `sports_*` mixin and card modules hold code the scoreboard plugins
+The `sports_*` mixin and card modules hold code the scoreboard plugins
 used to carry as identical copies. Each module docstring lists what a host
 class must provide. The plan behind them is in
 [docs/SPORTS_UNIFICATION.md](../../docs/SPORTS_UNIFICATION.md).
@@ -215,6 +218,33 @@ rules (`favorite_teams_for()`, `side_is_favorite()`, `favorite_result()`),
 dates (`format_game_date()`, `format_game_time()`, `card_tzinfo()`) and font
 sizes (`schema_font_size()`, `resolve_font_size()`). A plugin keeps its own
 method and delegates the body.
+
+### sports_card_wrappers
+
+[`sports_card_wrappers.py`](sports_card_wrappers.py).
+`SportsCardWrappersMixin`: the one-line methods a scoreboard's game renderer
+uses to call `sports_card` with its own `config` and `logger`
+(`_vs_text()`, `_element_color()`, `_format_game_date()`, ... seventeen in
+all), under their existing names. They are what `sports_game_renderer`'s
+mixin expects its host to provide. No `__init__` and no state.
+
+### sports_celebration
+
+[`sports_celebration.py`](sports_celebration.py). `SportsCelebrationMixin`
+draws the full-screen takeover a scoreboard shows when a team scores or wins
+(`_draw_celebration_layout(celebration)`): a backdrop in the scoring team's
+colours read off its crest, scenery, confetti, the headline and the score.
+The colour helpers are free functions (`logo_palette()`, `lift_color()`,
+`mix_color()`, ...). Deciding *when* to celebrate stays in the plugin, which
+builds the celebration dict the docstring describes.
+
+### sports_fetch
+
+[`sports_fetch.py`](sports_fetch.py). `SportsFetchMixin`: the `SportsCore`
+methods that decide which requests a scoreboard makes --
+`_fetch_season_directly()` (a season, in chunks ESPN accepts),
+`_background_fetches_espn_ranges()`, `_needs_previous_day()` (the live
+lookback) and `_wants_live_odds()` (odds only for games near the screen).
 
 ### sports_game_renderer
 
