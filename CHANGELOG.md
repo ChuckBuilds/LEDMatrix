@@ -19,6 +19,24 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.6.1
+
+A fix to `src.common.favorite_team_check` (#667). Plugins that drop their
+bundled copy of it should floor on 3.6.1, not 3.6.0.
+
+### Fixes
+
+- The favourite-team check no longer logs "the season has finished" for a
+  league that is still playing. ESPN's default scoreboard keeps showing the
+  last slate after it: MLB's regular-season games two days into the
+  postseason, a soccer league's previous matchday between rounds. When every
+  event is in the past, the check now looks first at the league's phase (a
+  regular season or postseason that has moved past the events shown draws no
+  conclusion) and at a match-day calendar (`calendarType` "day" with
+  `calendarIsWhitelist`, as soccer, the NHL and the NBA use), whose next date
+  becomes "nothing on until <date>". An offseason, or a payload without these
+  fields, is reported as before.
+
 ## 3.6.0
 
 New modules a plugin may import via `src.*` (floor on 3.6.0). Both are
