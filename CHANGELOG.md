@@ -19,6 +19,32 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### New modules
+
+A plugin may import these via `src.*` once it floors on the release that
+ships them. All three hold code the scoreboard plugins carry as identical
+copies, moved without behaviour change under the plugins' own method names;
+each docstring lists what the host class must provide. The plugins delete
+their copies when they floor on that release.
+
+- `src/common/sports_celebration.py` — `SportsCelebrationMixin`, the
+  score/win celebration takeover drawn by afl, football, hockey, nrl and
+  soccer (`_draw_celebration_layout` and the palette, backdrop, scenery,
+  confetti and crest steps behind it), plus its colour helpers as free
+  functions: `logo_palette`, `lift_color`, `cap_luminance`, `mix_color`,
+  `scale_color`, `dim_rgba`, `rgb_luminance`, `rgb_saturation`,
+  `color_distance`. Only the drawing: when to celebrate, the phrase and the
+  scenery stay in each plugin.
+- `src/common/sports_fetch.py` — `SportsFetchMixin`, four `SportsCore`
+  methods identical in all nine scoreboards: `_fetch_season_directly`,
+  `_background_fetches_espn_ranges`, `_needs_previous_day` and
+  `_wants_live_odds` (with `_LOOKBACK_CUTOFF_HOUR` and
+  `_LIVE_ODDS_LOOKAHEAD`).
+- `src/common/sports_card_wrappers.py` — `SportsCardWrappersMixin`, the
+  seventeen `sports_card` delegations the eight scoreboard game renderers
+  carry (`_vs_text`, `_element_color`, `_format_game_date`, ...): the methods
+  `SportsGameRendererMixin` expects its host to provide.
+
 ## 3.6.2
 
 A fix to `src.common.favorite_team_check` (#670).

@@ -83,6 +83,9 @@ more. Shared sports code lives in `src/common`:
 | `espn_dates.py` | 3.5.0 | ESPN date-range and `limit` workarounds |
 | `favorite_team_check.py` | 3.6.0 | `FavoriteTeamCheck` — logs why a favourite team code shows nothing |
 | `sports_timezone.py` | 3.6.0 | Which timezone start times are drawn in (`resolve_timezone_name`) |
+| `sports_celebration.py` | Unreleased | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
+| `sports_fetch.py` | Unreleased | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
+| `sports_card_wrappers.py` | Unreleased | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
@@ -167,6 +170,15 @@ mixin keeps working with the keys already in its published schema.
 Mix it in **before** the mode class — `class SoccerLive(CelebrationMixin,
 SportsLive)` — so the celebration `display()` runs first and falls through to
 the scorebug via `super()`.
+
+What shipped is narrower. `src/common/sports_celebration.py`
+(`SportsCelebrationMixin`) holds only the drawing, which is identical in the
+five scoreboards that celebrate (afl, football, hockey, nrl, soccer — hockey
+grew celebrations after this was written). Arming a celebration stays in each
+plugin: the trigger bodies differ (nrl matches favourites by team id, football
+folds a touchdown's extra point into one celebration and picks scenery by
+points), and so does `display()`. The seams above were not needed to move the
+drawing, so none was added.
 
 **Rotation strategies.** The three "dialects" turned out to be one algorithm
 (Smooth Weighted Round-Robin) in two shapes: an incremental picker holding state
