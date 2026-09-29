@@ -43,6 +43,36 @@ accepts both, but the store flags the old spelling as deprecated
   `/display/on-demand/status` kept reporting `status: error` for up to two
   minutes even after a stop.
 
+### Web UI styling: a real Tailwind build
+
+- The web UI's utility classes now come from a generated
+  `static/v3/tailwind.css` (Tailwind v3.4.19 standalone CLI, no Node)
+  instead of ~500 hand-written rules in `app.css`. The CSS is built on a
+  dev machine with `python3 scripts/build_css.py` and committed; the Pi
+  never builds anything. CI's new "Tailwind CSS is up to date" job rebuilds
+  it and fails when the committed file is stale. `app.css` keeps the theme
+  tokens, components and dark theme, and loads after `tailwind.css`. The
+  values `app.css` had customised (darker gray text, emerald/amber button
+  fills, token shadows, font line-heights, keyboard-only focus rings) are
+  kept in `web_interface/tailwind/tailwind.config.js`.
+- Border utilities now draw. `border-b`, `border-t` and `divide-y` set only
+  a width, and nothing gave them a style, so the tab-row underlines and
+  section dividers the markup asks for never showed. They do now.
+- `2xl:` classes now apply (the hand-written `.2xl\:…` selectors were
+  invalid CSS): at 1536px and wider the plugin grids show five columns and
+  the page gutters widen, as the markup intended.
+- Classes the hand-written file never defined now work, e.g. the teal
+  "configure" badge in Operation History, the button of a purple
+  `web_ui_actions` card (it had white text on no background), the
+  toggle-switch knob offsets, the slider accent colours and the password
+  strength colours.
+- A scrollable container with its own background (the live preview stage,
+  command output in Tools) keeps it. The scroll-hint rule's `background`
+  shorthand wiped it, so the preview stage rendered white instead of dark.
+- Plugin `web_ui/` pages no longer load Tailwind from a CDN, which failed
+  in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
+  with the v2 palette they were written against.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core

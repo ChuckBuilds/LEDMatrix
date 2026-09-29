@@ -1,11 +1,16 @@
 """
 Static-analysis audits for the web UI, as tests so CI enforces them.
 
-1. Breakpoint utility audit: app.css hand-maintains a Tailwind-style utility
-   subset, so a template can reference a responsive class (e.g. sm:block)
-   that no CSS rule defines — it silently no-ops. This once left the header
-   search box and system stats invisible at every screen width. The audit
-   diffs classes used in templates against classes defined in app.css.
+1. Utility class audits: templates and JS are written in Tailwind class names,
+   and a class no stylesheet defines silently does nothing. `.hidden` was
+   missing for years, which broke every JS show/hide toggle, and a
+   hand-written selector starting `.2xl` (an unescaped leading digit) was
+   invalid CSS, so no 2xl: class ever applied. The utilities are now
+   generated (scripts/build_css.py writes static/v3/tailwind.css), and these
+   tests check that the committed output plus app.css cover every class the
+   markup uses. That catches a class assembled at runtime that needs a
+   safelist entry in web_interface/tailwind/tailwind.config.js. (A template
+   edited without rebuilding is caught by `build_css.py --check` in CI.)
 
 2. Asset reference audit: every url_for('static', filename=...) in the
    templates must point to a file that exists, so a renamed/moved asset
@@ -24,12 +29,51 @@ WEB = PROJECT_ROOT / "web_interface"
 TEMPLATES = WEB / "templates"
 STATIC = WEB / "static"
 APP_CSS = STATIC / "v3" / "app.css"
+TAILWIND_CSS = STATIC / "v3" / "tailwind.css"
 
 BP_PREFIXES = ("sm", "md", "lg", "xl", "2xl")
 
 
 def _template_files():
     return sorted(TEMPLATES.rglob("*.html"))
+
+
+def _stylesheets():
+    """The main UI's CSS as base.html loads it: generated utilities, then app.css."""
+    return "\n".join(
+        p.read_text(encoding="utf-8") for p in (TAILWIND_CSS, APP_CSS)
+    )
+
+
+def _css_unescape(name):
+    r"""`\32xl\:px-16` -> `2xl:px-16` (CSS hex and character escapes)."""
+    name = re.sub(
+        r"\\([0-9a-fA-F]{1,6}) ?", lambda m: chr(int(m.group(1), 16)), name
+    )
+    return re.sub(r"\\(.)", r"\1", name)
+
+
+def _css_light_classes(css):
+    """Classes that get a rule outside [data-theme="dark"]."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    defined = set()
+    for block in re.finditer(r"([^{}]+)\{", css):
+        for sel in block.group(1).split(","):
+            sel = sel.strip()
+            if sel.startswith("@") or sel.startswith('[data-theme="dark"]'):
+                continue
+            for m in re.finditer(r"\.((?:\\[0-9a-fA-F]{1,6} ?|\\.|[\w-])+)", sel):
+                defined.add(_css_unescape(m.group(1)))
+    return defined
+
+
+def test_css_unescape_reads_tailwind_selectors():
+    assert _css_unescape(r"\32xl\:px-16") == "2xl:px-16"
+    assert _css_unescape(r"md\:grid-cols-2") == "md:grid-cols-2"
+    assert _css_unescape(r"w-1\/2") == "w-1/2"
+    assert "2xl:grid-cols-5" in _css_light_classes(
+        r"@media (min-width:1536px){.\32xl\:grid-cols-5{grid-template-columns:1fr}}"
+    )
 
 
 def test_every_used_breakpoint_class_is_defined():
@@ -41,18 +85,16 @@ def test_every_used_breakpoint_class_is_defined():
             for m in bp_class.finditer(attr):
                 used.add(m.group(0))
 
-    css = APP_CSS.read_text(encoding="utf-8")
     defined = {
-        m.group(0).lstrip(".").replace("\\:", ":")
-        for m in re.finditer(
-            r"\.(%s)\\:[A-Za-z0-9_-]+" % "|".join(BP_PREFIXES), css
-        )
+        cls for cls in _css_light_classes(_stylesheets())
+        if cls.split(":", 1)[0] in BP_PREFIXES
     }
 
     missing = sorted(used - defined)
     assert not missing, (
-        "Responsive utility classes referenced in templates but never defined "
-        f"in app.css (they silently no-op): {missing}"
+        "Responsive utility classes referenced in templates but not in "
+        "tailwind.css or app.css (they silently no-op). Run "
+        f"`python3 scripts/build_css.py`: {missing}"
     )
 
 
@@ -82,24 +124,12 @@ _UTILITY = re.compile(
 )
 
 
-def _css_light_classes(css):
-    """Classes that get a rule outside [data-theme="dark"]."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    defined = set()
-    for block in re.finditer(r"([^{}]+)\{", css):
-        for sel in block.group(1).split(","):
-            sel = sel.strip()
-            if sel.startswith("@") or sel.startswith('[data-theme="dark"]'):
-                continue
-            for m in re.finditer(r"\.((?:\\.|[\w-])+)", sel):
-                defined.add(m.group(1).replace("\\", ""))
-    return defined
-
-
 def test_every_used_utility_class_is_defined():
-    """app.css is the whole stylesheet (no Tailwind build), so a utility class
-    it doesn't define silently does nothing. `.hidden` was missing for years,
-    which broke every JS show/hide toggle. Scans templates and static JS."""
+    """A utility class neither tailwind.css nor app.css defines silently does
+    nothing. Scans templates and static JS the way Tailwind can't: it also
+    reads classList calls and `${...}`-stripped template strings, so a class
+    only ever built at runtime shows up here as missing until it's safelisted.
+    """
     attr = re.compile(r"""(?:class|className)\s*[=:]\s*(["'`])(.*?)\1""", re.S)
     class_list = re.compile(r"classList\.(?:add|remove|toggle)\(([^)]*)\)")
     template_expr = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\$\{[^}]*\}", re.S)
@@ -125,12 +155,34 @@ def test_every_used_utility_class_is_defined():
                     if _UTILITY.match(token):
                         used.setdefault(token, path.relative_to(PROJECT_ROOT))
 
-    defined = _css_light_classes(APP_CSS.read_text(encoding="utf-8"))
+    defined = _css_light_classes(_stylesheets())
     missing = sorted(f"{cls} ({used[cls]})" for cls in used if cls not in defined)
     assert not missing, (
-        "Utility classes used in templates/JS but not defined in app.css "
-        f"(they silently no-op): {missing}"
+        "Utility classes used in templates/JS but not in tailwind.css or "
+        "app.css (they silently no-op). Run `python3 scripts/build_css.py`; if "
+        "the class is assembled at runtime, safelist it in "
+        f"web_interface/tailwind/tailwind.config.js: {missing}"
     )
+
+
+def test_runtime_built_colour_classes_are_generated():
+    """tools.html builds `bg-${color}-50` and friends from green/red/yellow;
+    the scanner can't see those, so they only exist through the safelist."""
+    defined = _css_light_classes(TAILWIND_CSS.read_text(encoding="utf-8"))
+    for color in ("green", "red", "yellow"):
+        for cls in (f"bg-{color}-50", f"bg-{color}-100", f"border-{color}-200",
+                    f"text-{color}-600", f"text-{color}-700", f"text-{color}-800"):
+            assert cls in defined, cls
+
+
+def test_tailwind_loads_before_app_css():
+    """app.css overrides utilities of equal specificity (components, dark
+    theme), which only works if it comes second."""
+    base = (TEMPLATES / "v3" / "base.html").read_text(encoding="utf-8")
+    tw = base.find("filename='v3/tailwind.css'")
+    app = base.find("filename='v3/app.css'")
+    assert tw != -1 and app != -1
+    assert tw < app
 
 
 def test_every_static_url_for_points_to_a_real_file():
