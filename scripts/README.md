@@ -39,6 +39,7 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | `render_plugin.py` | dev-only | Runs a plugin's `update()` + `display()` and saves the frame as a PNG |
 | `run_plugin_tests.py` | dev-only | Discovers and runs plugin test suites |
 | `scroll_speeds.py` | keep | Shows and tries the scroll speeds your panel can display cleanly |
+| `sports_drift_report.py` | keep | Counts the different bodies of each method across the nine scoreboards in a `ledmatrix-plugins` checkout (report-only CI job; docs/SPORTS_UNIFICATION.md) |
 | `troubleshoot_captive_portal.sh` | diagnostic | Troubleshoots captive-portal WiFi setup after you can SSH back in |
 | `update_plugin_repos.py` | dev-only | Pulls the latest `ledmatrix-plugins` monorepo |
 | `verify_installation.sh` | diagnostic | Checks that an installation completed correctly |
