@@ -52,8 +52,10 @@ each other. They share three things:
 | Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, while a preview is open | display: writes full-rate snapshots only while it is fresh |
 | Hardware init status | `/tmp/led_matrix_hw_status.json` | display | web: `/api/v3/hardware/status` |
 
-The on-demand start route also restarts `ledmatrix.service` by default so the
-request takes effect straight away.
+The on-demand start route starts `ledmatrix.service` when it is not running
+(`start_service`, on by default) but never restarts a running one: the display
+reads the mailbox every `ON_DEMAND_POLL_INTERVAL` (0.25s), from its dwell
+sleep, its render loops and Vegas's interrupt check as well as the main loop.
 
 ## Display loop
 

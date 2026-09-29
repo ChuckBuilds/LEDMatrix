@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixes
+
+- On-demand no longer restarts a running display. `POST
+  /display/on-demand/start` treated `start_service` (on by default, and what
+  "Preview on display", the on-demand dialog and the MQTT bridge all send) as
+  "restart": it stopped the service, waited 1.5s and started it again, so
+  every request reloaded every plugin and left the panel blank for seconds.
+  The running display already reads the request within a quarter of a second,
+  mid-screen and mid-Vegas included, so the route now only starts the service
+  when it is not running. `POST /display/on-demand/stop` reads
+  `stop_service` as a boolean, so `"false"` no longer stops the service.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core
