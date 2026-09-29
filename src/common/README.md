@@ -24,12 +24,12 @@ Rules for the package:
 | Module | For | Plugins import it? | Since |
 |---|---|---|---|
 | [`api_helper`](#api_helper) | HTTP GET/POST with caching and rate limiting | Yes | — |
-| [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | Unreleased |
+| [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
 | [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | Unreleased |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
 | [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
-| [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | Unreleased |
+| [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | 3.5.0 |
 | [`logo_helper`](#logo_helper) | Load, resize and cache team logos | Yes | — |
 | [`path_safety`](#path_safety) | Turn request-supplied names into safe paths | No, core-internal | n/a |
 | [`permission_utils`](#permission_utils) | File modes and shared-group ownership | Rarely | — |
