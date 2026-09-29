@@ -66,7 +66,7 @@ class FavoriteTeamCheck:
                 name="favorite-team-check", daemon=True,
             ).start()
         except Exception:
-            pass  # A diagnostic must never be the reason an update fails.
+            pass  # nosec B110 - a diagnostic must never be the reason an update fails  # nosemgrep
 
     def _run(self, league_key: str, favorites) -> None:
         try:
