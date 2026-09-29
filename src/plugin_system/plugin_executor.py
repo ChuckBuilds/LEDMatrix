@@ -23,8 +23,10 @@ class PluginBusyError(PluginTimeoutError):
     """A plugin's lock stayed held past its bound.
 
     Not raised; recorded. The lock is held by the plugin's own display(),
-    update() or on_config_change() -- one that is hung or far slower than it
-    should be -- so the caller skipped the plugin rather than wait on it.
+    update(), on_config_change() or a Vegas content render -- slow, or hung
+    -- so the caller skipped the plugin rather than wait on it. Report-only:
+    it is kept as the plugin's state error info and counted as a busy skip in
+    health, never as a failure, so it cannot open the circuit breaker.
     """
 
 

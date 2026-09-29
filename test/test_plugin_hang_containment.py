@@ -9,9 +9,12 @@ plugin updated at all: scores, weather and clocks all froze while the panel
 kept scrolling stale data.
 
 Now:
-- the worker waits PLUGIN_LOCK_TIMEOUT at most, skips the busy plugin and
-  records the skip as a hang, so repeats open that plugin's circuit breaker;
-- display() calls are timed, slow ones recorded, overlong ones counted as hangs;
+- the worker waits PLUGIN_LOCK_TIMEOUT at most and skips the busy plugin. The
+  skip is report-only (a busy skip in health): the holder may be a healthy
+  Vegas prefetch render, so it never counts toward the circuit breaker;
+- display() calls are timed, slow ones recorded, overlong ones counted as
+  hangs; update() past the executor timeout is a hang too. Only hangs open
+  the breaker;
 - on_config_change runs under the plugin's lock, deferred to the worker if the
   lock stays busy, so it never interleaves with update().
 
@@ -167,18 +170,24 @@ class TestHungDisplayDoesNotStallTheWorker:
         assert _wait_for(lambda: plugin.update_calls == 1)
 
 
-class TestLockTimeoutIsRecordedAsAHang:
-    def test_skip_lands_in_health_and_state(self, pm, tracker):
+class TestLockTimeoutIsReportOnly:
+    def test_skip_lands_in_health_and_state_as_a_busy_skip(self, pm, tracker):
         plugin = _Plugin('hung')
         _install(pm, plugin)
         gate, render_thread = _hang_display(pm, plugin)
         try:
             pm.run_scheduled_updates()
-            assert _wait_for(lambda: tracker.get_health_summary('hung')['hang_count'] == 1)
+            assert _wait_for(lambda: tracker.get_health_summary('hung')['busy_skip_count'] == 1)
             summary = tracker.get_health_summary('hung')
-            assert summary['consecutive_failures'] == 1
-            assert summary['last_hang']['operation'] == 'update lock wait'
-            assert 'busy' in summary['last_error']
+            assert summary['last_busy_skip']['operation'] == 'update lock wait'
+            assert summary['last_busy_skip']['seconds'] >= pm.PLUGIN_LOCK_TIMEOUT - 0.01
+            # Reporting only: no failure, no hang, no error, breaker closed.
+            assert summary['consecutive_failures'] == 0
+            assert summary['total_failures'] == 0
+            assert summary['hang_count'] == 0
+            assert summary['last_error'] is None
+            assert summary['circuit_state'] == CircuitState.CLOSED.value
+            # Still visible in the plugin's state for the web UI.
             error_info = pm.state_manager.get_error_info('hung')
             assert error_info['error_type'] == 'PluginBusyError'
             # Stamped like any failed update, so the retry waits an interval.
@@ -187,24 +196,78 @@ class TestLockTimeoutIsRecordedAsAHang:
             gate.set()
             render_thread.join(timeout=2)
 
-    def test_repeated_hangs_open_the_circuit_breaker(self, pm, tracker):
+    def test_repeated_busy_skips_never_open_the_circuit_breaker(self, pm, tracker):
+        """A Vegas prefetch render can hold a healthy plugin's lock past the
+        bound on every update; that must not pull it from rotation."""
+        plugin = _Plugin('busy')
+        _install(pm, plugin)
+        gate, render_thread = _hang_display(pm, plugin)
+        skips = tracker.failure_threshold * 3
+        try:
+            for attempt in range(1, skips + 1):
+                pm.run_scheduled_updates()
+                assert _wait_for(
+                    lambda: pm.state_manager.can_execute('busy')
+                    and tracker.get_health_summary('busy')['busy_skip_count'] == attempt)
+                time.sleep(0.02)  # past the 0.01s interval
+            summary = tracker.get_health_summary('busy')
+            assert summary['busy_skip_count'] == skips
+            assert summary['consecutive_failures'] == 0
+            assert summary['hang_count'] == 0
+            assert summary['circuit_state'] == CircuitState.CLOSED.value
+            assert tracker.should_skip_plugin('busy') is False
+        finally:
+            gate.set()
+            render_thread.join(timeout=2)
+        # Once the lock frees the plugin updates normally.
+        pm.plugin_last_update.pop('busy', None)
+        pm.run_scheduled_updates()
+        assert _wait_for(lambda: plugin.update_calls == 1)
+
+    def test_busy_skips_do_not_add_to_a_real_hang_streak(self, pm, tracker):
+        plugin = _Plugin('p')
+        _install(pm, plugin)
+        tracker.record_hang('p', 'display', 31.0)
+        gate, render_thread = _hang_display(pm, plugin)
+        try:
+            for attempt in range(1, tracker.failure_threshold + 2):
+                pm.run_scheduled_updates()
+                assert _wait_for(
+                    lambda: pm.state_manager.can_execute('p')
+                    and tracker.get_health_summary('p')['busy_skip_count'] == attempt)
+                time.sleep(0.02)
+        finally:
+            gate.set()
+            render_thread.join(timeout=2)
+        summary = tracker.get_health_summary('p')
+        assert summary['consecutive_failures'] == 1
+        assert summary['hang_count'] == 1
+        assert summary['circuit_state'] == CircuitState.CLOSED.value
+
+    def test_repeated_real_hangs_still_open_the_circuit_breaker(self, pm, tracker):
+        """display() past the executor timeout is a real hang: the breaker
+        opens after failure_threshold of them, busy skips in between or not."""
         plugin = _Plugin('hung')
         _install(pm, plugin)
         gate, render_thread = _hang_display(pm, plugin)
+        too_long = pm.plugin_executor.default_timeout + 1
         try:
             for attempt in range(1, tracker.failure_threshold + 1):
                 pm.run_scheduled_updates()
                 assert _wait_for(
                     lambda: pm.state_manager.can_execute('hung')
-                    and tracker.get_health_summary('hung')['hang_count'] == attempt)
+                    and tracker.get_health_summary('hung')['busy_skip_count'] == attempt)
+                assert tracker.get_health_summary('hung')['circuit_state'] ==                     CircuitState.CLOSED.value
+                pm.note_display_duration('hung', too_long)
                 time.sleep(0.02)  # past the 0.01s interval
             summary = tracker.get_health_summary('hung')
+            assert summary['hang_count'] == tracker.failure_threshold
+            assert summary['busy_skip_count'] == tracker.failure_threshold
             assert summary['circuit_state'] == CircuitState.OPEN.value
             assert tracker.should_skip_plugin('hung') is True
             # Circuit open: the scheduler no longer queues it at all.
             pm.run_scheduled_updates()
             assert 'hung' not in pm._pending_updates
-            assert pm.state_manager.can_execute('hung')
         finally:
             gate.set()
             render_thread.join(timeout=2)
@@ -239,7 +302,9 @@ class TestLockTimeoutIsRecordedAsAHang:
             assert _wait_for(lambda: 'hung' not in pm._pending_updates)
             time.sleep(0.35)
             assert pm.state_manager.get_state('hung') == PluginState.UNLOADED
-            assert tracker.get_health_summary('hung')['hang_count'] == 0
+            summary = tracker.get_health_summary('hung')
+            assert summary['hang_count'] == 0
+            assert summary['busy_skip_count'] == 0
         finally:
             gate.set()
             render_thread.join(timeout=2)
@@ -432,6 +497,23 @@ class TestHealthRecords:
             t.record_slow_call('p', 'display', 2.5)
         assert cache.writes == writes
         assert t.get_health_summary('p')['slow_call_count'] == 51
+
+    def test_busy_skip_persistence_is_rate_limited_and_breaker_free(self):
+        cache = _Cache()
+        t = PluginHealthTracker(cache_manager=cache)
+        t.record_busy_skip('p', 'update lock wait', 5.0)
+        writes = cache.writes
+        # The first one is saved at once, so the web process sees it.
+        assert PluginHealthTracker(cache_manager=cache).get_health_summary(
+            'p')['busy_skip_count'] == 1
+        for _ in range(50):
+            t.record_busy_skip('p', 'update lock wait', 5.0)
+        assert cache.writes == writes
+        summary = t.get_health_summary('p')
+        assert summary['busy_skip_count'] == 51
+        assert summary['consecutive_failures'] == 0
+        assert summary['circuit_state'] == CircuitState.CLOSED.value
+        assert t.should_skip_plugin('p') is False
 
     def test_hang_survives_a_restart(self):
         cache = _Cache()

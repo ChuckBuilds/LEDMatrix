@@ -36,17 +36,21 @@ accepts both, but the store flags the old spelling as deprecated
   display() that never returned (or a first frame still running after the
   executor's 30s timeout) parked the worker for good, so scores, weather and
   clocks all froze while the panel kept scrolling. The worker now waits at
-  most 5s (the bound `unload_plugin()` already uses), skips the busy plugin
-  and records the skip as a hang, so a plugin that keeps hanging opens its
-  circuit breaker and drops out of updates and rotation until the cooldown.
-  The other plugins keep updating.
+  most 5s (the bound `unload_plugin()` already uses) and skips that update;
+  the other plugins keep updating. The skip is logged (at most once a minute
+  per plugin) and counted in plugin health as a busy skip (`busy_skip_count`,
+  `last_busy_skip`), but it is not a failure and never opens the circuit
+  breaker: Vegas mode holds a plugin's lock for its whole content render,
+  which on a slow Pi can outlast 5s, and a healthy plugin must not be pulled
+  from rotation for that.
 - display() calls are timed on every frame. One taking 2s or more is logged
   (at most once a minute per plugin) and counted in plugin health
   (`slow_call_count`, `last_slow_call`); one that runs past the executor's
   timeout counts as a hang (`hang_count`, `last_hang`) and as a failure to
   the circuit breaker. A first frame that times out is no longer recorded as
   a success, and an update() still running after its timeout is recorded as
-  a hang instead of leaving the plugin silently stuck.
+  a hang instead of leaving the plugin silently stuck. Only these real hangs
+  count toward the breaker.
 - A plugin's `on_config_change()` no longer runs while its update() is
   running on the worker thread. It now runs under the plugin's lock; if the
   lock stays busy past the same 5s bound the change is handed to the update

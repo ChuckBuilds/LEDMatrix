@@ -1071,8 +1071,8 @@ class PluginManager:
         self,
         plugin_id: str,
         exc: Optional[Exception] = None,
-        hang: Optional[Tuple[str, float]] = None,
         log: bool = True,
+        count_failure: bool = True,
     ) -> None:
         """Apply the standard failure-recovery path for a plugin update.
 
@@ -1086,10 +1086,11 @@ class PluginManager:
             exc: The exception that caused the failure, if any.  When None a
                  synthetic ExecutionFailure exception is constructed from the
                  timeout/executor-error path.
-            hang: ``(operation, seconds)`` when the failure is a hang rather
-                 than an error, so health records it as one.
             log: Log the generic failure line. Callers that already logged
                  something more specific (rate-limited) pass False.
+            count_failure: Record the failure in plugin health, where it
+                 counts toward the circuit breaker. A busy skip passes False:
+                 it records itself as a busy skip, reporting only.
         """
         failure_time = time.time()
         if exc is not None:
@@ -1110,9 +1111,7 @@ class PluginManager:
         with self._plugin_last_update_lock:
             self.plugin_last_update[plugin_id] = failure_time
         self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info)
-        if hang is not None:
-            self._record_hang(plugin_id, hang[0], hang[1], err)
-        elif self.health_tracker:
+        if count_failure and self.health_tracker:
             self.health_tracker.record_failure(plugin_id, err)
 
     def _warn_rate_limited(self, key: str, message: str, *args: Any) -> None:
@@ -1351,10 +1350,12 @@ class PluginManager:
         timeout elapses first.
 
         The lock wait is bounded by PLUGIN_LOCK_TIMEOUT. Whatever holds it
-        past that -- a hung display() on the render thread or a lingering
-        executor thread -- costs this worker that long once per attempt, and
-        the plugin is skipped and recorded as hung (_skip_busy_update); the
-        other plugins' queued updates carry on.
+        past that -- a hung display() on the render thread, a lingering
+        executor thread, or a long but healthy Vegas content render -- costs
+        this worker that long once per attempt, and the plugin's update is
+        skipped and reported as a busy skip (_skip_busy_update), which never
+        counts toward the circuit breaker; the other plugins' queued updates
+        carry on.
         """
         while True:
             item = self._update_queue.get()
@@ -1394,29 +1395,42 @@ class PluginManager:
         """Give up on a queued update whose plugin lock stayed held.
 
         Same bookkeeping as a failed update() -- pending slot dropped before
-        the state returns to ENABLED, last-update stamped so the retry waits
-        a full interval -- recorded as a hang, so a plugin stuck this way
-        opens its circuit breaker after the usual number of attempts and
-        stops being scheduled or displayed until the cooldown.
+        the state returns to ENABLED with PluginBusyError error info,
+        last-update stamped so the retry waits a full interval -- but
+        report-only in health: counted as a busy skip (``busy_skip_count`` /
+        ``last_busy_skip``), never as a failure or a hang. The lock holder
+        may be perfectly healthy: Vegas prefetch holds a plugin's lock for its
+        whole content render, which on a slow Pi can outlast
+        PLUGIN_LOCK_TIMEOUT, and counting that would pull a healthy plugin
+        from rotation. Real hangs -- display() or update() past the executor
+        timeout -- are recorded where they are measured and still open the
+        breaker.
         """
         with self._pending_lock:
             self._pending_updates.discard(plugin_id)
         if plugin_id not in self.plugins:
             # Unloaded while we waited: its lifecycle state is already
-            # cleared; recording a failure would resurrect it as ENABLED.
+            # cleared; recording anything would resurrect it as ENABLED.
             return
         self._warn_rate_limited(
             "busy-update:" + plugin_id,
             "Plugin %s update skipped: its lock was still held after %.1fs "
-            "(a display() or update() of it is hung or very slow); other "
-            "plugins keep updating", plugin_id, waited)
+            "(a display(), Vegas render or update() of it is still running); "
+            "retrying next interval, not counted as a failure", plugin_id, waited)
         self._record_update_failure(
             plugin_id,
             exc=PluginBusyError(
                 f"Plugin {plugin_id} busy: its lock was held for over {waited:.1f}s "
-                "by a hung or slow display()/update(); update skipped"),
-            hang=('update lock wait', waited),
-            log=False)
+                "by a slow or hung display()/update(); update skipped"),
+            log=False,
+            count_failure=False)
+        tracker = self.health_tracker
+        record_busy = getattr(tracker, 'record_busy_skip', None) if tracker is not None else None
+        if callable(record_busy):
+            try:
+                record_busy(plugin_id, 'update lock wait', waited)
+            except Exception as e:  # pylint: disable=broad-except
+                self.logger.debug("Could not record busy skip for %s: %s", plugin_id, e)
 
     def apply_config_change(self, plugin_id: str, new_config: Dict[str, Any],
                             plugin_instance: Optional[Any] = None) -> bool:
