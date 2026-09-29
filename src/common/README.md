@@ -26,7 +26,7 @@ Rules for the package:
 | [`api_helper`](#api_helper) | HTTP GET/POST with caching and rate limiting | Yes | — |
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
-| [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | Unreleased |
+| [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | 3.6.0 |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
 | [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
 | [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | 3.5.0 |
@@ -42,7 +42,7 @@ Rules for the package:
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
-| [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | Unreleased |
+| [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
 

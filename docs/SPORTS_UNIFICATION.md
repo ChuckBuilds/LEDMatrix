@@ -81,8 +81,8 @@ more. Shared sports code lives in `src/common`:
 | `sports_shared.py` | 3.3.0 | `SportsCoreSharedMixin`, `SportsLiveSharedMixin`, `SportsRecentSharedMixin` — the sport-independent `sports.py` methods |
 | `sports_helpers.py` | 3.5.0 | clamp/logo/rotation free functions and `SportsHelpersMixin`, plus the `_favorite_key` seam |
 | `espn_dates.py` | 3.5.0 | ESPN date-range and `limit` workarounds |
-| `favorite_team_check.py` | Unreleased | `FavoriteTeamCheck` — logs why a favourite team code shows nothing |
-| `sports_timezone.py` | Unreleased | Which timezone start times are drawn in (`resolve_timezone_name`) |
+| `favorite_team_check.py` | 3.6.0 | `FavoriteTeamCheck` — logs why a favourite team code shows nothing |
+| `sports_timezone.py` | 3.6.0 | Which timezone start times are drawn in (`resolve_timezone_name`) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
