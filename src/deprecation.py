@@ -45,3 +45,27 @@ def deprecated(removal: str, alternative: Optional[str] = None) -> Callable[[F],
         return wrapper  # type: ignore[return-value]
 
     return decorate
+
+
+def warn_deprecated(what: str, removal: str, alternative: Optional[str] = None,
+                    once_key: Optional[str] = None) -> bool:
+    """Warn that ``what`` will be removed in ``removal``, once per process.
+
+    For what ``@deprecated`` cannot decorate: a config key, a manifest field,
+    a value a hook returns. Same message, log line and DeprecationWarning as
+    the decorator. ``once_key`` (default: ``what``) is what "once" counts
+    against, so one deprecated key can warn once for each plugin that sets it.
+
+    Returns whether this call warned.
+    """
+    message = f"{what} is deprecated and will be removed in LEDMatrix {removal}"
+    if alternative:
+        message += f"; {alternative}"
+    key = once_key or what
+    with _warned_lock:
+        if key in _warned:
+            return False
+        _warned.add(key)
+    logger.warning(message)
+    warnings.warn(message, DeprecationWarning, stacklevel=2)
+    return True

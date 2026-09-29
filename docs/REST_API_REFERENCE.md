@@ -473,12 +473,20 @@ List all installed plugins with their status and metadata.
         "branch": "main",
         "web_ui_actions": [],
         "vegas_mode": null,
-        "vegas_content_type": null
+        "vegas_content_type": null,
+        "vegas_participation": "scroll"
       }
     ]
   }
 }
 ```
+
+`vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
+`"pause"` or `"exclude"` (see
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)).
+For a plugin that is not loaded it is only the user's own
+`vegas_participation` setting, or `null`. `vegas_mode` and
+`vegas_content_type` are the legacy hooks' raw answers.
 
 ### Get Plugin Configuration
 

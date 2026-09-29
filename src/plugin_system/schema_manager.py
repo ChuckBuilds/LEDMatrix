@@ -127,8 +127,9 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
         "description": "Enable live priority takeover when plugin has live content"
     },
     # Vegas tuning read by vegas_mode/plugin_adapter.py and base_plugin.py.
-    # Left untyped: the adapter validates them itself and ignores a bad
-    # value with a log line, so a stored one must never block a save.
+    # These three are left untyped: the adapter validates them itself and
+    # ignores a bad value with a log line, so a stored one must never block a
+    # save.
     "vegas_width_pct": {
         "description": "Vegas mode: width of this plugin's card, as a percentage of the panel"
     },
@@ -138,6 +139,22 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
     "vegas_max_width_screens": {
         "description": "Vegas mode: widest this plugin's card may be, in screens"
     },
+    # Read by resolve_vegas_participation / BasePlugin.get_vegas_participation.
+    # An enum with no default: a default would be written into every plugin's
+    # config and override the participation the plugin itself declares.
+    "vegas_participation": {
+        "type": "string",
+        "enum": ["scroll", "pause", "exclude"],
+        "title": "Vegas participation",
+        "description": (
+            "Vegas mode: how this plugin takes part in the scrolling ticker. "
+            "'scroll' = its content scrolls by with everything else; "
+            "'pause' = the ticker stops for this plugin's turn and shows it "
+            "full screen for its display duration; "
+            "'exclude' = leave it out of Vegas mode. "
+            "Leave unset to use the plugin's own default."
+        ),
+    },
 }
 
 #: The keys of CORE_PLUGIN_PROPERTIES that are Vegas tuning rather than plugin
@@ -145,6 +162,7 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
 #: PluginManager.CORE_OWNED_CONFIG_KEYS).
 CORE_VEGAS_TUNING_KEYS = frozenset({
     'vegas_width_pct', 'vegas_overflow', 'vegas_max_width_screens',
+    'vegas_participation',
 })
 
 

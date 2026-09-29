@@ -5,10 +5,12 @@ Main orchestrator for Vegas-style continuous scroll mode. Coordinates between
 StreamManager, RenderPipeline, and the display system to provide smooth
 continuous scrolling of all enabled plugin content.
 
-Supports three display modes per plugin:
-- SCROLL: Content scrolls continuously within the stream
-- FIXED_SEGMENT: Fixed block that scrolls by with other content
-- STATIC: Scroll pauses, plugin displays for its duration, then resumes
+Each plugin takes part in one of three ways (its Vegas participation, see
+BasePlugin.get_vegas_participation):
+- 'scroll': its content scrolls by within the stream
+- 'pause': the scroll pauses, the plugin displays for its duration, then
+  the scroll resumes
+- 'exclude': left out
 """
 
 import logging
