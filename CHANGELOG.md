@@ -41,6 +41,41 @@ accepts both, but the store flags the old spelling as deprecated
   original `Host` (`proxy_set_header Host $host;`); `X-Forwarded-Host` is
   not trusted.
 
+### Optional web login
+
+- The web interface can require a password, **off by default**: a device that
+  does not set one behaves exactly as before. Set it under **General >
+  Security**; from then on every page and API route needs a login (a session
+  cookie, 30 days, kept across restarts) or an API token. Unauthenticated page
+  loads go to the new `/login` page, HTMX requests get `HX-Redirect` to it,
+  and API calls get `401` JSON (`AUTH_REQUIRED` / `INVALID_TOKEN`). Wrong
+  passwords are rate-limited per address (5 a minute, 30 an hour, through the
+  existing flask-limiter). Log out from the header. Changing the password
+  signs every other browser out. (`web_interface/auth.py`)
+- **API tokens** for Home Assistant, scripts and the MQTT bridge: create,
+  list and revoke them in the same section, send them as
+  `Authorization: Bearer <token>`. A token is shown once; only its SHA-256 is
+  stored. Tokens cannot change login settings. The MQTT bridge takes one as
+  `ledmatrix_api_token` (or `LEDMATRIX_MQTT_LEDMATRIX_API_TOKEN`, or the
+  Tools tab); it needs one only when it runs on another machine.
+- Always open, login or not: requests from the Pi itself (loopback, without
+  proxy headers), the Wi-Fi setup flow (`/setup` and the Wi-Fi status, scan
+  and connect routes) while the Pi is in access-point mode, static files, the
+  captive-portal probe URLs, and `/api/v3/health`, which then answers only
+  `{"status": "healthy" | "degraded"}` to a caller that is not logged in.
+- The password hash (werkzeug), the token hashes and the cookie-signing key
+  live in the `web_auth` section of `config/config_secrets.json`. No API
+  returns them: `GET /api/v3/config/main`, `GET /api/v3/config/secrets` and
+  the raw JSON editor leave the section out, the raw secrets save keeps the
+  stored one, a `/config/main` save drops a `web_auth` key, and orphaned-plugin
+  cleanup no longer treats it as a plugin (`CORE_SECRETS_KEYS`).
+- **Lost password:** `sudo python3 scripts/reset_web_password.py` on the Pi
+  turns login off (`--revoke-tokens` also deletes the tokens), or open the
+  interface from the Pi itself.
+- New routes: `/login`, `/logout`, `GET /api/v3/auth/status`,
+  `POST /api/v3/auth/password`, `POST /api/v3/auth/disable`,
+  `GET|POST /api/v3/auth/tokens`, `DELETE /api/v3/auth/tokens/<id>`.
+
 ### Fixes
 
 - On-demand no longer restarts a running display. `POST
