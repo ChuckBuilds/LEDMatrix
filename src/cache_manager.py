@@ -943,7 +943,9 @@ class CacheManager:
     
     def log_memory_cache_stats(self) -> None:
         """Log current memory cache statistics."""
-        stats = self.get_memory_cache_stats()
+        # Not get_memory_cache_stats(): that is deprecated, and core must not
+        # trip its own deprecation warning every time memory logging runs.
+        stats = self._memory_cache_component.get_stats()
         self.logger.info(f"Memory Cache - Size: {stats['size']}/{stats['max_size']} "
                         f"({stats['usage_percent']:.1f}%), "
                         f"Last cleanup: {time.time() - stats['last_cleanup']:.1f}s ago")
