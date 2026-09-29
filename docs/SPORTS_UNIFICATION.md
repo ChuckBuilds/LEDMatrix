@@ -83,9 +83,9 @@ more. Shared sports code lives in `src/common`:
 | `espn_dates.py` | 3.5.0 | ESPN date-range and `limit` workarounds |
 | `favorite_team_check.py` | 3.6.0 | `FavoriteTeamCheck` — logs why a favourite team code shows nothing |
 | `sports_timezone.py` | 3.6.0 | Which timezone start times are drawn in (`resolve_timezone_name`) |
-| `sports_celebration.py` | Unreleased | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
-| `sports_fetch.py` | Unreleased | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
-| `sports_card_wrappers.py` | Unreleased | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
+| `sports_celebration.py` | 3.7.0 | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
+| `sports_fetch.py` | 3.7.0 | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
+| `sports_card_wrappers.py` | 3.7.0 | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 

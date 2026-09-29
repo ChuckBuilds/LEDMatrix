@@ -19,13 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.7.0
+
+Sports consolidation stage 3 (#672). No behaviour change: nothing in core
+uses these yet, and the scoreboards adopt them when they floor on 3.7.0.
+
 ### New modules
 
-A plugin may import these via `src.*` once it floors on the release that
-ships them. All three hold code the scoreboard plugins carry as identical
-copies, moved without behaviour change under the plugins' own method names;
-each docstring lists what the host class must provide. The plugins delete
-their copies when they floor on that release.
+A plugin may import these via `src.*` (floor on 3.7.0). All three hold code
+the scoreboard plugins carry as identical copies, moved without behaviour
+change under the plugins' own method names; each docstring lists what the
+host class must provide. The plugins delete their copies when they floor on
+3.7.0.
 
 - `src/common/sports_celebration.py` — `SportsCelebrationMixin`, the
   score/win celebration takeover drawn by afl, football, hockey, nrl and
