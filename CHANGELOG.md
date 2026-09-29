@@ -19,6 +19,31 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixes
+
+- One hung plugin no longer stops every plugin from updating. The single
+  update worker waited on each plugin's lock with no time limit, and the
+  render thread holds that lock while it runs the plugin's display(); a
+  display() that never returned (or a first frame still running after the
+  executor's 30s timeout) parked the worker for good, so scores, weather and
+  clocks all froze while the panel kept scrolling. The worker now waits at
+  most 5s (the bound `unload_plugin()` already uses), skips the busy plugin
+  and records the skip as a hang, so a plugin that keeps hanging opens its
+  circuit breaker and drops out of updates and rotation until the cooldown.
+  The other plugins keep updating.
+- display() calls are timed on every frame. One taking 2s or more is logged
+  (at most once a minute per plugin) and counted in plugin health
+  (`slow_call_count`, `last_slow_call`); one that runs past the executor's
+  timeout counts as a hang (`hang_count`, `last_hang`) and as a failure to
+  the circuit breaker. A first frame that times out is no longer recorded as
+  a success, and an update() still running after its timeout is recorded as
+  a hang instead of leaving the plugin silently stuck.
+- A plugin's `on_config_change()` no longer runs while its update() is
+  running on the worker thread. It now runs under the plugin's lock; if the
+  lock stays busy past the same 5s bound the change is handed to the update
+  worker, which applies the latest one as soon as the lock frees, and before
+  the plugin's next update() at the latest. The plugin API is unchanged.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core

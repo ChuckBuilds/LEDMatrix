@@ -254,6 +254,66 @@ class PluginHealthTracker:
         
         self._save_health_state(plugin_id, state)
     
+    def record_hang(self, plugin_id: str, operation: str, seconds: float,
+                    error: Optional[Exception] = None) -> None:
+        """Record a call that ran past its limit, or held the plugin's lock past it.
+
+        Counts as a failure, so the ordinary circuit breaker handles a plugin
+        that keeps hanging: after ``failure_threshold`` in a row it is skipped
+        by both the update scheduler and the display rotation until the
+        cooldown ends. The hang itself is kept alongside (``hang_count``,
+        ``last_hang``) so the health API can tell "hung" from "raised".
+
+        Args:
+            plugin_id: Plugin identifier
+            operation: What hung: ``"display"``, ``"update"``, or the lock
+                wait that found one of them still running.
+            seconds: How long it had been running, or how long the lock
+                was waited on, when this was recorded.
+            error: The error to store as ``last_error``; one is built from
+                the other arguments when omitted.
+        """
+        state = self.get_health_state(plugin_id)
+        count = state.get('hang_count')
+        state['hang_count'] = (count if isinstance(count, int) and not isinstance(count, bool)
+                               else 0) + 1
+        state['last_hang'] = {
+            'operation': operation,
+            'seconds': round(float(seconds), 3),
+            'time': time.time(),
+        }
+        if error is None:
+            error = TimeoutError(f"{operation} still running after {seconds:.1f}s")
+        # record_failure saves the record, hang fields included.
+        self.record_failure(plugin_id, error)
+
+    #: Minimum seconds between persisting a plugin's slow-call counters. The
+    #: in-memory record is updated on every slow call; a plugin that is slow
+    #: on every frame must not become an SD-card write per frame.
+    SLOW_CALL_PERSIST_INTERVAL = 60.0
+
+    def record_slow_call(self, plugin_id: str, operation: str, seconds: float) -> None:
+        """Note a call that finished, but slowly. Reporting only.
+
+        Unlike :meth:`record_hang` this never touches the circuit breaker: a
+        slow display() still drew its frame.
+        """
+        state = self.get_health_state(plugin_id)
+        count = state.get('slow_call_count')
+        state['slow_call_count'] = (count if isinstance(count, int) and not isinstance(count, bool)
+                                    else 0) + 1
+        now = time.time()
+        state['last_slow_call'] = {
+            'operation': operation,
+            'seconds': round(float(seconds), 3),
+            'time': now,
+        }
+        saved_at = self.__dict__.setdefault('_slow_call_saved_at', {})
+        last = saved_at.get(plugin_id)
+        if last is None or now - last >= self.SLOW_CALL_PERSIST_INTERVAL:
+            saved_at[plugin_id] = now
+            self._save_health_state(plugin_id, state)
+
     def set_degraded(self, plugin_id: str, reason: Optional[str]) -> None:
         """Flag (or clear) a plugin as degraded without touching the circuit breaker.
 
@@ -345,7 +405,11 @@ class PluginHealthTracker:
             'degraded': state.get('degraded', False),
             'degraded_reason': state.get('degraded_reason'),
             'circuit_opened_time': state.get('circuit_opened_time'),
-            'half_open_start_time': state.get('half_open_start_time')
+            'half_open_start_time': state.get('half_open_start_time'),
+            'hang_count': state.get('hang_count', 0),
+            'last_hang': state.get('last_hang'),
+            'slow_call_count': state.get('slow_call_count', 0),
+            'last_slow_call': state.get('last_slow_call'),
         }
     
     def get_all_health_summaries(self) -> Dict[str, Dict[str, Any]]:
