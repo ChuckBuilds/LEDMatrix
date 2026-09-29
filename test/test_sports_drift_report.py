@@ -117,6 +117,28 @@ def test_fold(drift):
     assert drift.fold("UFCScoreboardPlugin") == "SScoreboardPlugin"
     assert drift.fold("HockeyLive") == "SLive"
     assert drift.fold("display_mode") == "display_mode"
+    # Text between words survives, so different strings stay different.
+    assert drift.fold("NFL games: {n}") == "S games: {n}"
+    assert drift.fold("NFL games: {n}") != drift.fold("NFLgames:{n}")
+
+
+def test_one_outlier_means_one_plugin_across_the_whole_family(drift, tmp_path):
+    # SportsLive: hockey is the odd one out; SportsRecent: afl is. Each class
+    # role has a single outlier, but the family has two.
+    live = "class SportsLive:\n    def f(self):\n        return {}\n"
+    recent = "class SportsRecent:\n    def f(self):\n        return {}\n"
+    for sport in ("afl", "nrl", "soccer", "hockey"):
+        _write(tmp_path, sport, "sports.py",
+               live.format("2" if sport == "hockey" else "1")
+               + recent.format("2" if sport == "afl" else "1"))
+    rep = drift.report(drift.build(tmp_path / "plugins", ["sports.py"]), 2, 3)
+    assert rep["one_outlier"] == []
+    for sport in ("afl", "nrl", "soccer", "hockey"):
+        _write(tmp_path, sport, "sports.py",
+               live.format("2" if sport == "hockey" else "1")
+               + recent.format("2" if sport == "hockey" else "1"))
+    rep = drift.report(drift.build(tmp_path / "plugins", ["sports.py"]), 2, 3)
+    assert [drift._outlier(r) for r in rep["one_outlier"]] == ["hockey"]
 
 
 def test_no_checkout_is_a_report_not_a_failure(drift, tmp_path, capsys, monkeypatch):

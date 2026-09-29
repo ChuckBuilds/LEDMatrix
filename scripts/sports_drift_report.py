@@ -104,10 +104,10 @@ def fold(name: str) -> str:
     and CamelCase (``UFCScoreboardPlugin`` -> ``SScoreboardPlugin``).
     """
     name = _TOKEN_RE.sub("S", name)
-    parts = _CAMEL_RE.findall(name)
-    if not parts:
-        return name
-    return "".join("S" if p.lower() in _TOKEN_SET else p for p in parts)
+    # sub, not findall + join: characters between words (spaces, dots,
+    # braces in a log string) must survive, or distinct text folds together.
+    return _CAMEL_RE.sub(
+        lambda m: "S" if m.group(0).lower() in _TOKEN_SET else m.group(0), name)
 
 
 def _strip_docstring(body: List[ast.stmt]) -> List[ast.stmt]:
@@ -310,11 +310,14 @@ def report(families, min_plugins: int, min_variants: int) -> dict:
         (r for r in rows if r["copies"] >= 2 and r["worst_class_variants"] == 1),
         key=lambda r: (-r["duplicated_lines"], r["file"], r["family"]))
     # One body shared by every plugin but one: the cheapest reconciliations.
+    # "One" across the whole family: a class role whose odd one out is a
+    # different plugin from another role's is two outliers, not one.
     one_outlier = sorted(
         (r for r in rows
          if r["plugins"] >= min_plugins and r["worst_class_variants"] == 2
          and all(len(k["groups"]) < 2 or len(k["groups"][1]) == 1
-                 for k in r["classes"])),
+                 for k in r["classes"])
+         and len(_minorities(r)) == 1),
         key=lambda r: (-r["duplicated_lines"], r["file"], r["family"]))
     return {"files": files, "drifted": drifted, "identical": identical,
             "one_outlier": one_outlier,
@@ -322,10 +325,14 @@ def report(families, min_plugins: int, min_variants: int) -> dict:
                                          "min_variants": min_variants}}
 
 
+def _minorities(r) -> set:
+    """Every plugin in a minority body, across the family's class roles."""
+    return {p for k in r["classes"] for g in k["groups"][1:] for p in g}
+
+
 def _outlier(r) -> str:
-    """The plugins whose body differs, for a one-outlier family."""
-    return ", ".join(sorted({k["groups"][1][0] for k in r["classes"]
-                             if len(k["groups"]) > 1}))
+    """The plugin whose body differs, for a one-outlier family."""
+    return ", ".join(sorted(_minorities(r)))
 
 
 def _text(rep, top_identical: int) -> str:
