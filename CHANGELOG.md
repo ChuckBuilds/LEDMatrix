@@ -19,6 +19,10 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.6.2
+
+A fix to `src.common.favorite_team_check` (#670).
+
 ### Fixes
 
 - The favourite-team check no longer says the Europa League season has
@@ -27,7 +31,7 @@ accepts both, but the store flags the old spelling as deprecated
   3.6.1 rule applied. When every event is past, a round in a list calendar
   that has not started yet (outside an offseason phase) now draws no
   conclusion. PLL, the World Cup and AFL, whose seasons are over, are still
-  reported as finished: no round of theirs is still to start.
+  reported as finished: no round of theirs is still to start. (#670)
 
 ## 3.6.1
 
