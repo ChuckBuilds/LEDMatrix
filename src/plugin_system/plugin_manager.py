@@ -18,6 +18,7 @@ import types
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Any, Tuple, Union
 import logging
+from src import display_watchdog
 from src.exceptions import PluginError, ConfigError
 from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
@@ -354,6 +355,19 @@ class PluginManager:
         return plugin_ids
 
     def load_plugin(self, plugin_id: str, force_enabled: bool = False) -> bool:
+        """Load a plugin by ID; see _load_plugin.
+
+        Loading can install the plugin's dependencies with pip -- minutes,
+        not seconds. When that happens on the display's render thread (a
+        plugin enabled from the web UI, or loaded for on-demand), its
+        systemd watchdog gets a longer limit for the duration. Start-up
+        loads, on a thread pool, are covered by the start-up allowance.
+        """
+        with display_watchdog.extended(display_watchdog.PLUGIN_LOAD_ALLOWANCE_SECONDS,
+                                       f'loading plugin {plugin_id}'):
+            return self._load_plugin(plugin_id, force_enabled)
+
+    def _load_plugin(self, plugin_id: str, force_enabled: bool = False) -> bool:
         """
         Load a plugin by ID.
         
@@ -1244,6 +1258,9 @@ class PluginManager:
                 # Kill-switch path: the original inline execution
                 # (blocks the caller until update() completes/times out)
                 self._execute_update_now(plugin_id, plugin_instance, current_time)
+                # Up to the executor's 30s each, one after another on the
+                # render thread: check in with its watchdog between them.
+                display_watchdog.beat()
             else:
                 self._enqueue_update(plugin_id, current_time)
 

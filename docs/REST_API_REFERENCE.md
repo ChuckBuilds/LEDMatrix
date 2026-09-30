@@ -2101,9 +2101,17 @@ Health of the web interface, display service, config file, plugin system and
 display snapshot. `data.status` is `healthy` or `degraded`, with
 `data.services` and `data.checks`.
 
+`data.checks.display_loop` is the display's render-loop heartbeat: `running`
+(with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
+frozen even if the service is active; the status turns `degraded`), or
+`not_reported` when the display writes none (not started yet, the dev server,
+Windows), which does not affect the status.
+
 Open even when the web login is on, for uptime monitors; a caller that is not
 logged in (and has no token) then gets only `{"status": "success", "data":
-{"status": "healthy" | "degraded"}}`.
+{"status": "healthy" | "degraded"}}`. A stalled render loop still shows there
+as `degraded`; the `checks` detail is only for logged-in callers, tokens and
+requests from the Pi itself.
 
 ### Hardware Status
 

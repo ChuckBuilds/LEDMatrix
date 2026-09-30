@@ -302,6 +302,20 @@ def emulator_mode(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_display_watchdog(monkeypatch):
+    """Keep the render loop's watchdog off the host.
+
+    Every test that runs DisplayController.run() arms the process-wide
+    watchdog, which would ping a real $NOTIFY_SOCKET and write a heartbeat
+    into /run/ledmatrix -- the live display's, when the suite runs as root on
+    a device. Each test gets a fresh instance that does neither.
+    """
+    from src import display_watchdog
+    monkeypatch.setattr(display_watchdog, 'watchdog',
+                        display_watchdog.RenderWatchdog(environ={}, heartbeat_dir=None))
+
+
+@pytest.fixture(autouse=True)
 def reset_logging():
     """Reset logging configuration before each test."""
     import logging
