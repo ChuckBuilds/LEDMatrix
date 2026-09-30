@@ -66,6 +66,17 @@ faster than the panel (every frame early) or sits at half its rate (every
 frame late), both of which look self-consistent to an estimate taken from
 their own intervals.
 
+Operations
+----------
+The late count says how often, not which work did it. Render-thread work that
+happens between two frames -- extending the Vegas strip, patching a live
+element into it -- calls :meth:`FrameTimingRecorder.note_op` first, and the
+next presented frame carries the tag: the interval that frame ends is the one
+the work landed in. ``op_frames`` counts timed frames per kind,
+``late_op_frames`` the late ones among them, ``op_freezes`` those that were a
+freeze instead, and ``op_bytes`` what the work moved. A kind whose late rate
+sits well above the overall one is the work to look at.
+
 Stall watchdog
 --------------
 Counting a freeze says that it happened, not why. ``StallWatchdog`` watches the
@@ -153,9 +164,18 @@ def default_stats_path() -> str:
     return os.path.join(base, STATS_FILENAME)
 
 
+#: One presented frame's interval: (interval, blit, wait, hold, ops), where
+#: ops is the work noted before it (kind -> bytes) or None.
+_Frame = Tuple[float, float, float, int, Optional[Dict[str, int]]]
+
+
 def _bucket(seconds: float) -> int:
     index = int(seconds * 1000.0 / BUCKET_MS)
     return min(max(index, 0), BUCKET_COUNT - 1)
+
+
+def _bump(counter: Dict[str, int], key: str, by: int = 1) -> None:
+    counter[key] = counter.get(key, 0) + by
 
 
 def binding_releases_gil() -> Optional[bool]:
@@ -250,12 +270,14 @@ class FrameTimingRecorder:
         self.info = dict(info or {})
 
         # Render-thread state.
-        self._pending: List[Tuple[float, float, float, int]] = []
+        self._pending: List[_Frame] = []
         self._static_frames = 0
         self._previous: Optional[Tuple[float, bool, int]] = None
         # The interval ended by a static frame that followed a scrolling one,
         # until the next frame shows whether the scroll went on.
-        self._unsure: Optional[Tuple[float, float, float, int]] = None
+        self._unsure: Optional[_Frame] = None
+        # Work noted since the last frame (kind -> bytes), for the next one.
+        self._ops: Optional[Dict[str, int]] = None
         self._last_flush: Optional[float] = None
         self._queue: "queue.SimpleQueue" = queue.SimpleQueue()
         self._worker: Optional[threading.Thread] = None
@@ -281,6 +303,11 @@ class FrameTimingRecorder:
             "freeze_seconds": 0.0,
             "freeze_by": {label: 0 for _, label in FREEZE_BUCKETS},
             "worst_interval_ms": 0.0,
+            # Per kind of noted render-thread work; see "Operations".
+            "op_frames": {},
+            "late_op_frames": {},
+            "op_freezes": {},
+            "op_bytes": {},
         }
         self.histograms: Dict[str, Dict[int, int]] = {
             "blit": {}, "wait": {}, "work": {}, "interval_per_hold": {},
@@ -305,6 +332,21 @@ class FrameTimingRecorder:
 
     # -- render thread ------------------------------------------------------
 
+    def note_op(self, kind: str, nbytes: int = 0) -> None:
+        """Tag the next presented frame with work done before it.
+
+        Render thread only, like :meth:`record`, which consumes the tag: the
+        interval the next frame ends is the one this work landed in. Several
+        notes before one frame accumulate, per kind. See "Operations".
+
+        :param kind: a short name for the work, e.g. ``"extend"``, ``"patch"``.
+        :param nbytes: how much the work moved, summed into ``op_bytes``.
+        """
+        ops = self._ops
+        if ops is None:
+            ops = self._ops = {}
+        ops[kind] = ops.get(kind, 0) + int(nbytes)
+
     def record(self, blit: float, wait: float, hold: int, scrolling: bool,
                presented_at: float) -> None:
         """One frame reached the panel.
@@ -318,6 +360,7 @@ class FrameTimingRecorder:
         previous = self._previous
         self._previous = (presented_at, scrolling, hold)
         self.last_frame = (presented_at, scrolling, threading.get_ident())
+        ops, self._ops = self._ops, None
         if not scrolling:
             self._static_frames += 1
             # The scroll ended, or its state went missing for this frame: the
@@ -325,7 +368,8 @@ class FrameTimingRecorder:
             # state, so the interval is due at the scroll's own.
             self._unsure = None
             if previous is not None and previous[1]:
-                self._unsure = (presented_at - previous[0], blit, wait, previous[2])
+                self._unsure = (presented_at - previous[0], blit, wait,
+                                previous[2], ops)
         elif self.watchdog is None and self.scrolling_now is not None \
                 and os.environ.get("LEDMATRIX_STALL_WATCHDOG", "1") != "0":
             self.watchdog = StallWatchdog(self, **watchdog_settings())
@@ -335,14 +379,14 @@ class FrameTimingRecorder:
             unsure, self._unsure = self._unsure, None
             if previous[1]:
                 if interval < GAP_SECONDS:
-                    self._pending.append((interval, blit, wait, hold))
+                    self._pending.append((interval, blit, wait, hold, ops))
             elif unsure is not None and interval < RESUME_SECONDS:
                 # One static frame between two scrolling ones: the scroll never
                 # stopped, only its state did. Both intervals were motion.
                 self._static_frames -= 1
                 if unsure[0] < GAP_SECONDS:
                     self._pending.append(unsure)
-                self._pending.append((interval, blit, wait, hold))
+                self._pending.append((interval, blit, wait, hold, ops))
 
         if self._last_flush is None:
             self._last_flush = presented_at
@@ -382,15 +426,17 @@ class FrameTimingRecorder:
             except Exception:  # never let telemetry take anything down
                 logger.debug("Frame timing flush failed", exc_info=True)
 
-    def aggregate(self, batch: List[Tuple[float, float, float, int]],
-                  static: int) -> None:
-        """Fold one window of frames into the running totals."""
+    def aggregate(self, batch: List[_Frame], static: int) -> None:
+        """Fold one window of frames into the running totals.
+
+        Each frame is ``(interval, blit, wait, hold, ops)``; ``ops`` (the work
+        noted before it, or None) may be left off.
+        """
         totals = self.totals
         totals["static_frames"] += static
 
-        per_hold = sorted(interval / max(1, hold)
-                          for interval, _, _, hold in batch
-                          if interval < FREEZE_SECONDS)
+        per_hold = sorted(frame[0] / max(1, frame[3]) for frame in batch
+                          if frame[0] < FREEZE_SECONDS)
         if len(per_hold) >= MIN_FRAMES_FOR_REFRESH:
             estimate = per_hold[len(per_hold) // 10]
             current = self.refresh_period
@@ -412,15 +458,22 @@ class FrameTimingRecorder:
         period = self.refresh_period
 
         histograms = self.histograms
-        for interval, blit, wait, hold in batch:
+        for frame in batch:
+            interval, blit, wait, hold = frame[:4]
+            ops = frame[4] if len(frame) > 4 else None
             totals["worst_interval_ms"] = max(totals["worst_interval_ms"],
                                               interval * 1000.0)
+            if ops:
+                for kind, nbytes in ops.items():
+                    _bump(totals["op_bytes"], kind, nbytes)
             if interval >= FREEZE_SECONDS:
                 totals["freezes"] += 1
                 totals["freeze_seconds"] += interval
                 label = next(name for limit, name in FREEZE_BUCKETS
                              if interval < limit)
                 totals["freeze_by"][label] += 1
+                for kind in ops or ():
+                    _bump(totals["op_freezes"], kind)
                 continue
             totals["scroll_frames"] += 1
             for name, value in (("blit", blit), ("wait", wait),
@@ -432,6 +485,10 @@ class FrameTimingRecorder:
             if period:
                 totals["timed_frames"] += 1
                 missed = round(interval / period) - hold
+                for kind in ops or ():
+                    _bump(totals["op_frames"], kind)
+                    if missed >= 1:
+                        _bump(totals["late_op_frames"], kind)
                 if missed >= 1:
                     totals["late_frames"] += 1
                     totals["missed_refreshes"] += missed

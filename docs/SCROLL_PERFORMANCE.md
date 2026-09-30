@@ -342,6 +342,7 @@ service's user.
 | **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
 | **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
 | **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
+| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
 
 The refresh rate is estimated from the frames themselves (swaps that block on
 vsync can only land on refresh boundaries). Cross-check it with
@@ -406,6 +407,10 @@ sudo python3 scripts/render_bench.py --speed 50      # a held (frame_hold 2) spe
 sudo python3 scripts/render_bench.py --busy 2        # with threads imitating plugin updates
 sudo python3 scripts/render_bench.py --json /tmp/pi4-512x64.json
 
+# render-thread strip work, each tagged so the report gives it a late rate:
+sudo python3 scripts/render_bench.py --patch-bytes 101376 --patch-every 25  # a live map patch
+sudo python3 scripts/render_bench.py --strip-screens 30 --extend-every-screens 6  # Vegas extensions
+
 sudo systemctl start ledmatrix
 ```
 
@@ -468,6 +473,8 @@ refreshes" comes from.
 | `duplicate` | frames that advanced no pixels. A crisp fixed-step scroll should show none; any at all means the loop is presenting faster than the strip is moving. |
 | `blank` | frames with no visible slice to draw: the helper had no content. Should be zero. |
 | `restarts` | how many times the strip was scrolled through end to end. Informational: the bench restarts the strip where a plugin would hand over to the next one. |
+| `patches` | `--patch-bytes N --patch-every K`: N bytes of columns written into the strip in place every K frames, on screen or (`--patch-where ahead`) just past it -- what a live element update costs the render thread. Their frames are the `patch` row under *after work*. |
+| `extensions` | `--extend-every-screens N`: a block appended and the scrolled-past columns trimmed every N screens, as continuous Vegas does. The cost is a copy of the whole strip, so size it like Vegas's with `--strip-screens` (8,000-20,000px). Their frames are the `extend` row. |
 
 `--json` writes the full report plus the panel geometry, the solved speed and
 these counters, so two rigs (or one rig before and after a change) can be

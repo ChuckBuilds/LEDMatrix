@@ -25,6 +25,14 @@ against another) and for A/B testing a change to the render path.
     sudo python3 scripts/render_bench.py --busy 2           # with background load
     sudo python3 scripts/render_bench.py --json /tmp/pi4.json
 
+    # the cost of changing pixels under a moving strip (Vegas live elements):
+    # a 101KB write into the visible columns every 25 frames
+    sudo python3 scripts/render_bench.py --patch-bytes 101376 --patch-every 25
+
+    # the cost of extending a Vegas-sized strip on the render thread: a 30-screen
+    # strip, extended by 6 screens (and trimmed) every 6 screens scrolled
+    sudo python3 scripts/render_bench.py --strip-screens 30 --extend-every-screens 6
+
     sudo systemctl start ledmatrix
 
 Like scripts/scroll_speeds.py, this never starts or stops the service itself,
@@ -92,13 +100,17 @@ def load_config() -> dict:
     return config
 
 
-def build_strip(width: int, height: int, label: str):
-    """A marquee strip a few screens wide, with text and colour.
+def build_strip(width: int, height: int, label: str, screens: float = 4.0):
+    """A marquee strip about ``screens`` screens wide, with text and colour.
 
     Deliberately not plain white text on black: how long ``SetImage`` takes
     depends on how many subpixels are lit, so a strip that is mostly dark
     flatters the panel and hides exactly the regression this benchmark exists
     to catch.
+
+    The width matters to the extension mode, whose cost is a copy of the whole
+    strip: Vegas carries 8,000-20,000 columns, so measure extension against a
+    strip that wide (``--strip-screens``), not the four-screen default.
     """
     from PIL import Image, ImageDraw, ImageFont
 
@@ -123,7 +135,7 @@ def build_strip(width: int, height: int, label: str):
     text_width = max(1, box[2] - box[0])
     text_height = box[3] - box[1]
 
-    reps = max(2, (width * 4) // text_width + 1)
+    reps = max(2, int(width * screens) // text_width + 1)
     strip = Image.new("RGB", (text_width * reps, height), (0, 0, 0))
     draw = ImageDraw.Draw(strip)
     draw.fontmode = "1"  # the panel has no partial brightness; see DisplayManager
@@ -179,6 +191,119 @@ class BackgroundLoad:
             zlib.compress(image.tobytes(), 1)
 
 
+class StripWork:
+    """Render-thread work a Vegas strip does between frames, on a schedule.
+
+    Patching writes a block of columns into the strip in place, as a live
+    element update does. Extending appends a block and trims what has scrolled
+    past, as continuous Vegas does (render_pipeline.extend_scroll_content).
+    Both run where Vegas runs them -- on the frame loop, before the next frame
+    is drawn -- and are tagged with ``FrameTimingRecorder.note_op``, so the
+    report shows how often the frame straight after each one was late.
+
+    The content comes from the benchmark's own strip, prepared before the run:
+    in Vegas it is drawn off the render thread, so drawing it here would time
+    work the render thread never does.
+    """
+
+    def __init__(self, helper, recorder, source, *, patch_bytes: int = 0,
+                 patch_every: int = 25, patch_where: str = "visible",
+                 extend_every_screens: float = 0.0, extend_width: int = 0,
+                 separator: int = 32) -> None:
+        import numpy as np
+        from PIL import Image
+
+        self.helper = helper
+        self.recorder = recorder
+        self.width = helper.display_width
+        self.height = helper.display_height
+        self.patch_every = max(1, int(patch_every))
+        self.patch_where = patch_where
+        self.separator = max(0, int(separator))
+        self.patches = 0
+        self.patched_bytes = 0
+        self.extensions = 0
+        self._frames = 0
+        self._position_at_extend = 0.0
+
+        pixels = np.asarray(source.convert("RGB"))
+        source_width = pixels.shape[1]
+
+        def columns(count: int, offset: int):
+            # Wraps around the source, so any width can be cut from it.
+            return np.ascontiguousarray(
+                pixels[:, (np.arange(count) + offset) % source_width])
+
+        # Two versions to alternate between, so every patch changes pixels.
+        self._patches = []
+        if patch_bytes > 0:
+            count = max(1, int(patch_bytes) // (self.height * 3))
+            self._patches = [columns(count, 0), columns(count, count)]
+
+        self.extend_every = (int(extend_every_screens * self.width)
+                             if extend_every_screens > 0 else 0)
+        self._blocks = []
+        if self.extend_every:
+            # By default each append (block plus its separator) replaces
+            # exactly what scrolled past since the last one, so the strip
+            # holds its width, as Vegas's does in the steady state.
+            count = int(extend_width) or max(1, self.extend_every - self.separator)
+            self._blocks = [Image.fromarray(columns(count, 0)),
+                            Image.fromarray(columns(count, count))]
+
+    def reset(self) -> None:
+        """The strip was restarted from the beginning."""
+        self._position_at_extend = self.helper.scroll_position
+
+    def before_frame(self) -> None:
+        """Do whatever work is due before the next frame is drawn."""
+        if self._blocks:
+            self._extend_if_due()
+        if self._patches:
+            self._frames += 1
+            if self._frames % self.patch_every == 0:
+                self._patch()
+
+    def _extend_if_due(self) -> None:
+        helper = self.helper
+        if helper.scroll_position < self._position_at_extend:
+            self._position_at_extend = helper.scroll_position
+        # Due on a fixed cadence rather than N screens after the last one ran,
+        # which would drift by the overshoot of a multi-pixel step each time.
+        due_at = self._position_at_extend + self.extend_every
+        if helper.scroll_position < due_at:
+            return
+        block = self._blocks[self.extensions % 2]
+        helper.append_content([block], item_gap=self.separator, element_gap=0)
+        moved = helper.cached_array.nbytes
+        # One screen kept behind the viewport, as Vegas does. The trim shifts
+        # every strip coordinate, the cadence's included.
+        cut = helper.drop_scrolled_prefix(keep_before=self.width)
+        if cut:
+            moved += helper.cached_array.nbytes
+        self._position_at_extend = due_at - cut
+        self.extensions += 1
+        self.recorder.note_op("extend", moved)
+
+    def _patch(self) -> None:
+        patch = self._patches[self.patches % 2]
+        strip = self.helper.cached_array
+        count = patch.shape[1]
+        if strip is None or count > strip.shape[1]:
+            return
+        start = int(self.helper.scroll_position)
+        if self.patch_where == "visible":
+            x = start + max(0, (self.width - count) // 2)
+        else:
+            # Just past the right edge: a change to content not yet on screen.
+            x = start + self.width + 16
+        x = max(0, min(x, strip.shape[1] - count))
+        strip[:, x:x + count] = patch
+        self.patches += 1
+        self.patched_bytes += patch.nbytes
+        self.recorder.note_op("patch", patch.nbytes)
+
+
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
@@ -202,7 +327,35 @@ def main(argv=None) -> int:
                         help="also write the report as JSON, for comparing rigs")
     parser.add_argument("--label", default=None,
                         help="name for this run in the JSON report (default: hostname)")
+    parser.add_argument("--strip-screens", type=float, default=4.0, metavar="S",
+                        help="strip width in screens (default 4). Vegas strips are "
+                             "8,000-20,000px; the extension cost scales with it")
+    parser.add_argument("--patch-bytes", type=int, default=0, metavar="N",
+                        help="write N bytes of columns into the strip in place "
+                             "every --patch-every frames, as a Vegas live element "
+                             "update does (a 150x64 card is ~29KB, a 512x64 map "
+                             "~100KB)")
+    parser.add_argument("--patch-every", type=int, default=25, metavar="K",
+                        help="frames between patches (default 25; 1 = every frame)")
+    parser.add_argument("--patch-where", choices=("visible", "ahead"),
+                        default="visible",
+                        help="patch the columns on screen, or just past its right "
+                             "edge (default visible)")
+    parser.add_argument("--extend-every-screens", type=float, default=0.0,
+                        metavar="N",
+                        help="append a block and trim the strip every N screens "
+                             "scrolled, as continuous Vegas does")
+    parser.add_argument("--extend-width", type=int, default=0, metavar="W",
+                        help="width of each appended block in px (default: N "
+                             "screens less the separator, so the strip holds its "
+                             "width)")
     args = parser.parse_args(argv)
+
+    if args.extend_every_screens > 0 and args.strip_screens < args.extend_every_screens + 3:
+        # The strip must stay ahead of the viewport between extensions.
+        args.strip_screens = args.extend_every_screens + 3
+        print(f"strip widened to {args.strip_screens:g} screens so extensions "
+              "keep ahead of the viewport")
 
     # Everything the display service logs would otherwise land in the middle of
     # the report; the benchmark's own output is the point. The stall watchdog
@@ -272,8 +425,9 @@ def main(argv=None) -> int:
     print(f"asked for {requested:.1f} px/s -> {choice.describe()}")
 
     helper.set_sub_pixel_scrolling(False)
-    helper.set_scrolling_image(
-        build_strip(width, height, f"{choice.pixels_per_second:.0f} px/s"))
+    strip = build_strip(width, height, f"{choice.pixels_per_second:.0f} px/s",
+                        screens=args.strip_screens)
+    helper.set_scrolling_image(strip)
 
     # The display service's own recorder, owned outright here: never flushed to
     # the service's stats file, drained exactly at the start and end of the
@@ -288,8 +442,23 @@ def main(argv=None) -> int:
     recorder.scrolling_now = display._scrolling_now  # pylint: disable=protected-access
     display.frame_timing = recorder
 
-    print(f"scrolling {width}x{height} for {args.seconds:.0f}s"
-          + (f" with {args.busy} background worker(s)" if args.busy else "")
+    work = StripWork(helper, recorder, strip,
+                     patch_bytes=args.patch_bytes, patch_every=args.patch_every,
+                     patch_where=args.patch_where,
+                     extend_every_screens=args.extend_every_screens,
+                     extend_width=args.extend_width)
+
+    doing = []
+    if args.busy:
+        doing.append(f"{args.busy} background worker(s)")
+    if args.patch_bytes > 0:
+        doing.append(f"a {args.patch_bytes}B {args.patch_where} patch every "
+                     f"{args.patch_every} frame(s)")
+    if work.extend_every:
+        doing.append(f"an extension every {args.extend_every_screens:g} screens")
+    print(f"scrolling {width}x{height} ({helper.cached_array.shape[1]}px strip) "
+          f"for {args.seconds:.0f}s"
+          + (" with " + ", ".join(doing) if doing else "")
           + " ...", flush=True)
 
     frames = 0
@@ -309,8 +478,11 @@ def main(argv=None) -> int:
                     before = recorder.snapshot()
                     run_started = now
                     frames = duplicates = blanks = restarts = 0
+                    work.patches = work.patched_bytes = work.extensions = 0
                 if run_started is not None and now - run_started >= args.seconds:
                     break
+                # Where Vegas does its strip work: before the frame is drawn.
+                work.before_frame()
                 helper.update_scroll_position()
                 if helper.is_scroll_complete():
                     # The helper parks at the end of the strip and stops
@@ -320,6 +492,7 @@ def main(argv=None) -> int:
                     # the benchmark measures a still image for the rest of the
                     # run and reports a smoothness it never demonstrated.
                     helper.reset_scroll()
+                    work.reset()
                     restarts += 1
                 visible = helper.get_visible_portion()
                 column = int(helper.scroll_position)
@@ -375,6 +548,11 @@ def main(argv=None) -> int:
     if restarts:
         print(f"restarts    {restarts} (the strip was scrolled through "
               f"{restarts} time{'s' if restarts != 1 else ''})")
+    if work.patches:
+        print(f"patches     {work.patches} ({work.patched_bytes / 1e6:.1f} MB "
+              "written into the strip)")
+    if work.extensions:
+        print(f"extensions  {work.extensions}")
 
     if args.json_path:
         report.update({
@@ -388,6 +566,13 @@ def main(argv=None) -> int:
             "duplicate_frames": duplicates,
             "blank_frames": blanks,
             "strip_restarts": restarts,
+            "strip_screens": args.strip_screens,
+            "patch_bytes": args.patch_bytes,
+            "patch_every": args.patch_every,
+            "patch_where": args.patch_where,
+            "patches": work.patches,
+            "extend_every_screens": args.extend_every_screens,
+            "extensions": work.extensions,
             "max_late_pct": args.max_late_pct,
             "passed": frame_soak.passed(report, args.max_late_pct),
         })
