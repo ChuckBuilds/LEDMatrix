@@ -354,6 +354,12 @@ widget on one of those is ignored.
   selector: allow only `[A-Za-z0-9_-]`. `BaseWidget` has `sanitizeId()`.
 - Associate labels with inputs and keep the widget usable from the keyboard.
 - Debounce events that fire on every keystroke.
+- Style with the Tailwind utility classes the core UI already uses (`px-3`,
+  `border-gray-300`, `rounded`, `text-sm`, ...). `static/v3/tailwind.css` is
+  generated from the core templates and JS, so it only contains classes core
+  uses, plus everything the hand-written stylesheet defined before the build.
+  A rarer class a plugin widget needs belongs in a `<style>` the widget
+  injects, since core can't scan plugin repos.
 
 ## Troubleshooting
 

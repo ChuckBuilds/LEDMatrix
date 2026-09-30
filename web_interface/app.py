@@ -55,10 +55,20 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# No CSRF protection: the UI is meant for the local network, where anyone who
-# can forge a request can also send it directly, and neither the HTMX forms
-# nor the fetch() calls carry a token. Exposing the UI beyond the LAN needs
-# CSRF tokens added to both first.
+# Cross-site request forgery: the UI has no login, and being "only on the LAN"
+# does not keep other websites out. Any page a LAN user opens can make their
+# browser POST to this server -- a plain HTML form is not blocked by CORS -- so
+# a hostile site could reboot the Pi, pull code or rewrite the config through
+# the user's browser. web_interface/origin_guard.py (registered below) refuses
+# POST/PUT/PATCH/DELETE whose Origin (or, failing that, Referer) is not this
+# server's own host; requests with neither header (curl, Home Assistant, the
+# MQTT bridge) are not from a browser and pass. There are no CSRF tokens:
+# neither the HTMX forms nor the fetch() calls carry one. Anyone who can reach
+# the port directly can still use the API unless the optional login is on:
+# web_interface/auth.py (registered below the captive-portal redirect) adds a
+# password and API tokens. It is off until a password is set in General >
+# Security, and even then leaves requests from the Pi itself and the Wi-Fi
+# setup flow in access-point mode open.
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -410,6 +420,11 @@ def success_txt():
 from web_interface import request_logging
 request_logging.init_app(app)
 
+# Refuse state-changing requests sent by another website's page (see the
+# cross-site note near the top of this file).
+from web_interface import origin_guard
+origin_guard.init_app(app)
+
 # Global error handlers
 @app.errorhandler(404)
 def not_found_error(error):
@@ -500,6 +515,8 @@ def captive_portal_redirect():
         '/connecttest.txt',  # Windows detection
         '/success.txt',  # Firefox detection
         '/favicon.ico',  # Favicon
+        '/login',  # Optional web login (web_interface/auth.py)
+        '/logout',
     ]
 
     for allowed_path in allowed_paths:
@@ -508,6 +525,13 @@ def captive_portal_redirect():
 
     # Redirect to lightweight captive portal setup page (not the full UI)
     return redirect(url_for('pages_v3.captive_setup'), code=302)
+
+# Optional login (off until a password is set in General > Security). After
+# the captive-portal redirect, so in AP mode an unknown path still lands on
+# /setup rather than on the login page; the setup flow itself stays open.
+from web_interface import auth as web_auth
+web_auth.init_app(app, config_manager, limiter=limiter,
+                  is_ap_mode_active=is_ap_mode_active)
 
 # Append a content-version query param (file mtime) to every static URL so the
 # long-lived `immutable` cache (see add_security_headers below) is actually safe:
@@ -909,10 +933,14 @@ def stream_logs():
 # Each SSE stream is one long-lived request, so only a (re)connect counts
 # against a limit. The streams get their own 200 per minute, tighter than the
 # 1000 per minute default, which bounds a client stuck reconnecting.
+# flask-limiter enforces a decorated limit in the wrapper limit() returns, and
+# marks the original function exempt from the default, so the wrapper has to
+# replace the registered view: discarding it leaves the streams unlimited.
 if limiter:
-    limiter.limit("200 per minute")(stream_stats)
-    limiter.limit("200 per minute")(stream_display)
-    limiter.limit("200 per minute")(stream_logs)
+    for _endpoint in ('stream_stats', 'stream_display', 'stream_logs'):
+        app.view_functions[_endpoint] = limiter.limit("200 per minute")(
+            app.view_functions[_endpoint]
+        )
 
 @app.route('/favicon.ico')
 def favicon():

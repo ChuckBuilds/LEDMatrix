@@ -1,5 +1,55 @@
 [
   [
+    "/api/v3/auth/disable",
+    "api_v3.disable_web_login",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
+    "/api/v3/auth/password",
+    "api_v3.set_web_password",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
+    "/api/v3/auth/status",
+    "api_v3.get_web_auth_status",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
+    "/api/v3/auth/tokens",
+    "api_v3.create_api_token",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
+    "/api/v3/auth/tokens",
+    "api_v3.list_api_tokens",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
+    "/api/v3/auth/tokens/<token_id>",
+    "api_v3.revoke_api_token",
+    [
+      "DELETE",
+      "OPTIONS"
+    ]
+  ],
+  [
     "/api/v3/backup/<path:filename>",
     "api_v3.backup_delete",
     [

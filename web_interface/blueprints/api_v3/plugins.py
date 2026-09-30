@@ -10,6 +10,9 @@ from web_interface.blueprints.api_v3 import (
     jsonify, logger, os, request, subprocess, success_response,
 )
 from src.common.path_safety import safe_path_component
+from src.plugin_system.base_plugin import (
+    configured_vegas_participation, resolve_vegas_participation,
+)
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -109,6 +112,14 @@ def get_installed_plugins():
         vegas_mode = plugin_config.get('vegas_mode')
         vegas_content_type = None
 
+        # What Vegas actually does with the plugin: 'scroll', 'pause' or
+        # 'exclude'. The same resolution the ticker uses; without a loaded
+        # instance only the user's own setting is known.
+        if plugin_instance is not None:
+            vegas_participation = resolve_vegas_participation(plugin_instance, plugin_id)
+        else:
+            vegas_participation = configured_vegas_participation(plugin_id, plugin_config)
+
         return {
             'id': plugin_id,
             'name': plugin_info.get('name', plugin_id),
@@ -135,6 +146,7 @@ def get_installed_plugins():
             'web_ui_actions': plugin_info.get('web_ui_actions', []),
             'vegas_mode': vegas_mode,
             'vegas_content_type': vegas_content_type,
+            'vegas_participation': vegas_participation,
         }
 
     from concurrent.futures import ThreadPoolExecutor

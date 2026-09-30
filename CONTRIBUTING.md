@@ -71,7 +71,11 @@ integration tests.
    annotation-only where you can -- widen a hint rather than delete a
    defensive runtime check mypy calls unreachable. HTML/JS in
    `web_interface/` follows the patterns already in `templates/v3/`
-   and `static/v3/`.
+   and `static/v3/`. If you change a template or a static JS file,
+   run `python3 scripts/build_css.py` and commit the regenerated
+   `static/v3/tailwind.css` with it -- CI fails when the committed CSS
+   is out of date. It needs no Node; see
+   [`web_interface/README.md`](web_interface/README.md#styling-tailwind-css).
 5. **Update documentation** alongside code changes. If you add a
    config key, document it in the relevant `*.md` file (or, for
    plugins, in `config_schema.json` so the form is auto-generated).

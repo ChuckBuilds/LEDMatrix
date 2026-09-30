@@ -143,6 +143,8 @@ def test_legacy_v3_alias_serves_the_same_partials(client, path):
 
 STATIC_ASSETS = [
     "/static/v3/app.css",
+    "/static/v3/tailwind.css",
+    "/static/v3/plugin-frame.css",
     "/static/v3/app.js",
     "/static/v3/manifest.json",
     "/static/v3/icons/icon-192.png",

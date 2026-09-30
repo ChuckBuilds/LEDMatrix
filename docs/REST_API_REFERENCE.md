@@ -18,6 +18,39 @@ top level instead of under `data` (install-from-url, registry-from-url, the
 auth endpoints, upload endpoints, `system/git-info`, `system/check-update`),
 the entry below says so.
 
+**Cross-site requests are refused.** A `POST`, `PUT`, `PATCH` or `DELETE`
+carrying an `Origin` header (or, without one, a `Referer`) that is not the
+host the request was sent to gets `403` with `"error_code":
+"CROSS_SITE_REQUEST"`; so does `Origin: null`. This stops other websites from
+driving the Pi through a LAN user's browser. Scripts, curl, Home Assistant and
+the MQTT bridge send neither header and are unaffected. A browser page on
+another origin (a dashboard you host elsewhere, say) can no longer call the
+API; call it server-side instead. Behind a reverse proxy, pass the original
+`Host` through, port included (nginx: `proxy_set_header Host $http_host;`;
+`$host` drops the port) -- `X-Forwarded-Host` is not read.
+
+**Authentication (optional, off by default).** With no web password set,
+nothing below needs credentials. Once one is set (General > Security, or
+[`POST /auth/password`](#web-login-and-api-tokens)), every route needs a login
+session or an API token:
+
+```bash
+curl -H "Authorization: Bearer lmx_..." http://your-pi-ip:5000/api/v3/display/current
+```
+
+Without either, an API route answers `401` with
+`{"status": "error", "error_code": "AUTH_REQUIRED", "message": ...}`, a
+`WWW-Authenticate: Bearer realm="LEDMatrix"` header and the login page's URL
+in `X-LEDMatrix-Login`; an unknown or revoked token gets `"error_code":
+"INVALID_TOKEN"`. Browser page loads are redirected to `/login` instead, and
+HTMX requests get `401` with `HX-Redirect: /login?...`. Never asked for
+credentials: requests from the Pi itself (loopback, with no `X-Forwarded-For`,
+`X-Real-IP`, `Forwarded` or `X-Forwarded-Host` header), `/static/*`, the
+captive-portal probe URLs, `/login`, `/api/v3/health` (status only, see
+[Health Check](#health-check)), and -- only while the Pi is in access-point
+mode -- `/setup`, `GET /wifi/status`, `GET /wifi/scan` and
+`POST /wifi/connect`.
+
 ## Table of Contents
 
 - [Configuration](#configuration)
@@ -35,6 +68,7 @@ the entry below says so.
 - [Health and Status](#health-and-status)
 - [Schedule (dim/power)](#schedule-dimpower)
 - [Integrations](#integrations)
+- [Web login and API tokens](#web-login-and-api-tokens)
 - [Plugin-specific endpoints](#plugin-specific-endpoints)
 - [Starlark Apps](#starlark-apps)
 
@@ -220,7 +254,10 @@ times `07:00`-`23:00`. At least one day must be enabled.
 
 Retrieve `config/config_secrets.json` with every set value replaced by eight
 bullet characters (`"••••••••"`). Empty values and `YOUR_*` placeholders
-are returned as-is, so a client can tell "set" from "not set".
+are returned as-is, so a client can tell "set" from "not set". The
+`web_auth` section (the web login's password hash, API-token hashes and
+cookie key) is left out entirely; [Get Main Configuration](#get-main-configuration)
+leaves it out too.
 
 **Response**:
 ```json
@@ -245,7 +282,8 @@ Replace `config/config.json` with the JSON body (advanced use only).
 Save the secrets file (advanced use only). Masked values (`"••••••••"`)
 and blank strings in the body are dropped, and the rest is merged onto the
 stored secrets, so posting back the GET response unchanged changes nothing.
-A secret cannot be cleared by blanking it here.
+A secret cannot be cleared by blanking it here. A `web_auth` key in the body
+is ignored; the stored login settings are kept.
 
 ---
 
@@ -480,7 +518,9 @@ List all installed plugins with their status and metadata.
         "branch": "main",
         "web_ui_actions": [],
         "vegas_mode": null,
-        "vegas_content_type": null
+        "vegas_content_type": null,
+        "vegas_participation": "scroll",
+        "vegas_participation_source": "manifest"
       }
     ]
   }
@@ -493,7 +533,20 @@ reads it). `loaded`, `state` and `error_info` are always `null`: the web
 process runs no plugin code, and the display does not publish which plugins
 it has loaded. What the display does publish is at
 [`/plugins/health`](#get-plugin-health), `/plugins/metrics` and `/errors/*`.
-`vegas_mode` is the plugin's configured `vegas_mode`, or `null`.
+
+`vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
+`"pause"` or `"exclude"` (see
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)),
+and `vegas_participation_source` says where it came from. The web reads it
+the way the display resolves it, as far as files can tell: the user's own
+`vegas_participation` setting (`"config"`), else the manifest's declared
+`vegas_participation` (`"manifest"`). Past those the display derives it from
+the plugin's code -- a `get_vegas_participation()` override or the legacy
+Vegas hooks -- which the web process never runs, so `vegas_participation`
+is `null` and the source is `"runtime"`. A plugin that overrides
+`get_vegas_participation()` decides at run time and can differ from its
+manifest's declaration. `vegas_mode` is the plugin's configured
+`vegas_mode`, or `null`; `vegas_content_type` is always `null`.
 
 ### Get Plugin Configuration
 
@@ -662,6 +715,12 @@ carries `restart_required`: true when the plugin is already enabled in
 files by itself; `restart_message` then holds the restart banner's wording.
 A plugin that is not enabled needs no restart: enabling it loads it.
 
+A plugin whose registry entry (or downloaded manifest) needs a newer
+LEDMatrix is refused: the synchronous install answers `409` with a message
+such as `Failed to install plugin x: X requires LEDMatrix 3.8.0 or newer…`,
+and a queued one fails with that message. Nothing already installed is
+changed.
+
 ### Uninstall Plugin
 
 **POST** `/api/v3/plugins/uninstall`
@@ -721,6 +780,9 @@ Update a plugin to the latest version. Runs synchronously.
 `update_status` is `updated`, `up_to_date` or `local_only`.
 `restart_required` is true when the plugin changed and is enabled: the
 running display keeps the code it loaded until it restarts.
+
+An update this core cannot run answers `409` with `Plugin update refused:`
+and the reason; the installed version is left as it was.
 
 ### Install Plugin from URL
 
@@ -1225,12 +1287,21 @@ searches.
         "version": "1.2.3",
         "branch": "main",
         "default_branch": "main",
-        "plugin_path": "plugins/football-scoreboard"
+        "plugin_path": "plugins/football-scoreboard",
+        "commit": "843588025a81197056f8d96779ccb2be19337ab8",
+        "ledmatrix_min_version": "3.7.0",
+        "aliases": [],
+        "incompatible_reason": null
       }
     ]
   }
 }
 ```
+
+`commit` (the monorepo commit that introduced `version`),
+`ledmatrix_min_version` and `aliases` come from the registry entry and are
+`null` / `[]` when an older registry lacks them. `incompatible_reason` is the
+message an install would be refused with on this core, or `null`.
 
 ### Get GitHub Status
 
@@ -1424,7 +1495,10 @@ Fetches `origin` and lists branches to switch to: `current`, `upstream`,
 
 **POST** `/api/v3/system/action`
 
-Execute system-level actions. JSON or form data.
+Execute system-level actions. Send JSON (`Content-Type: application/json`).
+A form-encoded or `text/plain` body is accepted only with an `HX-Request`
+header (HTMX sends it; a cross-site HTML form cannot) and is otherwise
+refused with `415`.
 
 **Request Body**:
 ```json
@@ -1985,6 +2059,10 @@ Health of the web interface, display service, config file, plugin system and
 display snapshot. `data.status` is `healthy` or `degraded`, with
 `data.services` and `data.checks`.
 
+Open even when the web login is on, for uptime monitors; a caller that is not
+logged in (and has no token) then gets only `{"status": "success", "data":
+{"status": "healthy" | "degraded"}}`.
+
 ### Hardware Status
 
 **GET** `/api/v3/hardware/status`
@@ -2050,17 +2128,97 @@ enabled.
 
 Home Assistant MQTT bridge service state and settings: `data.service`,
 `data.config_exists`, `data.config_path`, `data.config` (password
-omitted), `data.password_set`, `data.env_override_prefix`.
+omitted), `data.password_set`, `data.api_token_set`, `data.env_override_prefix`.
 
 **PUT** `/api/v3/integrations/mqtt-bridge/config`
 
 Write `integrations/mqtt_bridge/bridge_config.json`. Only the keys you send
 change. The password is write-only: omit `mqtt_password` to keep it, send a
-value to replace it, or send `"clear_password": true`. A password with
+value to replace it, or send `"clear_password": true`. The web-login API token
+the bridge sends (`ledmatrix_api_token`, needed only when login is on and the
+bridge runs on another machine) is write-only the same way, cleared with
+`"clear_api_token": true`. A password with
 `mqtt_tls` off is refused unless `allow_insecure_mqtt` is true. Returns
-`data.password_set` and `data.restart_required` (the bridge must be
-restarted to pick up changes). See
+`data.password_set`, `data.api_token_set` and `data.restart_required` (the
+bridge must be restarted to pick up changes). See
 [integrations/mqtt_bridge/README.md](../integrations/mqtt_bridge/README.md).
+
+---
+
+## Web login and API tokens
+
+The optional password and API tokens (`web_auth` in
+`config/config_secrets.json`, `web_interface/auth.py`). No route here returns
+the password hash, a token hash or the cookie key. A request authenticated by
+an API token gets `403` `TOKEN_NOT_ALLOWED` from every route in this section:
+tokens are for integrations, not for changing who can log in. Wrong current
+passwords (`403` `WRONG_PASSWORD`) count against the same per-address limit as
+the login page: 5 a minute, 30 an hour, then `429`.
+
+Lost password: run `sudo python3 scripts/reset_web_password.py` on the Pi.
+
+### Login status
+
+**GET** `/api/v3/auth/status`
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "signed_in": true,
+    "access": "session",
+    "min_password_length": 8,
+    "tokens": [
+      {"id": "3f9c1a2b4d5e6f70", "name": "Home Assistant", "prefix": "lmx_Ab3d",
+       "created_at": "2026-09-29T20:14:03+00:00"}
+    ]
+  }
+}
+```
+
+`access` is how this request got in: `open` (login off), `session`,
+`localhost`, `ap-setup` or `token`.
+
+### Set or change the password
+
+**POST** `/api/v3/auth/password`
+
+Body: `{"new_password": "...", "current_password": "..."}`.
+`current_password` is required once login is on. At least 8 characters, no
+leading or trailing space (`400` `WEAK_PASSWORD`). Setting the first password
+turns login on. Every existing login session ends; the caller's own browser
+is signed in again with the answer.
+
+### Turn login off
+
+**POST** `/api/v3/auth/disable`
+
+Body: `{"current_password": "..."}`. Removes the password; API tokens are
+kept (and are needed again if login is turned back on).
+
+### API tokens
+
+**GET** `/api/v3/auth/tokens` — `data.tokens`, as in the status answer.
+
+**POST** `/api/v3/auth/tokens` — body `{"name": "Home Assistant"}` (1-60
+characters). Answers `201` with `data.token`, the token itself (`lmx_` plus 43
+characters), and `data.record`. **The token is never shown again**; only its
+SHA-256 is stored. At most 50 tokens.
+
+**DELETE** `/api/v3/auth/tokens/<id>` — revoke; it stops working on the next
+request. `404` for an unknown id.
+
+Send a token as `Authorization: Bearer <token>`.
+
+### Login page
+
+`GET /login` shows the login form (and redirects home when login is off or
+this browser is already signed in); `POST /login` with a form field `password`
+(and optional `next`, a path on this server) signs in and redirects to `next`,
+or answers `401` with the form again. `POST /logout` ends the session. Both
+are outside `/api/v3` and go through the cross-site check like every other
+`POST`.
 
 ---
 

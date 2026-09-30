@@ -180,9 +180,9 @@ def start_on_demand_display():
             if not resolved_plugin:
                 return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 
-    # Note: On-demand can work with disabled plugins - the display controller
-    # will temporarily enable them during initialization if needed
-    # We don't block the request here, but log it for debugging
+    # On-demand works with disabled plugins: the running display loads one
+    # for the session and unloads it afterwards, leaving config.json alone
+    # (DisplayController._load_plugin_for_on_demand). Logged for debugging.
     if api_v3.config_manager and resolved_plugin:
         config = api_v3.config_manager.load_config()
         plugin_config = config.get(resolved_plugin, {})

@@ -46,6 +46,7 @@
 - Store manager (`PluginStoreManager` in `src/plugin_system/store_manager.py`) handles install/update/uninstall
 - Monorepo plugins are installed without a `.git` directory: GitHub Trees API + raw downloads, falling back to ZIP extraction
 - Update detection for monorepo plugins uses version comparison (manifest version vs registry latest_version)
+- Optional registry entry fields (`store_registry.py`): `ledmatrix_min_version` refuses an incompatible install/update before the download (the post-download manifest gate stays as the fallback); `aliases` are the entry's other ids (manifest id `ledmatrix-weather` for `weather`), used with the `plugin_path` name by update/uninstall/reinstall to find the install — only this registry proof counts, never a bare `ledmatrix-<id>` folder (owner decision, #686; such a folder is only logged); `commit` is informational. An older plugins.json has none of them
 - Plugin configs stored in `config/config.json`, NOT in plugin directories — safe across reinstalls
 - Third-party plugins can use their own repo URL with empty `plugin_path`
 
