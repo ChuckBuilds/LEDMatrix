@@ -15,6 +15,8 @@ import os
 import sys
 from src.deprecation import deprecated, warn_deprecated
 from src.logging_config import get_logger
+# Re-exported: a plugin may import it from here beside VegasDisplayMode.
+from src.plugin_system.vegas_elements import VegasElement  # noqa: F401
 
 
 _shared_fallback_font_manager: Optional[Any] = None
@@ -985,6 +987,88 @@ class BasePlugin(ABC):
                 return self._render_current_view()
         """
         return None
+
+    def get_vegas_elements(self) -> Optional[List[Any]]:
+        """
+        Vegas content as live elements: named, fixed-width pieces the ticker
+        can swap in place while they are on screen.
+
+        get_vegas_content() hands the ticker pictures, and a picture already
+        in the scrolling strip keeps what it showed when it was drawn. Return
+        a list of ``VegasElement`` (src/plugin_system/vegas_elements.py)
+        instead and the ticker records where each one is; after your update()
+        it calls this again, compares each element's ``version`` (or pixels)
+        with what the strip holds, and swaps the changed ones in between two
+        frames -- a score changes on a card already crossing the panel, and
+        nothing next to it moves.
+
+        The contract:
+
+        - Called only on the ticker's background thread, under this plugin's
+          lock (never while update() runs), on a canvas of its own and told
+          its width (get_vegas_render_width()), like get_vegas_content().
+        - Called often -- after every update() while any of your elements is
+          on or ahead of the screen -- so it must be cheap when nothing
+          changed (cache images by version), idempotent, and must not fetch.
+        - A live element's width must not depend on its data: a redraw at a
+          different width is not swapped in (it shows the next time the
+          plugin comes round).
+        - Keys must be unique in the list and stable for the same logical
+          item.
+
+        Return None (the default) to use get_vegas_content(). A core older
+        than 3.8.0 never calls this, so keep get_vegas_content() working and
+        floor ``ledmatrix_min_version`` at 3.8.0 only if you rely on it.
+
+        Example (scoreboard)::
+
+            def get_vegas_elements(self):
+                return [VegasElement(key=f"game:{g['id']}",
+                                     image=self._card_for(g),   # cached by fingerprint
+                                     version=self._fingerprint(g))
+                        for g in self.games]
+
+        Returns:
+            A list of VegasElement, or None.
+        """
+        return None
+
+    def redraw_vegas_element(self, key: str, width: int, height: int,
+                             at: float) -> Optional[Any]:
+        """
+        Redraw one live element for a moment in time, without the plugin lock.
+
+        Only for elements returned with ``refresh_hz > 0``: content that
+        changes with time rather than with data, such as an aircraft moving
+        between position reports. The ticker calls it up to that often while
+        the element is on or near the screen.
+
+        - Called WITHOUT this plugin's lock, possibly while update() runs, so
+          read only state that update() replaces in a single assignment (an
+          immutable snapshot), never state it mutates in place.
+        - ``at`` is the time.monotonic() at which the pixels are expected to
+          reach the panel; draw the element as it should look then.
+        - Return an image of exactly ``width`` x ``height``, or None to skip
+          this tick.
+
+        Returns:
+            PIL Image of exactly (width, height), or None.
+        """
+        return None
+
+    def notify_vegas_data_changed(self) -> None:
+        """
+        Tell the Vegas ticker this plugin's data changed outside update().
+
+        The ticker redraws a plugin's live elements when its update()
+        completes. Data that lands some other way -- a background thread, a
+        push callback -- calls this so the change reaches the screen without
+        waiting for the next update(). Cheap and safe from any thread.
+        """
+        notify = getattr(getattr(self, 'plugin_manager', None),
+                         'notify_data_changed', None)
+        if callable(notify):
+            notify(self.plugin_id)
 
     def get_vegas_participation(self) -> str:
         """

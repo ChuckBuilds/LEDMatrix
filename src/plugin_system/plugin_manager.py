@@ -16,7 +16,7 @@ import time
 import threading
 import types
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Any, Tuple, Union
+from typing import Callable, Dict, List, NamedTuple, Optional, Any, Tuple, Union
 import logging
 from src import display_watchdog
 from src.exceptions import PluginError, ConfigError
@@ -197,6 +197,11 @@ class PluginManager:
         # run_scheduled_updates_with_changes().
         self._completed_updates: set = set()
         self._completed_updates_lock = threading.Lock()
+        # Called with a plugin id the moment its data may have changed: its
+        # update() completed, or it called notify_vegas_data_changed(). See
+        # add_update_listener(). A tuple, replaced rather than mutated, so the
+        # worker can iterate it without a lock.
+        self._update_listeners: Tuple[Callable[[str], None], ...] = ()
         # Config changes that found the plugin's lock busy, latest per plugin,
         # with the instance they were meant for. See apply_config_change().
         self._deferred_config_changes: Dict[str, Tuple[Any, Dict[str, Any]]] = {}
@@ -589,8 +594,8 @@ class PluginManager:
     #: prefix rule would silently stop validating it.
     #:
     #: Read by: ``vegas_mode/plugin_adapter.py`` (``vegas_width_pct``,
-    #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``,
-    #: ``vegas_participation``).
+    #: ``vegas_overflow``, ``vegas_live``) and ``base_plugin.py``
+    #: (``vegas_max_width_screens``, ``vegas_participation``).
     #:
     #: The list itself lives with the other core-owned per-plugin properties in
     #: ``schema_manager.CORE_PLUGIN_PROPERTIES``, which the web save path also
@@ -1723,9 +1728,53 @@ class PluginManager:
         return self.drain_completed_updates()
 
     def _note_update_completed(self, plugin_id: str) -> None:
-        """Record that a plugin's update() finished, for the next poll."""
+        """Record that a plugin's update() finished, for the next poll.
+
+        Also tells the update listeners at once, so Vegas live elements are
+        redrawn the moment new data lands instead of at the next ~4s poll.
+        This runs while the plugin's lock is still held (see _finish), which
+        is what makes the listeners' contract strict.
+        """
         with self._completed_updates_lock:
             self._completed_updates.add(plugin_id)
+        self._fire_update_listeners(plugin_id)
+
+    def add_update_listener(self, listener: Callable[[str], None]) -> None:
+        """Call ``listener(plugin_id)`` whenever a plugin's data may have changed.
+
+        That is: its update() completed successfully, or it called
+        notify_vegas_data_changed(). The listener runs on the thread that
+        noticed -- the update worker, with the plugin's lock still held, or
+        the plugin's own thread -- so it must return at once and take no lock
+        a plugin could hold: record the id and hand off (a dict store, a
+        queue put). An exception from it is logged and does not reach the
+        plugin. Adding the same listener twice has no effect.
+        """
+        # __dict__.get: tests build bare managers with PluginManager.__new__.
+        listeners = self.__dict__.get('_update_listeners', ())
+        if listener not in listeners:
+            self._update_listeners = listeners + (listener,)
+
+    def remove_update_listener(self, listener: Callable[[str], None]) -> None:
+        """Stop calling a listener added with add_update_listener()."""
+        self._update_listeners = tuple(
+            fn for fn in self.__dict__.get('_update_listeners', ()) if fn != listener)
+
+    def notify_data_changed(self, plugin_id: str) -> None:
+        """A plugin's data changed outside update(); tell the update listeners.
+
+        BasePlugin.notify_vegas_data_changed() lands here.
+        """
+        self._fire_update_listeners(plugin_id)
+
+    def _fire_update_listeners(self, plugin_id: str) -> None:
+        for listener in self.__dict__.get('_update_listeners', ()):
+            try:
+                listener(plugin_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._warn_rate_limited(
+                    "update-listener",
+                    "An update listener failed for plugin %s: %r", plugin_id, exc)
 
     def drain_completed_updates(self) -> List[str]:
         """Return and clear the plugin ids whose update() has since finished."""

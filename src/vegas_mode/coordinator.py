@@ -23,6 +23,7 @@ from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 from src import display_watchdog
 from src.common import render_gate
 from src.vegas_mode.config import VegasModeConfig
+from src.vegas_mode.elements import LiveEpochs
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
 from src.vegas_mode.render_pipeline import RenderPipeline
@@ -86,6 +87,9 @@ class VegasModeCoordinator:
 
     # Class-level so coordinators built without __init__ (tests) have it.
     _last_live_check: float = float('-inf')
+    #: Whether live elements are on for this run (see _apply_live_state).
+    live_active: bool = False
+    _live_reason: Optional[str] = None
     # Set only while Vegas has changed the GIL switch interval; read with getattr.
     _saved_switch_interval: Optional[float]
 
@@ -123,6 +127,12 @@ class VegasModeCoordinator:
             display_manager,
             self.stream_manager
         )
+
+        # Live elements: one data epoch per plugin, shared with the adapter,
+        # which stamps every element it draws with it. Moved on by the plugin
+        # manager's update listener while Vegas runs. See _apply_live_state.
+        self.live_epochs = LiveEpochs()
+        self.plugin_adapter.live_epochs = self.live_epochs
 
         # State management
         self._is_active = False
@@ -293,6 +303,9 @@ class VegasModeCoordinator:
             self._fps_was_degraded = False
             self._apply_switch_interval()
             self._install_render_gate()
+            # Before the first background fetch below, which is the first
+            # that may ask a plugin for live elements.
+            self._apply_live_state()
 
         # Line up the next group immediately, so the first extension is already
         # warm rather than stalling the scroll to fetch it.
@@ -319,6 +332,7 @@ class VegasModeCoordinator:
 
         self._restore_switch_interval()
         self._remove_render_gate()
+        self._set_live(False, None)
 
         # Cleanup components
         self.render_pipeline.reset()
@@ -343,6 +357,57 @@ class VegasModeCoordinator:
         if saved is not None:
             sys.setswitchinterval(saved)
             self._saved_switch_interval = None
+
+    # -- live elements ------------------------------------------------------
+
+    def _live_blocker(self) -> Optional[str]:
+        """Why live elements must stay off for this run, or None if they may run."""
+        cfg = self.vegas_config
+        if not getattr(cfg, 'live_refresh', False):
+            return "switched off (vegas_scroll.live_refresh)"
+        if getattr(self.render_pipeline, 'sync_manager', None) is not None:
+            # The follower mirrors whole strips only; a patch would not reach it.
+            return "multi-display sync is configured"
+        if not cfg.continuous_scroll:
+            return "swap mode (vegas_scroll.continuous_scroll is off)"
+        if not cfg.offscreen_prefetch:
+            return "vegas_scroll.offscreen_prefetch is off"
+        if not hasattr(self.display_manager, 'offscreen'):
+            return "the display manager has no off-screen canvas"
+        return None
+
+    def _apply_live_state(self) -> None:
+        """Switch live elements on or off for this run, as the config allows."""
+        blocker = self._live_blocker()
+        self._set_live(blocker is None, blocker)
+
+    def _set_live(self, active: bool, reason: Optional[str]) -> None:
+        was, self.live_active = self.live_active, active
+        # getattr: tests build coordinators without every component.
+        adapter = getattr(self, 'plugin_adapter', None)
+        if adapter is not None:
+            adapter.live_elements_enabled = active
+        plugin_manager = getattr(self, 'plugin_manager', None)
+        add = getattr(plugin_manager, 'add_update_listener', None)
+        remove = getattr(plugin_manager, 'remove_update_listener', None)
+        if active and callable(add):
+            add(self._on_plugin_data_changed)
+        elif not active and callable(remove):
+            remove(self._on_plugin_data_changed)
+        if active != was or (reason is not None and reason != self._live_reason):
+            if active:
+                logger.info("Vegas live elements on")
+            elif reason is not None:
+                logger.info("Vegas live elements off: %s", reason)
+        self._live_reason = reason
+
+    def _on_plugin_data_changed(self, plugin_id: str) -> None:
+        """Update listener: a plugin's data may have changed.
+
+        Runs on the update worker with the plugin's lock held, so it only
+        moves the plugin's epoch on; whatever redraws happen later read it.
+        """
+        self.live_epochs.bump(plugin_id)
 
     def _install_render_gate(self) -> None:
         """Gate the prefetch thread on the render thread's swaps; see VegasModeConfig."""
@@ -774,6 +839,8 @@ class VegasModeCoordinator:
             # Cached segments were trimmed under the old settings, so drop them
             # or a changed trim/padding value would not visibly take effect.
             self.plugin_adapter.invalidate_cache()
+            if self._is_active:
+                self._apply_live_state()
 
             # Force refresh of stream manager to pick up plugin_order/buffer changes
             self.stream_manager._last_refresh = 0

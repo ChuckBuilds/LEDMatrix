@@ -5,6 +5,7 @@ Composes plugin content into one wide strip and renders the visible window of
 it each frame, using ScrollHelper for the numpy-backed scroll.
 """
 
+import itertools
 import logging
 import os
 import time
@@ -18,6 +19,7 @@ from src.common.scroll_config import solve_crisp
 from src.common.scroll_helper import ScrollHelper
 from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
 from src.vegas_mode.config import VegasModeConfig
+from src.vegas_mode.elements import ElementMeta, ElementRecord, meta_of
 from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
 
@@ -66,6 +68,15 @@ class RenderPipeline:
     # never mutated, so the class-level default is safe for pipelines built
     # without __init__ (tests).
     _static_markers: Tuple[Tuple[int, str], ...] = ()
+
+    # Live elements in the strip (see "live element records" below). Replaced,
+    # never mutated, like _static_markers, and class-level for the same reason.
+    _elements: Tuple[ElementRecord, ...] = ()
+    # Columns trimmed off the strip's front since it was composed.
+    _strip_origin: int = 0
+    # Bumped whenever a new strip replaces the old one (compose, reset), so
+    # anything computed against the old strip can tell.
+    _strip_gen: int = 0
 
     def __init__(
         self,
@@ -117,6 +128,7 @@ class RenderPipeline:
         # Render state
         self._cycle_complete = False
         self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
+        self._record_by_seq: Dict[int, ElementRecord] = {}
 
         # The sub-pixel path's pacing; the crisp path solves its own (frame_interval).
         self._frame_interval = config.get_frame_interval()
@@ -292,6 +304,8 @@ class RenderPipeline:
             # plugin boundaries only.
             grouped = self.stream_manager.get_grouped_content_for_composition()
             self._static_markers = ()
+            # A compose replaces the strip, and every record with it.
+            self._reset_records()
 
             if not grouped:
                 logger.warning("No content available for composition")
@@ -304,10 +318,13 @@ class RenderPipeline:
             # row". Without this, a per-row ticker such as the F1 scoreboard got
             # the full separator between each of its ~116 rows.
             blocks = []
+            layouts = []
             total_rows = 0
-            for plugin_id, images in grouped:
+            for _plugin_id, images in grouped:
                 total_rows += len(images)
-                blocks.append(self._join_plugin_rows(images))
+                block, layout = self._join_plugin_rows_with_layout(images)
+                blocks.append(block)
+                layouts.append(layout)
 
             # Create scrolling image via ScrollHelper.
             #
@@ -328,6 +345,10 @@ class RenderPipeline:
                 return False
 
             self._static_markers = self._markers_for_composition(blocks)
+            self._register_elements(
+                self._block_starts([b.width for b in blocks], 0, False,
+                                   lead=self.config.lead_in_width),
+                layouts)
             self._note_op('compose', self._strip_nbytes())
 
             # Track which plugins are in this scroll (get safely via buffer status)
@@ -633,12 +654,18 @@ class RenderPipeline:
                 return bool(deferred)
 
             blocks = []
+            layouts = []
             total_rows = 0
             for _plugin_id, images in grouped:
                 total_rows += len(images)
-                blocks.append(self._join_plugin_rows(images))
+                block, layout = self._join_plugin_rows_with_layout(images)
+                blocks.append(block)
+                layouts.append(layout)
 
             had_strip = self.scroll_helper.has_strip()
+            if not had_strip:
+                # append_content is about to build a strip from scratch.
+                self._reset_records()
             appended = self.scroll_helper.append_content(
                 content_items=blocks,
                 item_gap=self.config.separator_width,
@@ -648,16 +675,13 @@ class RenderPipeline:
                 return False
             moved = self._strip_nbytes()
 
+            # Where each block starts, laid out as append_content does: a
+            # separator before every block, or -- when there was no strip to
+            # extend -- as create_scrolling_image does with no lead-in.
+            starts = self._block_starts([b.width for b in blocks], strip_end, had_strip)
+            self._register_elements(starts, layouts)
             if statics:
-                # Where each block ends, laid out as append_content does: a
-                # separator before every block, or -- when there was no strip
-                # to extend -- as create_scrolling_image does with no lead-in.
-                gap = max(0, self.config.separator_width)
-                ends = []
-                x = strip_end if had_strip else -gap
-                for block in blocks:
-                    x += gap + block.width
-                    ends.append(x)
+                ends = [start + block.width for start, block in zip(starts, blocks)]
                 self._add_static_markers([
                     (ends[n - 1] if n > 0 else strip_end, pid) for n, pid in statics
                 ])
@@ -667,6 +691,7 @@ class RenderPipeline:
             if cut and self._static_markers:
                 self._static_markers = tuple(
                     (max(0, x - cut), pid) for x, pid in self._static_markers)
+            self._forget_trimmed_records(cut)
             # The append built the whole strip anew, and a trim copies what is
             # left of it again: both land in the frame after this one.
             self._note_op('extend', moved + (self._strip_nbytes() if cut else 0))
@@ -703,8 +728,22 @@ class RenderPipeline:
             ``intra_plugin_gap``. Returned unchanged when there is only one row,
             which is the common case and avoids a pointless copy.
         """
+        return self._join_plugin_rows_with_layout(images)[0]
+
+    def _join_plugin_rows_with_layout(
+        self, images: List[Image.Image]
+    ) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
+        """_join_plugin_rows, plus where each live element landed in the block.
+
+        Returns ``(block, layout)``, layout being ``(x, meta, width)`` for
+        every image tagged as a live element (src/vegas_mode/elements.py), x
+        measured from the block's left edge. The offsets were always computed
+        here; they used to be thrown away.
+        """
         if len(images) == 1:
-            return images[0]
+            meta = meta_of(images[0])
+            layout = [(0, meta, images[0].width)] if meta is not None else []
+            return images[0], layout
 
         floor = max(0, self.config.intra_plugin_gap)
         target = max(0, self.config.min_content_separation)
@@ -723,11 +762,100 @@ class RenderPipeline:
         height = max(img.height for img in images)
 
         block = Image.new('RGB', (width, height), (0, 0, 0))
+        layout: List[Tuple[int, ElementMeta, int]] = []
         x = 0
         for i, img in enumerate(images):
             block.paste(img, (x, 0))
+            meta = meta_of(img)
+            if meta is not None:
+                layout.append((x, meta, img.width))
             x += img.width + (gaps[i] if i < len(gaps) else 0)
-        return block
+        return block, layout
+
+    # -- live element records ---------------------------------------------
+    #
+    # Where each live element sits in the strip (ElementRecord), kept so a
+    # redraw can later be swapped into exactly its columns. Coordinates are
+    # absolute: a record's column in the strip is abs_x - _strip_origin, and
+    # a trim moves the origin instead of every record. Only the render thread
+    # changes any of this, at the points where it builds or trims the strip.
+
+    def _block_starts(self, widths: List[int], strip_end: int, had_strip: bool,
+                      lead: int = 0) -> List[int]:
+        """Strip columns where each of these blocks starts once placed.
+
+        Mirrors ScrollHelper exactly: append_content puts a separator before
+        every block after an existing strip; create_scrolling_image (a compose,
+        or an append with nothing to extend) puts ``lead`` columns first and a
+        separator between blocks.
+        """
+        gap = max(0, self.config.separator_width)
+        starts = []
+        if had_strip:
+            x = strip_end
+            for width in widths:
+                x += gap
+                starts.append(x)
+                x += width
+        else:
+            x = max(0, int(lead))
+            for width in widths:
+                starts.append(x)
+                x += width + gap
+        return starts
+
+    def _next_record_seq(self) -> int:
+        counter = self.__dict__.get('_record_counter')
+        if counter is None:
+            counter = self._record_counter = itertools.count(1)
+        return next(counter)
+
+    def _register_elements(
+        self, starts: List[int], layouts: List[List[Tuple[int, ElementMeta, int]]]
+    ) -> int:
+        """Record every live element in blocks just placed at ``starts``."""
+        new = []
+        for start, layout in zip(starts, layouts):
+            for offset, meta, width in layout:
+                new.append(ElementRecord(
+                    seq=self._next_record_seq(), plugin_id=meta.plugin_id,
+                    key=meta.key, abs_x=self._strip_origin + start + offset,
+                    width=width, epoch=meta.epoch, digest=meta.digest,
+                    refresh_hz=meta.refresh_hz))
+        if new:
+            self._elements = self._elements + tuple(new)
+            by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            for record in new:
+                by_seq[record.seq] = record
+        return len(new)
+
+    def _forget_trimmed_records(self, cut: int) -> None:
+        """The strip lost ``cut`` columns off its front: move the origin on."""
+        if cut <= 0:
+            return
+        self._strip_origin += cut
+        origin = self._strip_origin
+        records = self._elements
+        if not records:
+            return
+        kept = tuple(r for r in records if r.abs_x + r.width > origin)
+        if len(kept) != len(records):
+            by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            for record in records:
+                if record.abs_x + record.width <= origin:
+                    by_seq.pop(record.seq, None)
+            self._elements = kept
+
+    def _reset_records(self) -> None:
+        """A new strip: nothing recorded, coordinates from zero, a new generation."""
+        self._strip_gen += 1
+        self._strip_origin = 0
+        self._elements = ()
+        self._record_by_seq = {}
+
+    def live_records(self) -> Tuple[ElementRecord, ...]:
+        """The live elements in the strip, in the order they were placed."""
+        return self._elements
 
     def render_frame(self) -> bool:
         """
@@ -1059,6 +1187,7 @@ class RenderPipeline:
             self._prepared_group = None
             self._deferred_queue = []
         self._static_markers = ()
+        self._reset_records()
 
         self.display_manager.set_scrolling_state(False)
 
