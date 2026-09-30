@@ -9,7 +9,6 @@ from pathlib import Path
 
 from src.plugin_system.operation_queue import PluginOperationQueue
 from src.plugin_system.operation_types import OperationType
-from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 
 
@@ -22,12 +21,10 @@ class TestPluginOperationsIntegration(unittest.TestCase):
         
         # Initialize components
         self.operation_queue = PluginOperationQueue(max_history=100)
-        
-        self.state_manager = PluginStateManager(
-            state_file=str(self.temp_dir / "state.json"),
-            auto_save=True
-        )
-        
+
+        # No state manager: installed / enabled / version are read from disk
+        # and config.json, not from a plugin_state.json record.
+
         self.operation_history = OperationHistory(
             history_file=str(self.temp_dir / "history.json"),
             max_records=100
@@ -64,21 +61,14 @@ class TestPluginOperationsIntegration(unittest.TestCase):
             operation_id=operation_id
         )
         self.assertIsNotNone(history_id)
-        
-        # Update state manager
-        self.state_manager.set_plugin_installed(plugin_id, "1.0.0")
-        
-        # Verify state
-        state = self.state_manager.get_plugin_state(plugin_id)
-        self.assertIsNotNone(state)
-        self.assertEqual(state.version, "1.0.0")
-    
+
+        # Verify history
+        history = self.operation_history.get_history(plugin_id=plugin_id)
+        self.assertEqual([r.operation_type for r in history], ["install"])
+
     def test_update_operation_flow(self):
         """Test complete update operation flow."""
         plugin_id = "test-plugin"
-        
-        # First, mark as installed
-        self.state_manager.set_plugin_installed(plugin_id, "1.0.0")
         
         # Enqueue update operation
         operation_id = self.operation_queue.enqueue_operation(
@@ -97,19 +87,13 @@ class TestPluginOperationsIntegration(unittest.TestCase):
             operation_id=operation_id
         )
         
-        # Update state
-        self.state_manager.update_plugin_state(plugin_id, {"version": "2.0.0"})
-        
-        # Verify state
-        state = self.state_manager.get_plugin_state(plugin_id)
-        self.assertEqual(state.version, "2.0.0")
-    
+        # Verify history
+        history = self.operation_history.get_history(plugin_id=plugin_id)
+        self.assertEqual([r.operation_type for r in history], ["update"])
+
     def test_uninstall_operation_flow(self):
         """Test complete uninstall operation flow."""
         plugin_id = "test-plugin"
-        
-        # First, mark as installed
-        self.state_manager.set_plugin_installed(plugin_id, "1.0.0")
         
         # Enqueue uninstall operation
         operation_id = self.operation_queue.enqueue_operation(
@@ -127,13 +111,10 @@ class TestPluginOperationsIntegration(unittest.TestCase):
             operation_id=operation_id
         )
         
-        # Update state - remove plugin state
-        self.state_manager.remove_plugin_state(plugin_id)
-        
-        # Verify state
-        state = self.state_manager.get_plugin_state(plugin_id)
-        self.assertIsNone(state)
-    
+        # Verify history
+        history = self.operation_history.get_history(plugin_id=plugin_id)
+        self.assertEqual([r.operation_type for r in history], ["uninstall"])
+
     def test_operation_history_tracking(self):
         """Test that operations are tracked in history."""
         plugin_id = "test-plugin"

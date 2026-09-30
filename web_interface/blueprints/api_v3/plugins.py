@@ -47,10 +47,13 @@ def get_installed_plugins():
     """Get installed plugins.
 
     Metadata comes from the plugin catalog (manifests on disk), ``enabled``
-    from config.json. ``loaded``, ``state`` and ``error_info`` are always
-    null: they would describe the display process's plugin instances, and
-    the display does not publish which plugins it has loaded. What it does
-    publish -- health, metrics, errors -- is served by /plugins/health,
+    from config.json. ``loaded``, ``state``, ``error_info``,
+    ``loaded_version`` and ``loaded_at`` come from the runtime snapshot the
+    display publishes (src/plugin_system/plugin_runtime.py), and only while
+    that snapshot is live: when the display is stopped, hung or has never
+    published, they are null and ``data.runtime.status`` says why
+    (``stale``, ``stopped``, ``unknown``) instead of passing on old truth.
+    Health, metrics and errors are served by /plugins/health,
     /plugins/metrics and /errors.
     """
     if not api_v3.plugin_catalog or not api_v3.plugin_store_manager:
@@ -65,6 +68,8 @@ def get_installed_plugins():
 
     # Load config once before the loop (not per-plugin)
     full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+    # One read of the display's snapshot for the whole listing.
+    runtime = _pkg._plugin_runtime_view()
 
     def _build_plugin_entry(plugin_info):
         plugin_id = plugin_info.get('id')
@@ -154,10 +159,9 @@ def get_installed_plugins():
             'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
             'enabled': enabled,
             'verified': verified,
-            # Not published by the display process; see the docstring.
-            'loaded': None,
-            'state': None,
-            'error_info': None,
+            # loaded, state, error_info, loaded_version, loaded_at: the
+            # display's snapshot, null unless it is live (see the docstring).
+            **runtime.plugin(plugin_id),
             'last_updated': last_updated,
             'last_commit': last_commit,
             'last_commit_message': last_commit_message,
@@ -175,7 +179,8 @@ def get_installed_plugins():
     plugins = [r for r in results if r is not None]
     plugins.extend(_starlark_virtual_plugins())
 
-    return jsonify({'status': 'success', 'data': {'plugins': plugins}})
+    return jsonify({'status': 'success', 'data': {'plugins': plugins,
+                                                  'runtime': runtime.describe()}})
 
 
 @api_v3.route('/plugins/toggle', methods=['POST'])
@@ -246,10 +251,6 @@ def toggle_plugin():
                 f"Failed to save configuration: {error_msg}",
                 status_code=500
             )
-
-        # Update state manager if available
-        if api_v3.plugin_state_manager:
-            api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
 
         # Log operation
         if api_v3.operation_history:

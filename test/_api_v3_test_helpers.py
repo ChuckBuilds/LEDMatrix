@@ -22,7 +22,7 @@ from flask import Flask
 # whatever a previously-run test left on the singleton.
 API_V3_MANAGER_ATTRS = (
     'config_manager', 'plugin_catalog', 'plugin_store_manager',
-    'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+    'saved_repositories_manager', 'schema_manager',
     'operation_queue', 'operation_history', 'cache_manager',
     'health_tracker', 'resource_monitor',
 )

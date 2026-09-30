@@ -88,7 +88,6 @@ _WIFI_REL = Path("config/wifi_config.json")
 _YTM_REL = Path("config/ytm_auth.json")
 _FONTS_REL = Path("assets/fonts")
 _PLUGIN_UPLOADS_REL = Path("assets/plugins")
-_STATE_REL = Path("data/plugin_state.json")
 
 #: The sections that are one file each: (section name, path, the
 #: RestoreOptions flag that restores it). create, preview, validate and
@@ -179,20 +178,27 @@ def _build_manifest(contents: List[str]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _plugins_directory(project_root: Path) -> Path:
-    """The plugin install directory: ``plugin_system.plugins_directory`` from
-    config/config.json (relative to ``project_root`` unless absolute), or
-    ``plugin-repos`` when the config does not say or cannot be read."""
-    configured: Any = None
+def _read_config(project_root: Path) -> Dict[str, Any]:
+    """config/config.json as a dict; empty when missing or unreadable."""
     try:
         with (project_root / _CONFIG_REL).open("r", encoding="utf-8") as f:
             config = json.load(f)
-        if isinstance(config, dict):
-            plugin_system = config.get("plugin_system")
-            if isinstance(plugin_system, dict):
-                configured = plugin_system.get("plugins_directory")
     except (OSError, json.JSONDecodeError):
-        pass
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _plugins_directory(project_root: Path,
+                       config: Optional[Dict[str, Any]] = None) -> Path:
+    """The plugin install directory: ``plugin_system.plugins_directory`` from
+    config/config.json (relative to ``project_root`` unless absolute), or
+    ``plugin-repos`` when the config does not say or cannot be read."""
+    if config is None:
+        config = _read_config(project_root)
+    configured: Any = None
+    plugin_system = config.get("plugin_system")
+    if isinstance(plugin_system, dict):
+        configured = plugin_system.get("plugins_directory")
     if not isinstance(configured, str) or not configured.strip():
         configured = "plugin-repos"
     path = Path(configured)
@@ -202,33 +208,23 @@ def _plugins_directory(project_root: Path) -> Path:
 def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
     """
     Return a list of currently-installed plugins suitable for the backup
-    manifest. Each entry has ``plugin_id`` and ``version``.
+    manifest. Each entry has ``plugin_id``, ``version`` and ``enabled``.
 
-    Reads ``data/plugin_state.json`` if present, then adds any plugin it
-    does not list from the ``manifest.json`` files in the configured plugin
-    directory (see :func:`_plugins_directory`).
+    The plugins are the ``manifest.json`` files in the configured plugin
+    directory (see :func:`_plugins_directory`), with the manifest's version;
+    ``enabled`` is config.json's flag by the display's rule (a missing flag
+    is disabled). A restore reinstalls every listed plugin and takes enabled
+    state from the restored config.json, so ``enabled`` is informational.
+
+    ``data/plugin_state.json`` is not read: it only ever repeated config's
+    enabled flags and the manifests' versions, and is retired (nothing
+    writes it any more). An old backup that listed a plugin only from that
+    file still restores it, since restore reads ``plugins.json`` as written.
     """
     plugins: Dict[str, Dict[str, Any]] = {}
+    config = _read_config(project_root)
 
-    state_file = project_root / _STATE_REL
-    if state_file.exists():
-        try:
-            with state_file.open("r", encoding="utf-8") as f:
-                state = json.load(f)
-            raw_plugins = state.get("states", {}) if isinstance(state, dict) else {}
-            if isinstance(raw_plugins, dict):
-                for plugin_id, info in raw_plugins.items():
-                    if not isinstance(info, dict):
-                        continue
-                    plugins[plugin_id] = {
-                        "plugin_id": plugin_id,
-                        "version": info.get("version") or "",
-                        "enabled": bool(info.get("enabled", True)),
-                    }
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning("Could not read plugin_state.json: %s", e)
-
-    plugins_root = _plugins_directory(project_root)
+    plugins_root = _plugins_directory(project_root, config)
     if plugins_root.exists():
         for entry in sorted(plugins_root.iterdir()):
             if not entry.is_dir():
@@ -247,10 +243,11 @@ def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
                 continue
             plugin_id = data.get("id") or entry.name
             if plugin_id not in plugins:
+                section = config.get(plugin_id)
                 plugins[plugin_id] = {
                     "plugin_id": plugin_id,
                     "version": data.get("version", ""),
-                    "enabled": True,
+                    "enabled": isinstance(section, dict) and bool(section.get("enabled", False)),
                 }
 
     return sorted(plugins.values(), key=lambda p: p["plugin_id"])

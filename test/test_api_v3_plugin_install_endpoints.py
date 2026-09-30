@@ -50,7 +50,6 @@ def side_effects(module):
     return {
         "schema_invalidated": api.schema_manager.invalidate_cache.call_args_list,
         "discovered": api.plugin_catalog.discover_plugins.call_count,
-        "state_set": api.plugin_state_manager.set_plugin_installed.call_args_list,
         "history": api.operation_history.record_operation.call_args_list,
     }
 
@@ -87,7 +86,6 @@ class TestInstallDirectPath:
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == [(("clock",), {})]
         assert effects["discovered"] == 1
-        assert effects["state_set"] == [(("clock",), {})]
         assert effects["history"][0].kwargs["status"] == "success"
 
     def test_branch_forwarded_to_the_manager(self, api_v3_client, api_v3_module):
@@ -134,7 +132,6 @@ class TestInstallDirectPath:
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == []
         assert effects["discovered"] == 0
-        assert effects["state_set"] == []
 
 
 class TestInstallQueuedPath:
@@ -157,7 +154,6 @@ class TestInstallQueuedPath:
         effects = side_effects(api_v3_module)
         assert effects["schema_invalidated"] == [(("clock",), {})]
         assert effects["discovered"] == 1
-        assert effects["state_set"] == [(("clock",), {})]
         assert effects["history"][0].kwargs["status"] == "success"
 
     def test_callback_reports_success(self, api_v3_client, api_v3_module, queued):
@@ -199,7 +195,6 @@ class TestInstallPathsAgree:
         # Reset and re-run through the queue.
         for mock in (api_v3_module.api_v3.schema_manager,
                      api_v3_module.api_v3.plugin_catalog,
-                     api_v3_module.api_v3.plugin_state_manager,
                      api_v3_module.api_v3.operation_history):
             mock.reset_mock()
         queue = MagicMock()
@@ -210,7 +205,6 @@ class TestInstallPathsAgree:
 
         assert direct["schema_invalidated"] == queued["schema_invalidated"]
         assert direct["discovered"] == queued["discovered"]
-        assert direct["state_set"] == queued["state_set"]
         assert (direct["history"][0].kwargs["status"]
                 == queued["history"][0].kwargs["status"])
         assert (direct["history"][0].kwargs["details"]

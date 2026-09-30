@@ -39,7 +39,6 @@ from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
 from src.plugin_system.schema_manager import SchemaManager
 from src.plugin_system.operation_queue import PluginOperationQueue
-from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 
 _JOURNALCTL = shutil.which('journalctl')
@@ -158,13 +157,10 @@ plugin_catalog = PluginCatalog(
 # Initialize operation queue for plugin operations
 operation_queue = PluginOperationQueue(max_history=500)
 
-# Initialize plugin state manager
-# Use lazy_load=True to defer file loading until first use (improves startup time)
-plugin_state_manager = PluginStateManager(
-    state_file=str(project_root / "data" / "plugin_state.json"),
-    auto_save=True,
-    lazy_load=True
-)
+# No plugin state file: data/plugin_state.json is retired. Desired state is
+# config.json plus the plugins on disk, observed state is the runtime
+# snapshot the display publishes (src/plugin_system/plugin_runtime.py). An
+# existing file is left where it is, unread; see docs/ARCHITECTURE.md.
 
 # Initialize operation history
 # Use lazy_load=True to defer file loading until first use (improves startup time)
@@ -194,7 +190,6 @@ api_v3.plugin_store_manager = plugin_store_manager
 api_v3.saved_repositories_manager = saved_repositories_manager
 api_v3.schema_manager = schema_manager
 api_v3.operation_queue = operation_queue
-api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
@@ -965,12 +960,12 @@ def _run_startup_reconciliation() -> None:
 
     try:
         from src.plugin_system.state_reconciliation import StateReconciliation
+        from src.plugin_system.plugin_runtime import read_plugin_runtime
         reconciler = StateReconciliation(
-            state_manager=plugin_state_manager,
             config_manager=config_manager,
-            plugin_manager=plugin_catalog,
             plugins_dir=plugins_dir,
-            store_manager=plugin_store_manager
+            store_manager=plugin_store_manager,
+            runtime_source=lambda: read_plugin_runtime(api_v3.cache_manager),
         )
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:

@@ -509,9 +509,11 @@ List all installed plugins with their status and metadata.
         "tags": ["sports", "football", "nfl"],
         "enabled": true,
         "verified": true,
-        "loaded": null,
-        "state": null,
+        "loaded": true,
+        "state": "enabled",
         "error_info": null,
+        "loaded_version": "1.2.3",
+        "loaded_at": 1790000000.0,
         "last_updated": "2025-01-15T10:30:00Z",
         "last_commit": "abc1234",
         "last_commit_message": "feat: Add live game updates",
@@ -522,17 +524,37 @@ List all installed plugins with their status and metadata.
         "vegas_participation": "scroll",
         "vegas_participation_source": "manifest"
       }
-    ]
+    ],
+    "runtime": {
+      "status": "live",
+      "published_at": 1790000030.0,
+      "age_seconds": 12.4,
+      "stale_after": 180.0
+    }
   }
 }
 ```
 
 Metadata comes from each plugin's files on disk; `enabled` is the plugin's
 `enabled` flag in `config.json` (missing means disabled, as the display
-reads it). `loaded`, `state` and `error_info` are always `null`: the web
-process runs no plugin code, and the display does not publish which plugins
-it has loaded. What the display does publish is at
-[`/plugins/health`](#get-plugin-health), `/plugins/metrics` and `/errors/*`.
+reads it). `vegas_mode` is the plugin's configured `vegas_mode`, or `null`.
+
+`loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` come from
+the runtime snapshot the display publishes (the web process runs no plugin
+code). `state` is the display's lifecycle state (`loaded` while loading,
+`enabled`, `disabled`, `error`, `unloaded`); `error_info` is `null` or
+`{"type", "message", "at", "recoverable"}`, with the message redacted and at
+most 200 characters (the full error is at `/errors/*`). `loaded_version` is
+the version the display loaded, which differs from `version` after an update
+until the display restarts. A plugin a live snapshot does not list is
+`loaded: false`, `state: "unloaded"`.
+
+`runtime.status` says whether to believe them: `live` (fresh snapshot from
+a running display), `stale` (not refreshed within `stale_after` seconds: the
+display is hung or died), `stopped` (the display shut down) or `unknown`
+(nothing published yet). Unless it is `live`, every one of those fields is
+`null`. Health and metrics are at [`/plugins/health`](#get-plugin-health)
+and `/plugins/metrics`.
 
 `vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
 `"pause"` or `"exclude"` (see
@@ -545,8 +567,7 @@ the plugin's code -- a `get_vegas_participation()` override or the legacy
 Vegas hooks -- which the web process never runs, so `vegas_participation`
 is `null` and the source is `"runtime"`. A plugin that overrides
 `get_vegas_participation()` decides at run time and can differ from its
-manifest's declaration. `vegas_mode` is the plugin's configured
-`vegas_mode`, or `null`; `vegas_content_type` is always `null`.
+manifest's declaration. `vegas_content_type` is always `null`.
 
 ### Get Plugin Configuration
 
@@ -990,8 +1011,11 @@ copy, not the display service's in-memory state.
 
 **GET** `/api/v3/plugins/state`
 
-Get the state manager's record for every plugin, keyed by plugin id. Pass
-`?plugin_id=<id>` for one plugin (`data` is then that record).
+Every plugin that is installed or configured, keyed by plugin id: desired
+state from `config.json` and the plugins directory, observed state from the
+display's runtime snapshot. Built per request; there is no state file.
+Pass `?plugin_id=<id>` for one plugin (`data` is then that record; 404 if
+it is neither installed nor configured).
 
 **Response**:
 ```json
@@ -1000,23 +1024,41 @@ Get the state manager's record for every plugin, keyed by plugin id. Pass
   "data": {
     "football-scoreboard": {
       "plugin_id": "football-scoreboard",
-      "status": "loaded",
+      "status": "enabled",
+      "installed": true,
+      "in_config": true,
       "enabled": true,
       "version": "1.2.3",
+      "loaded": true,
+      "state": "enabled",
+      "error_info": null,
+      "loaded_version": "1.2.3",
+      "loaded_at": 1790000000.0,
       "installed_at": "2025-01-15T10:30:00",
-      "last_updated": "2025-01-15T10:30:00",
-      "config_version": 1,
-      "metadata": {}
+      "last_updated": "2025-01-15T10:30:00"
     }
-  }
+  },
+  "runtime": {"status": "live", "published_at": 1790000030.0, "age_seconds": 12.4, "stale_after": 180.0}
 }
 ```
+
+`status` is `enabled` / `disabled` for an installed plugin, `unknown` for
+one that is configured but not installed, and `error` when the display
+reports its state as `error`. `installed_at` and `last_updated` are the
+newest successful install, and install or update, in the operation history
+(`null` when it has none). The runtime fields follow the same rule as
+[`/plugins/installed`](#get-installed-plugins): `null` unless
+`runtime.status` is `live`.
 
 ### Reconcile Plugin State
 
 **POST** `/api/v3/plugins/state/reconcile`
 
-Reconcile plugin state across config, disk and the state manager.
+Reconcile desired state (`config.json` plus the plugins on disk) with the
+display's runtime snapshot. Desired-state gaps are fixed (a plugin on disk
+with no config section is added disabled); observed-state gaps -- enabled
+but not loaded, loaded at an older version than is installed -- are
+reported with `fix_action: "no_action"`.
 
 **Request Body** (optional):
 ```json

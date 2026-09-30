@@ -86,7 +86,6 @@ def env(tmp_path):
     api_v3.plugin_store_manager = MagicMock()
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.operation_queue = MagicMock()
-    api_v3.plugin_state_manager = MagicMock()
     api_v3.operation_history = MagicMock()
     api_v3.cache_manager = MagicMock()
 

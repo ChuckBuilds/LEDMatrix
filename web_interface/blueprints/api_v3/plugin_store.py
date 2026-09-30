@@ -8,7 +8,7 @@ from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, Path, _do_transactional_uninstall,
     _non_plugin_id_error, _get_plugin_version, _plugin_directory,
     _plugin_enabled_in_config, _store_restart_fields, api_v3,
-    datetime, error_response, exception_error_response, json, jsonify, logger,
+    error_response, exception_error_response, json, jsonify, logger,
     request, success_response, validate_request_json,
 )
 from src.common.path_safety import resolve_under, safe_path_component
@@ -236,12 +236,8 @@ def update_plugin():
             if api_v3.plugin_catalog:
                 api_v3.plugin_catalog.discover_plugins()
 
-            # Update state and history
-            if api_v3.plugin_state_manager:
-                api_v3.plugin_state_manager.update_plugin_state(
-                    plugin_id,
-                    {'last_updated': datetime.now()}
-                )
+            # Record in history (the only record of when it was updated;
+            # the version is the manifest on disk).
             if api_v3.operation_history:
                 version = _get_plugin_version(plugin_id)
                 api_v3.operation_history.record_operation(
@@ -467,10 +463,6 @@ def install_plugin():
                 if api_v3.plugin_catalog:
                     api_v3.plugin_catalog.discover_plugins()
 
-                # Update state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
-
                 # Record in history
                 if api_v3.operation_history:
                     version = _get_plugin_version(plugin_id)
@@ -529,8 +521,6 @@ def install_plugin():
                 api_v3.schema_manager.invalidate_cache(plugin_id)
             if api_v3.plugin_catalog:
                 api_v3.plugin_catalog.discover_plugins()
-            if api_v3.plugin_state_manager:
-                api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
             if api_v3.operation_history:
                 version = _get_plugin_version(plugin_id)
                 api_v3.operation_history.record_operation(

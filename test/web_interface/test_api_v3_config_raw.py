@@ -44,7 +44,7 @@ def env(tmp_path):
 
     _SENTINEL = object()
     attrs = ('config_manager', 'plugin_catalog', 'plugin_store_manager',
-             'plugin_state_manager', 'saved_repositories_manager',
+             'saved_repositories_manager',
              'schema_manager', 'operation_queue', 'operation_history',
              'cache_manager')
     originals = {name: getattr(api_v3, name, _SENTINEL) for name in attrs}

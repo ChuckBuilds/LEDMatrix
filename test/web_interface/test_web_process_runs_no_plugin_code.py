@@ -194,8 +194,11 @@ class TestTheWebProcessNeverRunsAPlugin:
         entry = next(p for p in body["data"]["plugins"] if p["id"] == PLUGIN_ID)
         assert entry["version"] == "1.0.0"
         assert entry["enabled"] is True
-        # Not published by the display, so not invented here.
+        # No display has published a runtime snapshot here, so these are
+        # unknown rather than invented (test_plugin_runtime_snapshot.py
+        # covers a live one).
         assert entry["loaded"] is None and entry["state"] is None
+        assert body["data"]["runtime"]["status"] == "unknown"
         # Nothing in its files declares a participation; the display derives
         # one from its hooks, which are not called here.
         assert (entry["vegas_participation"], entry["vegas_participation_source"]) == (

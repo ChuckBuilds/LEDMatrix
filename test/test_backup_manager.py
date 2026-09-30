@@ -72,7 +72,8 @@ def _make_project(root: Path) -> Path:
         encoding="utf-8",
     )
 
-    # plugin_state.json
+    # A plugin_state.json left behind by an older release. Retired: the
+    # listing must ignore it (see test_list_installed_plugins).
     (root / "data").mkdir()
     (root / "data" / "plugin_state.json").write_text(
         json.dumps(
@@ -130,12 +131,82 @@ def test_bundled_fonts_matches_repo() -> None:
 
 
 def test_list_installed_plugins(project: Path) -> None:
+    """Installed = a manifest on disk; enabled = config.json. The retired
+    plugin_state.json is not read: its "other-plugin" is not installed and
+    not configured, so a restore must not install it."""
     plugins = list_installed_plugins(project)
-    ids = [p["plugin_id"] for p in plugins]
-    assert "my-plugin" in ids
-    assert "other-plugin" in ids
-    my = next(p for p in plugins if p["plugin_id"] == "my-plugin")
-    assert my["version"] == "1.2.3"
+    assert plugins == [{"plugin_id": "my-plugin", "version": "1.2.3", "enabled": True}]
+
+
+def test_list_installed_plugins_reads_enabled_from_config(project: Path) -> None:
+    """The display's rule: only "enabled": true is enabled; a plugin with no
+    config section, or no flag, is disabled."""
+    for pid in ("quiet-plugin", "unconfigured-plugin"):
+        d = project / "plugin-repos" / pid
+        d.mkdir()
+        (d / "manifest.json").write_text(json.dumps({"id": pid, "version": "2.0.0"}),
+                                         encoding="utf-8")
+    config_path = project / "config" / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["quiet-plugin"] = {"favorites": []}
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    by_id = {p["plugin_id"]: p for p in list_installed_plugins(project)}
+
+    assert by_id["my-plugin"]["enabled"] is True
+    assert by_id["quiet-plugin"]["enabled"] is False
+    assert by_id["unconfigured-plugin"]["enabled"] is False
+    assert by_id["quiet-plugin"]["version"] == "2.0.0"
+
+
+def test_list_installed_plugins_without_a_state_file(project: Path) -> None:
+    """Nothing depends on plugin_state.json being there."""
+    (project / "data" / "plugin_state.json").unlink()
+    assert [p["plugin_id"] for p in list_installed_plugins(project)] == ["my-plugin"]
+
+
+def test_backup_restore_round_trip_ignores_the_retired_state_file(
+        project: Path, empty_project: Path, tmp_path: Path) -> None:
+    """A backup made on a device that still has plugin_state.json restores
+    the installed plugins and their enabled state (from config.json), and
+    carries no state file of its own."""
+    zip_path = create_backup(project, output_dir=tmp_path / "exports")
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(zf.namelist())
+        listed = json.loads(zf.read("plugins.json"))
+    assert not any("plugin_state" in n for n in names)
+    assert listed == [{"plugin_id": "my-plugin", "version": "1.2.3", "enabled": True}]
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions())
+
+    assert result.success, result.errors
+    assert result.plugins_to_install == [{"plugin_id": "my-plugin", "version": "1.2.3"}]
+    restored = json.loads((empty_project / "config" / "config.json").read_text())
+    assert restored["my-plugin"]["enabled"] is True
+    assert not (empty_project / "data" / "plugin_state.json").exists()
+
+
+def test_restore_of_a_backup_listing_a_state_file_only_plugin(
+        project: Path, empty_project: Path, tmp_path: Path) -> None:
+    """A backup written by an older release could list a plugin known only
+    to plugin_state.json. Restore reads plugins.json as written, so such a
+    backup still restores everything it lists."""
+    zip_path = tmp_path / "old.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({
+            "schema_version": 1, "created_at": "2026-01-01T00:00:00Z",
+            "ledmatrix_version": "3.6.0", "hostname": "old",
+            "contents": ["config", "plugins"]}))
+        zf.writestr("config/config.json", json.dumps({"my-plugin": {"enabled": True}}))
+        zf.writestr("plugins.json", json.dumps([
+            {"plugin_id": "my-plugin", "version": "1.2.3", "enabled": True},
+            {"plugin_id": "other-plugin", "version": "0.1.0", "enabled": False},
+        ]))
+
+    result = restore_backup(zip_path, empty_project, RestoreOptions())
+
+    assert result.success, result.errors
+    assert {p["plugin_id"] for p in result.plugins_to_install} == {"my-plugin", "other-plugin"}
 
 
 def test_preview_backup_contents(project: Path) -> None:

@@ -33,7 +33,7 @@ from test._api_v3_test_helpers import mock_plugin_catalog
 
 _API_V3_MOCKED_ATTRS = (
     'config_manager', 'plugin_catalog', 'plugin_store_manager',
-    'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+    'saved_repositories_manager', 'schema_manager',
     'operation_queue', 'operation_history', 'cache_manager',
     'health_tracker', 'resource_monitor',
 )
@@ -64,8 +64,6 @@ def _make_client():
     api_v3.plugin_catalog = mock_plugin_catalog()
     api_v3.plugin_catalog.plugins_dir = "/tmp"
     api_v3.plugin_store_manager = MagicMock()
-    api_v3.plugin_state_manager = MagicMock()
-    api_v3.plugin_state_manager.get_all_states.return_value = {}
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.schema_manager = MagicMock()
     api_v3.operation_queue = None  # force the direct (non-queue) path

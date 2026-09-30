@@ -97,14 +97,8 @@ def _reconcile(tmp_path, config, installed=(), secrets=None):
         _install(plugins_dir, pid)
     secrets_path = tmp_path / "config_secrets.json"
     secrets_path.write_text(json.dumps(secrets or {}), encoding="utf-8")
-    state_manager = Mock()
-    state_manager.get_all_states.return_value = {}
-    plugin_manager = Mock()
-    plugin_manager.plugin_manifests = {}
     reconciler = StateReconciliation(
-        state_manager=state_manager,
         config_manager=_ConfigManager(config, str(secrets_path)),
-        plugin_manager=plugin_manager,
         plugins_dir=plugins_dir,
     )
     return reconciler, reconciler.reconcile_state()

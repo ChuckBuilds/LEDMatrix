@@ -43,7 +43,6 @@ def store(tmp_path):
     with patch.object(api_v3, 'plugin_store_manager', sm, create=True), \
          patch.object(api_v3, 'plugin_catalog', None, create=True), \
          patch.object(api_v3, 'schema_manager', None, create=True), \
-         patch.object(api_v3, 'plugin_state_manager', None, create=True), \
          patch.object(api_v3, 'operation_history', None, create=True):
         yield sm
 

@@ -720,8 +720,6 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     # --- Step 4: finish ---
     if api_v3.schema_manager:
         api_v3.schema_manager.invalidate_cache(plugin_id)
-    if api_v3.plugin_state_manager:
-        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
     # Persistently record the uninstall so a later core `git pull` update
     # cannot resurrect a built-in plugin (committed under plugin-repos/) that
     # the user removed. Best-effort: never fail the uninstall over this.
@@ -730,6 +728,17 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     except Exception as record_err:
         logger.warning("Could not record uninstall for %s: %s", plugin_id, record_err)
     return True, None
+def _plugin_runtime_view():
+    """What the display publishes about its plugins (loaded, lifecycle
+    state, last error, version loaded), judged for staleness.
+
+    Only a ``live`` view reports those facts; a stale, stopped or missing
+    snapshot answers None for them (see src/plugin_system/plugin_runtime.py).
+    """
+    from src.plugin_system.plugin_runtime import read_plugin_runtime
+    return read_plugin_runtime(getattr(api_v3, 'cache_manager', None))
+
+
 def _plugin_enabled_in_config(plugin_id: str) -> bool:
     """Whether config.json enables ``plugin_id``, by the display's rule.
 
