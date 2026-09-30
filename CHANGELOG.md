@@ -19,6 +19,30 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Security
+
+- The web interface refuses state-changing requests (`POST`, `PUT`, `PATCH`,
+  `DELETE`) sent by another website's page. Any site a LAN user visited could
+  make their browser submit a plain HTML form to `http://<pi>:5000` -- CORS
+  does not stop such a request, only hides its answer -- and
+  `/api/v3/system/action` accepted form bodies, so that page could reboot or
+  power off the Pi, pull code, or reach any other mutating route. A request
+  whose `Origin` (or, without one, `Referer`) is not the host it was sent to,
+  or is `null`, now gets 403 `CROSS_SITE_REQUEST`
+  (`web_interface/origin_guard.py`). `/api/v3/system/action` also refuses a
+  form-encoded or `text/plain` body (415) unless it carries HTMX's
+  `HX-Request` header; every caller in the interface already sends JSON.
+- **Behaviour change for API scripts:** clients that send no `Origin` or
+  `Referer` -- curl, Python `requests`, Home Assistant, the MQTT bridge --
+  are unaffected. A browser page served from a *different* origin (a
+  dashboard or userscript on another host) can no longer call the mutating
+  API; call it server-side instead. Anyone posting a form body to
+  `system/action` must switch to JSON. Behind a reverse proxy, forward the
+  original `Host`, port included (`proxy_set_header Host $http_host;`;
+  nginx's `$host` drops the port); `X-Forwarded-Host` is not trusted. A
+  TLS-terminating proxy needs nothing more: a portless `Host` matches an
+  `https://` page.
+
 ### Fixes
 
 - On-demand no longer restarts a running display. `POST

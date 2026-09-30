@@ -63,6 +63,14 @@ are intentional rather than vulnerabilities:
 
 - **No web UI authentication.** The web interface assumes the network
   it's running on is trusted. Don't expose port 5000 to the internet.
+  "Trusted network" does not mean "trusted websites", though: any page
+  a LAN user opens could make their browser POST to the Pi. So the
+  interface refuses a `POST`/`PUT`/`PATCH`/`DELETE` whose `Origin` (or
+  `Referer`) header names another site (`web_interface/origin_guard.py`),
+  and `/api/v3/system/action` only accepts JSON or HTMX requests. Tools
+  that send neither header (curl, Home Assistant, the MQTT bridge) are
+  unaffected. Not covered: DNS rebinding, and anyone who can reach the
+  port directly.
 - **Plugins run unsandboxed.** Installed plugins execute in the same
   Python process as the display loop with full file-system and
   network access. Review plugin code (especially third-party plugins

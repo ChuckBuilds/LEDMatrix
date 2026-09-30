@@ -18,6 +18,17 @@ top level instead of under `data` (install-from-url, registry-from-url, the
 auth endpoints, upload endpoints, `system/git-info`, `system/check-update`),
 the entry below says so.
 
+**Cross-site requests are refused.** A `POST`, `PUT`, `PATCH` or `DELETE`
+carrying an `Origin` header (or, without one, a `Referer`) that is not the
+host the request was sent to gets `403` with `"error_code":
+"CROSS_SITE_REQUEST"`; so does `Origin: null`. This stops other websites from
+driving the Pi through a LAN user's browser. Scripts, curl, Home Assistant and
+the MQTT bridge send neither header and are unaffected. A browser page on
+another origin (a dashboard you host elsewhere, say) can no longer call the
+API; call it server-side instead. Behind a reverse proxy, pass the original
+`Host` through, port included (nginx: `proxy_set_header Host $http_host;`;
+`$host` drops the port) -- `X-Forwarded-Host` is not read.
+
 ## Table of Contents
 
 - [Configuration](#configuration)
@@ -1388,7 +1399,10 @@ Fetches `origin` and lists branches to switch to: `current`, `upstream`,
 
 **POST** `/api/v3/system/action`
 
-Execute system-level actions. JSON or form data.
+Execute system-level actions. Send JSON (`Content-Type: application/json`).
+A form-encoded or `text/plain` body is accepted only with an `HX-Request`
+header (HTMX sends it; a cross-site HTML form cannot) and is otherwise
+refused with `415`.
 
 **Request Body**:
 ```json

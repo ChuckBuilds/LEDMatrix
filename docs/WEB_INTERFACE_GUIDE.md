@@ -412,6 +412,16 @@ The API blueprint (`web_interface/blueprints/api_v3/`) is registered at
 - No authentication is currently implemented
 - Recommended for trusted networks only
 
+**Other websites:**
+- A web page you open elsewhere could otherwise make your browser send
+  commands to the Pi (reboot, update, config changes). The interface refuses
+  any change request whose `Origin`/`Referer` header names a different site
+  (403 `CROSS_SITE_REQUEST`), so use the interface from its own address.
+- Scripts, curl, Home Assistant and the MQTT bridge send no such header and
+  keep working. Behind a reverse proxy, forward the original `Host` header
+  with its port (nginx: `proxy_set_header Host $http_host;` -- `$host`
+  drops the port).
+
 **Best Practices:**
 1. Run on a private network (not exposed to internet)
 2. Use a firewall to restrict access if needed

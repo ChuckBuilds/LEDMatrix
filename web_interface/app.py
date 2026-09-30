@@ -55,10 +55,17 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# No CSRF protection: the UI is meant for the local network, where anyone who
-# can forge a request can also send it directly, and neither the HTMX forms
-# nor the fetch() calls carry a token. Exposing the UI beyond the LAN needs
-# CSRF tokens added to both first.
+# Cross-site request forgery: the UI has no login, and being "only on the LAN"
+# does not keep other websites out. Any page a LAN user opens can make their
+# browser POST to this server -- a plain HTML form is not blocked by CORS -- so
+# a hostile site could reboot the Pi, pull code or rewrite the config through
+# the user's browser. web_interface/origin_guard.py (registered below) refuses
+# POST/PUT/PATCH/DELETE whose Origin (or, failing that, Referer) is not this
+# server's own host; requests with neither header (curl, Home Assistant, the
+# MQTT bridge) are not from a browser and pass. There are no CSRF tokens:
+# neither the HTMX forms nor the fetch() calls carry one. Anyone who can reach
+# the port directly can still use the API, so exposing the UI beyond a trusted
+# network still needs real authentication.
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -401,6 +408,11 @@ def success_txt():
 # Request timing and logging (routine reads at DEBUG; see request_logging)
 from web_interface import request_logging
 request_logging.init_app(app)
+
+# Refuse state-changing requests sent by another website's page (see the
+# cross-site note near the top of this file).
+from web_interface import origin_guard
+origin_guard.init_app(app)
 
 # Global error handlers
 @app.errorhandler(404)
