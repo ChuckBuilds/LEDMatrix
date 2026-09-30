@@ -177,3 +177,246 @@
         </div>
     </form>
 </div>
+
+{% if web_login %}
+<!-- Web login (optional; web_interface/auth.py). Off until a password is set. -->
+<div id="web-login-settings" class="bg-white rounded-lg shadow p-6 mt-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900"><i class="fas fa-lock mr-2" aria-hidden="true"></i>Security</h2>
+        <p class="mt-1 text-sm text-gray-600">
+            {% if web_login.enabled %}
+            <span class="text-green-700 font-semibold">Login is on.</span>
+            Browsers on your network need the password; integrations use an API token.
+            {% else %}
+            Login is off: anyone on your network can open this page. Set a password to require one.
+            {% endif %}
+        </p>
+    </div>
+
+    <div class="space-y-6">
+        <div class="form-group" id="setting-general-web_login" data-setting-key="web_auth.password">
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">
+                {# A <label> so the settings search indexes it; no `for`, so
+                   the password inputs keep their own labels. #}
+                <label>{% if web_login.enabled %}Change the web interface password{% else %}Web interface password{% endif %}{{ ui.help_tip('Optional. With a password set, every page and API call needs a login or an API token.\nAlways allowed without one: this Pi itself (localhost), and the Wi-Fi setup page while the Pi is in access-point mode.\nForgot it? On the Pi run: sudo python3 ~/LEDMatrix/scripts/reset_web_password.py', 'Web interface password') }}</label>
+            </h3>
+            <form class="space-y-4" onsubmit="window.webLogin.setPassword(this); return false;" autocomplete="off">
+                {% if web_login.enabled %}
+                <div>
+                    <label for="web-login-current" class="block text-sm font-medium text-gray-700">Current password</label>
+                    <input type="password" id="web-login-current" name="current_password" required
+                           autocomplete="current-password" class="form-control mt-1">
+                </div>
+                {% endif %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="web-login-new" class="block text-sm font-medium text-gray-700">New password</label>
+                        <input type="password" id="web-login-new" name="new_password" required
+                               minlength="{{ web_login.min_length }}" autocomplete="new-password" class="form-control mt-1">
+                    </div>
+                    <div>
+                        <label for="web-login-confirm" class="block text-sm font-medium text-gray-700">Type it again</label>
+                        <input type="password" id="web-login-confirm" name="confirm_password" required
+                               minlength="{{ web_login.min_length }}" autocomplete="new-password" class="form-control mt-1">
+                    </div>
+                </div>
+                <p class="text-sm text-gray-600">
+                    At least {{ web_login.min_length }} characters.
+                    {% if not web_login.enabled %}Write it down: if you lose it, you need SSH access to the Pi (or a browser on the Pi) to turn login off again.{% endif %}
+                </p>
+                <div class="flex justify-end">
+                    <button type="submit" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                        <i class="fas fa-key mr-2" aria-hidden="true"></i>{% if web_login.enabled %}Change password{% else %}Set password and turn login on{% endif %}
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        {% if web_login.enabled %}
+        <div class="border-t border-gray-200 pt-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Turn login off</h3>
+            <form class="flex flex-wrap items-end gap-2" onsubmit="window.webLogin.disable(this); return false;" autocomplete="off">
+                <div class="flex-1">
+                    <label for="web-login-disable-current" class="block text-sm font-medium text-gray-700">Current password</label>
+                    <input type="password" id="web-login-disable-current" name="current_password" required
+                           autocomplete="current-password" class="form-control mt-1">
+                </div>
+                <button type="submit" class="btn bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md">
+                    <i class="fas fa-lock-open mr-2" aria-hidden="true"></i>Turn login off
+                </button>
+            </form>
+        </div>
+        {% endif %}
+
+        <div class="border-t border-gray-200 pt-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">API tokens</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                For Home Assistant, scripts, or the MQTT bridge on another machine, once login is on.
+                Send it as <code class="bg-gray-100 font-mono">Authorization: Bearer &lt;token&gt;</code>.
+                A token is shown once, when you create it.
+            </p>
+            <div id="web-login-tokens" class="space-y-2 mb-4">
+                {% for token in web_login.tokens %}
+                <div class="flex flex-wrap items-center justify-between gap-2 border border-gray-200 rounded-md px-4 py-2" data-token-id="{{ token.id }}">
+                    <div class="text-sm">
+                        <span class="font-semibold text-gray-900">{{ token.name }}</span>
+                        <span class="font-mono text-gray-600 ml-2">{{ token.prefix }}&hellip;</span>
+                        <span class="text-gray-600 ml-2">created {{ (token.created_at or '')[:10] }}</span>
+                    </div>
+                    <button type="button" class="text-sm text-red-600 hover:underline"
+                            data-token-name="{{ token.name }}"
+                            onclick="window.webLogin.revoke(this.closest('[data-token-id]').dataset.tokenId, this.dataset.tokenName)">
+                        Revoke
+                    </button>
+                </div>
+                {% else %}
+                <p class="text-sm text-gray-600" data-empty>No tokens yet.</p>
+                {% endfor %}
+            </div>
+            <form class="flex flex-wrap items-end gap-2" onsubmit="window.webLogin.createToken(this); return false;" autocomplete="off">
+                <div class="flex-1">
+                    <label for="web-login-token-name" class="block text-sm font-medium text-gray-700">New token name</label>
+                    <input type="text" id="web-login-token-name" name="name" required maxlength="60"
+                           placeholder="Home Assistant" class="form-control mt-1">
+                </div>
+                <button type="submit" class="btn bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md">
+                    <i class="fas fa-plus mr-2" aria-hidden="true"></i>Create token
+                </button>
+            </form>
+            <div id="web-login-new-token" class="hidden mt-4 border border-amber-300 bg-amber-50 rounded-md p-4" role="status">
+                <p class="text-sm font-semibold text-gray-900 mb-2">Copy this token now. It is not shown again.</p>
+                <div class="flex flex-wrap items-center gap-2">
+                    <code id="web-login-new-token-value" class="font-mono break-all bg-white border border-gray-200 rounded-md px-4 py-2 flex-1"></code>
+                    <button type="button" class="btn bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md"
+                            onclick="window.webLogin.copyToken()">
+                        <i class="fas fa-copy mr-2" aria-hidden="true"></i>Copy
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    var API = '/api/v3/auth';
+
+    function notify(message, type) {
+        if (typeof window.showNotification === 'function') window.showNotification(message, type);
+        else window.alert(message);
+    }
+
+    function send(method, url, body) {
+        return fetch(url, {
+            method: method,
+            headers: {'Content-Type': 'application/json'},
+            body: body === undefined ? undefined : JSON.stringify(body)
+        }).then(function(r) {
+            return r.json().catch(function() { return {}; }).then(function(d) { return {ok: r.ok, d: d}; });
+        });
+    }
+
+    function reloadSection() {
+        if (window.htmx) {
+            window.htmx.ajax('GET', '/v3/partials/general', {target: '#general-content', swap: 'innerHTML'});
+        } else {
+            window.location.reload();
+        }
+    }
+
+    function field(form, name) {
+        var el = form.querySelector('[name="' + name + '"]');
+        return el ? el.value : '';
+    }
+
+    function tokenRow(record) {
+        var row = document.createElement('div');
+        row.className = 'flex flex-wrap items-center justify-between gap-2 border border-gray-200 rounded-md px-4 py-2';
+        row.dataset.tokenId = record.id;
+        var text = document.createElement('div');
+        text.className = 'text-sm';
+        [['font-semibold text-gray-900', record.name],
+         ['font-mono text-gray-600 ml-2', record.prefix + '…'],
+         ['text-gray-600 ml-2', 'created just now']].forEach(function(part) {
+            var span = document.createElement('span');
+            span.className = part[0];
+            span.textContent = part[1];
+            text.appendChild(span);
+        });
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'text-sm text-red-600 hover:underline';
+        btn.textContent = 'Revoke';
+        btn.addEventListener('click', function() { window.webLogin.revoke(record.id, record.name); });
+        row.appendChild(text);
+        row.appendChild(btn);
+        return row;
+    }
+
+    window.webLogin = {
+        setPassword: function(form) {
+            var next = field(form, 'new_password');
+            if (next !== field(form, 'confirm_password')) {
+                notify('The two new passwords do not match.', 'error');
+                return;
+            }
+            var body = {new_password: next};
+            if (form.querySelector('[name="current_password"]')) body.current_password = field(form, 'current_password');
+            send('POST', API + '/password', body).then(function(res) {
+                notify(res.d.message || (res.ok ? 'Saved' : 'Could not save the password'), res.ok ? 'success' : 'error');
+                if (res.ok) reloadSection();
+            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
+        },
+        disable: function(form) {
+            if (!window.confirm('Turn login off? Anyone on your network will be able to open this page.')) return;
+            send('POST', API + '/disable', {current_password: field(form, 'current_password')}).then(function(res) {
+                notify(res.d.message || (res.ok ? 'Login is off' : 'Could not turn login off'), res.ok ? 'success' : 'error');
+                if (res.ok) reloadSection();
+            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
+        },
+        createToken: function(form) {
+            send('POST', API + '/tokens', {name: field(form, 'name')}).then(function(res) {
+                if (!res.ok) {
+                    notify(res.d.message || 'Could not create the token', 'error');
+                    return;
+                }
+                var list = document.getElementById('web-login-tokens');
+                if (list) {
+                    var empty = list.querySelector('[data-empty]');
+                    if (empty) empty.remove();
+                    list.appendChild(tokenRow(res.d.data.record));
+                }
+                document.getElementById('web-login-new-token-value').textContent = res.d.data.token;
+                document.getElementById('web-login-new-token').classList.remove('hidden');
+                form.reset();
+                notify(res.d.message || 'Token created', 'success');
+            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
+        },
+        copyToken: function() {
+            var box = document.getElementById('web-login-new-token-value');
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(box.textContent).then(function() { notify('Token copied', 'success'); });
+                return;
+            }
+            // Plain http on a LAN is not a secure context: select it instead.
+            var range = document.createRange();
+            range.selectNodeContents(box);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            notify('Selected: press Ctrl+C (or Cmd+C) to copy.', 'info');
+        },
+        revoke: function(id, name) {
+            if (!window.confirm('Revoke the token "' + name + '"? Anything using it stops working.')) return;
+            send('DELETE', API + '/tokens/' + encodeURIComponent(id)).then(function(res) {
+                notify(res.d.message || (res.ok ? 'Token revoked' : 'Could not revoke the token'), res.ok ? 'success' : 'error');
+                if (!res.ok) return;
+                var rows = document.querySelectorAll('#web-login-tokens [data-token-id]');
+                Array.prototype.forEach.call(rows, function(row) {
+                    if (row.dataset.tokenId === id) row.remove();
+                });
+            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
+        }
+    };
+})();
+</script>
+{% endif %}

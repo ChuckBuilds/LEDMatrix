@@ -477,7 +477,25 @@ def _load_general_partial():
             auto_update_status = None
         return render_template('v3/partials/general.html',
                              main_config=main_config,
-                             auto_update_status=auto_update_status)
+                             auto_update_status=auto_update_status,
+                             web_login=_web_login_state())
+
+
+def _web_login_state():
+    """What the General tab's Security section shows; None hides it.
+
+    None when the app has no login store (a bare test app), so the section
+    only appears where it can work. Never includes a hash.
+    """
+    from web_interface import auth as web_auth
+    store = web_auth.get_store()
+    if store is None:
+        return None
+    return {
+        'enabled': store.is_enabled(),
+        'tokens': store.list_tokens(),
+        'min_length': web_auth.MIN_PASSWORD_LENGTH,
+    }
 
 def _load_display_partial():
     """Load display settings partial"""
@@ -594,7 +612,11 @@ def _load_raw_json_partial():
     """Load raw JSON editor partial"""
     if pages_v3.config_manager:
         main_config_data = pages_v3.config_manager.get_raw_file_content('main')
-        secrets_config_data = pages_v3.config_manager.get_raw_file_content('secrets')
+        # The web login section (password and token hashes) is managed in
+        # General > Security, never in this editor; its save keeps it.
+        from web_interface.auth import strip_auth_section
+        secrets_config_data = strip_auth_section(
+            pages_v3.config_manager.get_raw_file_content('secrets'))
         main_config_json = json.dumps(main_config_data, indent=4)
         secrets_config_json = json.dumps(secrets_config_data, indent=4)
 

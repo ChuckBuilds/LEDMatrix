@@ -19,7 +19,138 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Security
+
+- The web interface refuses state-changing requests (`POST`, `PUT`, `PATCH`,
+  `DELETE`) sent by another website's page. Any site a LAN user visited could
+  make their browser submit a plain HTML form to `http://<pi>:5000` -- CORS
+  does not stop such a request, only hides its answer -- and
+  `/api/v3/system/action` accepted form bodies, so that page could reboot or
+  power off the Pi, pull code, or reach any other mutating route. A request
+  whose `Origin` (or, without one, `Referer`) is not the host it was sent to,
+  or is `null`, now gets 403 `CROSS_SITE_REQUEST`
+  (`web_interface/origin_guard.py`). `/api/v3/system/action` also refuses a
+  form-encoded or `text/plain` body (415) unless it carries HTMX's
+  `HX-Request` header; every caller in the interface already sends JSON.
+- **Behaviour change for API scripts:** clients that send no `Origin` or
+  `Referer` -- curl, Python `requests`, Home Assistant, the MQTT bridge --
+  are unaffected. A browser page served from a *different* origin (a
+  dashboard or userscript on another host) can no longer call the mutating
+  API; call it server-side instead. Anyone posting a form body to
+  `system/action` must switch to JSON. Behind a reverse proxy, forward the
+  original `Host`, port included (`proxy_set_header Host $http_host;`;
+  nginx's `$host` drops the port); `X-Forwarded-Host` is not trusted. A
+  TLS-terminating proxy needs nothing more: a portless `Host` matches an
+  `https://` page.
+
+### Optional web login
+
+- The web interface can require a password, **off by default**: a device that
+  does not set one behaves exactly as before. Set it under **General >
+  Security**; from then on every page and API route needs a login (a session
+  cookie, 30 days, kept across restarts) or an API token. Unauthenticated page
+  loads go to the new `/login` page, HTMX requests get `HX-Redirect` to it,
+  and API calls get `401` JSON (`AUTH_REQUIRED` / `INVALID_TOKEN`). Wrong
+  passwords are rate-limited per address (5 a minute, 30 an hour, through the
+  existing flask-limiter). Log out from the header. Changing the password
+  signs every other browser out. (`web_interface/auth.py`)
+- **API tokens** for Home Assistant, scripts and the MQTT bridge: create,
+  list and revoke them in the same section, send them as
+  `Authorization: Bearer <token>`. A token is shown once; only its SHA-256 is
+  stored. Tokens cannot change login settings. The MQTT bridge takes one as
+  `ledmatrix_api_token` (or `LEDMATRIX_MQTT_LEDMATRIX_API_TOKEN`, or the
+  Tools tab); it needs one only when it runs on another machine.
+- Always open, login or not: requests from the Pi itself (loopback, without
+  proxy headers), the Wi-Fi setup flow (`/setup` and the Wi-Fi status, scan
+  and connect routes) while the Pi is in access-point mode, static files, the
+  captive-portal probe URLs, and `/api/v3/health`, which then answers only
+  `{"status": "healthy" | "degraded"}` to a caller that is not logged in.
+- The password hash (werkzeug), the token hashes and the cookie-signing key
+  live in the `web_auth` section of `config/config_secrets.json`. No API
+  returns them: `GET /api/v3/config/main`, `GET /api/v3/config/secrets` and
+  the raw JSON editor leave the section out, the raw secrets save keeps the
+  stored one, a `/config/main` save drops a `web_auth` key, and orphaned-plugin
+  cleanup no longer treats it as a plugin (`CORE_SECRETS_KEYS`).
+- **Lost password:** `sudo python3 scripts/reset_web_password.py` on the Pi
+  turns login off (`--revoke-tokens` also deletes the tokens), or open the
+  interface from the Pi itself.
+- New routes: `/login`, `/logout`, `GET /api/v3/auth/status`,
+  `POST /api/v3/auth/password`, `POST /api/v3/auth/disable`,
+  `GET|POST /api/v3/auth/tokens`, `DELETE /api/v3/auth/tokens/<id>`.
+
+### Vegas participation
+
+A plugin now takes part in Vegas mode in one declared way: `'scroll'` (its
+content scrolls by), `'pause'` (the scroll stops for its turn and its
+`display()` draws it full screen) or `'exclude'`. No plugin changes
+behaviour: one that declares nothing gets exactly what the old hooks gave
+it, checked against every official plugin.
+
+- `BasePlugin.get_vegas_participation()` resolves, in order: the user's
+  `vegas_participation` config value, the manifest's `vegas_participation`,
+  then the legacy hooks (`get_vegas_display_mode()` returning `STATIC` →
+  pause, else `get_vegas_content_type()` returning `'none'` → exclude, else
+  scroll). `resolve_vegas_participation()` in `src.plugin_system.base_plugin`
+  is what the core calls; the user's setting wins even over a plugin that
+  overrides the method.
+- The Vegas stream manager decides inclusion and pauses through it, and
+  `PluginAdapter.get_content_type()` is removed (core-internal, now unused).
+  Swap mode no longer drops a plugin's segment for a cycle when its
+  `get_vegas_display_mode()` raises something other than
+  `AttributeError`/`TypeError`: like every other decision point it now
+  treats that as "not paused".
+- `vegas_participation` is a core-owned per-plugin property (an enum with no
+  default) and a manifest field in `schema/manifest_schema.json`.
+- `GET /api/v3/plugins/installed` reports each plugin's
+  `vegas_participation`, and the Vegas plugin-order list badges it (Scroll /
+  Pause / Excluded) instead of the old Scroll / Fixed / Static.
+- `src.deprecation.warn_deprecated()` warns once per process for what
+  `@deprecated` cannot decorate, such as a config key.
+
+Deprecated, removed in 3.9.0 (each logs a warning on first use). Vegas never
+read any of them:
+
+- `BasePlugin.get_supported_vegas_modes()` and
+  `BasePlugin.get_vegas_segment_width()`.
+- The `vegas_panel_count` per-plugin setting (warns once per plugin that sets
+  it).
+- The SCROLL / FIXED_SEGMENT distinction (`vegas_mode` `"scroll"` vs
+  `"fixed"`): both always scrolled. Documented only; no warning, because
+  official plugins' schemas still offer `"fixed"`.
+
+### Plugin store
+
+- The store reads three optional registry fields that ledmatrix-plugins'
+  `update_registry.py` now publishes (ChuckBuilds/ledmatrix-plugins#579). An
+  older `plugins.json` without them behaves as before.
+  - `ledmatrix_min_version`: an install or update this core cannot run is
+    refused before anything is downloaded, pulled or moved aside, and the web
+    UI says why ("requires LEDMatrix X or newer…", HTTP 409) instead of "check
+    logs for details". The store card shows a "Needs LEDMatrix X+" badge. The
+    check on the downloaded manifest stays as the fallback (older registries,
+    an explicitly requested other branch, `compatible_versions`).
+  - `aliases`: the entry's other ids. Update, uninstall and reinstall by the
+    registry id now find a plugin installed under its manifest id
+    (`weather` → `ledmatrix-weather/`; likewise leaderboard, music, stocks).
+    Only registry proof counts: the entry's `aliases` or its `plugin_path`
+    name, or a folder whose manifest declares one of those ids. A
+    `ledmatrix-<id>/` folder with no such proof is never replaced or removed;
+    uninstall and update report "not installed" and log the folder's path.
+    Install and update fetch the registry first when such a folder exists
+    and none is loaded; uninstall stays offline.
+  - `commit`: the monorepo commit that introduced the listed version, shown
+    on the store card and linked to the plugin's source at that commit.
+    Informational only; installs still come from the branch head.
+
 ### Fixes
+
+- Reinstalling a plugin by its registry id when it is installed under its
+  manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
+  the install then fails. The safety copy was taken of `weather/`, which did
+  not exist, and the real install was removed to make room for the download,
+  so a refusal by the compatibility gate left no plugin at all. Uninstalling
+  by the registry id reported success and removed nothing; updating by it
+  said "not installed". All three now find the install.
 
 - On-demand no longer restarts a running display. `POST
   /display/on-demand/start` treated `start_service` (on by default, and what
@@ -42,6 +173,60 @@ accepts both, but the store flags the old spelling as deprecated
 - A stop request now clears an on-demand error. After a failed request,
   `/display/on-demand/status` kept reporting `status: error` for up to two
   minutes even after a stop.
+- One hung plugin no longer stops every plugin from updating. The single
+  update worker waited on each plugin's lock with no time limit, and the
+  render thread holds that lock while it runs the plugin's display(); a
+  display() that never returned (or a first frame still running after the
+  executor's 30s timeout) parked the worker for good, so scores, weather and
+  clocks all froze while the panel kept scrolling. The worker now waits at
+  most 5s (the bound `unload_plugin()` already uses) and skips that update;
+  the other plugins keep updating. The skip is logged (at most once a minute
+  per plugin) and counted in plugin health as a busy skip (`busy_skip_count`,
+  `last_busy_skip`), but it is not a failure and never opens the circuit
+  breaker: Vegas mode holds a plugin's lock for its whole content render,
+  which on a slow Pi can outlast 5s, and a healthy plugin must not be pulled
+  from rotation for that.
+- display() calls are timed on every frame. One taking 2s or more is logged
+  (at most once a minute per plugin) and counted in plugin health
+  (`slow_call_count`, `last_slow_call`); one that runs past the executor's
+  timeout counts as a hang (`hang_count`, `last_hang`) and as a failure to
+  the circuit breaker. A first frame that times out is no longer recorded as
+  a success, and an update() still running after its timeout is recorded as
+  a hang instead of leaving the plugin silently stuck. Only these real hangs
+  count toward the breaker.
+- A plugin's `on_config_change()` no longer runs while its update() is
+  running on the worker thread. It now runs under the plugin's lock; if the
+  lock stays busy past the same 5s bound the change is handed to the update
+  worker, which applies the latest one as soon as the lock frees, and before
+  the plugin's next update() at the latest. The plugin API is unchanged.
+
+### Tooling
+
+- `scripts/sports_drift_report.py`: for a ledmatrix-plugins checkout, counts
+  how many different bodies each method family has across the nine
+  scoreboards' `sports.py`, `manager.py` and `game_renderer.py`, lists the
+  families still identical everywhere and those with one outlier, and with
+  `--family ... --diff` shows the variants. It is the progress measure for
+  the reconcile-then-promote roadmap in `docs/SPORTS_UNIFICATION.md`, which
+  this release rewrites. CI runs it against the monorepo's main as a
+  report-only job ("Sports drift report"; never fails the build).
+
+### Deprecations
+
+- The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
+  not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
+  "will be removed in LEDMatrix 3.7.0". The warning, the docs and
+  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+- New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
+  scans core, the plugin monorepo and the registry's third-party plugins for
+  calls and overrides, telling real uses from unrelated methods of the same
+  name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
+  `CacheManager.get_memory_cache_stats` is still called by core's own
+  `log_memory_cache_stats()`, so it stays until that call migrates.
+- `test/test_deprecation.py` fails while any `@deprecated` marker names a
+  release at or below `src.__version__`, so a release can no longer ship
+  warning about a removal it has already passed.
 
 ### Web UI styling: a real Tailwind build
 
@@ -220,7 +405,8 @@ New names in existing modules (a plugin using these must floor on 3.5.0):
 - `FontManager.register_plugin_fonts()` takes an optional `plugin_dir`, and
   `FontManager.forget_manager_fonts()` is new (see Fonts).
 
-Deprecated, removed in 3.7.0 (each logs a warning on first use; see
+Deprecated for removal in 3.7.0, later moved to 3.8.0 (each logs a warning
+on first use; see
 `docs/PLUGIN_API_REFERENCE.md#deprecated-apis` for replacements). Nothing in
 core, the monorepo or the registry's third-party plugins calls them:
 
