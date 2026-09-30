@@ -334,6 +334,18 @@ read any of them:
 
 ### Tooling
 
+- The frame-timing recorder says which render-thread work a late frame
+  followed. Work done between two frames calls
+  `FrameTimingRecorder.note_op(kind, nbytes)` and the next presented frame
+  carries the tag; the stats gain `op_frames`, `late_op_frames`, `op_freezes`
+  and `op_bytes` per kind (additive; the file's schema version is unchanged).
+  Vegas tags every strip `compose` and `extend`, and `frame_soak.py` prints an
+  "after work" table with each kind's own late rate.
+  `scripts/render_bench.py` can drive the same work on a panel with nothing
+  else running: `--strip-screens` for a Vegas-sized strip, `--patch-bytes /
+  --patch-every / --patch-where` for in-place column writes, and
+  `--extend-every-screens` for appending and trimming on a fixed cadence.
+  See "Soaking a rig" in `docs/SCROLL_PERFORMANCE.md`.
 - `scripts/sports_drift_report.py`: for a ledmatrix-plugins checkout, counts
   how many different bodies each method family has across the nine
   scoreboards' `sports.py`, `manager.py` and `game_renderer.py`, lists the
