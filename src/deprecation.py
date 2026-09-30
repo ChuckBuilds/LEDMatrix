@@ -6,6 +6,14 @@ still be called by a plugin nobody has checked. Such methods get
 process logs a warning naming the method and the release that removes it
 (visible in ``journalctl -u ledmatrix``), and emits a DeprecationWarning for
 tooling.
+
+Before a release removes anything, ``scripts/plugin_api_usage.py`` scans core,
+the official plugin monorepo and the registry's third-party plugins for callers
+and overriders of every marked method. Its latest output is
+``docs/DEPRECATIONS_3.8.md``; remove only what it reports unused, and move the
+rest to a later release. ``test/test_deprecation.py`` fails while any marker
+names a release at or below ``src.__version__``, so a release cannot ship with
+a removal date it has already passed.
 """
 
 import functools

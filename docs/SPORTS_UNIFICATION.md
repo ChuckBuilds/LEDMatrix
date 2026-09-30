@@ -35,10 +35,11 @@ defaults, or as capabilities they opt into.
 
 ### Reusability — write once, nine plugins benefit
 
-Only code that is **identical in intent across all nine** moves into the base
-class. That set is small and knowable — it is exactly the methods present in every
-copy today (phase B1 below). Everything else stays where it is until it earns
-promotion.
+Only code that is **identical across every plugin that carries it** moves into
+core. Stages 0–3 moved the copies that already were; what is left has drifted,
+and earns promotion by being reconciled first — made identical in all nine
+plugins, one method family per release, with every visible difference decided
+rather than averaged away. See [Roadmap](#roadmap).
 
 ### Modularity — a change to one feature cannot reach a plugin that doesn't use it
 
@@ -97,9 +98,10 @@ modules taken from the plugin copies, each a **new module** rather than growth
 on an existing one: a plugin that deletes a method copy and relies on an older
 module having gained it fails at runtime with an `AttributeError`, while a
 missing module fails at load, where the version checks can see it.
-`sports_helpers.py` is the newest (it holds `_favorite_key`, the override point
-listed below, for later phases); its parity test compares every body against
-the plugin copies when `LEDMATRIX_PLUGINS` points at a checkout, and
+`sports_helpers.py` holds `_favorite_key`, the override point listed below.
+Each promoted module has a parity test that compares its bodies against the
+plugin copies when `LEDMATRIX_PLUGINS` points at a checkout
+(`test_sports_helpers.py`, `test_sports_stage3_parity.py`), and
 `test/test_common_is_hardware_free.py` keeps `src/common` free of
 `rgbmatrix`, `src.display_manager` and `src.plugin_system`. How a plugin adopts a
 module and drops its copy is documented in the plugins repo's
@@ -235,12 +237,246 @@ legacy compatibility rather than the mechanism.
 > (`display_manager.refresh_hz`), and speed comes from
 > `scroll_settings.scroll_speed` alone. See `docs/SCROLL_PERFORMANCE.md`.
 
-## Phases
+## Roadmap
 
-B0–B3 are merged and shipping in core 3.2.0. Everything that remains is
-**rollout**, and it splits into three phases with very different risk profiles.
-The original plan folded the last two together; they are separated here because
-one of them cannot break a user on an old core and the other can.
+### Done: stages 0–3
+
+The second project, after the B phases below: move what the nine `sports.py`
+copies (and their support files) carried byte-identically into `src/common`,
+one new module per stage, and delete the copies once the plugins floor on the
+release that ships it.
+
+| Stage | Core | Plugins (ledmatrix-plugins) | What moved |
+|---|---|---|---|
+| 0 | none needed; found #662 (odds `no_odds` marker) and #663 (a reloaded plugin's dir goes first on `sys.path`) | #562 | Deleted the bundled copies nothing could reach (`base_odds_manager`, `logo_downloader`, three unused data sources, ~4.2k lines); three UFC fixes |
+| 1 | 3.5.0: `sports_helpers` (#583), `espn_dates`, `json_body` | #563 (1a, the eight team scoreboards), #564 (1b, ufc); floor 3.5.0 | The identical helpers and ESPN date-range handling; ufc also adopted the `sports_shared` mixins |
+| 2 | 3.6.0: `favorite_team_check`, `sports_timezone`; fixes in 3.6.1 (#667) and 3.6.2 (#670) | #565 (guarded adoption), #567 (f1), #570 (sunset, floor 3.6.1), #571 (soccer, 3.6.2) | The favourite-team check (seven copies) and the timezone resolver (ten); each plugin keeps a thin timezone binding |
+| 3 | 3.7.0 (#672): `sports_celebration`, `sports_fetch`, `sports_card_wrappers` | #572 (goldens first), #574 (floor 3.7.0, copies deleted) | Celebration drawing (five plugins), four fetch methods (nine), seventeen card delegations (eight renderers) |
+
+Stage 3 was re-checked independently when this roadmap was written: #574's
+parent and #574 itself, rendered through the core harness against core 3.7.0,
+gave pixel-identical output for all 399 frames (192 harness screens across the
+nine plugins at the eight default sizes, 72 scroll/Vegas cards, 135
+celebration frames), with a parent-vs-parent rerun as the determinism control.
+
+### Why the method changes
+
+Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
+`4327c2e` (2026-09-29, after stage 3) with `scripts/sports_drift_report.py`:
+
+| File | Method families | In all nine | Method lines | Identical copies beyond the first | Drifted families |
+|---|---:|---:|---:|---:|---:|
+| `sports.py` | 94 | 30 | 30,976 | 1,479 lines | 19 |
+| `manager.py` | 114 | 36 | 27,137 | 3,198 lines | 38 |
+| `game_renderer.py` (8 plugins) | 89 | — | 6,830 | 546 lines | 11 |
+
+"Drifted" means in at least seven plugins with at least three different
+bodies. Everything still identical adds up to about 5,200 duplicated lines;
+the rest of the ~65,000 method lines is drifted, one outlier away from
+identical, or unique to one plugin. Drifted code cannot move unchanged, so
+consolidation stalls unless the copies are made identical first.
+`manager.py`, the largest copy of all and the layer the display controller and
+Vegas talk to, was in no plan before this one.
+
+### The method: reconcile, then promote
+
+**Owner decision (2026-09-29):** each release, pick one drifted method family,
+make all nine copies identical, then promote it to core. A *family* here is a
+set of methods that share state and ship together (the rankings methods, the
+game-over check); the report measures each method in it. The procedure:
+
+1. **Measure.** `python scripts/sports_drift_report.py --family sports.py::<name> --diff`
+   lists which plugins share each body and diffs every variant against the
+   most common one. Put the grouping in the PR.
+2. **Classify every difference**, and say which class in the PR:
+   - *A fix one copy has and the others lack* (a lock, a guard, a correct
+     season year). Port it. It is a behaviour change, so it gets a CHANGELOG
+     line in each plugin.
+   - *A per-sport fact* (hockey ends in period 3; a soccer clock counts up).
+     Make it a declared class constant or override point with a default, as
+     `FINAL_PERIOD`, `CLOCK_COUNTS_DOWN`, `COALESCE_SCORING_SEQUENCE` and
+     `_favorite_key` are, and add it to the tables above. Never a sport-name
+     branch: core must not learn sport names.
+   - *A product difference*: anything a user can see (which games show, a
+     colour, a date, a badge, how long a screen stays). The owner picks the
+     behaviour before the code changes; the decision goes in the PR and in a
+     test that pins it (as `test/test_sports_twins.py` pins the twins).
+   - *Noise*: comments, log wording, dead branches. Pick one.
+3. **Pin the output first.** Before touching the family, its output must be
+   covered: the harness goldens (`test/golden`), the scroll cards
+   (`golden-cards`) and celebrations (`golden-celebration`) for drawing
+   families; for logic families, a table-driven test over the nine plugins'
+   fixture games. Missing coverage lands in its own PR first, as #572 did for
+   stage 3.
+4. **Reconcile in the plugins** (a monorepo PR). The report must show one
+   variant per class for the family. Render every touched plugin before and
+   after through the harness and diff pixels, not hashes. Every differing
+   frame must match a recorded product decision; any other difference is a
+   bug. Bump each plugin's `version`, add a `versions[]` entry and a CHANGELOG
+   entry, and run `update_registry.py`.
+5. **Promote in core**: a new `src/common` module per family (a new module, not
+   growth on an old one, for the reason under Converging on `src/common`), a
+   parity test against the plugin copies, and a CHANGELOG module entry naming
+   the release that ships it.
+6. **Adopt** once that release is out: each plugin floors on it, inherits the
+   mixin, deletes its copy, gains a sunset guard (like the monorepo's
+   `scripts/test_stage3_mixin_copies.py`), and is pixel-diffed again; the
+   expected difference is zero.
+7. **Re-measure** and update the numbers here.
+
+A family is only reconciled when *all nine* agree. Leaving one plugin behind
+recreates the drift the report exists to measure.
+
+Soaks: pixel diffs prove the drawing, not the timing. A family that changes
+when data arrives or which games are live (5, 7, 9, 13 and 14 below) needs a
+live-game soak on a rig, and out-of-season sports wait for their season.
+Before a soak, check the rig's `*_display_mode`: a board in `switch` mode tells
+you nothing about the scroll path.
+
+### Order
+
+One family per release, in this order. Variant counts are from the report
+above (per method: distinct bodies across the plugins that carry it, counted
+per class role). Stage 4 needs no reconciliation and can ride along with any
+release.
+
+| # | Family | Methods (variants) | Why here |
+|---|---|---|---|
+| 4 | Identical sweep | `manager.py`: `_dispatch_switch_refresh`, `_favorite_team_is_live`, `get_vegas_priority_weight`, `_game_involves`, `_favorite_scan_targets`, `_favorite_scan_games`, `_get_total_games_for_manager` (all nine, 1); the live-scroll helpers `_preserving_scroll_position`, `_refresh_live_scroll_managers`, `_live_scroll_managers`, `_note_live_scroll_built`, `_live_scroll_needs_rebuild`, `_live_scroll_fields` (eight, 1). `sports.py`: `_card_option`, `_filtered_or_all`, `_effective_live_duration`, `_recent_date_text` (eight, 1). 58 identical families in all | Nothing to decide; brings `manager.py` into core as a `SportsPluginHostMixin`. `_resolve_font_path` (identical in nine `sports.py` and eight renderers) is replaced by core's `font_layout.resolve_asset_path` rather than promoted |
+| 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; its seams (`FINAL_PERIOD`, `CLOCK_COUNTS_DOWN`) were designed in B1. The pilot for the procedure |
+| 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam |
+| 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc) | One outlier each; football carries two fixes the other eight lack |
+| 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it |
+| 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
+| 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
+| 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
+| 12 | Scroll/Vegas card | `game_renderer.py`: `render_game_card` (6), `_load_and_resize_logo` (8), `_load_custom_font`, `preload_logos`, `__init__` (7 each), `_draw_records_or_rankings` (6), `_load_fonts`, `_draw_dynamic_odds`, `_draw_live_game_status`, `_draw_recent_game_status`, `_get_team_display_text` (5 each), `_draw_text_with_outline` (2: football) | Same decisions as 11; sequence after the scroll-performance work on pre-rendered strips lands |
+| 13 | Mode lifecycle | `sports.py`: `update` (23), `__init__` (16), `display` (13), `_advance_live_game_if_due` (6) | Where per-sport behaviour lives; last in `sports.py`. Each difference becomes a seam or a strategy chosen by name (live rotation already has three) |
+| 14 | `manager.py` host | Nine different bodies in nine plugins: `__init__`, `display`, `update`, `has_live_content`, `get_live_modes`, `get_vegas_content`, `on_config_change`, `_initialize_managers`, `_get_available_modes`, `_get_current_manager`, `_adapt_config_for_manager`. Dynamic duration: `_evaluate_dynamic_cycle_completion` (9), `_record_dynamic_progress` (8), `get_cycle_duration` (8), `get_dynamic_duration_cap` (6), `supports_dynamic_duration`, `is_cycle_complete` (5 each), `reset_cycle_state` (4). Scroll: `_display_scroll_mode` (8), `_ensure_scroll_content_for_vegas` (8), `_collect_games_for_scroll` (7), `_should_use_scroll_mode`, `_has_any_scroll_mode` (6 each) | See below |
+
+**`manager.py`.** Reconciling it body by body would take a release per
+method. The plan is a host class in core, `SportsScoreboardPlugin(BasePlugin)`,
+that takes the plugin's leagues as data (key, label, ESPN path, Live, Recent
+and Upcoming classes: basketball's `manager.py` already describes its leagues
+as such a table) and a typed mode key instead of the mode-name string parsing
+(`endswith('_live')`, `split('_')`) every copy repeats. Order within it:
+stage 4's identical helpers first; then dynamic duration, then live priority (`has_live_content`,
+`get_live_modes`, `has_live_priority`), then Vegas content, then mode
+resolution, then the lifecycle methods. Pilot the whole host on nrl or afl,
+the smallest copies (about 1,850 lines each), with a frame soak and a
+live-game soak before a second plugin moves. `get_vegas_content` is also being
+changed by the scroll-performance work: coordinate before touching it.
+
+**Held:** `data_sources.py` (nine copies; soccer's matches core's) and
+`dynamic_team_resolver.py` (eight true forks, a different constructor from
+core's). Effort on data fetching is better spent on the shared poller that
+family 9 prepares.
+
+### Product decisions each family needs
+
+Owner calls to make before (or while) reconciling. Items marked *verify* are
+suspected behaviour that needs a payload or a rig to confirm first.
+
+- **5, game-over check.** Which rule each sport gets: the clock never ends a
+  game in afl, nrl and soccer (`CLOCK_COUNTS_DOWN = False`); hockey ends at
+  0:00 from period 3, basketball, football and lacrosse from period 4.
+  baseball and ufc share a copy that reads a missing clock as "0:00": dormant
+  in baseball (its games carry no `period`), but ufc's fights carry both, so
+  the break after round 4 of a five-round fight (`0:00`, period 4) reads as
+  "over" and drops the fight from the live rotation (*verify* against an ESPN
+  MMA payload). Decide ufc's rule: no clock rule, or its own final period.
+- **6, favourite matching.** NRL keeps matching favourites by team id
+  (abbreviations collide: NEW, CAN), through `_favorite_key` rather than its
+  own copies of the selection methods. Six plugins log the recent-games
+  selection at INFO; baseball, football and ufc do not.
+- **7, other-games rotation.** football advances the rotation window under
+  `_games_lock` (update() and display() both advance it; interleaved, a
+  window of games is skipped) and fixes a favourites-only pool that recomposed
+  the list on every frame. Port both. ufc does not attach odds to fights
+  rotated in: decide whether rotated fights show odds.
+- **8, rankings.** (a) afl, basketball, nrl and soccer turn a *standings*
+  payload into ranks (a pro league's standings position becomes the rank
+  badge); baseball, hockey, lacrosse, ufc and football do not. Which is
+  right is visible on every pro-league card with "show ranking" on.
+  (b) football also keys ranks by team id, so two schools sharing an
+  abbreviation across divisions cannot be confused: adopt for all.
+  (c) football asks for the division roster of the *season* year (July
+  onward is this year's season), which is right for football and wrong for
+  college basketball, hockey and lacrosse, whose ESPN season is the year it
+  ends: a per-sport seam, not football's constant. (d) baseball's
+  `_choose_poll` calls `dynamic_team_resolver.choose_top_division_poll`, the
+  others inline it: one home, in core.
+- **9, live fetch and odds.** (a) afl, basketball, nrl and soccer cache the
+  live scoreboard for 30 s under `<sport_key>_scoreboard_current`; the others
+  do not (the harness fixtures seed that key, so the change shows up there).
+  (b) basketball fetches college games with no `dates` parameter, citing a
+  404 (*verify* now that `espn_dates` handles ranges). (c) odds are fetched
+  three ways: blocking (hockey, lacrosse), a thread waited on for 1.5–2 s
+  (six plugins), or fire-and-forget for upcoming games (basketball). This
+  sets how long `update()` takes and when an odds line appears. (d) nrl
+  guards on a missing odds manager; port it.
+- **10, view model.** Per key, whether every sport emits it. Additive only:
+  no key is renamed or removed.
+- **11 and 12, the scorebug and the card.** The pinned divergences in
+  `test/test_sports_twins.py`, where switch mode and scroll mode draw the
+  same game differently:
+  - weekday timezone: the card reads only `config["timezone"]` and falls back
+    to UTC, so a board with only the global zone labels an evening kickoff
+    with the next day. **Decided 2026-09-24: use the plugin's timezone
+    (fix); not yet implemented;**
+  - an out-of-range start time: the scorebug drops the weekday, the card
+    raises;
+  - favourite result on a nested payload, which score wins when flat and
+    nested disagree, and where the favourites come from (the manager's list
+    vs the game's stamped list plus config);
+  - the element vocabulary (`team_text` vs `team_name`; rank and odds in one
+    map, not the other), and its consequences: a `team_name` colour reaching
+    one team face and not the other, and the odds face shared with the score
+    face in scroll mode only;
+  - per-mode colour overrides, which apply in switch mode only;
+  - by design, kept unless the owner says otherwise: the date format
+    (`switch_date_format` "numeric" vs the card's "abbrev") and the upcoming
+    centre (`switch_upcoming_center` "date_time" vs "vs"), both with an
+    "inherit" opt-in; and the two schema-font caches (per class vs per path).
+
+  Also: football's `_fit_score_font` swaps to the narrow score face at any
+  panel height when the score overflows, where the other seven keep the
+  design face at or below the design height (a 64x32 board shows the
+  difference); and whether switch mode and the card become one renderer drawn
+  at two sizes.
+- **13, mode lifecycle.** The live-rotation dialect per sport (incremental
+  SWRR in afl, nrl and soccer; a precomputed schedule elsewhere); which sports
+  arm celebrations and on what (stays in each plugin, as in stage 3).
+- **14, `manager.py`.** Dynamic-duration semantics (what completes a cycle,
+  the floor and cap per mode), what counts as live content for live priority
+  (favourites only or any live game), and the order of Vegas content.
+
+### Measuring progress
+
+`scripts/sports_drift_report.py` prints the numbers above for any
+ledmatrix-plugins checkout (`--plugins <path>` or `LEDMATRIX_PLUGINS`). CI runs
+it on every push and PR against the monorepo's main (the "Sports drift report"
+job in `.github/workflows/test.yml`): report only, never failing, with the
+tables in the job summary and the full JSON as an artifact. The monorepo's
+`scripts/check_sports_drift.py` is the gate: it fails when a function that
+agrees across the plugins starts to differ. A stage is done when its family
+shows one variant per class here and its copies are gone.
+
+```
+python scripts/sports_drift_report.py --plugins ../ledmatrix-plugins
+python scripts/sports_drift_report.py --family sports.py::_is_game_really_over --diff
+```
+
+## Phases B0–B6 (history)
+
+The first project: it moved the scroll orchestration into core and proved the
+upgrade path (floors, the store's compatibility gate, the sunset). All seven
+phases are done. They are kept because the reasoning in B4–B6 is what every
+later stage relies on; the plan from here is [Roadmap](#roadmap).
+
+B0–B3 shipped in core 3.2.0. The rollout after them split into three phases
+with very different risk profiles, because one of them cannot break a user on
+an old core and the other can.
 
 | Phase | Scope | Status | Gate |
 |---|---|---|---|
@@ -439,10 +675,13 @@ deprecated `ledmatrix_min`). See
 order any floor-raising tool must reproduce — and note the name is **inverted**
 between the top level and `versions[]`.
 
-**Still not adopted, deliberately:** `data_sources.py`, `game_renderer.py` and
-`base_odds_manager.py`. The standing decision held them until B6 closed; it now
-has, so they can be reconsidered — with B5's lesson applied, which is to build
-the object and diff rendered output rather than trust a static check.
+**The modules held back then** (`data_sources.py`, `game_renderer.py`,
+`base_odds_manager.py`) have since gone different ways: the eight team
+scoreboards import core's `base_odds_manager` (ufc keeps an MMA fork), the
+game renderers inherit core's `SportsCardWrappersMixin` (3.7.0) but keep their
+drawing, and `data_sources.py` is still copied. Their status is under
+[Roadmap](#roadmap). B5's lesson applies to all of them: build the object and
+diff rendered output rather than trust a static check.
 
 ### B5 retrospective — what the adoption actually cost
 
@@ -485,40 +724,12 @@ and its one delivered user-visible gain was that adopted plugins honoured the
 global `target_fps` instead of hardcoding ~100 FPS (since withdrawn: see the
 note under the B3 design above).
 
-### Decision: stop adopting further modules until B6 closes
+### Decision: stop adopting further modules until B6 closes (lifted)
 
-`data_sources.py` (9 copies), `game_renderer.py` (8) and `base_odds_manager.py`
-are the obvious next candidates. **Do not adopt them yet.** Each adoption adds
-carrying cost — a second copy to keep in step — against a payoff that is
-contingent on B6, and B6 is gated on an installed base we cannot currently
-measure. Consolidate what is already committed; revisit when B6 does.
-
-## What's next
-
-Steps 1–5 of the original plan are **done**: 3.2.0 is tagged and published with
-a version number CI now asserts (#428), the compatibility gate is in
-`install_plugin` and reads `compatible_versions` as well as the floor
-(#431, #433), the newest manifest entry is required to use `ledmatrix_min_version`
-(plugins #244), and all eight plugins have adopted the scroll orchestration
-(plugins #245–#249, repaired in #251, tidied in #252).
-
-What actually remains, smallest first:
-
-1. **Soak the adoptions on hardware.** football and hockey have been run on a
-   live rig through real games; baseball was watched through one earlier. The
-   rest are proven by harness, unit tests and pixel comparison. Out-of-season
-   sports cannot be soaked until their season starts. When you do, **check the
-   rig's `*_display_mode` first** — a board in `switch` mode will happily load a
-   sunset plugin and tell you nothing about the scroll code the sunset changed.
-2. **Cut 3.3.0.** Not required by B6 — its floors are 3.2.0, which is released —
-   but `calendar` 1.2.3 floors at 3.3.0 for the device-authorization endpoints
-   that landed after 3.2.0, so it is un-installable until the release exists.
-3. **Reconsider the held modules** (`data_sources.py`, `game_renderer.py`,
-   `base_odds_manager.py`) now that the sunset has closed. `game_renderer.py` is
-   the largest single duplication left: ~11,500 lines across eight plugins, with
-   ~36,500 more in the eight `sports.py`. The `src/base_classes/sports/`
-   package promoted in B1/B2 was never imported by a plugin and has been
-   removed, so the plugin copies are the only starting point.
+Held from B5 until B6 ran on 2026-09-01: each adoption added a second copy to
+keep in step against a payoff that depended on the sunset. Once the store
+refused a too-new plugin on every route, adopting and sunsetting in one stage
+became safe, and stages 0–3 under [Roadmap](#roadmap) did exactly that.
 
 ## How to keep this project healthy
 
@@ -545,7 +756,9 @@ Lessons this migration paid for, worth applying beyond it:
 ## Rules for contributors
 
 - **Promote on evidence, not intuition.** A method moves to core when every copy
-  has it and they agree on intent. Otherwise it stays in the plugins.
+  that has it is identical. Drifted copies are reconciled first, one family
+  per release, with each visible difference an owner decision (see
+  [Roadmap](#roadmap)); until then they stay in the plugins.
 - **Never add a sport name to core.** If core needs to know which sport it is,
   the design is wrong — add an override point instead.
 - **A capability that is not opted into must not execute.** If you find yourself

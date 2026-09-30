@@ -84,7 +84,11 @@ then normal rotation.
 - **On-demand.** A request from the web interface pins one plugin (or mode)
   for a duration. `_activate_on_demand()` / `_clear_on_demand()`; the
   session is saved under `display_on_demand_config` so it survives a
-  restart. It also keeps the display on during scheduled off hours.
+  restart. It also keeps the display on during scheduled off hours. A
+  request for a plugin that is disabled in config loads it live
+  (`_load_plugin_for_on_demand()`, `load_plugin(force_enabled=True)`)
+  without writing `config.json`; the main loop unloads it once on-demand
+  moves off it (`_release_on_demand_plugins()`).
 - **Live priority.** `_check_live_priority()` looks for a plugin whose
   `has_live_priority()` and `has_live_content()` are both true and switches
   to it, rotating between several live games.
@@ -101,7 +105,8 @@ then normal rotation.
   changes. The controller refreshes its cached settings; enabling or
   disabling a plugin queues `_reconcile_enabled_plugins()`, which loads or
   unloads it on the display thread; each plugin gets `on_config_change()`
-  for its own section. Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
+  for its own section, under its plugin lock
+  (`PluginManager.apply_config_change()`). Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
   Matrix hardware settings are only read at start-up.
 - **Vegas mode.** [`src/vegas_mode/`](../src/vegas_mode/): the display loop
   calls `VegasModeCoordinator.run_iteration()`

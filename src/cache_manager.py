@@ -408,7 +408,7 @@ class CacheManager:
         """Get the cache directory path."""
         return self.cache_dir
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def has_data_changed(self, data_type: str, new_data: Dict[str, Any]) -> bool:
         """Check if data has changed from cached version."""
         cached_data = self.load_cache(data_type)
@@ -514,7 +514,7 @@ class CacheManager:
         """Check if the US stock market is currently open."""
         return self._strategy_component.is_market_open()
 
-    @deprecated("3.7.0", "use set()")
+    @deprecated("3.8.0", "use set()")
     def update_cache(self, data_type: str, data: Dict[str, Any]) -> bool:
         """Update cache with new data."""
         cache_data = {
@@ -564,7 +564,7 @@ class CacheManager:
         cache_data['data'] = data
         self.save_cache(key, cache_data)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def setup_persistent_cache(self) -> bool:
         """
         Set up a persistent cache directory with proper permissions.
@@ -776,7 +776,7 @@ class CacheManager:
         else:
             self.logger.info("Disk cache cleanup thread stopped successfully") 
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_sport_live_interval(self, sport_key: str) -> int:
         """
         Get the live_update_interval for a specific sport from config.
@@ -798,7 +798,7 @@ class CacheManager:
         """
         return self._strategy_component.get_data_type_from_key(key)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_sport_key_from_cache_key(self, key: str) -> Optional[str]:
         """
         Extract sport key from cache key to determine appropriate live_update_interval.
@@ -838,7 +838,7 @@ class CacheManager:
         data_type = self.get_data_type_from_key(key)
         return self.get_cached_data_with_strategy(key, data_type)
 
-    @deprecated("3.7.0", "use get()")
+    @deprecated("3.8.0", "use get()")
     def get_background_cached_data(self, key: str, sport_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Get data from background service cache with appropriate strategy.
@@ -876,7 +876,7 @@ class CacheManager:
         self.record_cache_miss('background')
         return None
 
-    @deprecated("3.7.0", "use get()")
+    @deprecated("3.8.0", "use get()")
     def is_background_data_available(self, key: str, sport_key: Optional[str] = None) -> bool:
         """
         Check if background service has fresh data available.
@@ -906,32 +906,32 @@ class CacheManager:
             date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
         return f"{sport}_{date_str}"
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def record_cache_hit(self, cache_type: str = 'regular') -> None:
         """Record a cache hit for performance monitoring."""
         self._metrics_component.record_hit(cache_type)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def record_cache_miss(self, cache_type: str = 'regular') -> None:
         """Record a cache miss for performance monitoring."""
         self._metrics_component.record_miss(cache_type)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def record_fetch_time(self, duration: float) -> None:
         """Record fetch operation duration for performance monitoring."""
         self._metrics_component.record_fetch_time(duration)
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_cache_metrics(self) -> Dict[str, Any]:
         """Get current cache performance metrics."""
         return self._metrics_component.get_metrics()
 
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def log_cache_metrics(self) -> None:
         """Log current cache performance metrics."""
         self._metrics_component.log_metrics()
     
-    @deprecated("3.7.0")
+    @deprecated("3.8.0")
     def get_memory_cache_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the memory cache.
@@ -943,7 +943,9 @@ class CacheManager:
     
     def log_memory_cache_stats(self) -> None:
         """Log current memory cache statistics."""
-        stats = self.get_memory_cache_stats()
+        # Not get_memory_cache_stats(): that is deprecated, and core must not
+        # trip its own deprecation warning every time memory logging runs.
+        stats = self._memory_cache_component.get_stats()
         self.logger.info(f"Memory Cache - Size: {stats['size']}/{stats['max_size']} "
                         f"({stats['usage_percent']:.1f}%), "
                         f"Last cleanup: {time.time() - stats['last_cleanup']:.1f}s ago")
