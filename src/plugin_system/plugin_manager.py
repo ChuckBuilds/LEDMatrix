@@ -569,7 +569,8 @@ class PluginManager:
     #: prefix rule would silently stop validating it.
     #:
     #: Read by: ``vegas_mode/plugin_adapter.py`` (``vegas_width_pct``,
-    #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``).
+    #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``,
+    #: ``vegas_participation``).
     #:
     #: The list itself lives with the other core-owned per-plugin properties in
     #: ``schema_manager.CORE_PLUGIN_PROPERTIES``, which the web save path also

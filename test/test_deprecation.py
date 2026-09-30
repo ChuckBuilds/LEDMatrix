@@ -45,6 +45,19 @@ DEPRECATED = {
     "src.plugin_system.plugin_manager.PluginManager": ["get_enabled_plugins"],
 }
 
+#: Deprecated with Vegas participation, for removal in 3.9.0: core never read
+#: them (src.plugin_system.base_plugin.VEGAS_LEGACY_REMOVAL).
+DEPRECATED_3_9 = {
+    "src.plugin_system.base_plugin.BasePlugin": [
+        "get_supported_vegas_modes", "get_vegas_segment_width",
+    ],
+}
+
+#: Every pinned marker: (class path, method) -> the release that removes it.
+PINNED = {(path, name): removal
+          for removal, table in (("3.8.0", DEPRECATED), ("3.9.0", DEPRECATED_3_9))
+          for path, names in table.items() for name in names}
+
 
 def _cls(path):
     import importlib
@@ -52,14 +65,14 @@ def _cls(path):
     return getattr(importlib.import_module(module), name)
 
 
-@pytest.mark.parametrize("path", sorted(DEPRECATED))
+@pytest.mark.parametrize("path", sorted({path for path, _ in PINNED}))
 def test_exactly_these_methods_are_deprecated(path):
     cls = _cls(path)
     marked = sorted(name for name, value in vars(cls).items()
                     if hasattr(value, "__deprecated__"))
-    assert marked == sorted(DEPRECATED[path])
+    assert marked == sorted(name for owner, name in PINNED if owner == path)
     for name in marked:
-        assert "3.8.0" in getattr(cls, name).__deprecated__
+        assert f"LEDMatrix {PINNED[(path, name)]}" in getattr(cls, name).__deprecated__
 
 
 def _markers():
@@ -82,7 +95,7 @@ def _markers():
 
 
 def test_markers_are_found():
-    assert len(_markers()) == sum(len(v) for v in DEPRECATED.values())
+    assert len(_markers()) == len(PINNED)
 
 
 def test_no_marker_names_a_release_already_shipped():
@@ -116,8 +129,7 @@ def usage_script():
 def test_usage_script_lists_exactly_the_pinned_markers(usage_script):
     found = {(f"{m.module}.{m.owner}", m.method, m.removal)
              for m in usage_script.find_markers(REPO)}
-    assert found == {(path, name, "3.8.0")
-                     for path, names in DEPRECATED.items() for name in names}
+    assert found == {(path, name, removal) for (path, name), removal in PINNED.items()}
 
 
 def test_usage_script_tells_uses_from_name_collisions(usage_script, tmp_path):

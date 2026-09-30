@@ -78,6 +78,46 @@ accepts both, but the store flags the old spelling as deprecated
   `POST /api/v3/auth/password`, `POST /api/v3/auth/disable`,
   `GET|POST /api/v3/auth/tokens`, `DELETE /api/v3/auth/tokens/<id>`.
 
+### Vegas participation
+
+A plugin now takes part in Vegas mode in one declared way: `'scroll'` (its
+content scrolls by), `'pause'` (the scroll stops for its turn and its
+`display()` draws it full screen) or `'exclude'`. No plugin changes
+behaviour: one that declares nothing gets exactly what the old hooks gave
+it, checked against every official plugin.
+
+- `BasePlugin.get_vegas_participation()` resolves, in order: the user's
+  `vegas_participation` config value, the manifest's `vegas_participation`,
+  then the legacy hooks (`get_vegas_display_mode()` returning `STATIC` →
+  pause, else `get_vegas_content_type()` returning `'none'` → exclude, else
+  scroll). `resolve_vegas_participation()` in `src.plugin_system.base_plugin`
+  is what the core calls; the user's setting wins even over a plugin that
+  overrides the method.
+- The Vegas stream manager decides inclusion and pauses through it, and
+  `PluginAdapter.get_content_type()` is removed (core-internal, now unused).
+  Swap mode no longer drops a plugin's segment for a cycle when its
+  `get_vegas_display_mode()` raises something other than
+  `AttributeError`/`TypeError`: like every other decision point it now
+  treats that as "not paused".
+- `vegas_participation` is a core-owned per-plugin property (an enum with no
+  default) and a manifest field in `schema/manifest_schema.json`.
+- `GET /api/v3/plugins/installed` reports each plugin's
+  `vegas_participation`, and the Vegas plugin-order list badges it (Scroll /
+  Pause / Excluded) instead of the old Scroll / Fixed / Static.
+- `src.deprecation.warn_deprecated()` warns once per process for what
+  `@deprecated` cannot decorate, such as a config key.
+
+Deprecated, removed in 3.9.0 (each logs a warning on first use). Vegas never
+read any of them:
+
+- `BasePlugin.get_supported_vegas_modes()` and
+  `BasePlugin.get_vegas_segment_width()`.
+- The `vegas_panel_count` per-plugin setting (warns once per plugin that sets
+  it).
+- The SCROLL / FIXED_SEGMENT distinction (`vegas_mode` `"scroll"` vs
+  `"fixed"`): both always scrolled. Documented only; no warning, because
+  official plugins' schemas still offer `"fixed"`.
+
 ### Fixes
 
 - On-demand no longer restarts a running display. `POST

@@ -314,6 +314,58 @@ rotating one at a time. Plugins control how their content appears via
 these hooks. See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for the user
 side of Vegas mode.
 
+#### Vegas participation
+
+Each plugin takes part in Vegas mode in one of three ways:
+
+| Participation | What Vegas does |
+|---|---|
+| `'scroll'` | The plugin's content (`get_vegas_content()`) scrolls by with everything else |
+| `'pause'` | The scroll stops when the plugin's turn comes round; its `display()` draws it full screen for `get_display_duration()` seconds, then the scroll resumes |
+| `'exclude'` | The plugin is left out of Vegas mode |
+
+Declare the plugin's default in `manifest.json`:
+
+```json
+{
+  "id": "my-alerts",
+  "vegas_participation": "pause"
+}
+```
+
+The user can override it per plugin with `vegas_participation` in that
+plugin's config section (it is one of the core-owned properties, see
+[PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md)).
+Vegas resolves it in this order:
+
+1. the user's `vegas_participation` config value;
+2. the plugin's `get_vegas_participation()` — the default implementation
+   reads the manifest's `vegas_participation`, then derives a value from
+   the legacy hooks below;
+3. derived from the legacy hooks: `get_vegas_display_mode()` returning
+   `VegasDisplayMode.STATIC` → `'pause'`; otherwise
+   `get_vegas_content_type()` returning `'none'` → `'exclude'`; everything
+   else → `'scroll'`.
+
+Step 3 is exactly what Vegas did before participation existed, so a plugin
+that declares nothing behaves as it always has. Manifest
+`vegas_participation` is new in core 3.8.0; older cores ignore it and use
+the legacy hooks.
+
+#### `get_vegas_participation() -> str`
+
+Returns `'scroll'`, `'pause'` or `'exclude'`. Override it only when the
+answer depends on state — pause only while an alert is live, exclude while
+there is nothing to show; for a fixed answer use the manifest. Vegas applies
+the user's config value before calling an override, so an override does not
+need to check it. A value that is not one of the three is ignored with a log
+line and the legacy hooks decide.
+
+```python
+def get_vegas_participation(self):
+    return 'pause' if self._alert_is_live() else 'scroll'
+```
+
 #### `get_vegas_content() -> Optional[PIL.Image | List[PIL.Image] | None]`
 
 Return content to inject into the scroll. Multi-item plugins (sports,
@@ -321,26 +373,40 @@ odds, news) should return a *list* of PIL Images so each item scrolls
 independently. Static plugins (clock, weather) can return a single image.
 Returning `None` falls back to capturing whatever `display()` produces.
 
-#### `get_vegas_content_type() -> str`
+#### `get_vegas_render_width() -> int`
 
-`'multi'`, `'static'`, or `'none'`. Affects how Vegas mode treats the
-plugin. Default `'static'`.
+The width Vegas wants this plugin's content to occupy, from the plugin's
+`vegas_width_pct` config value or the global
+`display.vegas_scroll.render_width_pct`. Vegas also narrows
+`display_manager` while it asks for content, so a plugin that sizes itself
+from `display_manager.width` does not need to read this.
 
-#### `get_vegas_display_mode() -> VegasDisplayMode`
+#### Legacy: `get_vegas_content_type()` and `get_vegas_display_mode()`
 
-Returns one of `VegasDisplayMode.SCROLL`, `FIXED_SEGMENT`, or `STATIC`.
-Read from `config["vegas_mode"]` or override directly.
+Superseded by participation, and still read to derive it when neither the
+user nor the manifest declares one (step 3 above). Only two answers ever
+mattered: `get_vegas_content_type()` returning `'none'`, and
+`get_vegas_display_mode()` returning `VegasDisplayMode.STATIC`.
 
-#### `get_supported_vegas_modes() -> List[VegasDisplayMode]`
+- `get_vegas_content_type()` returns `'multi'`, `'static'` or `'none'`
+  (default `'static'`).
+- `get_vegas_display_mode()` returns a `VegasDisplayMode` member (not a
+  string — the string `'static'` never paused anything). The default reads
+  the plugin's `vegas_mode` config value (`"scroll"`, `"fixed"` or
+  `"static"`), else maps content type `'multi'` to `SCROLL` and anything
+  else to `FIXED_SEGMENT`.
 
-The set of Vegas modes this plugin can render. Used by the UI to populate
-the mode selector for this plugin.
+`SCROLL` and `FIXED_SEGMENT` (and `vegas_mode` `"scroll"` and `"fixed"`)
+have always behaved identically: both scroll. The distinction is deprecated
+and goes away in 3.9.0 — see [Deprecated APIs](#deprecated-apis).
 
-#### `get_vegas_segment_width() -> Optional[int]`
+#### Deprecated: `get_supported_vegas_modes()` and `get_vegas_segment_width()`
 
-For `FIXED_SEGMENT` plugins, the number of *panels* the segment
-occupies in the scroll (pixel width = panels × `single_panel_width`,
-from `display.hardware.cols`). `None` uses the default of 1 panel.
+Never read by core, and removed in 3.9.0: calling the `BasePlugin`
+implementation logs a deprecation warning. A plugin's own override keeps
+working for the plugin itself. `get_vegas_segment_width()` read the
+`vegas_panel_count` config value, which has never affected Vegas — a card's
+width comes from `get_vegas_content()` and `vegas_width_pct`.
 
 > The full source for `BasePlugin` lives in
 > `src/plugin_system/base_plugin.py`. If a method here disagrees with the
@@ -1095,3 +1161,17 @@ are removed in 3.8.0; the rest stay until their callers migrate.
 | `font_manager` | `set_override`, `remove_override`, `get_overrides`, `add_font`, `remove_font`, `validate_font`, `get_size_tokens`, `get_performance_stats`, `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`, `unregister_plugin_fonts` | no replacement |
 | `plugin_manager` | `get_enabled_plugins` | check `enabled` on the entries in `plugin_manager.plugins` |
 
+### Removed in 3.9.0
+
+The Vegas APIs that described a fixed-width segment, which Vegas never
+implemented. Vegas participation (`'scroll'`, `'pause'`, `'exclude'`, see
+[Vegas scroll hooks](#vegas-scroll-hooks)) replaces them. Calling one of the
+methods, or setting `vegas_panel_count`, logs a warning once per process.
+No official plugin calls them; calendar, olympics and blackjack override
+`get_supported_vegas_modes()`, which keeps working for the plugin itself.
+
+| What | Instead |
+|---|---|
+| `BasePlugin.get_supported_vegas_modes()` | declare `vegas_participation` in the manifest |
+| `BasePlugin.get_vegas_segment_width()` and the `vegas_panel_count` config key | nothing: a card's width comes from `get_vegas_content()` and `vegas_width_pct` |
+| `VegasDisplayMode.SCROLL` vs `FIXED_SEGMENT` (`vegas_mode` `"scroll"` vs `"fixed"`) | `'scroll'` participation; the two always behaved the same |
