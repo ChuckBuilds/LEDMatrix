@@ -323,7 +323,7 @@ class RenderPipeline:
             )
 
             # Verify scroll image was created successfully
-            if not self.scroll_helper.cached_image:
+            if not self.scroll_helper.has_strip():
                 logger.error("ScrollHelper failed to create cached image")
                 return False
 
@@ -341,7 +341,7 @@ class RenderPipeline:
                 "Composed scroll image: %dx%d, %d plugin block(s), %d rows, "
                 "separator=%dpx between plugins, rows spaced to %dpx of ink "
                 "(min added %dpx)",
-                self.scroll_helper.cached_image.width if self.scroll_helper.cached_image else 0,
+                self.scroll_helper.total_scroll_width if self.scroll_helper.has_strip() else 0,
                 self.display_height,
                 len(blocks),
                 total_rows,
@@ -429,7 +429,7 @@ class RenderPipeline:
 
         Cheap enough to call every frame: it is arithmetic over cached state.
         """
-        if not self.config.continuous_scroll or not self.scroll_helper.cached_image:
+        if not self.config.continuous_scroll or not self.scroll_helper.has_strip():
             return False
         threshold = int(self.display_width * self.config.extend_threshold_screens)
         return self.scroll_helper.remaining_unscrolled() <= threshold
@@ -599,8 +599,10 @@ class RenderPipeline:
                 else:
                     content.append((pid, images))
             grouped = content
-            strip_end = (self.scroll_helper.cached_image.width
-                         if self.scroll_helper.cached_image is not None else 0)
+            # From the helper's own bookkeeping, never cached_image: reading
+            # that would build the full PIL strip the helper now defers.
+            strip_end = (self.scroll_helper.total_scroll_width
+                         if self.scroll_helper.has_strip() else 0)
 
             # Plugins the background thread had to defer need the shared canvas,
             # so they can only be fetched here. Queue them rather than doing all
@@ -636,7 +638,7 @@ class RenderPipeline:
                 total_rows += len(images)
                 blocks.append(self._join_plugin_rows(images))
 
-            had_strip = self.scroll_helper.cached_image is not None
+            had_strip = self.scroll_helper.has_strip()
             appended = self.scroll_helper.append_content(
                 content_items=blocks,
                 item_gap=self.config.separator_width,
@@ -740,7 +742,7 @@ class RenderPipeline:
         frame_start = time.time()
 
         try:
-            if not self.scroll_helper.cached_image:
+            if not self.scroll_helper.has_strip():
                 return False
 
             # Update scroll position
@@ -980,10 +982,11 @@ class RenderPipeline:
             self.sync_manager.send_new_cycle()
             # Push the actual scroll image over TCP so follower has identical pixels.
             # Done in a background thread to not block the render loop (~15ms transfer).
-            if self.scroll_helper.cached_image is not None:
+            image = self.scroll_helper.cached_image
+            if image is not None:
                 threading.Thread(
                     target=self.sync_manager.send_scroll_image,
-                    args=(self.scroll_helper.cached_image,),
+                    args=(image,),
                     daemon=True, name="sync-image-push"
                 ).start()
 
