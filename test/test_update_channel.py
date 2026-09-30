@@ -611,6 +611,79 @@ class TestChannelApi:
         assert data['update_available'] is True and data['target_version'] == 'v1.1.0'
         assert data['commits_behind'] == 2
 
+    def _check_update(self, monkeypatch):
+        from web_interface.blueprints import api_v3 as pkg
+        monkeypatch.setitem(pkg._update_check_cache, 'result', None)
+        return self.client.get('/api/v3/system/check-update').get_json()
+
+    def _update_code(self, monkeypatch):
+        from web_interface.blueprints import api_v3 as pkg
+        from web_interface.blueprints.api_v3 import system
+        monkeypatch.setattr(pkg.api_v3, 'plugin_store_manager', None, raising=False)
+        monkeypatch.setattr(system, '_pip_install_requirements',
+                            lambda *a, **k: pytest.fail('no requirements changed'))
+        return system.perform_core_update()
+
+    @pytest.mark.parametrize('config', [STABLE, {'auto_update': {'enabled': True}}],
+                             ids=['stable', 'legacy'])
+    def test_check_update_detached_ahead_of_the_release_is_not_an_update(
+            self, client, monkeypatch, config):
+        # The ledpi rig: a detached HEAD that pulled main after the newest
+        # release, with main moved on since. Update Code leaves it where it
+        # is, so check-update must not offer "12 commits" and an Update Now
+        # that then answers "already up to date".
+        self.client = client
+        client.cm.config = {k: dict(v) for k, v in config.items()}
+        repo = client.repo
+        repo.tag('v1.0.0')
+        ahead = repo.publish('v = 2 (unreleased)\n')
+        repo.publish('v = 3 (unreleased)\n')
+        repo.fetch()
+        git(repo.device, 'checkout', '-q', '--detach', ahead)
+
+        data = self._check_update(monkeypatch)
+        assert data['update_available'] is False, \
+            "the channel's action is none: nothing for Update Code to install"
+        assert data['commits_behind'] == 0 and data['waiting'] is True
+        general_tab = uc.resolve(repo.device, client.cm.load_config()).message
+        assert data['channel_message'] == general_tab
+        assert 'moves to the first release that includes it' in data['channel_message']
+
+        result = self._update_code(monkeypatch)
+        assert result['status'] == 'success' and 'already up to date' in result['message']
+        assert (repo.head(), repo.branch()) == (ahead, ''), "Update Code agrees: nothing moved"
+
+        info = client.get('/api/v3/system/git-info').get_json()
+        assert info['detached'] is True and info['current_release'] is None
+        assert info['channel_message'] == general_tab
+
+    @pytest.mark.parametrize('config', [BETA, STABLE], ids=['beta', 'stable-waiting'])
+    def test_check_update_on_a_branch_behind_main_is_an_update(self, client, monkeypatch, config):
+        # beta, and stable waiting on a branch for a release: both pull main.
+        self.client = client
+        client.cm.config = {k: dict(v) for k, v in config.items()}
+        repo = client.repo
+        repo.tag('v1.0.0')
+        repo.publish('v = 2 (unreleased)\n')
+        git(repo.device, 'pull', '-q')
+        tip = repo.publish('v = 3 (unreleased)\n')
+
+        data = self._check_update(monkeypatch)
+        assert data['update_available'] is True and data['commits_behind'] == 1
+        assert data['remote_sha'] == tip and 'target_version' not in data
+
+        result = self._update_code(monkeypatch)
+        assert result['status'] == 'success', result['message']
+        assert (repo.head(), repo.branch()) == (tip, 'main'), "Update Code agrees: it pulled main"
+
+    def test_git_info_names_the_release_when_on_one(self, client):
+        client.cm.config = dict(STABLE)
+        client.repo.tag('v1.0.0')
+        client.repo.fetch()
+        git(client.repo.device, 'checkout', '-q', '--detach', 'v1.0.0')
+        info = client.get('/api/v3/system/git-info').get_json()
+        assert info['detached'] is True and info['current_release'] == 'v1.0.0'
+
     def test_general_form_saves_the_channel(self, client, monkeypatch):
         r = client.post('/api/v3/config/main', json={'auto_update_channel': 'beta'})
         assert r.status_code == 200, r.get_json()

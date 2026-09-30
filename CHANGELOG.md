@@ -36,7 +36,9 @@ accepts both, but the store flags the old spelling as deprecated
 - Switch channels on the General tab (Update Channel, under Automatic
   Updates) or with `GET`/`POST /api/v3/system/update-channel`. The Overview
   update banner compares release tags on stable ("LEDMatrix v3.8.0 is
-  available") rather than commits on `main`.
+  available") rather than commits on `main`. A detached checkout newer
+  than the newest release gets no banner: Update Code leaves it where it
+  is until a release includes it.
 - A move between `main` and a release tag carries local edits across as the
   pull's `--autostash` does, and the automatic update's health check rolls
   it back to where HEAD was: the branch, or the detached release.

@@ -1338,9 +1338,12 @@ Get LEDMatrix repository version.
 
 Whether newer code is available on this device's update channel. On
 `stable` that is a newer release tag than the checkout (`target_version`
-names it); on `beta`, and on `stable` while it waits for a release that
-contains the current commit, it is commits on `origin/main` the checkout
-lacks. Cached briefly. Fields at the top level (no envelope):
+names it); on `beta`, and on `stable` while it waits on a branch for a
+release that contains the current commit, it is commits on `origin/main`
+the checkout lacks. A detached checkout newer than the newest release is
+never offered an update: Update Code leaves it where it is until a release
+includes it, and `channel_message` says so in the General tab's words.
+Cached briefly. Fields at the top level (no envelope):
 
 ```json
 {
@@ -1411,7 +1414,9 @@ Hide the current automatic-update alert until a new one replaces it.
 
 Branch, dirty state, recent commits and remote for the Tools tab. Fields at
 the top level: `branch`, `dirty`, `status`, `recent_commits`, `remote_url`
-(credentials scrubbed), `upstream`, `can_pull`.
+(credentials scrubbed), `upstream`, `can_pull`, and for the update channel
+`detached`, `version` (`git describe`), `current_release` (the release tag
+HEAD is exactly on, else `null`) and `channel_message` (detached only).
 
 ### Git Branches
 

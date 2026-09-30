@@ -142,7 +142,10 @@ def check_for_update():
     """Check whether newer LEDMatrix code is available on this device's update channel.
 
     stable compares HEAD with the newest release tag; beta (and stable while
-    it waits for a release newer than this commit) with origin/main. The
+    it waits on a branch for a release newer than this commit) with
+    origin/main. When the channel says an update would do nothing -- on the
+    newest release, or detached and newer than it -- it is never reported
+    as available, whatever origin/main holds. The
     response carries ``channel``, ``waiting``, ``newest_release`` and, when
     the update is a release, ``target_version``.
     """
@@ -175,9 +178,14 @@ def check_for_update():
                           'waiting': channel.waiting, 'newest_release': channel.newest_release,
                           'current_release': channel.current_release,
                           'channel_message': channel.message}
-        if channel.channel == 'stable':
+        if channel.channel == 'stable' or channel.action == update_channel.ACTION_NONE:
             # On a release (or about to move to one): compare tags, not
             # branch commits -- main is always ahead of the newest release.
+            # ACTION_NONE covers a detached HEAD newer than the newest
+            # release too: Update Code leaves it where it is until a release
+            # includes it, so origin/main being ahead is not an update it
+            # would install. channel_message says so, in the General tab's
+            # words.
             result = {'update_available': False, 'remote_sha': channel.newest_release_sha or 'unknown',
                       'commits_behind': 0, **channel_fields}
             if channel.action == update_channel.ACTION_CHECKOUT_TAG:
@@ -780,11 +788,23 @@ def get_git_info():
         remote = subprocess.run([_GIT, 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=10, cwd=d)
         branch_name = branch.stdout.strip()
         upstream = _git_upstream(d)
+        current_release, channel_message = None, ''
+        if not branch_name:
+            # Detached is not always "on a release": a device that pulled
+            # main and was then detached is newer than the newest one.
+            # Local refs only; the panel must not wait on the network.
+            try:
+                channel, _ = channel_status(d, fetch=False)
+                current_release, channel_message = channel.current_release, channel.message
+            except Exception:
+                logger.debug("git-info: could not read the update channel", exc_info=True)
         return jsonify({
             'branch': branch_name,
             # No branch: the stable update channel checks out release tags.
             'detached': not branch_name,
             'version': get_git_version(),
+            'current_release': current_release,
+            'channel_message': channel_message,
             'dirty': bool(status.stdout.strip()),
             'status': status.stdout.strip(),
             'recent_commits': log.stdout.strip() if log.returncode == 0 else '',
