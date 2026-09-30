@@ -94,7 +94,9 @@ VEGAS_PARTICIPATION_VALUES = ('scroll', 'pause', 'exclude')
 
 #: The release that removes get_supported_vegas_modes(),
 #: get_vegas_segment_width(), the ``vegas_panel_count`` setting and the
-#: SCROLL / FIXED_SEGMENT distinction.
+#: SCROLL / FIXED_SEGMENT distinction. The two @deprecated markers below
+#: spell it as a literal, because tools that read markers statically (the
+#: deprecation tests, the plugin API usage scan) cannot follow a name.
 VEGAS_LEGACY_REMOVAL = "3.9.0"
 
 _vegas_logger = get_logger(__name__)
@@ -1094,7 +1096,7 @@ class BasePlugin(ABC):
             return VegasDisplayMode.SCROLL
         return VegasDisplayMode.FIXED_SEGMENT
 
-    @deprecated(VEGAS_LEGACY_REMOVAL,
+    @deprecated("3.9.0",
                 "nothing reads it -- declare vegas_participation in the manifest instead")
     def get_supported_vegas_modes(self) -> List[VegasDisplayMode]:
         """
@@ -1122,7 +1124,7 @@ class BasePlugin(ABC):
         else:  # 'static'
             return [VegasDisplayMode.FIXED_SEGMENT, VegasDisplayMode.STATIC]
 
-    @deprecated(VEGAS_LEGACY_REMOVAL,
+    @deprecated("3.9.0",
                 "nothing reads it -- Vegas sizes a card from vegas_width_pct "
                 "(see get_vegas_render_width())")
     def get_vegas_segment_width(self) -> Optional[int]:

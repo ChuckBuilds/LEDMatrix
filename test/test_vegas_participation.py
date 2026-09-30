@@ -22,7 +22,7 @@ os.environ.setdefault("EMULATOR", "true")
 from src import deprecation
 from src.plugin_system import base_plugin
 from src.plugin_system.base_plugin import (
-    VEGAS_PARTICIPATION_VALUES, BasePlugin, VegasDisplayMode,
+    VEGAS_LEGACY_REMOVAL, VEGAS_PARTICIPATION_VALUES, BasePlugin, VegasDisplayMode,
     legacy_vegas_participation, resolve_vegas_participation,
 )
 from src.vegas_mode.config import VegasModeConfig
@@ -339,6 +339,8 @@ class TestDeprecations:
     def test_marked_for_3_9_0(self, name):
         marker = getattr(getattr(BasePlugin, name), '__deprecated__', '')
         assert 'LEDMatrix 3.9.0' in marker
+        # The marker spells the version out; it must match the constant.
+        assert f'LEDMatrix {VEGAS_LEGACY_REMOVAL}' in marker
 
     def test_the_kept_hooks_are_not_deprecated(self):
         for name in ('get_vegas_content', 'get_vegas_render_width',
