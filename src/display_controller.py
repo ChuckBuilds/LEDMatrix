@@ -34,6 +34,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
 
+from src import display_watchdog
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
@@ -218,6 +219,7 @@ class DisplayController:
         # Initialize Plugin System
         plugin_time = time.time()
         self.plugin_manager = None
+        self._plugin_runtime_publisher = None
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
@@ -321,6 +323,13 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
+
+            # The web UI's loaded / state / error_info for each plugin read
+            # what this publishes. Started before loading, so the loads that
+            # follow are published as they land.
+            from src.plugin_system.plugin_runtime import start_plugin_runtime_publisher
+            self._plugin_runtime_publisher = start_plugin_runtime_publisher(
+                self.cache_manager, self.plugin_manager.state_manager)
 
             # Activate the plugin health/metrics subsystem. PluginManager leaves
             # health_tracker/resource_monitor as None by default; wiring real
@@ -452,6 +461,12 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
+            # Its state machine no longer describes what runs; let the last
+            # snapshot go stale (readers then say unknown) rather than keep
+            # refreshing it.
+            if self._plugin_runtime_publisher is not None:
+                self._plugin_runtime_publisher.stop(publish_stopped=False)
+                self._plugin_runtime_publisher = None
 
         # The web UI's Fonts tab ("Used by") reads what this publishes.
         from src.font_usage import start_font_usage_publisher
@@ -1038,6 +1053,8 @@ class DisplayController:
             the plugin's update() holds its lock (the panel keeps the last
             frame; that is not a failure).
         """
+        # Every frame of both per-screen render loops comes through here.
+        display_watchdog.watchdog.beat()
         plugin_id = getattr(plugin, 'plugin_id', None)
         with self._display_lock_or_skip(plugin_id) as can_display:
             if not can_display:
@@ -1134,6 +1151,9 @@ class DisplayController:
 
             sleep_time = min(tick_interval, remaining)
             time.sleep(sleep_time)
+            # A dwell can be a minute long (sixty seconds while scheduled
+            # off); the watchdog must hear from this thread throughout.
+            display_watchdog.watchdog.beat()
             self._tick_plugin_updates()
             self._service_pending_changes()
             if (self.current_display_mode != mode
@@ -2224,6 +2244,11 @@ class DisplayController:
                 "plugin is enabled via the web UI."
             )
 
+        # This thread is the one the systemd watchdog and the heartbeat
+        # vouch for: beats from any other thread are ignored, so a render
+        # thread stuck inside a plugin stops them.
+        display_watchdog.watchdog.bind_render_thread()
+
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
             logger.info("Starting display with cached data (fast startup mode)")
@@ -2232,6 +2257,11 @@ class DisplayController:
             self._publish_current_mode_state()
             
             while True:
+                # Arms the watchdog after the first frame -- or after the
+                # first full pass, when there is nothing to draw -- and pings
+                # it from then on.
+                display_watchdog.watchdog.loop_pass()
+
                 # Apply plugin enable/disable edits saved via the web UI. The
                 # config-watcher thread only sets the flag; loading/unloading and
                 # rebuilding available_modes happens here on the render thread so
@@ -3617,6 +3647,9 @@ class DisplayController:
 
     def cleanup(self):
         """Clean up resources."""
+        # First: a clean stop is not a hang, and a heartbeat left behind
+        # would read as a frozen panel to the web interface.
+        display_watchdog.watchdog.stopping()
         # Stop the async update worker first so no in-flight update() call
         # is still touching display/cache-backed resources while they're
         # torn down below.
@@ -3647,6 +3680,12 @@ class DisplayController:
                 logger.warning("Error shutting down config service: %s", e)
         if getattr(self, '_font_usage_publisher', None) is not None:
             self._font_usage_publisher.stop()
+        # Publishes "stopped", so the web UI stops reporting what was loaded.
+        if getattr(self, '_plugin_runtime_publisher', None) is not None:
+            try:
+                self._plugin_runtime_publisher.stop()
+            except Exception as e:
+                logger.warning("Error stopping the plugin runtime publisher: %s", e)
         logger.info("Cleaning up display controller...")
         if hasattr(self, 'display_manager'):
             self.display_manager.cleanup()

@@ -1014,7 +1014,7 @@ def save_main_config():
         plugin_manifests = _pkg._discovered_plugin_manifests()
         for key in data:
             # Check if this key is a plugin ID
-            if api_v3.plugin_manager and key in plugin_manifests:
+            if api_v3.plugin_catalog and key in plugin_manifests:
                 plugin_id = key
                 submitted_config = data[key]
                 if not isinstance(submitted_config, dict):
@@ -1030,7 +1030,7 @@ def save_main_config():
                 # the schema load are far enough apart that a later edit could
                 # separate them. Refuse rather than save without knowing which
                 # fields are secrets.
-                schema_path = resolve_under(api_v3.plugin_manager.plugins_dir,
+                schema_path = resolve_under(api_v3.plugin_catalog.plugins_dir,
                                             plugin_id, 'config_schema.json')
                 if schema_path is None:
                     return error_response(
@@ -1116,18 +1116,9 @@ def save_main_config():
 
         invalidate_cache()
 
-        # Notify saved plugins of their new config (with secrets merged), now
-        # that it is on disk.
-        for plugin_id in plugin_keys_to_remove:
-            try:
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance and hasattr(plugin_instance, 'on_config_change'):
-                    merged_config = api_v3.config_manager.load_config()
-                    plugin_instance.on_config_change(_pkg._prepared_plugin_config(
-                        plugin_id, merged_config.get(plugin_id, {})))
-            except Exception as hook_err:
-                # Don't fail the save if hook fails
-                logger.warning("on_config_change failed: %s", hook_err)
+        # Saved plugin sections reach the running plugins through the display
+        # process's config watcher (on_config_change there); nothing runs a
+        # plugin in this process.
 
         message = 'Configuration saved successfully'
         # Switching automatic updates on finishes their setup, which needs
@@ -1139,7 +1130,10 @@ def save_main_config():
                 message = f'{message}. {note}'
         except Exception:
             logger.warning("Automatic update setup could not be started", exc_info=True)
-        return success_response(message=message)
+        # Display hardware, rotation/durations and general settings take
+        # effect after a display restart; the UI shows its restart banner on
+        # this flag.
+        return success_response(message=message, extra={'restart_required': True})
     except Exception as e:
         logger.error("Error saving config", exc_info=True)
         return error_response(

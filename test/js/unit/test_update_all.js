@@ -229,6 +229,78 @@ const noSleep = { sleep: async () => {} };
        allNoop.type === 'success' && allNoop.text === '2 already up to date', allNoop);
   }
 
+  console.log('\nrestart banner: driven by the server\'s restart_required');
+  {
+    const body = (restart_required, restart_message) => ({
+      success: true,
+      result: { status: 'success', data: { update_status: 'updated' }, restart_required, restart_message },
+    });
+    const needed = body(true, 'Plugin updated — restart the display to run the new version');
+    ok('an update the display is running asks for the banner, with its wording',
+       Manager.restartRequest([body(false), needed, body(true, 'second')]) === needed.result);
+    ok('updates the display does not run need no restart',
+       Manager.restartRequest([body(false), body(false)]) === null);
+    ok('a failed request never raises the banner',
+       Manager.restartRequest([{ success: false, error: { restart_required: true } }]) === null);
+    ok('an older server that sends no flag raises nothing',
+       Manager.restartRequest([{ success: true, result: { status: 'success' } }]) === null);
+    ok('no results, no banner', Manager.restartRequest(undefined) === null);
+
+    // The first request's answer was lost; the re-sent one finds nothing to do.
+    const lost = (enabled, update_status = 'up_to_date') => ({
+      pluginId: 'clock', success: true, afterLostAnswer: true, enabled,
+      result: { status: 'success', data: { update_status }, restart_required: false },
+    });
+    const maybe = Manager.restartRequest([body(false), lost(true)]);
+    ok('an enabled plugin up to date after a lost answer may have been updated: banner',
+       maybe && maybe.restart_required === true && /clock/.test(maybe.restart_message), maybe);
+    ok('...but an explicit answer still wins, with its wording',
+       Manager.restartRequest([lost(true), needed]) === needed.result);
+    ok('a disabled one needs no restart (enabling it loads it)',
+       Manager.restartRequest([lost(false)]) === null);
+    ok('nor does one that was not retried',
+       Manager.restartRequest([{ ...lost(true), afterLostAnswer: undefined }]) === null);
+  }
+
+  console.log('\nupdateAll keeps what the banner needs');
+  {
+    // ledmatrix-flights (enabled) loses its first answer, then is up to date.
+    const api = fakeApi({
+      'ledmatrix-flights': (n) => {
+        if (n === 1) throw netErr();
+        return { status: 'success', data: { update_status: 'up_to_date' }, restart_required: false };
+      },
+    });
+    setup(api, { windowList: INSTALLED });
+    const results = await Manager.updateAll(null, noSleep);
+    const flights = results.find(r => r.pluginId === 'ledmatrix-flights');
+    ok('a retried entry is marked, with the plugin\'s enabled flag',
+       flights.afterLostAnswer === true && flights.enabled === true, flights);
+    ok('an entry answered first time is not marked',
+       results.filter(r => r.afterLostAnswer).length === 1, results);
+    ok('...so the run asks for a restart', Manager.restartRequest(results) !== null);
+  }
+  {
+    const answer = { status: 'success', data: { update_status: 'updated' }, restart_required: true };
+    const api = fakeApi({ 'ledmatrix-flights': () => answer });
+    setup(api, { stateList: INSTALLED });
+    window.PluginStateManager.loadInstalledPlugins = async () => { throw new Error('refresh failed'); };
+    const warn = console.warn;
+    console.warn = () => {};
+    let results;
+    try {
+      results = await Manager.updateAll(null, noSleep);
+    } catch (e) {
+      results = e;
+    } finally {
+      console.warn = warn;
+    }
+    ok('a failed list refresh still returns the results',
+       Array.isArray(results) && results.length === EXPECTED.length, String(results));
+    ok('...with the restart flag intact',
+       Array.isArray(results) && Manager.restartRequest(results) === answer);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

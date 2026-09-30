@@ -34,12 +34,11 @@ from src.common.path_safety import (
 )
 from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
-from src.plugin_system.plugin_manager import PluginManager
+from src.plugin_system.plugin_catalog import PluginCatalog
 from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
 from src.plugin_system.schema_manager import SchemaManager
 from src.plugin_system.operation_queue import PluginOperationQueue
-from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 
 _JOURNALCTL = shutil.which('journalctl')
@@ -117,12 +116,6 @@ else:
     # If relative, resolve relative to the project root
     plugins_dir = project_root / plugins_dir_name
 
-plugin_manager = PluginManager(
-    plugins_dir=str(plugins_dir),
-    config_manager=config_manager,
-    display_manager=None,  # Not needed for web interface
-    cache_manager=None     # Not needed for web interface
-)
 plugin_store_manager = PluginStoreManager(plugins_dir=str(plugins_dir))
 # A core `git pull` update (or any checkout) restores built-in plugins
 # committed under plugin-repos/, even ones the user uninstalled. Re-remove any
@@ -149,16 +142,25 @@ schema_manager = SchemaManager(
     config_manager=config_manager
 )
 
+# The web process reads plugins as files and never runs them: no plugin module
+# is imported, no plugin class instantiated, no lifecycle hook called here.
+# Only the display process (src/display_controller.py) does that. Config
+# saves reach the running plugins through the display's config watcher; what
+# the display knows at run time (health, metrics, errors, current mode) it
+# publishes to the shared cache. See docs/ARCHITECTURE.md.
+plugin_catalog = PluginCatalog(
+    plugins_dir=plugins_dir,
+    config_manager=config_manager,
+    schema_manager=schema_manager,
+)
+
 # Initialize operation queue for plugin operations
 operation_queue = PluginOperationQueue(max_history=500)
 
-# Initialize plugin state manager
-# Use lazy_load=True to defer file loading until first use (improves startup time)
-plugin_state_manager = PluginStateManager(
-    state_file=str(project_root / "data" / "plugin_state.json"),
-    auto_save=True,
-    lazy_load=True
-)
+# No plugin state file: data/plugin_state.json is retired. Desired state is
+# config.json plus the plugins on disk, observed state is the runtime
+# snapshot the display publishes (src/plugin_system/plugin_runtime.py). An
+# existing file is left where it is, unread; see docs/ARCHITECTURE.md.
 
 # Initialize operation history
 # Use lazy_load=True to defer file loading until first use (improves startup time)
@@ -169,7 +171,7 @@ operation_history = OperationHistory(
 )
 
 # Plugin discovery is deferred until first API request that needs it
-# This improves startup time - endpoints will call discover_plugins() when needed
+# This improves startup time - endpoints call plugin_catalog.discover_plugins() when needed
 
 # Register blueprints
 from web_interface.blueprints.pages_v3 import pages_v3
@@ -177,34 +179,35 @@ from web_interface.blueprints.api_v3 import api_v3
 
 # Initialize managers in blueprints
 pages_v3.config_manager = config_manager
-pages_v3.plugin_manager = plugin_manager
+pages_v3.plugin_catalog = plugin_catalog
 pages_v3.plugin_store_manager = plugin_store_manager
 pages_v3.saved_repositories_manager = saved_repositories_manager
 pages_v3.schema_manager = schema_manager
 
 api_v3.config_manager = config_manager
-api_v3.plugin_manager = plugin_manager
+api_v3.plugin_catalog = plugin_catalog
 api_v3.plugin_store_manager = plugin_store_manager
 api_v3.saved_repositories_manager = saved_repositories_manager
 api_v3.schema_manager = schema_manager
 api_v3.operation_queue = operation_queue
-api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()
 
-# Wire plugin health/metrics for the web process. The display service records
-# health and execution-time metrics to the shared on-disk cache; giving the web
-# process its own tracker/monitor backed by that same cache lets the health API
-# routes (/api/v3/plugins/health, /plugins/metrics) read that persisted data.
+# Plugin health and metrics as the display publishes them. The display service
+# records health and execution-time metrics to the shared on-disk cache; a
+# tracker/monitor backed by that same cache lets the health API routes
+# (/api/v3/plugins/health, /plugins/metrics) read what it wrote.
 # Guarded so any init failure degrades to "not available" rather than breaking
 # the web server.
+api_v3.health_tracker = None
+api_v3.resource_monitor = None
 try:
     from src.plugin_system.plugin_health import PluginHealthTracker
     from src.plugin_system.resource_monitor import PluginResourceMonitor
-    plugin_manager.health_tracker = PluginHealthTracker(api_v3.cache_manager)
-    plugin_manager.resource_monitor = PluginResourceMonitor(api_v3.cache_manager)
+    api_v3.health_tracker = PluginHealthTracker(api_v3.cache_manager)
+    api_v3.resource_monitor = PluginResourceMonitor(api_v3.cache_manager)
 except Exception as _hm_err:  # pragma: no cover - defensive startup guard
     logging.getLogger(__name__).warning(
         "Could not enable plugin health/metrics for web UI: %s", _hm_err
@@ -957,18 +960,18 @@ def _run_startup_reconciliation() -> None:
 
     try:
         from src.plugin_system.state_reconciliation import StateReconciliation
+        from src.plugin_system.plugin_runtime import read_plugin_runtime
         reconciler = StateReconciliation(
-            state_manager=plugin_state_manager,
             config_manager=config_manager,
-            plugin_manager=plugin_manager,
             plugins_dir=plugins_dir,
-            store_manager=plugin_store_manager
+            store_manager=plugin_store_manager,
+            runtime_source=lambda: read_plugin_runtime(api_v3.cache_manager),
         )
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
             _logger.info("[Reconciliation] %s", result.message)
         if result.inconsistencies_fixed:
-            plugin_manager.discover_plugins()
+            plugin_catalog.discover_plugins()
         if not result.reconciliation_successful:
             _logger.warning(
                 "[Reconciliation] Finished with %d unresolved issue(s); "
@@ -1043,7 +1046,7 @@ def start_auto_update_scheduler():
         config_manager=config_manager,
         core_update=perform_core_update,
         store_manager=plugin_store_manager,
-        plugin_manager=plugin_manager,
+        plugin_catalog=plugin_catalog,
         schema_manager=schema_manager,
         operation_history=operation_history,
     )

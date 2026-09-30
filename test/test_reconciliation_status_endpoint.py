@@ -64,7 +64,7 @@ def client(tmp_path, monkeypatch):
         # singleton, so assigning them directly leaks mocks -- pointing at a
         # deleted tmp_path -- into every later test that imports api_v3.
         monkeypatch.setattr(api_v3, "config_manager", cm, raising=False)
-        monkeypatch.setattr(api_v3, "plugin_manager", pm, raising=False)
+        monkeypatch.setattr(api_v3, "plugin_catalog", pm, raising=False)
 
         app = Flask(__name__)
         app.config["TESTING"] = True

@@ -503,6 +503,42 @@ class TestExemptions:
         assert set(r.get_json()['data']) == {'status'}
         assert 'checks' in admin.get('/api/v3/health').get_json()['data']
 
+    def test_a_stalled_render_loop_reaches_the_minimal_answer(
+            self, config_manager, api_v3_module, tmp_path, monkeypatch):
+        """The display's heartbeat (checks.display_loop) feeds the one word a
+        caller who is not logged in gets, without its detail."""
+        import time
+        from src import display_watchdog
+        from web_interface import display_preview
+        from web_interface.blueprints.api_v3 import misc
+        # Every other check healthy, so the heartbeat alone decides.
+        monkeypatch.setattr(misc, '_get_display_service_status', lambda: {'active': True})
+        monkeypatch.setattr(misc, '_discovered_plugin_manifests', lambda: {})
+        monkeypatch.setattr(api_v3_module.api_v3, 'plugin_catalog', object(), raising=False)
+        preview = tmp_path / 'preview.png'
+        preview.write_bytes(b'png')
+        monkeypatch.setattr(display_preview, 'SNAPSHOT_PATH', str(preview))
+        heartbeat = tmp_path / 'display-heartbeat.json'
+        monkeypatch.setattr(display_watchdog, 'HEARTBEAT_PATH', str(heartbeat))
+
+        def beat(age):
+            heartbeat.write_text(json.dumps({'pid': 1, 'mono': time.monotonic() - age,
+                                             'wall': time.time() - age}))
+
+        app = build(config_manager, api_v3_module)
+        admin = enable(app)
+        stranger = lan_client(app)
+
+        beat(age=2)
+        assert admin.get('/api/v3/health').get_json()['data']['checks']['display_loop']['status'] == 'running'
+        assert stranger.get('/api/v3/health').get_json()['data'] == {'status': 'healthy'}
+
+        beat(age=300)
+        full = admin.get('/api/v3/health').get_json()['data']
+        assert full['checks']['display_loop']['status'] == 'stalled'
+        assert full['status'] == 'degraded'
+        assert stranger.get('/api/v3/health').get_json()['data'] == {'status': 'degraded'}
+
 
 # --- The hash never leaves ------------------------------------------------------
 

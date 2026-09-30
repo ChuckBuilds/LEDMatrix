@@ -793,7 +793,7 @@ def api_client(monkeypatch):
     cm.get_raw_file_content.return_value = {}
     cm.save_config_atomic.return_value = MagicMock(status=MagicMock(value='success'), message=None)
     api_v3.config_manager = cm
-    api_v3.plugin_manager = MagicMock(plugins={})
+    api_v3.plugin_catalog = MagicMock()
     # Never restart a real display from a test run.
     setup_calls = []
     monkeypatch.setattr(au, 'start_setup_if_needed',

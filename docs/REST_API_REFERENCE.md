@@ -154,9 +154,16 @@ there an unchecked checkbox — which the browser omits — is saved as
 ```json
 {
   "status": "success",
-  "message": "Configuration saved successfully"
+  "message": "Configuration saved successfully",
+  "restart_required": true
 }
 ```
+
+`restart_required` is always true here: display hardware, rotation,
+durations and general settings take effect when the display restarts, and
+the web UI shows its restart banner on the flag. (Plugin sections saved
+through this route reach the running plugin live, like
+`POST /plugins/config`.)
 
 Invalid values (e.g. an out-of-range `target_fps`, a hardware option the
 Raspberry Pi 5 driver cannot use) are rejected with `400` and nothing is
@@ -503,8 +510,10 @@ List all installed plugins with their status and metadata.
         "enabled": true,
         "verified": true,
         "loaded": true,
-        "state": "loaded",
+        "state": "enabled",
         "error_info": null,
+        "loaded_version": "1.2.3",
+        "loaded_at": 1790000000.0,
         "last_updated": "2025-01-15T10:30:00Z",
         "last_commit": "abc1234",
         "last_commit_message": "feat: Add live game updates",
@@ -512,19 +521,53 @@ List all installed plugins with their status and metadata.
         "web_ui_actions": [],
         "vegas_mode": null,
         "vegas_content_type": null,
-        "vegas_participation": "scroll"
+        "vegas_participation": "scroll",
+        "vegas_participation_source": "manifest"
       }
-    ]
+    ],
+    "runtime": {
+      "status": "live",
+      "published_at": 1790000030.0,
+      "age_seconds": 12.4,
+      "stale_after": 180.0
+    }
   }
 }
 ```
 
+Metadata comes from each plugin's files on disk; `enabled` is the plugin's
+`enabled` flag in `config.json` (missing means disabled, as the display
+reads it). `vegas_mode` is the plugin's configured `vegas_mode`, or `null`.
+
+`loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` come from
+the runtime snapshot the display publishes (the web process runs no plugin
+code). `state` is the display's lifecycle state (`loaded` while loading,
+`enabled`, `disabled`, `error`, `unloaded`); `error_info` is `null` or
+`{"type", "message", "at", "recoverable"}`, with the message redacted and at
+most 200 characters (the full error is at `/errors/*`). `loaded_version` is
+the version the display loaded, which differs from `version` after an update
+until the display restarts. A plugin a live snapshot does not list is
+`loaded: false`, `state: "unloaded"`.
+
+`runtime.status` says whether to believe them: `live` (fresh snapshot from
+a running display), `stale` (not refreshed within `stale_after` seconds: the
+display is hung or died), `stopped` (the display shut down) or `unknown`
+(nothing published yet). Unless it is `live`, every one of those fields is
+`null`. Health and metrics are at [`/plugins/health`](#get-plugin-health)
+and `/plugins/metrics`.
+
 `vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
 `"pause"` or `"exclude"` (see
-[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)).
-For a plugin that is not loaded it is only the user's own
-`vegas_participation` setting, or `null`. `vegas_mode` and
-`vegas_content_type` are the legacy hooks' raw answers.
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)),
+and `vegas_participation_source` says where it came from. The web reads it
+the way the display resolves it, as far as files can tell: the user's own
+`vegas_participation` setting (`"config"`), else the manifest's declared
+`vegas_participation` (`"manifest"`). Past those the display derives it from
+the plugin's code -- a `get_vegas_participation()` override or the legacy
+Vegas hooks -- which the web process never runs, so `vegas_participation`
+is `null` and the source is `"runtime"`. A plugin that overrides
+`get_vegas_participation()` decides at run time and can differ from its
+manifest's declaration. `vegas_content_type` is always `null`.
 
 ### Get Plugin Configuration
 
@@ -685,7 +728,13 @@ Install a plugin from the plugin store.
 ```
 
 When the operation queue is unavailable the install runs synchronously and
-the response has only a `message`.
+the response has only a `message` and the restart fields below.
+
+The finished operation's `result` (from `/plugins/operation/<operation_id>`)
+carries `restart_required`: true when the plugin is already enabled in
+`config.json`, because the running display does not load newly installed
+files by itself; `restart_message` then holds the restart banner's wording.
+A plugin that is not enabled needs no restart: enabling it loads it.
 
 A plugin whose registry entry (or downloaded manifest) needs a newer
 LEDMatrix is refused: the synchronous install answers `409` with a message
@@ -716,6 +765,11 @@ Remove an installed plugin.
 }
 ```
 
+The finished operation's `result` carries `restart_required`. Removing the
+plugin's config (the default) lets the display unload it by itself, so it is
+false; with `preserve_config: true` an enabled plugin keeps running until
+the display restarts, and it is true.
+
 ### Update Plugin
 
 **POST** `/api/v3/plugins/update`
@@ -736,10 +790,17 @@ Update a plugin to the latest version. Runs synchronously.
   "message": "Plugin football-scoreboard updated ...",
   "data": {
     "last_updated": "2025-01-15T10:30:00Z",
-    "commit": "abc1234..."
-  }
+    "commit": "abc1234...",
+    "update_status": "updated"
+  },
+  "restart_required": true,
+  "restart_message": "Plugin updated — restart the display to run the new version"
 }
 ```
+
+`update_status` is `updated`, `up_to_date` or `local_only`.
+`restart_required` is true when the plugin changed and is enabled: the
+running display keeps the code it loaded until it restarts.
 
 An update this core cannot run answers `409` with `Plugin update refused:`
 and the reason; the installed version is left as it was.
@@ -772,9 +833,12 @@ Install a plugin directly from a GitHub repository URL. Runs synchronously.
   "message": "Plugin my-plugin installed successfully",
   "plugin_id": "my-plugin",
   "name": "My Plugin",
-  "branch": "main"
+  "branch": "main",
+  "restart_required": false
 }
 ```
+
+`restart_required` follows the same rule as `/plugins/install`.
 
 ### Load Registry from URL
 
@@ -947,8 +1011,11 @@ copy, not the display service's in-memory state.
 
 **GET** `/api/v3/plugins/state`
 
-Get the state manager's record for every plugin, keyed by plugin id. Pass
-`?plugin_id=<id>` for one plugin (`data` is then that record).
+Every plugin that is installed or configured, keyed by plugin id: desired
+state from `config.json` and the plugins directory, observed state from the
+display's runtime snapshot. Built per request; there is no state file.
+Pass `?plugin_id=<id>` for one plugin (`data` is then that record; 404 if
+it is neither installed nor configured).
 
 **Response**:
 ```json
@@ -957,23 +1024,41 @@ Get the state manager's record for every plugin, keyed by plugin id. Pass
   "data": {
     "football-scoreboard": {
       "plugin_id": "football-scoreboard",
-      "status": "loaded",
+      "status": "enabled",
+      "installed": true,
+      "in_config": true,
       "enabled": true,
       "version": "1.2.3",
+      "loaded": true,
+      "state": "enabled",
+      "error_info": null,
+      "loaded_version": "1.2.3",
+      "loaded_at": 1790000000.0,
       "installed_at": "2025-01-15T10:30:00",
-      "last_updated": "2025-01-15T10:30:00",
-      "config_version": 1,
-      "metadata": {}
+      "last_updated": "2025-01-15T10:30:00"
     }
-  }
+  },
+  "runtime": {"status": "live", "published_at": 1790000030.0, "age_seconds": 12.4, "stale_after": 180.0}
 }
 ```
+
+`status` is `enabled` / `disabled` for an installed plugin, `unknown` for
+one that is configured but not installed, and `error` when the display
+reports its state as `error`. `installed_at` and `last_updated` are the
+newest successful install, and install or update, in the operation history
+(`null` when it has none). The runtime fields follow the same rule as
+[`/plugins/installed`](#get-installed-plugins): `null` unless
+`runtime.status` is `live`.
 
 ### Reconcile Plugin State
 
 **POST** `/api/v3/plugins/state/reconcile`
 
-Reconcile plugin state across config, disk and the state manager.
+Reconcile desired state (`config.json` plus the plugins on disk) with the
+display's runtime snapshot. Desired-state gaps are fixed (a plugin on disk
+with no config section is added disabled); observed-state gaps -- enabled
+but not loaded, loaded at an older version than is installed -- are
+reported with `fix_action: "no_action"`.
 
 **Request Body** (optional):
 ```json
@@ -2016,9 +2101,17 @@ Health of the web interface, display service, config file, plugin system and
 display snapshot. `data.status` is `healthy` or `degraded`, with
 `data.services` and `data.checks`.
 
+`data.checks.display_loop` is the display's render-loop heartbeat: `running`
+(with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
+frozen even if the service is active; the status turns `degraded`), or
+`not_reported` when the display writes none (not started yet, the dev server,
+Windows), which does not affect the status.
+
 Open even when the web login is on, for uptime monitors; a caller that is not
 logged in (and has no token) then gets only `{"status": "success", "data":
-{"status": "healthy" | "degraded"}}`.
+{"status": "healthy" | "degraded"}}`. A stalled render loop still shows there
+as `degraded`; the `checks` detail is only for logged-in callers, tokens and
+requests from the Pi itself.
 
 ### Hardware Status
 

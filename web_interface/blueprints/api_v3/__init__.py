@@ -91,8 +91,9 @@ def _scrub_git_remote_url(url: str) -> str:
         pass
     return url
 # NOTE: the managers live on the blueprint object (app.py sets
-# api_v3.config_manager, api_v3.plugin_manager, api_v3.cache_manager and
-# the rest). Deliberately not mirrored as module globals: a bare
+# api_v3.config_manager, api_v3.plugin_catalog, api_v3.cache_manager and
+# the rest). There is no plugin manager: the web process reads plugins
+# through a PluginCatalog and never runs them (docs/ARCHITECTURE.md). Deliberately not mirrored as module globals: a bare
 # `config_manager` used to resolve to a None that was never assigned, which
 # silently disabled the /health checks and made /display/current fall back
 # to a hardcoded 128x64.
@@ -631,7 +632,7 @@ def _non_plugin_id_error(plugin_id):
                               status_code=400)
     return None
 def _discovered_plugin_manifests(plugin_id=None, rescan=False):
-    """The plugin manager's manifests, discovering plugins first if needed.
+    """The plugin catalog's manifests, discovering plugins first if needed.
 
     The web process discovers plugins lazily (see app.py): nothing scans at
     startup, so plugin_manifests is empty until some endpoint calls
@@ -646,18 +647,18 @@ def _discovered_plugin_manifests(plugin_id=None, rescan=False):
     Otherwise the existing map is reused, so a steady stream of requests
     for known plugins costs nothing.
 
-    Returns the manifest map, or {} when there is no plugin manager.
+    Returns the manifest map, or {} when there is no plugin catalog.
     """
-    pm = api_v3.plugin_manager
-    if pm is None:
+    catalog = getattr(api_v3, 'plugin_catalog', None)
+    if catalog is None:
         return {}
-    manifests = getattr(pm, 'plugin_manifests', None)
+    manifests = getattr(catalog, 'plugin_manifests', None)
     if not manifests or rescan or (plugin_id is not None and plugin_id not in manifests):
         try:
-            pm.discover_plugins()
+            catalog.discover_plugins()
         except Exception:
             logger.warning('Plugin discovery failed', exc_info=True)
-        manifests = getattr(pm, 'plugin_manifests', None)
+        manifests = getattr(catalog, 'plugin_manifests', None)
     return manifests or {}
 def _do_transactional_uninstall(plugin_id, preserve_config):
     """Execute an uninstall with snapshot-based rollback.
@@ -665,12 +666,13 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     Order of operations:
       1. Snapshot main config + secrets (abort on unexpected errors, proceed on expected I/O errors).
       2. Clean up plugin config (abort with 500 if this raises — avoids orphaned files).
-      3. Unload plugin from runtime if loaded (rollback + 500 if this raises).
-      4. Remove plugin files (rollback + 500 if this returns False or raises).
-      5. Finish (remove state, invalidate caches).
+      3. Remove plugin files (rollback + 500 if this returns False or raises).
+      4. Finish (remove state, invalidate caches).
 
-    Rollback restores the config snapshot and, if the plugin had been
-    loaded before unload, calls load_plugin to restore runtime state.
+    Rollback restores the config snapshot. Nothing is unloaded here: the web
+    process never loaded the plugin. The display unloads it when the removed
+    config section reaches its config watcher; plugin_catalog's
+    display_restart_required() covers the case where that doesn't happen.
 
     Returns (True, None) on success or (False, error_message) on failure.
     """
@@ -692,13 +694,7 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     if not preserve_config:
         api_v3.config_manager.cleanup_plugin_config(plugin_id, remove_secrets=True)
 
-    # Record whether the plugin was running before we touch anything.
-    was_loaded = (
-        api_v3.plugin_manager is not None
-        and plugin_id in api_v3.plugin_manager.plugins
-    )
-
-    def _rollback(reload_plugin):
+    def _rollback():
         if main_snapshot is not None:
             try:
                 api_v3.config_manager.save_raw_file_content('main', main_snapshot)
@@ -709,36 +705,21 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
                 api_v3.config_manager.save_raw_file_content('secrets', secrets_snapshot)
             except Exception as restore_err:
                 logger.error("Failed to restore secrets snapshot for %s: %s", plugin_id, restore_err)
-        if reload_plugin and api_v3.plugin_manager is not None:
-            try:
-                api_v3.plugin_manager.load_plugin(plugin_id)
-            except Exception as reload_err:
-                logger.error("Failed to reload plugin %s during rollback: %s", plugin_id, reload_err)
 
-    # --- Step 3: unload ---
-    if was_loaded:
-        try:
-            api_v3.plugin_manager.unload_plugin(plugin_id)
-        except Exception as unload_err:
-            _rollback(reload_plugin=False)  # unload failed — runtime state unchanged
-            return False, f"Failed to unload plugin {plugin_id}: {unload_err}"
-
-    # --- Step 4: remove files ---
+    # --- Step 3: remove files ---
     try:
         success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
     except Exception as remove_err:
-        _rollback(reload_plugin=was_loaded)
+        _rollback()
         return False, f"Failed to remove plugin {plugin_id}: {remove_err}"
 
     if not success:
-        _rollback(reload_plugin=was_loaded)
+        _rollback()
         return False, f"Failed to uninstall plugin {plugin_id}"
 
-    # --- Step 5: finish ---
+    # --- Step 4: finish ---
     if api_v3.schema_manager:
         api_v3.schema_manager.invalidate_cache(plugin_id)
-    if api_v3.plugin_state_manager:
-        api_v3.plugin_state_manager.remove_plugin_state(plugin_id)
     # Persistently record the uninstall so a later core `git pull` update
     # cannot resurrect a built-in plugin (committed under plugin-repos/) that
     # the user removed. Best-effort: never fail the uninstall over this.
@@ -747,6 +728,54 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
     except Exception as record_err:
         logger.warning("Could not record uninstall for %s: %s", plugin_id, record_err)
     return True, None
+def _plugin_runtime_view():
+    """What the display publishes about its plugins (loaded, lifecycle
+    state, last error, version loaded), judged for staleness.
+
+    Only a ``live`` view reports those facts; a stale, stopped or missing
+    snapshot answers None for them (see src/plugin_system/plugin_runtime.py).
+    """
+    from src.plugin_system.plugin_runtime import read_plugin_runtime
+    return read_plugin_runtime(getattr(api_v3, 'cache_manager', None))
+
+
+def _plugin_enabled_in_config(plugin_id: str) -> bool:
+    """Whether config.json enables ``plugin_id``, by the display's rule.
+
+    Read this before an operation changes the config (uninstall removes the
+    section). A config that cannot be read counts as enabled, so the answer
+    errs towards asking for a restart.
+    """
+    try:
+        section = (api_v3.config_manager.load_config() or {}).get(plugin_id)
+    except Exception:
+        logger.debug("Could not read config for %s", plugin_id, exc_info=True)
+        return True
+    return isinstance(section, dict) and bool(section.get('enabled', False))
+
+
+_RESTART_MESSAGES = {
+    'install': 'Plugin installed — restart the display to start it',
+    'update': 'Plugin updated — restart the display to run the new version',
+    'uninstall': 'Plugin uninstalled — restart the display to stop it',
+}
+
+
+def _store_restart_fields(action: str, plugin_enabled: bool, **kwargs) -> Dict[str, Any]:
+    """``restart_required`` (and the banner's wording) for a store response.
+
+    The rules are ``display_restart_required``'s: whether the display picks
+    the change up by itself or keeps running what it has until a restart.
+    The UI shows its restart banner when ``restart_required`` is true.
+    """
+    from src.plugin_system.plugin_catalog import display_restart_required
+    required = display_restart_required(action, plugin_enabled, **kwargs)
+    fields: Dict[str, Any] = {'restart_required': required}
+    if required:
+        fields['restart_message'] = _RESTART_MESSAGES[action]
+    return fields
+
+
 def deep_merge(base_dict, update_dict):
     """
     Deep merge update_dict into base_dict.
@@ -1346,24 +1375,6 @@ def _enhance_schema_with_core_properties(schema):
     return with_core_plugin_properties(schema)
 
 
-def _prepared_plugin_config(plugin_id, raw_config):
-    """A plugin's config section as the plugin runs with it, for on_config_change.
-
-    Loading a plugin reads legacy booleans as objects and fills in schema
-    defaults (PluginManager.prepare_plugin_config); a save's notification must
-    hand over the same shape. Falls back to the raw section.
-    """
-    prepare = getattr(api_v3.plugin_manager, 'prepare_plugin_config', None)
-    if callable(prepare):
-        try:
-            prepared = prepare(plugin_id, raw_config)
-            if isinstance(prepared, dict):
-                return prepared
-        except Exception:
-            logger.debug("Could not prepare config for %s", plugin_id, exc_info=True)
-    return raw_config
-
-
 def _filter_config_by_schema(config, schema, prefix=''):
     """
     Filter config to only include fields defined in the schema.
@@ -1423,15 +1434,15 @@ _CALENDAR_LIST_MAX_PAGES = 10
 def _plugin_directory(plugin_id: str) -> Optional[Path]:
     """An installed plugin's directory, or None when it has none on disk.
 
-    Only the plugin manager is asked, so no plugin manager means None. There
-    is no fallback to the legacy plugins/ directory: the loader never scans
-    it, so a plugin found only there is one that never runs.
+    Only the plugin catalog is asked, so no catalog means None. There is no
+    fallback to the legacy plugins/ directory: the loader never scans it, so
+    a plugin found only there is one that never runs.
     """
-    # getattr: the blueprint only has plugin_manager once the app has set it.
-    manager = getattr(api_v3, 'plugin_manager', None)
-    if not manager:
+    # getattr: the blueprint only has plugin_catalog once the app has set it.
+    catalog = getattr(api_v3, 'plugin_catalog', None)
+    if not catalog:
         return None
-    plugin_dir = manager.get_plugin_directory(plugin_id)
+    plugin_dir = catalog.get_plugin_directory(plugin_id)
     if not plugin_dir or not Path(plugin_dir).exists():
         return None
     return Path(plugin_dir)
@@ -1533,10 +1544,22 @@ _STARLARK_MANIFEST_FILE = _STARLARK_APPS_DIR / 'manifest.json'
 # A dedicated, never-replaced file to flock -- see _starlark_manifest_lock.
 _STARLARK_MANIFEST_LOCK_FILE = _STARLARK_APPS_DIR / 'manifest.json.lock'
 def _get_starlark_plugin() -> Optional[Any]:
-    """Get the starlark-apps plugin instance, or None."""
-    if not api_v3.plugin_manager:
-        return None
-    return api_v3.plugin_manager.get_plugin('starlark-apps')
+    """The starlark-apps plugin instance in this process: always None.
+
+    The web process runs no plugin code (see PluginCatalog), so every
+    Starlark route takes its standalone path -- starlark-apps/manifest.json
+    and each app's files on disk, rendered through Pixlet directly -- and the
+    display's own starlark-apps plugin reads what they write. Before, this
+    returned a web-side copy only in the rare session that had just
+    installed or updated starlark-apps from the store, and that copy's
+    frames and state never reached the panel.
+
+    This is the one seam where a Starlark route would reach a plugin
+    instance. The instance branches behind it stay until the plugin
+    web-entry contract (docs/ARCHITECTURE.md) gives plugins an explicit way
+    to serve web requests; the tests drive them through this function.
+    """
+    return None
 def _find_pixlet_binary(explicit_path: Optional[str] = None) -> Optional[str]:
     """Find pixlet binary: explicit path → bundled binary → system PATH."""
     import platform
@@ -1647,70 +1670,66 @@ def _starlark_github_token() -> Optional[str]:
     except Exception:
         logger.warning("[Starlark] Could not read config for a GitHub token", exc_info=True)
         return None
-def _get_tronbyte_repository_class() -> Type[Any]:
-    """Import TronbyteRepository from plugin-repos directory."""
-    import importlib.util
-    import importlib
+def _import_plugin_code_in_web_process(module_name: str, module_path: Path,
+                                       reuse: bool = True) -> Any:
+    """Import a file of plugin code into the web process and return the module.
 
+    The only place the web process executes plugin code. Plugins run in the
+    display process; the web process reads them as files (PluginCatalog) and
+    runs a web-UI action's script as a subprocess. Two features still need a
+    plugin's Python in-process, and both come through here:
+
+    - Starlark: the standalone routes use the starlark-apps plugin's
+      ``tronbyte_repository`` (browsing the app repository) and
+      ``pixlet_renderer`` (rendering an app) -- helper modules, never the
+      plugin class itself.
+    - A web-UI action with ``oauth_flow``: step 1 calls the action script's
+      ``get_auth_url()`` (or the Spotify credential helpers).
+
+    Temporary: the plugin web-entry contract (docs/ARCHITECTURE.md, "Web and
+    display processes") replaces both with an explicit, declared entry point
+    for plugin web code.
+
+    ``reuse`` returns the module already imported under ``module_name``
+    instead of executing the file again. A module that fails to execute is
+    removed from sys.modules, so one transient failure cannot leave a
+    half-initialised module cached for the rest of the process (it used to
+    surface as AttributeError, not ImportError).
+    """
+    import importlib.util
+
+    if reuse and module_name in sys.modules:
+        return sys.modules[module_name]
+
+    spec = importlib.util.spec_from_file_location(module_name, str(module_path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Failed to create module spec for {module_name} at {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def _get_tronbyte_repository_class() -> Type[Any]:
+    """TronbyteRepository, from the installed starlark-apps plugin."""
     module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'tronbyte_repository.py'
     if not module_path.exists():
         raise ImportError(f"TronbyteRepository module not found at {module_path}")
+    return _import_plugin_code_in_web_process('tronbyte_repository', module_path).TronbyteRepository
 
-    # If already imported, return cached class
-    if "tronbyte_repository" in sys.modules:
-        return sys.modules["tronbyte_repository"].TronbyteRepository
 
-    spec = importlib.util.spec_from_file_location("tronbyte_repository", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for tronbyte_repository at {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for tronbyte_repository")
-
-    sys.modules["tronbyte_repository"] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        # A module that failed to execute must not stay in sys.modules: the
-        # cache branch above would hand back the half-initialised object for
-        # the rest of the process, so one transient failure would disable
-        # this path permanently and surface as AttributeError, not ImportError.
-        sys.modules.pop("tronbyte_repository", None)
-        raise
-    return module.TronbyteRepository
 def _get_pixlet_renderer_class() -> Type[Any]:
-    """Import PixletRenderer from plugin-repos directory."""
-    import importlib.util
-    import importlib
-
+    """PixletRenderer, from the installed starlark-apps plugin."""
     module_path = PROJECT_ROOT / 'plugin-repos' / 'starlark-apps' / 'pixlet_renderer.py'
     if not module_path.exists():
         raise ImportError(f"PixletRenderer module not found at {module_path}")
+    return _import_plugin_code_in_web_process('pixlet_renderer', module_path).PixletRenderer
 
-    # If already imported, return cached class
-    if "pixlet_renderer" in sys.modules:
-        return sys.modules["pixlet_renderer"].PixletRenderer
 
-    spec = importlib.util.spec_from_file_location("pixlet_renderer", str(module_path))
-    if spec is None:
-        raise ImportError(f"Failed to create module spec for pixlet_renderer at {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    if module is None:
-        raise ImportError("Failed to create module from spec for pixlet_renderer")
-
-    sys.modules["pixlet_renderer"] = module
-    try:
-        spec.loader.exec_module(module)
-    except BaseException:
-        # A module that failed to execute must not stay in sys.modules: the
-        # cache branch above would hand back the half-initialised object for
-        # the rest of the process, so one transient failure would disable
-        # this path permanently and surface as AttributeError, not ImportError.
-        sys.modules.pop("pixlet_renderer", None)
-        raise
-    return module.PixletRenderer
 def _validate_and_sanitize_app_id(app_id: Optional[str], fallback_source: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Validate and sanitize app_id to a safe slug."""
     if not app_id and fallback_source:

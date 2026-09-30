@@ -45,7 +45,7 @@ VALID_CREDENTIALS = {
 def plugin_dir(tmp_path, api_v3_module):
     directory = tmp_path / "plugins" / "calendar"
     directory.mkdir(parents=True)
-    api_v3_module.api_v3.plugin_manager.get_plugin_directory.return_value = str(directory)
+    api_v3_module.api_v3.plugin_catalog.get_plugin_directory.return_value = str(directory)
     return directory
 
 
@@ -98,7 +98,7 @@ class TestRequestValidation:
         assert not (plugin_dir / "credentials.json").exists()
 
     def test_missing_plugin_directory_is_a_404(self, api_v3_client, api_v3_module, tmp_path):
-        api_v3_module.api_v3.plugin_manager.get_plugin_directory.return_value = str(
+        api_v3_module.api_v3.plugin_catalog.get_plugin_directory.return_value = str(
             tmp_path / "not-installed")
         assert upload(api_v3_client, VALID_CREDENTIALS).status_code == 404
 

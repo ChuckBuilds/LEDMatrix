@@ -20,7 +20,8 @@ from web_interface import widget_bundle
 logger = logging.getLogger(__name__)
 
 # The managers live on the blueprint object: app.py sets
-# pages_v3.config_manager, pages_v3.plugin_manager and the rest.
+# pages_v3.config_manager, pages_v3.plugin_catalog and the rest. The catalog
+# reads plugins as files; this process never runs plugin code.
 pages_v3 = Blueprint('pages_v3', __name__)
 
 
@@ -201,11 +202,11 @@ def settings_search_index():
     ]
     try:
         plugin_ids = []
-        if pages_v3.plugin_manager:
+        if pages_v3.plugin_catalog:
             try:
-                pages_v3.plugin_manager.discover_plugins()
+                pages_v3.plugin_catalog.discover_plugins()
                 plugin_ids = sorted(
-                    pi.get('id') for pi in pages_v3.plugin_manager.get_all_plugin_info()
+                    pi.get('id') for pi in pages_v3.plugin_catalog.get_all_plugin_info()
                     if pi.get('id')
                 )
             except Exception:
@@ -220,7 +221,7 @@ def settings_search_index():
             fields.extend(_extract_settings_fields(_partial_html(loader), tab, label))
 
         for pid in plugin_ids:
-            info = pages_v3.plugin_manager.get_plugin_info(pid) or {}
+            info = pages_v3.plugin_catalog.get_plugin_info(pid) or {}
             label = info.get('name', pid)
             html = _partial_html(lambda pid=pid: _load_plugin_config_partial(pid))
             fields.extend(_extract_settings_fields(html, pid, label))
@@ -264,8 +265,8 @@ def serve_plugin_web_ui(plugin_id, filename):
     if not safe_id or not safe_fn:
         return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
 
-    if not pages_v3.plugin_manager:
-        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+    if not pages_v3.plugin_catalog:
+        return 'Plugin catalog not available', 503, {'Content-Type': 'text/plain'}
 
     try:
         web_ui_path = resolve_under(_plugin_dir_for(safe_id) / 'web_ui', safe_fn)
@@ -329,7 +330,7 @@ def _resolved_plugin_dir(plugin_id):
     its id is found there), and it refuses anything that is not one plain
     path segment. See src/plugin_system/plugin_dirs.py.
     """
-    found = pages_v3.plugin_manager.get_plugin_directory(plugin_id)
+    found = pages_v3.plugin_catalog.get_plugin_directory(plugin_id)
     if isinstance(found, (str, Path)) and Path(found).exists():
         return Path(found)
     return None
@@ -347,7 +348,7 @@ def _plugin_dir_for(safe_id):
     if resolved is not None:
         return resolved
 
-    plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+    plugins_base = Path(pages_v3.plugin_catalog.plugins_dir).resolve()
     plugin_dir = resolve_under(plugins_base, safe_id)
     if plugin_dir is None:
         raise ValueError('plugin id escapes the plugins directory')
@@ -416,8 +417,8 @@ def serve_plugin_widget(plugin_id, widget_name):
     if not safe_id or not safe_widget:
         return 'Invalid path component', 400, {'Content-Type': 'text/plain'}
 
-    if not pages_v3.plugin_manager:
-        return 'Plugin manager not available', 503, {'Content-Type': 'text/plain'}
+    if not pages_v3.plugin_catalog:
+        return 'Plugin catalog not available', 503, {'Content-Type': 'text/plain'}
 
     try:
         plugin_dir = _plugin_dir_for(safe_id)
@@ -543,17 +544,17 @@ def _load_durations_partial():
         main_config = pages_v3.config_manager.load_config()
         duration_groups = []
         covered_keys = set()
-        if pages_v3.plugin_manager:
+        if pages_v3.plugin_catalog:
             try:
-                pages_v3.plugin_manager.discover_plugins()
+                pages_v3.plugin_catalog.discover_plugins()
                 saved = (main_config.get('display', {}) or {}).get('display_durations', {}) or {}
-                infos = sorted(pages_v3.plugin_manager.get_all_plugin_info(),
+                infos = sorted(pages_v3.plugin_catalog.get_all_plugin_info(),
                                key=lambda i: (i.get('name') or i.get('id') or '').lower())
                 for info in infos:
                     pid = info.get('id')
                     if not pid or not (main_config.get(pid, {}) or {}).get('enabled', False):
                         continue
-                    modes = pages_v3.plugin_manager.get_plugin_display_modes(pid) or [pid]
+                    modes = pages_v3.plugin_catalog.get_plugin_display_modes(pid) or [pid]
                     covered_keys.update(modes)
                     default = _plugin_default_duration(pid, main_config.get(pid, {}) or {})
                     duration_groups.append({
@@ -691,7 +692,7 @@ def _load_plugin_config_partial(plugin_id):
         return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
 
     try:
-        if not pages_v3.plugin_manager:
+        if not pages_v3.plugin_catalog:
             return '<div class="text-red-500 p-4">Plugin manager not available</div>', 500
 
         # Handle starlark app config (starlark:<app_id>)
@@ -699,18 +700,18 @@ def _load_plugin_config_partial(plugin_id):
             return _load_starlark_config_partial(plugin_id[len('starlark:'):])
 
         # Resolve and validate all plugin paths against the plugins base directory
-        _plugins_base = Path(pages_v3.plugin_manager.plugins_dir).resolve()
+        _plugins_base = Path(pages_v3.plugin_catalog.plugins_dir).resolve()
         _plugin_dir = resolve_under(_plugins_base, plugin_id)
         if _plugin_dir is None:
             return '<div class="text-red-500 p-4">Invalid plugin ID</div>', 400
 
         # Try to get plugin info first
-        plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
+        plugin_info = pages_v3.plugin_catalog.get_plugin_info(plugin_id)
 
         # If not found, re-discover plugins (handles plugins added after startup)
         if not plugin_info:
-            pages_v3.plugin_manager.discover_plugins()
-            plugin_info = pages_v3.plugin_manager.get_plugin_info(plugin_id)
+            pages_v3.plugin_catalog.discover_plugins()
+            plugin_info = pages_v3.plugin_catalog.get_plugin_info(plugin_id)
 
         if not plugin_info:
             return '<div class="text-red-500 p-4">Plugin not found</div>', 404
@@ -719,9 +720,6 @@ def _load_plugin_config_partial(plugin_id):
         # read from wherever the plugin manager says the plugin lives, which
         # for one installed as ledmatrix-<id> is not plugins_dir/<id>.
         _plugin_dir = _resolved_plugin_dir(plugin_id) or _plugin_dir
-
-        # Get plugin instance (may be None if not loaded)
-        plugin_instance = pages_v3.plugin_manager.get_plugin(plugin_id)
 
         # Get plugin configuration from config file
         config = {}
@@ -829,8 +827,6 @@ def _load_plugin_config_partial(plugin_id):
 
         # Determine enabled status
         enabled = config.get('enabled', True)
-        if plugin_instance:
-            enabled = plugin_instance.enabled
 
         # Build plugin data for template
         plugin_data = {
@@ -868,7 +864,10 @@ def _load_starlark_config_partial(app_id):
         return '<div class="text-red-500 p-4">Invalid app ID</div>', 400
 
     try:
-        starlark_plugin = pages_v3.plugin_manager.get_plugin('starlark-apps') if pages_v3.plugin_manager else None
+        # Always None: the web process runs no plugin code. See
+        # api_v3._get_starlark_plugin, the one seam for this.
+        from web_interface.blueprints.api_v3 import _get_starlark_plugin
+        starlark_plugin = _get_starlark_plugin()
 
         if starlark_plugin and hasattr(starlark_plugin, 'apps'):
             app = starlark_plugin.apps.get(app_id)

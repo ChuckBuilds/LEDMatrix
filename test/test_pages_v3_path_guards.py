@@ -39,19 +39,18 @@ def pages(tmp_path):
         "<p>panel</p>", encoding="utf-8"
     )
 
-    original_pm = getattr(module.pages_v3, "plugin_manager", None)
+    original_pm = getattr(module.pages_v3, "plugin_catalog", None)
     original_cm = getattr(module.pages_v3, "config_manager", None)
 
     plugin_manager = MagicMock()
     plugin_manager.plugins_dir = plugins_dir
     plugin_manager.get_plugin_info.return_value = {"name": "Weather", "version": "1.0.0"}
-    plugin_manager.get_plugin.return_value = None
-    module.pages_v3.plugin_manager = plugin_manager
+    module.pages_v3.plugin_catalog = plugin_manager
     module.pages_v3.config_manager = MagicMock(load_config=lambda: {})
 
     yield module, plugins_dir
 
-    module.pages_v3.plugin_manager = original_pm
+    module.pages_v3.plugin_catalog = original_pm
     module.pages_v3.config_manager = original_cm
 
 

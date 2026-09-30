@@ -99,7 +99,7 @@ def post(tmp_path):
     from web_interface.blueprints import api_v3 as a
 
     originals = {k: getattr(a.api_v3, k, None)
-                 for k in ("config_manager", "schema_manager", "plugin_manager")}
+                 for k in ("config_manager", "schema_manager", "plugin_catalog")}
 
     pdir = tmp_path / "plugins" / "demo"
     pdir.mkdir(parents=True)
@@ -122,9 +122,7 @@ def post(tmp_path):
     a.api_v3.schema_manager = SchemaManager(plugins_dir=tmp_path / "plugins",
                                             project_root=tmp_path)
     pm = MagicMock()
-    pm.plugins = {}
-    pm.get_plugin.return_value = None
-    a.api_v3.plugin_manager = pm
+    a.api_v3.plugin_catalog = pm
 
     app = Flask(__name__)
     app.config["TESTING"] = True

@@ -39,7 +39,7 @@ class SharedCache:
 @pytest.fixture
 def shared_cache(api_v3_module):
     cache = SharedCache()
-    api_v3_module.api_v3.plugin_manager.resource_monitor = PluginResourceMonitor(
+    api_v3_module.api_v3.resource_monitor = PluginResourceMonitor(
         cache, enable_monitoring=False)
     return cache
 

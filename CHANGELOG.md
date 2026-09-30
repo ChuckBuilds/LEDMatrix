@@ -19,6 +19,45 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Frozen-panel detection
+
+A render loop stuck inside a plugin's `display()` left `ledmatrix.service`
+"active" with the panel frozen, and nothing noticed: `/api/v3/health` judged
+the display by the preview PNG's age, and the automatic update's health check
+passed "service active plus one HTTP 200".
+
+- **systemd watchdog.** `ledmatrix.service` now has `WatchdogSec=120` and
+  `NotifyAccess=main` (still `Type=simple`). The render thread itself pings
+  systemd over `$NOTIFY_SOCKET` (`src/display_watchdog.py`, standard library
+  only), so a stuck render thread stops the pings even while the update
+  worker and Vegas's tick thread carry on. systemd then kills the display with
+  SIGABRT -- faulthandler writes every thread's stack to the journal, which
+  names the plugin -- and restarts it. The process widens the limit to 15
+  minutes while it starts and while it loads a plugin enabled from the web UI
+  (either can run pip), and sends `READY=1` and narrows it back after its
+  first frame.
+- **Heartbeat.** The render loop writes `/run/ledmatrix/display-heartbeat.json`
+  every 5 seconds (`RuntimeDirectory=ledmatrix`; tmpfs, so no SD-card
+  writes). `/api/v3/health` reports it as `checks.display_loop`: `running`,
+  `stalled` (older than 60s; the overall status turns `degraded`) or
+  `not_reported` when there is no heartbeat (dev server, emulator, Windows),
+  which leaves the verdict to the older checks as before.
+- **Update health check.** When the display wrote a heartbeat before an
+  automatic update, the restarted display must keep one fresh (30s) for the
+  update to pass; a frozen panel is rolled back. Code that never wrote one is
+  checked as before. The check runs as the copy taken before the update, so
+  this takes effect from the update after the one that installs it.
+- **Crash loops back off.** `RestartSteps=4` and `RestartMaxDelaySec=2min`
+  stretch the delay between automatic restarts from 10s to two minutes, instead
+  of retrying every 10s forever. systemd before 254 (Bookworm) ignores the two
+  lines with a warning. A start limit was ruled out: once tripped it leaves the
+  panel dark and refuses the web UI's Start button and the update rollback.
+- **Existing installs** keep their old unit until `sudo
+  ./scripts/install/install_service.sh` is re-run (an update never rewrites
+  units; the startup validator warns about the drift). Until then there is no
+  watchdog, but the display creates `/run/ledmatrix` itself, so the heartbeat,
+  the health check and the update check work straight away.
+
 ### Security
 
 - The web interface refuses state-changing requests (`POST`, `PUT`, `PATCH`,
@@ -141,6 +180,75 @@ read any of them:
   - `commit`: the monorepo commit that introduced the listed version, shown
     on the store card and linked to the plugin's source at that commit.
     Informational only; installs still come from the branch head.
+
+### Changes
+
+- The web interface no longer loads or runs plugins (web plugin catalog,
+  stage 1). It built its own `PluginManager` and loaded plugins into the web
+  process: store installs and updates loaded or reloaded a web-side copy, and
+  config saves and enable/disable called `on_config_change`, `on_enable` and
+  `on_disable` on it. None of that reached the panel. The web process now
+  reads plugins as files through the new `PluginCatalog`
+  (`src/plugin_system/plugin_catalog.py`); only the display runs them, and
+  config changes reach them through its config watcher, as they already did.
+  - A plugin update, an install of a plugin that is already enabled, or an
+    uninstall that keeps an enabled plugin's config now answers
+    `restart_required: true` and shows the restart banner, because the
+    running display keeps the code it loaded until it restarts. Before, the
+    update looked applied and the panel kept the old version.
+  - The restart banner follows `restart_required` in any response
+    (`POST /api/v3/config/main` sends it) rather than the URL that was
+    called.
+  - `/api/v3/plugins/installed` reports `loaded`, `state` and `error_info`
+    as `null`: the display does not publish them, and the old values
+    described web-side copies. `enabled` follows the display's rule, so a
+    plugin whose config has no `enabled` flag shows as disabled (it never
+    ran). `vegas_mode` is the configured value only.
+  - `vegas_participation` there is the user's setting, else the manifest's
+    declaration, with a new `vegas_participation_source` (`config` or
+    `manifest`). When only the plugin's code decides it (a
+    `get_vegas_participation()` override or the legacy Vegas hooks) it is
+    `null` with source `runtime`: the display derives it, and the web no
+    longer asks a web-side plugin instance.
+  - Starlark routes always use their on-disk path. The one place the web
+    process still imports plugin code -- the Starlark helper modules and an
+    `oauth_flow` action script -- is `_import_plugin_code_in_web_process()`,
+    until a plugin web-entry contract replaces it.
+- The display publishes its plugin runtime state, and the web interface
+  reads it (web plugin catalog, stage 2). A new snapshot in the shared cache
+  (`plugin_runtime_snapshot`, `src/plugin_system/plugin_runtime.py`) lists,
+  per plugin, whether the display has it loaded, its lifecycle state, a
+  short redacted summary of its last error, the version it loaded and when.
+  It is written when something changes (at most every 10 s; an ordinary
+  plugin update is not a change) and otherwise once a minute, carries its
+  publish time, and says `running: false` when the display stops.
+  - `/api/v3/plugins/installed` fills `loaded`, `state` and `error_info`
+    again, from that snapshot, and adds `loaded_version` and `loaded_at`.
+    Only a live snapshot counts: when the display is stopped, has not
+    published, or has not refreshed for 3 minutes, those fields are `null`
+    and the new `data.runtime.status` says `stopped`, `unknown` or `stale`.
+  - `data/plugin_state.json` is retired: nothing reads or writes it. It held
+    copies of config.json's enabled flags and the manifests' versions, plus
+    install timestamps only `GET /api/v3/plugins/state` returned, so nothing
+    in it is migrated; an existing file is left in place and can be deleted.
+    The web-side `PluginStateManager` (`src/plugin_system/state_manager.py`)
+    that wrote it is removed; the display's state machine in
+    `plugin_state.py` is now the only `PluginStateManager`.
+  - `GET /api/v3/plugins/state` is built per request from config.json, the
+    plugins on disk and the display's snapshot (`installed`, `in_config`,
+    `enabled`, `version`, `status`, the runtime fields, and `installed_at` /
+    `last_updated` from the operation history), with a top-level `runtime`.
+    It no longer returns `config_version` or `metadata`.
+  - State reconciliation compares desired state (config.json plus disk) with
+    the display's snapshot. New findings -- enabled but not loaded (with the
+    load error), and loaded at an older version than is installed -- are
+    reported with `fix_action: no_action`; the unresolved-issues banner is
+    unchanged. `StateReconciliation` takes `config_manager`, `plugins_dir`,
+    `store_manager` and `runtime_source` as keywords.
+  - Backups list the installed plugins from disk, with `enabled` from
+    config.json, instead of merging in `plugin_state.json`. A plugin that
+    only that file still named (not installed, not configured) is no longer
+    listed. Restores are unchanged.
 
 ### Fixes
 
