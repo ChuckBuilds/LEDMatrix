@@ -901,10 +901,14 @@ def stream_logs():
 # Each SSE stream is one long-lived request, so only a (re)connect counts
 # against a limit. The streams get their own 200 per minute, tighter than the
 # 1000 per minute default, which bounds a client stuck reconnecting.
+# flask-limiter enforces a decorated limit in the wrapper limit() returns, and
+# marks the original function exempt from the default, so the wrapper has to
+# replace the registered view: discarding it leaves the streams unlimited.
 if limiter:
-    limiter.limit("200 per minute")(stream_stats)
-    limiter.limit("200 per minute")(stream_display)
-    limiter.limit("200 per minute")(stream_logs)
+    for _endpoint in ('stream_stats', 'stream_display', 'stream_logs'):
+        app.view_functions[_endpoint] = limiter.limit("200 per minute")(
+            app.view_functions[_endpoint]
+        )
 
 @app.route('/favicon.ico')
 def favicon():
