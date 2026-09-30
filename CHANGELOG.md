@@ -128,6 +128,17 @@ accepts both, but the store flags the old spelling as deprecated
   worker, which applies the latest one as soon as the lock frees, and before
   the plugin's next update() at the latest. The plugin API is unchanged.
 
+### Tooling
+
+- `scripts/sports_drift_report.py`: for a ledmatrix-plugins checkout, counts
+  how many different bodies each method family has across the nine
+  scoreboards' `sports.py`, `manager.py` and `game_renderer.py`, lists the
+  families still identical everywhere and those with one outlier, and with
+  `--family ... --diff` shows the variants. It is the progress measure for
+  the reconcile-then-promote roadmap in `docs/SPORTS_UNIFICATION.md`, which
+  this release rewrites. CI runs it against the monorepo's main as a
+  report-only job ("Sports drift report"; never fails the build).
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core
