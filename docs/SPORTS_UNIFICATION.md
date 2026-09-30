@@ -381,10 +381,13 @@ suspected behaviour that needs a payload or a rig to confirm first.
   game in afl, nrl and soccer (`CLOCK_COUNTS_DOWN = False`); hockey ends at
   0:00 from period 3, basketball, football and lacrosse from period 4.
   baseball and ufc share a copy that reads a missing clock as "0:00": dormant
-  in baseball (its games carry no `period`), but ufc's fights carry both, so
-  the break after round 4 of a five-round fight (`0:00`, period 4) reads as
-  "over" and drops the fight from the live rotation (*verify* against an ESPN
-  MMA payload). Decide ufc's rule: no clock rule, or its own final period.
+  in baseball (its games carry no `period`), and not triggered by ufc's round
+  breaks either. ESPN sends a break as `STATUS_END_OF_ROUND` with displayClock
+  `-`, not `0:00` (verified against recorded payloads; ledmatrix-plugins#580
+  pins it). Whatever rule ufc gets must not read `-` as `0:00`. Decide ufc's
+  rule: no clock rule (ESPN's `STATUS_FINAL` is the only end signal it needs;
+  this also closes a ~1 s window at the horn when the ticking clock reads
+  `0:00`), or its own final period.
 - **6, favourite matching.** NRL keeps matching favourites by team id
   (abbreviations collide: NEW, CAN), through `_favorite_key` rather than its
   own copies of the selection methods. Six plugins log the recent-games
