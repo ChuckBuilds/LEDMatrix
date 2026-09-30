@@ -96,6 +96,13 @@ environment as `LEDMATRIX_MQTT_<KEY>` (`LEDMATRIX_MQTT_MQTT_PASSWORD`, say),
 which keeps a broker password out of a file on disk — put it in a systemd
 drop-in with `Environment=` or `EnvironmentFile=` instead.
 
+**Web login.** If the web interface's optional login is on (General >
+Security), a bridge running on the Pi itself still needs nothing: requests from
+the Pi are never asked to log in. A bridge on another machine needs an API
+token: create one under General > Security and set `"ledmatrix_api_token"`
+(or `LEDMATRIX_MQTT_LEDMATRIX_API_TOKEN`, or the token field in the Tools tab's
+bridge settings). It is sent as `Authorization: Bearer <token>`.
+
 Set `mqtt_tls: true` for a broker with TLS. `mqtt_tls_insecure` skips
 certificate verification and exists only for a self-signed broker on a
 trusted LAN; it logs a warning when used.

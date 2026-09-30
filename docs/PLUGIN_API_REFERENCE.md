@@ -151,6 +151,12 @@ Clean up resources when plugin is unloaded. Override to close connections, stop 
 
 Called after plugin configuration is updated via web API.
 
+In the display service it runs on the config watcher thread while holding
+the plugin's lock, so it never overlaps your `update()` or `display()`. If
+the plugin stays busy for more than 5 seconds, the change is applied later
+from the update thread: as soon as the plugin is free, and before its next
+`update()` at the latest.
+
 #### `on_enable() -> None`
 
 Called when plugin is enabled.

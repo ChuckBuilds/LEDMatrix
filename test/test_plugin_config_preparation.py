@@ -84,6 +84,19 @@ def plugin_manager(plugin_dir, tmp_path):
     return manager
 
 
+@pytest.fixture
+def delivering_manager(tmp_path):
+    """A real PluginManager whose apply_config_change() the mocked one uses.
+
+    The hot-reload callback hands on_config_change to the plugin manager, so
+    it runs under the plugin's lock; delegate to the real method so these
+    tests still see the plugin called.
+    """
+    manager = PluginManager(plugins_dir=str(tmp_path / "plugin-repos"))
+    yield manager
+    manager.stop_update_worker()
+
+
 class TestPluginManagerPreparation:
     def test_legacy_boolean_and_defaults(self, plugin_manager):
         prepared = plugin_manager.prepare_plugin_config(
@@ -107,11 +120,13 @@ class TestPluginManagerPreparation:
 
 
 class TestHotReload:
-    def test_on_config_change_gets_the_prepared_config(self, test_display_controller, plugin_manager):
+    def test_on_config_change_gets_the_prepared_config(self, test_display_controller, plugin_manager,
+                                                       delivering_manager):
         controller = test_display_controller
         plugin = MagicMock()
         plugin.modes = ["demo"]
         pm = controller.plugin_manager
+        pm.apply_config_change.side_effect = delivering_manager.apply_config_change
         pm.discover_plugins.return_value = ["demo"]
         pm.load_plugin.return_value = True
         pm.plugin_manifests = {}
@@ -128,11 +143,13 @@ class TestHotReload:
             "enabled": True, "max_duration_seconds": 300}
         assert new_config["nhl"]["show_records"] is True
 
-    def test_raw_section_still_delivered_without_a_preparer(self, test_display_controller):
+    def test_raw_section_still_delivered_without_a_preparer(self, test_display_controller,
+                                                            delivering_manager):
         controller = test_display_controller
         plugin = MagicMock()
         plugin.modes = ["demo"]
         pm = controller.plugin_manager
+        pm.apply_config_change.side_effect = delivering_manager.apply_config_change
         pm.discover_plugins.return_value = ["demo"]
         pm.load_plugin.return_value = True
         pm.plugin_manifests = {}

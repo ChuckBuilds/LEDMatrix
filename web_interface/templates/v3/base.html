@@ -23,6 +23,27 @@
     };
     </script>
 
+    <!-- Optional web login (web_interface/auth.py): a fetch() answered 401
+         with X-LEDMatrix-Login -- the session ran out, or login was turned on
+         from another browser -- goes to the login page instead of leaving
+         every panel showing an error. HTMX requests follow HX-Redirect on
+         their own. Only a same-origin answer can expose that header. -->
+    <script>
+    (function() {
+        if (typeof window.fetch !== 'function') return;
+        var originalFetch = window.fetch;
+        window.fetch = function() {
+            return originalFetch.apply(this, arguments).then(function(response) {
+                var login = response.status === 401 && response.headers.get('X-LEDMatrix-Login');
+                if (login && login.charAt(0) === '/' && login.charAt(1) !== '/') {
+                    window.location.assign(login);
+                }
+                return response;
+            });
+        };
+    })();
+    </script>
+
     <!-- Theme initialization (must run before CSS to prevent flash) -->
     <script>
     (function() {
@@ -351,6 +372,16 @@
                              aria-label="Settings search results"
                              class="hidden absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto"></div>
                     </div>
+
+                    {% if web_auth_state and web_auth_state.signed_in %}
+                    <!-- Log out (only shown when the optional web login is on) -->
+                    <form method="post" action="{{ url_for('ledmatrix_auth.logout') }}" class="flex items-center">
+                        <button type="submit" class="theme-toggle-btn p-2 rounded-md"
+                                title="Log out" aria-label="Log out">
+                            <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
+                        </button>
+                    </form>
+                    {% endif %}
 
                     <!-- Theme toggle -->
                     <button id="theme-toggle"

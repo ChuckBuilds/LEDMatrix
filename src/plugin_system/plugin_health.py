@@ -254,6 +254,104 @@ class PluginHealthTracker:
         
         self._save_health_state(plugin_id, state)
     
+    def record_hang(self, plugin_id: str, operation: str, seconds: float,
+                    error: Optional[Exception] = None) -> None:
+        """Record a display() or update() call that ran past its limit.
+
+        Counts as a failure, so the ordinary circuit breaker handles a plugin
+        that keeps hanging: after ``failure_threshold`` in a row it is skipped
+        by both the update scheduler and the display rotation until the
+        cooldown ends. The hang itself is kept alongside (``hang_count``,
+        ``last_hang``) so the health API can tell "hung" from "raised".
+
+        Not for an update skipped because the plugin's lock stayed held: the
+        holder may be a healthy but long render (Vegas prefetch). That is
+        :meth:`record_busy_skip`, which never touches the breaker.
+
+        Args:
+            plugin_id: Plugin identifier
+            operation: What hung: ``"display"`` or ``"update"``.
+            seconds: How long it had been running when this was recorded.
+            error: The error to store as ``last_error``; one is built from
+                the other arguments when omitted.
+        """
+        state = self.get_health_state(plugin_id)
+        count = state.get('hang_count')
+        state['hang_count'] = (count if isinstance(count, int) and not isinstance(count, bool)
+                               else 0) + 1
+        state['last_hang'] = {
+            'operation': operation,
+            'seconds': round(float(seconds), 3),
+            'time': time.time(),
+        }
+        if error is None:
+            error = TimeoutError(f"{operation} still running after {seconds:.1f}s")
+        # record_failure saves the record, hang fields included.
+        self.record_failure(plugin_id, error)
+
+    #: Minimum seconds between persisting a plugin's slow-call or busy-skip
+    #: counters. The in-memory record is updated every time; a plugin that is
+    #: slow on every frame must not become an SD-card write per frame.
+    SLOW_CALL_PERSIST_INTERVAL = 60.0
+
+    def record_slow_call(self, plugin_id: str, operation: str, seconds: float) -> None:
+        """Note a call that finished, but slowly. Reporting only.
+
+        Unlike :meth:`record_hang` this never touches the circuit breaker: a
+        slow display() still drew its frame.
+        """
+        state = self.get_health_state(plugin_id)
+        count = state.get('slow_call_count')
+        state['slow_call_count'] = (count if isinstance(count, int) and not isinstance(count, bool)
+                                    else 0) + 1
+        now = time.time()
+        state['last_slow_call'] = {
+            'operation': operation,
+            'seconds': round(float(seconds), 3),
+            'time': now,
+        }
+        self._save_reporting_throttled('slow', plugin_id, state, now)
+
+    def record_busy_skip(self, plugin_id: str, operation: str, seconds: float) -> None:
+        """Note a call skipped because the plugin's lock stayed held. Reporting only.
+
+        The update worker gives up on a plugin's lock after
+        ``PluginManager.PLUGIN_LOCK_TIMEOUT``. Whatever held it may be healthy
+        -- Vegas prefetch holds the lock for a plugin's whole content render,
+        which on a slow Pi can take longer than that -- so like
+        :meth:`record_slow_call` this never touches the circuit breaker, the
+        failure streak or ``last_error``. A real hang is recorded by
+        :meth:`record_hang` where it is measured.
+
+        Args:
+            plugin_id: Plugin identifier
+            operation: What was skipped, e.g. ``"update lock wait"``.
+            seconds: How long the lock was waited on.
+        """
+        state = self.get_health_state(plugin_id)
+        count = state.get('busy_skip_count')
+        state['busy_skip_count'] = (count if isinstance(count, int) and not isinstance(count, bool)
+                                    else 0) + 1
+        now = time.time()
+        state['last_busy_skip'] = {
+            'operation': operation,
+            'seconds': round(float(seconds), 3),
+            'time': now,
+        }
+        self._save_reporting_throttled('busy', plugin_id, state, now)
+
+    def _save_reporting_throttled(self, kind: str, plugin_id: str,
+                                  state: Dict[str, Any], now: float) -> None:
+        """Persist a reporting-only change at most once per
+        SLOW_CALL_PERSIST_INTERVAL per plugin and ``kind``. The first one is
+        saved at once, so the web process (which reads the persisted record)
+        sees it; repeats in between stay in memory until the next save."""
+        saved_at = self.__dict__.setdefault('_reporting_saved_at', {})
+        last = saved_at.get((kind, plugin_id))
+        if last is None or now - last >= self.SLOW_CALL_PERSIST_INTERVAL:
+            saved_at[(kind, plugin_id)] = now
+            self._save_health_state(plugin_id, state)
+
     def set_degraded(self, plugin_id: str, reason: Optional[str]) -> None:
         """Flag (or clear) a plugin as degraded without touching the circuit breaker.
 
@@ -345,7 +443,13 @@ class PluginHealthTracker:
             'degraded': state.get('degraded', False),
             'degraded_reason': state.get('degraded_reason'),
             'circuit_opened_time': state.get('circuit_opened_time'),
-            'half_open_start_time': state.get('half_open_start_time')
+            'half_open_start_time': state.get('half_open_start_time'),
+            'hang_count': state.get('hang_count', 0),
+            'last_hang': state.get('last_hang'),
+            'slow_call_count': state.get('slow_call_count', 0),
+            'last_slow_call': state.get('last_slow_call'),
+            'busy_skip_count': state.get('busy_skip_count', 0),
+            'last_busy_skip': state.get('last_busy_skip'),
         }
     
     def get_all_health_summaries(self) -> Dict[str, Dict[str, Any]]:
