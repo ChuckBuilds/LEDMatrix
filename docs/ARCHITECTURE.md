@@ -84,7 +84,11 @@ then normal rotation.
 - **On-demand.** A request from the web interface pins one plugin (or mode)
   for a duration. `_activate_on_demand()` / `_clear_on_demand()`; the
   session is saved under `display_on_demand_config` so it survives a
-  restart. It also keeps the display on during scheduled off hours.
+  restart. It also keeps the display on during scheduled off hours. A
+  request for a plugin that is disabled in config loads it live
+  (`_load_plugin_for_on_demand()`, `load_plugin(force_enabled=True)`)
+  without writing `config.json`; the main loop unloads it once on-demand
+  moves off it (`_release_on_demand_plugins()`).
 - **Live priority.** `_check_live_priority()` looks for a plugin whose
   `has_live_priority()` and `has_live_content()` are both true and switches
   to it, rotating between several live games.
