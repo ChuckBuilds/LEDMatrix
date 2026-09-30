@@ -1052,7 +1052,12 @@
                 if (data.update_available && getDismissedSha() !== data.remote_sha) {
                     var n = data.commits_behind || 0;
                     var msg = 'A new LEDMatrix update is available';
-                    if (n > 0) msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
+                    if (data.target_version) {
+                        // Stable channel: the update is a release.
+                        msg = 'LEDMatrix ' + data.target_version + ' is available';
+                    } else if (n > 0) {
+                        msg += ' (' + n + ' commit' + (n > 1 ? 's' : '') + ')';
+                    }
                     document.getElementById('update-banner-text').textContent = msg;
                     banner.style.display = '';
                     try { sessionStorage.setItem('update-sha', data.remote_sha); } catch(e) {}

@@ -295,6 +295,42 @@ sudo systemctl cat ledmatrix-web | grep User
 
 ---
 
+#### Issue: Updates and the update channel
+
+**Symptoms:**
+- The General tab says "Stable: this device runs code newer than the newest
+  release ... keeps following main"
+- Tools shows a version such as `v3.8.0` instead of a branch name, or `git
+  status` over SSH says `HEAD detached at v3.8.0`
+- Update Code says "already up to date" while GitHub's `main` has newer commits
+
+**Explanation:** these are the Stable update channel working as intended
+(`auto_update.channel`, General → Update Channel). Stable installs the
+newest release tag, which git checks out without a branch ("detached
+HEAD"); that is normal and every update path handles it. Stable never
+installs an older version than the one running, so a device that is ahead of
+the newest release keeps following `main` until a release includes its
+commit, then switches to releases on its own.
+
+**Solutions:**
+
+1. **Want the newest code instead?** Set Update Channel to **Beta** and click
+   Update Code. The device leaves the release for `main` and pulls it.
+   Or from SSH:
+   ```bash
+   curl -X POST http://localhost:5000/api/v3/system/update-channel \
+        -H 'Content-Type: application/json' -d '{"channel": "beta"}'
+   ```
+2. **See what the next update will do:**
+   ```bash
+   curl 'http://localhost:5000/api/v3/system/update-channel?fetch=1'
+   ```
+3. **Local changes after a channel switch:** edits that no longer fit the new
+   version are kept in the git stash rather than lost; `git stash list`
+   shows them as "LEDMatrix autostash before update".
+
+---
+
 ### WiFi & AP Mode Issues
 
 #### AP Mode Not Activating
@@ -1009,6 +1045,11 @@ git reset --hard HEAD~1
 
 # Or rollback to specific commit
 git reset --hard <commit-hash>
+
+# On the Stable update channel HEAD is a release tag, not a branch:
+# go back to an earlier release instead (the next update moves forward again)
+git tag --list 'v*' --sort=-v:refname | head
+git checkout --detach v3.7.0
 
 # Restart all services
 sudo systemctl restart ledmatrix

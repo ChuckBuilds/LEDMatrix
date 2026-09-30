@@ -14,6 +14,7 @@ the same reason: the rollback cannot depend on packages the update changed.
 The updater leaves data/auto_update_pending.json:
 
     {"status": "pending", "old_head": ..., "new_head": ...,
+     "old_ref": "main" | "" (detached) | absent (older updaters),
      "display_was_active": bool, "dependency_failures": [...], "created_at": ...}
 
 This moves its status to "verifying" and then to one of "success",
@@ -276,6 +277,20 @@ class Verifier:
         if not old:
             return False, 'the commit to roll back to is unknown'
         requirements = self.changed_requirements(old, new) if new else list(REQUIREMENT_FILES)
+        # An update may have moved HEAD between main and a detached release
+        # tag (the stable/beta channels). Go back to where HEAD was -- the
+        # branch, or detached -- before resetting, or resetting would drag
+        # the wrong ref: main onto a release commit, or leave a device that
+        # was following main stuck on a detached one. No old_ref (an older
+        # updater wrote this file) means HEAD never moved between refs.
+        old_ref = pending.get('old_ref')
+        if old_ref is not None:
+            move = (['git', 'checkout', '--quiet', '--force', old_ref] if old_ref
+                    else ['git', 'checkout', '--quiet', '--force', '--detach', old])
+            result = self._run(move, timeout=GIT_RESET_TIMEOUT_SECONDS)
+            if result.returncode != 0:
+                return False, (f'"{" ".join(move)}" failed: '
+                               f'{(result.stderr or result.stdout or "").strip()}')
         # --hard: the updater refuses to run with local edits to tracked core
         # files (web_interface/auto_update.local_changes), so outside the
         # plugin folders the only thing this discards is the update. Edits

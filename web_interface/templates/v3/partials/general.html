@@ -69,6 +69,22 @@
             {% endif %}
         </div>
 
+        <!-- Update channel: which code Update Code and the weekly update move to -->
+        {% set configured_channel = (main_config.auto_update or {}).channel if (main_config.auto_update or {}).channel in ('stable', 'beta') else 'stable' %}
+        <div class="form-group" id="setting-general-auto_update_channel" data-setting-key="auto_update.channel">
+            <label for="auto_update_channel" class="block text-sm font-medium text-gray-700">Update Channel{{ ui.help_tip('Which LEDMatrix version updates install, both Update Code on the Overview tab and the weekly automatic update.\nStable: the newest release. Recommended.\nBeta: the newest code on main, before it is released. Gets fixes sooner, and problems too.\nSwitching to Stable never installs an older version than the one running: a device that is ahead of the newest release keeps following main until a release includes its version, then moves to releases.\nDefault: Stable.', 'Update Channel') }}</label>
+            <select id="auto_update_channel" name="auto_update_channel" class="form-control mt-1">
+                <option value="stable" {% if configured_channel == 'stable' %}selected{% endif %}>Stable (releases)</option>
+                <option value="beta" {% if configured_channel == 'beta' %}selected{% endif %}>Beta (newest code on main)</option>
+            </select>
+            {% if update_channel_status %}
+            <p class="mt-1 text-xs {{ 'text-amber-700' if update_channel_status.waiting and configured_channel == 'stable' else 'text-gray-500' }}">
+                {{ update_channel_status.message }}
+            </p>
+            {% endif %}
+            <p class="mt-1 text-xs text-gray-500">Takes effect at the next update: use Update Code on the Overview tab to apply it now.</p>
+        </div>
+
         <!-- Timezone -->
         <div class="form-group" id="setting-general-timezone" data-setting-key="timezone">
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone{{ ui.help_tip('Time zone used for clocks, schedules, and time-based content.\nChoose the zone where the display physically lives so on/off schedules fire at the correct local time.', 'Timezone') }}</label>

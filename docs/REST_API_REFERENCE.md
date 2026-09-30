@@ -1485,19 +1485,58 @@ Get LEDMatrix repository version.
 
 **GET** `/api/v3/system/check-update`
 
-Whether `origin/main` has commits the checkout lacks. Cached briefly.
-Fields at the top level (no envelope):
+Whether newer code is available on this device's update channel. On
+`stable` that is a newer release tag than the checkout (`target_version`
+names it); on `beta`, and on `stable` while it waits on a branch for a
+release that contains the current commit, it is commits on `origin/main`
+the checkout lacks. A detached checkout newer than the newest release is
+never offered an update: Update Code leaves it where it is until a release
+includes it, and `channel_message` says so in the General tab's words.
+Cached briefly. Fields at the top level (no envelope):
 
 ```json
 {
   "update_available": true,
   "remote_sha": "abc123...",
-  "commits_behind": 3
+  "commits_behind": 3,
+  "target_version": "v3.8.0",
+  "channel": "stable",
+  "configured_channel": "stable",
+  "waiting": false,
+  "newest_release": "v3.8.0",
+  "current_release": null,
+  "channel_message": "Stable: release v3.8.0 is available."
 }
 ```
 
 When git cannot run the check, the response also carries
 `"check_failed": true` and an `error` explaining why.
+
+### Update Channel
+
+**GET** `/api/v3/system/update-channel`
+
+The update channel and what the next Update Code or weekly update would do
+(in `data`): `configured` (`"stable"`, `"beta"` or `null` for a config from
+before channels), `channel` (the one in effect), `waiting` (stable, but the
+device is newer than the newest release, so it follows `main` for now),
+`action` (`none`, `checkout_tag`, `pull` or `switch_to_beta`),
+`newest_release`, `current_release`, `branch` (`""` when on a release tag),
+`message`. Reads local refs; `?fetch=1` fetches from origin first.
+
+**POST** `/api/v3/system/update-channel`
+
+```json
+{
+  "channel": "beta"
+}
+```
+
+Saves `auto_update.channel`. The next update applies it; switching to
+`stable` never installs an older version than the one running, and the
+`message` says when the device keeps following `main` until a newer release.
+400 for anything but `stable` or `beta`. The General tab form also accepts
+`auto_update_channel` on `POST /api/v3/config/main`.
 
 ### Automatic Update Status
 
@@ -1524,7 +1563,9 @@ Hide the current automatic-update alert until a new one replaces it.
 
 Branch, dirty state, recent commits and remote for the Tools tab. Fields at
 the top level: `branch`, `dirty`, `status`, `recent_commits`, `remote_url`
-(credentials scrubbed), `upstream`, `can_pull`.
+(credentials scrubbed), `upstream`, `can_pull`, and for the update channel
+`detached`, `version` (`git describe`), `current_release` (the release tag
+HEAD is exactly on, else `null`) and `channel_message` (detached only).
 
 ### Git Branches
 

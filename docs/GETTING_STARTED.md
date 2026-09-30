@@ -240,6 +240,22 @@ The fastest way to verify a plugin works without waiting for the rotation:
 - Install community plugins straight from a GitHub URL via
   **Install from GitHub** on the same tab.
 
+### Keep LEDMatrix Up to Date
+
+- **Update Code** on the **Overview** tab installs the newest version, and a
+  banner at the top of the page says when one is available.
+- **General → Automatic Updates** does it once a week, overnight, with a
+  health check that undoes an update that breaks the device.
+- **General → Update Channel** picks which version that is. **Stable** (the
+  default) installs releases, which have been tested and have release
+  notes. **Beta** installs the newest code as soon as it is written, before
+  it is released: fixes arrive sooner, and so do new problems.
+- Switching to Stable never installs an older version than the one you
+  have. If your device is already newer than the latest release (which is
+  normal if it was set up or updated from the newest code), it keeps
+  getting the newest code until the next release includes it, then follows
+  releases from there. The General tab says when this is the case.
+
 ### Enable Advanced Features
 
 **Vegas Scroll Mode:**
