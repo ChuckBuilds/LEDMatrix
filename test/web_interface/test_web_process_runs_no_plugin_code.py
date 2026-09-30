@@ -199,6 +199,10 @@ class TestTheWebProcessNeverRunsAPlugin:
         # covers a live one).
         assert entry["loaded"] is None and entry["state"] is None
         assert body["data"]["runtime"]["status"] == "unknown"
+        # Nothing in its files declares a participation; the display derives
+        # one from its hooks, which are not called here.
+        assert (entry["vegas_participation"], entry["vegas_participation_source"]) == (
+            None, "runtime")
         assert web.ran() == []
 
     def test_enabling_and_disabling(self, web):
@@ -268,7 +272,11 @@ class TestNoLifecycleCallsInWebCode:
 
     FORBIDDEN = (".on_enable(", ".on_disable(", ".on_config_change(",
                  ".load_plugin(", ".unload_plugin(", ".reload_plugin(",
-                 ".get_plugin(", ".update(force", ".display(force_clear")
+                 ".get_plugin(", ".update(force", ".display(force_clear",
+                 # Vegas participation past config and manifest calls the
+                 # plugin's hooks; the installed route reports it from files.
+                 "resolve_vegas_participation(", "legacy_vegas_participation(",
+                 ".get_vegas_participation(")
 
     def _code_lines(self):
         for path in sorted((PROJECT_ROOT / "web_interface").rglob("*.py")):

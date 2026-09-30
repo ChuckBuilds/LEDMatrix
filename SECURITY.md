@@ -61,8 +61,31 @@ Out of scope (please report upstream):
 LEDMatrix is designed for trusted local networks. Several limitations
 are intentional rather than vulnerabilities:
 
-- **No web UI authentication.** The web interface assumes the network
-  it's running on is trusted. Don't expose port 5000 to the internet.
+- **Web UI authentication is optional and off by default.** Out of the
+  box the web interface assumes the network it's running on is trusted.
+  Setting a password under **General > Security** makes every page and
+  API route require a login or an API token (`Authorization: Bearer`),
+  with wrong passwords rate-limited per address
+  (`web_interface/auth.py`). Deliberately left open even then: requests
+  from the Pi itself (loopback without proxy headers; a reverse proxy on
+  the Pi must add `X-Forwarded-For`, or every request it relays counts as
+  local), the Wi-Fi setup flow while the Pi is in access-point mode,
+  static files, and a status-only `/api/v3/health`. The password is a
+  werkzeug hash and tokens are stored as SHA-256, in
+  `config/config_secrets.json`, which no API returns. There is no TLS:
+  over plain HTTP the password and tokens cross the LAN in the clear, so
+  still don't expose port 5000 to the internet; put a TLS reverse proxy
+  or a VPN in front for remote access. Anyone with shell access to the Pi
+  can turn login off (`scripts/reset_web_password.py`), which is the
+  documented recovery path.
+  "Trusted network" does not mean "trusted websites", though: any page
+  a LAN user opens could make their browser POST to the Pi. So the
+  interface refuses a `POST`/`PUT`/`PATCH`/`DELETE` whose `Origin` (or
+  `Referer`) header names another site (`web_interface/origin_guard.py`),
+  and `/api/v3/system/action` only accepts JSON or HTMX requests. Tools
+  that send neither header (curl, Home Assistant, the MQTT bridge) are
+  unaffected. Not covered: DNS rebinding, and anyone who can reach the
+  port directly.
 - **Plugins run unsandboxed.** Installed plugins execute in the same
   Python process as the display loop with full file-system and
   network access. Review plugin code (especially third-party plugins

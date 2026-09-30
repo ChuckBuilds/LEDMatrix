@@ -2275,7 +2275,10 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
     // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
     const pluginPath = pluginIdOrPlugin.plugin_path || '';
     const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
-    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId));
+    // Newer registries also list the other ids outright (the manifest id).
+    const aliases = Array.isArray(pluginIdOrPlugin.aliases) ? pluginIdOrPlugin.aliases : [];
+    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId)
+        || aliases.includes(p.id));
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
@@ -2433,6 +2436,16 @@ function renderPluginStore(plugins) {
         const installed = isStorePluginInstalled(plugin);
         // Registry data: only open real web links, never javascript: URLs.
         const repoLink = plugin.repo && /^https?:\/\//i.test(plugin.repo) ? plugin.repo : '';
+        // The commit that introduced this version (newer registries only).
+        // Checked as a hex SHA before it goes anywhere near a URL.
+        const commit = typeof plugin.commit === 'string' && /^[0-9a-f]{7,40}$/i.test(plugin.commit) ? plugin.commit : '';
+        const commitUrl = commit && repoLink
+            ? repoLink.replace(/\/+$/, '').replace(/\.git$/, '') + '/tree/' + commit
+              + (plugin.plugin_path ? '/' + plugin.plugin_path.split('/').map(encodeURIComponent).join('/') : '')
+            : '';
+        const commitHtml = !commit ? '' : (commitUrl
+            ? `<a href="${escapeAttribute(commitUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-gray-500 hover:underline" title="Source of this version: commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</a>`
+            : `<span class="text-xs font-mono text-gray-500" title="Commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</span>`);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -2443,10 +2456,11 @@ function renderPluginStore(plugins) {
                         ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
                         ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
+                        ${plugin.incompatible_reason ? `<span class="badge badge-warning" title="${escapeAttribute(plugin.incompatible_reason)}"><i class="fas fa-exclamation-triangle mr-1"></i>Needs LEDMatrix ${escapeHtml(plugin.ledmatrix_min_version || 'update')}+</span>` : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        ${plugin.version ? `<p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}</p>` : ''}
+                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${commitHtml}</p>` : ''}
                         <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>

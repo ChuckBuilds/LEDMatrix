@@ -15,6 +15,33 @@ from src.common.path_safety import resolve_under, safe_path_component
 from typing import Optional
 
 
+def _compatibility_refusal(plugin_id: str) -> Optional[str]:
+    """Why the store just refused ``plugin_id`` as incompatible, or None.
+
+    The store records the reason under the id it was handed and, for a
+    reinstall, under the registry id it resolved to; both are cleared here.
+    """
+    store = api_v3.plugin_store_manager
+    ids = [plugin_id]
+    try:
+        entry = store.get_registry_info(plugin_id)
+    except Exception:  # noqa: BLE001 - only used to phrase an error
+        entry = None
+    if isinstance(entry, dict) and isinstance(entry.get('id'), str):
+        ids.append(entry['id'])
+    reason = store.pop_refusal(*ids)
+    return reason if isinstance(reason, str) and reason else None
+
+
+def _store_incompatibility(plugin: dict) -> Optional[str]:
+    """The pre-download compatibility verdict for a store listing entry."""
+    try:
+        reason = api_v3.plugin_store_manager.registry_incompatibility(plugin.get('id'), plugin)
+    except Exception:  # noqa: BLE001 - a listing must not fail over a hint
+        return None
+    return reason if isinstance(reason, str) and reason else None
+
+
 def _listed_plugin_dir(base: Path, name: str) -> Optional[Path]:
     """The entry of ``base`` called ``name``, or None.
 
@@ -146,7 +173,9 @@ def update_plugin():
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
-        # Update the plugin
+        # Update the plugin. A refusal left over from an earlier attempt
+        # (say, the automatic updater's) must not explain this one.
+        _compatibility_refusal(plugin_id)
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
 
         if success:
@@ -236,7 +265,11 @@ def update_plugin():
                     changed=update_status == 'updated'),
             )
         else:
-            if plugin_dir is None or not plugin_dir.exists():
+            refusal = _compatibility_refusal(plugin_id)
+            if refusal:
+                # The plugin is untouched; say why rather than "check logs".
+                client_msg = f'Plugin update refused: {refusal}'
+            elif plugin_dir is None or not plugin_dir.exists():
                 client_msg = 'Plugin update failed: plugin not found'
             else:
                 git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
@@ -265,7 +298,8 @@ def update_plugin():
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 client_msg,
-                status_code=500
+                # A refusal is the plugin's requirement, not a server fault.
+                status_code=409 if refusal else 500
             )
 
     except Exception as e:
@@ -415,6 +449,7 @@ def install_plugin():
     if api_v3.operation_queue:
         def install_callback(operation):
             """Callback to execute plugin installation."""
+            _compatibility_refusal(plugin_id)  # clear any stale one
             success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
 
             if success:
@@ -446,8 +481,10 @@ def install_plugin():
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
                     error_msg += f' (branch: {branch})'
-                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                if not plugin_info:
+                refusal = _compatibility_refusal(plugin_id)
+                if refusal:
+                    error_msg += f': {refusal}'
+                elif not api_v3.plugin_store_manager.get_plugin_info(plugin_id):
                     error_msg += ' (plugin not found in registry)'
 
                 # Record failure in history
@@ -476,6 +513,7 @@ def install_plugin():
         )
     else:
         # Fallback to direct installation
+        _compatibility_refusal(plugin_id)  # clear any stale one
         success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
 
         if success:
@@ -500,8 +538,10 @@ def install_plugin():
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:
                 error_msg += f' (branch: {branch})'
-            plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-            if not plugin_info:
+            refusal = _compatibility_refusal(plugin_id)
+            if refusal:
+                error_msg += f': {refusal}'
+            elif not api_v3.plugin_store_manager.get_plugin_info(plugin_id):
                 error_msg += ' (plugin not found in registry)'
 
             if api_v3.operation_history:
@@ -516,7 +556,7 @@ def install_plugin():
             return error_response(
                 ErrorCode.PLUGIN_INSTALL_FAILED,
                 error_msg,
-                status_code=500
+                status_code=409 if refusal else 500
             )
 
 
@@ -728,7 +768,17 @@ def list_plugin_store():
             'version': plugin.get('latest_version') or plugin.get('version', ''),
             'branch': plugin.get('branch') or plugin.get('default_branch'),
             'default_branch': plugin.get('default_branch'),
-            'plugin_path': plugin.get('plugin_path', '')
+            'plugin_path': plugin.get('plugin_path', ''),
+            # Registry fields from after 3.7.0; absent (None) in an older
+            # plugins.json. `commit` is the one that introduced `version`.
+            'commit': plugin.get('commit') if isinstance(plugin.get('commit'), str) else None,
+            'ledmatrix_min_version': (plugin.get('ledmatrix_min_version')
+                                      if isinstance(plugin.get('ledmatrix_min_version'), str) else None),
+            'aliases': [a for a in plugin.get('aliases') or [] if isinstance(a, str)]
+                       if isinstance(plugin.get('aliases'), list) else [],
+            # What Install would answer, without trying: the same check the
+            # store runs before downloading.
+            'incompatible_reason': _store_incompatibility(plugin),
         })
 
     return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})

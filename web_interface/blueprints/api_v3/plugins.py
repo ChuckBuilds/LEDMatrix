@@ -10,11 +10,36 @@ from web_interface.blueprints.api_v3 import (
     jsonify, logger, os, request, subprocess, success_response,
 )
 from src.common.path_safety import safe_path_component
+from src.plugin_system.base_plugin import (
+    configured_vegas_participation, vegas_participation_value,
+)
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+
+
+def _vegas_participation(plugin_id, plugin_config, manifest):
+    """What Vegas does with a plugin, as far as its files say, and from where.
+
+    The order the display resolves it in (resolve_vegas_participation), up
+    to where that needs the plugin's code: the user's ``vegas_participation`` setting
+    (``'config'``), then the manifest's declared ``vegas_participation``
+    (``'manifest'``). Past those the display asks the plugin itself -- a
+    get_vegas_participation() override or the legacy Vegas hooks -- which the
+    web process never runs, so the answer is ``(None, 'runtime')``: decided
+    at run time, not guessed here. A plugin that overrides
+    get_vegas_participation() can still differ from its manifest.
+    """
+    configured = configured_vegas_participation(plugin_id, plugin_config)
+    if configured is not None:
+        return configured, 'config'
+    declared = vegas_participation_value(
+        manifest.get('vegas_participation') if isinstance(manifest, dict) else None)
+    if declared is not None:
+        return declared, 'manifest'
+    return None, 'runtime'
 
 
 @api_v3.route('/plugins/installed', methods=['GET'])
@@ -109,10 +134,15 @@ def get_installed_plugins():
             last_commit_message = store_info.get('last_commit_message')
 
         # Vegas mode as configured. What a plugin's code would choose on its
-        # own is only known to the display, which runs it; the Vegas order
-        # list falls back to 'fixed' for a plugin with no configured mode.
+        # own is only known to the display, which runs it.
         vegas_mode = plugin_config.get('vegas_mode')
         vegas_content_type = None
+
+        # What Vegas does with it: 'scroll', 'pause' or 'exclude', or None
+        # when only the plugin's code (run by the display) decides. The Vegas
+        # order list badges a None as its configured vegas_mode, else Scroll.
+        vegas_participation, vegas_participation_source = _vegas_participation(
+            plugin_id, plugin_config, plugin_info)
 
         return {
             'id': plugin_id,
@@ -139,6 +169,8 @@ def get_installed_plugins():
             'web_ui_actions': plugin_info.get('web_ui_actions', []),
             'vegas_mode': vegas_mode,
             'vegas_content_type': vegas_content_type,
+            'vegas_participation': vegas_participation,
+            'vegas_participation_source': vegas_participation_source,
         }
 
     from concurrent.futures import ThreadPoolExecutor

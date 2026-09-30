@@ -17,6 +17,7 @@ from src.common.path_safety import safe_path_component
 from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
 from web_interface import display_preview
+from web_interface.auth import request_is_authenticated
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -124,6 +125,11 @@ def get_health():
         if not all_healthy:
             health_status['status'] = 'degraded'
 
+        if not request_is_authenticated():
+            # Web login is on and this caller has not logged in: the route
+            # stays open for uptime monitors, but says only up or degraded.
+            return jsonify({'status': 'success',
+                            'data': {'status': health_status['status']}})
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
         logger.error("%s failed", request.path, exc_info=True)
@@ -444,6 +450,8 @@ def get_mqtt_bridge():
                 'config': safe,
                 # Enough to render "a password is set" without disclosing it.
                 'password_set': bool(password),
+                # Likewise the web-login API token (only needed off-Pi).
+                'api_token_set': bool(config.get('ledmatrix_api_token')),
                 'env_override_prefix': 'LEDMATRIX_MQTT_',
             }
         })
@@ -497,6 +505,15 @@ def update_mqtt_bridge_config():
         else:
             config['mqtt_password'] = existing_password
 
+        # The web-login API token is write-only the same way.
+        if _coerce_to_bool(data.get('clear_api_token')):
+            config['ledmatrix_api_token'] = None
+        elif 'ledmatrix_api_token' in data and str(data['ledmatrix_api_token']).strip() != '':
+            new_token = str(data['ledmatrix_api_token']).strip()
+            if len(new_token) > 200:
+                return jsonify({'status': 'error', 'message': 'API token is too long'}), 400
+            config['ledmatrix_api_token'] = new_token
+
         # CWE-319: a password with TLS off is sent in the clear. On a trusted
         # LAN that is a normal, deliberate setup, so this is refused rather
         # than forbidden -- allow_insecure_mqtt is the explicit acknowledgement.
@@ -534,6 +551,7 @@ def update_mqtt_bridge_config():
             message += ' Restart the bridge for them to take effect.'
         return jsonify({'status': 'success', 'message': message,
                         'data': {'password_set': bool(config.get('mqtt_password')),
+                                 'api_token_set': bool(config.get('ledmatrix_api_token')),
                                  'restart_required': service['active']}})
     except Exception as e:
         logger.exception('Error saving MQTT bridge settings')

@@ -13,7 +13,7 @@
 BDF fonts in `assets/fonts/`, registers fonts that plugins ship, and records
 which plugin uses which font so the web UI can show it.
 
-Several methods are deprecated and will be removed in LEDMatrix 3.7.0; they
+Several methods are deprecated and will be removed in LEDMatrix 3.8.0; they
 log a warning on first call. They are listed in
 [Deprecated methods](#deprecated-methods) below, and the full set is pinned in
 [`test/test_deprecation.py`](../test/test_deprecation.py).
@@ -209,7 +209,7 @@ Current methods:
 
 ### Deprecated methods
 
-Removed in 3.7.0. Each logs a warning on first call.
+Removed in 3.8.0. Each logs a warning on first call.
 
 | Method | Use instead |
 |---|---|

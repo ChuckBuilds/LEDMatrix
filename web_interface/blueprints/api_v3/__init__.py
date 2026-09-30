@@ -2257,7 +2257,10 @@ def _read_mqtt_bridge_config() -> Dict[str, Any]:
     name shadows it.
     """
     settings = dict(_MQTT_BRIDGE_DEFAULTS)
+    # Write-only credentials: never in _MQTT_BRIDGE_DEFAULTS, which is what
+    # the GET route echoes back.
     settings['mqtt_password'] = None
+    settings['ledmatrix_api_token'] = None
     try:
         if _MQTT_BRIDGE_CONFIG.is_file():
             with open(_MQTT_BRIDGE_CONFIG, encoding='utf-8') as handle:
@@ -2339,6 +2342,7 @@ from web_interface.blueprints.api_v3 import (  # noqa: E402,F401
     plugins,
     starlark,
     system,
+    web_login,
     wifi,
 )
 

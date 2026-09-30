@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from src.core_config_keys import CORE_CONFIG_KEYS
+from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
 from src.plugin_system.plugin_dirs import PluginDirectoryIndex
 from src.plugin_system.plugin_runtime import PluginRuntimeView, UNKNOWN
 from src.logging_config import get_logger
@@ -307,11 +307,11 @@ class StateReconciliation:
     # Top-level config keys that are NOT plugins. The core keys come from the
     # shared list in src/core_config_keys.py -- a private copy here missed
     # #581's 'auto_update' and reported it as a plugin missing from disk.
-    # 'github'/'youtube' are the historical secrets-file keys. The secrets file
+    # CORE_SECRETS_KEYS are the core's own secrets-file keys. The secrets file
     # itself is read at run time too (ignored_config_keys): load_config() merges
     # it in, and naming its keys one by one let a 'data' key become a phantom
     # plugin permanently reported as "in config but not on disk".
-    _SYSTEM_CONFIG_KEYS = CORE_CONFIG_KEYS | frozenset({'github', 'youtube'})
+    _SYSTEM_CONFIG_KEYS = CORE_CONFIG_KEYS | CORE_SECRETS_KEYS
 
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
