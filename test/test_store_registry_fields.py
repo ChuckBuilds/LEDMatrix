@@ -342,9 +342,9 @@ def web_store(api_v3_module, tmp_path, monkeypatch):
     fake = FakeStore(tmp_path, monkeypatch, [], manifest("2.0.0"))
     api_v3_module.api_v3.plugin_store_manager = fake.store
     api_v3_module.api_v3.operation_queue = None
-    # No plugin manager: the routes skip discovery and reload, and the update
-    # route finds the directory through the store alone.
-    api_v3_module.api_v3.plugin_manager = None
+    # No plugin catalog: the routes skip discovery, and the update route
+    # finds the directory through the store alone.
+    api_v3_module.api_v3.plugin_catalog = None
     return fake
 
 

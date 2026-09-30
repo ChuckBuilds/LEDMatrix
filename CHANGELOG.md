@@ -165,6 +165,12 @@ read any of them:
     described web-side copies. `enabled` follows the display's rule, so a
     plugin whose config has no `enabled` flag shows as disabled (it never
     ran). `vegas_mode` is the configured value only.
+  - `vegas_participation` there is the user's setting, else the manifest's
+    declaration, with a new `vegas_participation_source` (`config` or
+    `manifest`). When only the plugin's code decides it (a
+    `get_vegas_participation()` override or the legacy Vegas hooks) it is
+    `null` with source `runtime`: the display derives it, and the web no
+    longer asks a web-side plugin instance.
   - Starlark routes always use their on-disk path. The one place the web
     process still imports plugin code -- the Starlark helper modules and an
     `oauth_flow` action script -- is `_import_plugin_code_in_web_process()`,
