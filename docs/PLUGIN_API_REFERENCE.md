@@ -308,9 +308,9 @@ the core then falls back to its own live-content check — so a plugin whose
 weight calculation is broken still gets `live_weight` for a game that really
 is live, rather than being demoted to 1.
 
-Only consulted when the user has set `vegas_scroll.live_in_ticker`. With the
-default (`false`) live content preempts Vegas entirely and there is no ticker
-to be weighted within. See
+Only consulted while `vegas_scroll.live_in_ticker` is on (the default since
+3.8.0). With it off live content preempts Vegas entirely and there is no
+ticker to be weighted within. See
 [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md#live-content-in-the-ticker).
 
 ### Vegas scroll hooks
