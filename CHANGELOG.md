@@ -118,7 +118,39 @@ read any of them:
   `"fixed"`): both always scrolled. Documented only; no warning, because
   official plugins' schemas still offer `"fixed"`.
 
+### Plugin store
+
+- The store reads three optional registry fields that ledmatrix-plugins'
+  `update_registry.py` now publishes (ChuckBuilds/ledmatrix-plugins#579). An
+  older `plugins.json` without them behaves as before.
+  - `ledmatrix_min_version`: an install or update this core cannot run is
+    refused before anything is downloaded, pulled or moved aside, and the web
+    UI says why ("requires LEDMatrix X or newer…", HTTP 409) instead of "check
+    logs for details". The store card shows a "Needs LEDMatrix X+" badge. The
+    check on the downloaded manifest stays as the fallback (older registries,
+    an explicitly requested other branch, `compatible_versions`).
+  - `aliases`: the entry's other ids. Update, uninstall and reinstall by the
+    registry id now find a plugin installed under its manifest id
+    (`weather` → `ledmatrix-weather/`; likewise leaderboard, music, stocks).
+    Only registry proof counts: the entry's `aliases` or its `plugin_path`
+    name, or a folder whose manifest declares one of those ids. A
+    `ledmatrix-<id>/` folder with no such proof is never replaced or removed;
+    uninstall and update report "not installed" and log the folder's path.
+    Install and update fetch the registry first when such a folder exists
+    and none is loaded; uninstall stays offline.
+  - `commit`: the monorepo commit that introduced the listed version, shown
+    on the store card and linked to the plugin's source at that commit.
+    Informational only; installs still come from the branch head.
+
 ### Fixes
+
+- Reinstalling a plugin by its registry id when it is installed under its
+  manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
+  the install then fails. The safety copy was taken of `weather/`, which did
+  not exist, and the real install was removed to make room for the download,
+  so a refusal by the compatibility gate left no plugin at all. Uninstalling
+  by the registry id reported success and removed nothing; updating by it
+  said "not installed". All three now find the install.
 
 - On-demand no longer restarts a running display. `POST
   /display/on-demand/start` treated `start_service` (on by default, and what

@@ -21,7 +21,7 @@ from src.plugin_system.plugin_dirs import (
     PluginDirectoryIndex, resolve_plugin_dir, store_search_dirs,
 )
 from src.plugin_system.store_install import _InstallMixin
-from src.plugin_system.store_registry import _RegistryMixin
+from src.plugin_system.store_registry import _RegistryMixin, prefix_hint
 from src.plugin_system.store_update import _UpdateMixin
 
 
@@ -407,13 +407,20 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         alone reported such a plugin as not installed, so update_plugin()
         silently did nothing.
 
-        No ``ledmatrix-`` prefix and no case folding here, unlike the loader:
-        a store operation may delete what this returns, so it only accepts a
-        directory that names the id exactly or declares it. So a registry id
-        such as `stocks` does not resolve to an installed `ledmatrix-stocks/`
-        declaring `ledmatrix-stocks` (the monorepo's leaderboard, music,
-        stocks and weather); callers pass the installed id, and
-        update_plugin() maps it back to the registry id itself.
+        When nothing answers to the id itself, the ids the registry proves
+        are the same plugin are tried the same way
+        (`_installed_id_candidates`): the entry's own id, its ``aliases`` and
+        its ``plugin_path`` name. So the registry id `stocks` finds an
+        installed `ledmatrix-stocks/` declaring `ledmatrix-stocks` (the
+        monorepo's leaderboard, music, stocks and weather), and uninstalling
+        by the registry id no longer reports success while leaving the
+        plugin on disk.
+
+        Never ``ledmatrix-<id>`` without that proof -- no registry loaded, or
+        an entry that doesn't name it: a store operation may delete or
+        replace what this returns, and an unrelated plugin can own that
+        folder. Such a folder is only logged, so a person can act on it.
+        Still no case folding.
 
         Args:
             plugin_id: Plugin identifier
@@ -421,9 +428,55 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         Returns:
             Path to plugin directory if found, None otherwise
         """
-        return resolve_plugin_dir(
-            plugin_id, self._candidate_plugin_dirs(), prefix=False,
-            case_insensitive=False)
+        return self._find_with_proof(plugin_id, fetch=False)
+
+    def _find_with_proof(self, plugin_id: str, fetch: bool) -> Optional[Path]:
+        """`_find_plugin_path`; with ``fetch``, a ``ledmatrix-<id>`` folder
+        found while no registry is loaded makes it fetch the registry and
+        look again, since only the registry can prove the folder is this
+        plugin. Uninstall passes False (it must work offline); update, which
+        needs the network anyway, passes True."""
+        search_dirs = self._candidate_plugin_dirs()
+        found = self._resolve_installed(plugin_id, search_dirs)
+        if found is not None:
+            return found
+        folder = self._unproven_prefix_folder(plugin_id, search_dirs)
+        if folder is not None and fetch and not getattr(self, 'registry_cache', None):
+            try:
+                self.fetch_registry()
+            except Exception as e:  # noqa: BLE001 - fall through to "not found"
+                self.logger.debug("Registry fetch while looking for %s failed: %s", plugin_id, e)
+            found = self._resolve_installed(plugin_id, search_dirs)
+            if found is not None:
+                return found
+        if folder is not None:
+            self.logger.warning(
+                "Plugin %s not found. %s may be it, but nothing in the plugin "
+                "registry says so (no alias), so the store leaves it alone; "
+                "if it is this plugin, manage it as %s.",
+                plugin_id, folder, prefix_hint(plugin_id))
+        return None
+
+    @staticmethod
+    def _unproven_prefix_folder(plugin_id: str, search_dirs: List[Path]) -> Optional[Path]:
+        """A ``ledmatrix-<id>`` folder, which the store names but won't touch."""
+        hint = prefix_hint(plugin_id)
+        if hint is None:
+            return None
+        return resolve_plugin_dir(hint, search_dirs, prefix=False, by_manifest=False)
+
+    def _resolve_installed(self, plugin_id: str, search_dirs: List[Path]) -> Optional[Path]:
+        """The first of ``plugin_id``'s candidate ids found in ``search_dirs``.
+
+        The id itself is looked for in every directory before any alias is,
+        so an exact install anywhere beats an alias in the configured one.
+        """
+        for candidate in self._installed_id_candidates(plugin_id):
+            found = resolve_plugin_dir(
+                candidate, search_dirs, prefix=False, case_insensitive=False)
+            if found is not None:
+                return found
+        return None
 
     def _candidate_plugin_dirs(self) -> List[Path]:
         """Directories that may hold installed plugins, configured one first."""
