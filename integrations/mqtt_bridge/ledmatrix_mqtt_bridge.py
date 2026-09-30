@@ -66,6 +66,10 @@ DEFAULTS = {
     "mqtt_tls": False,
     "mqtt_tls_insecure": False,
     "ledmatrix_api_base": "http://localhost:5000",
+    # Only needed when the web interface's optional login is on AND the bridge
+    # reaches it from another machine: requests from the Pi itself never need
+    # one. Create it under General > Security; sent as a Bearer token.
+    "ledmatrix_api_token": None,
     "request_timeout": 15,
     "on_demand_duration": None,
     "log_level": "INFO",
@@ -125,10 +129,13 @@ class LEDMatrixClient:
     """
 
     def __init__(self, api_base: str, timeout: int = 15,
-                 session: Optional[requests.Session] = None):
+                 session: Optional[requests.Session] = None,
+                 api_token: Optional[str] = None):
         self.api_base = api_base.rstrip("/")
         self.timeout = timeout
         self.session = session or requests.Session()
+        if api_token:
+            self.session.headers["Authorization"] = f"Bearer {api_token}"
 
     def _call(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         url = f"{self.api_base}/api/v3{path}"
@@ -403,7 +410,8 @@ class Bridge:
         self.status_topic = f"{self.command_topic}/status"
         self.state_topic = f"{self.command_topic}/state"
         self.availability_topic = f"{self.command_topic}/availability"
-        self.client = LEDMatrixClient(config["ledmatrix_api_base"], config["request_timeout"])
+        self.client = LEDMatrixClient(config["ledmatrix_api_base"], config["request_timeout"],
+                                      api_token=config.get("ledmatrix_api_token") or None)
         self.handler = CommandHandler(self.client, config.get("on_demand_duration"))
         self._stop = threading.Event()
         self._mqtt = None

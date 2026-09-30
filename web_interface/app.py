@@ -64,8 +64,11 @@ config_manager = ConfigManager()
 # server's own host; requests with neither header (curl, Home Assistant, the
 # MQTT bridge) are not from a browser and pass. There are no CSRF tokens:
 # neither the HTMX forms nor the fetch() calls carry one. Anyone who can reach
-# the port directly can still use the API, so exposing the UI beyond a trusted
-# network still needs real authentication.
+# the port directly can still use the API unless the optional login is on:
+# web_interface/auth.py (registered below the captive-portal redirect) adds a
+# password and API tokens. It is off until a password is set in General >
+# Security, and even then leaves requests from the Pi itself and the Wi-Fi
+# setup flow in access-point mode open.
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -504,6 +507,8 @@ def captive_portal_redirect():
         '/connecttest.txt',  # Windows detection
         '/success.txt',  # Firefox detection
         '/favicon.ico',  # Favicon
+        '/login',  # Optional web login (web_interface/auth.py)
+        '/logout',
     ]
 
     for allowed_path in allowed_paths:
@@ -512,6 +517,13 @@ def captive_portal_redirect():
 
     # Redirect to lightweight captive portal setup page (not the full UI)
     return redirect(url_for('pages_v3.captive_setup'), code=302)
+
+# Optional login (off until a password is set in General > Security). After
+# the captive-portal redirect, so in AP mode an unknown path still lands on
+# /setup rather than on the login page; the setup flow itself stays open.
+from web_interface import auth as web_auth
+web_auth.init_app(app, config_manager, limiter=limiter,
+                  is_ap_mode_active=is_ap_mode_active)
 
 # Append a content-version query param (file mtime) to every static URL so the
 # long-lived `immutable` cache (see add_security_headers below) is actually safe:
