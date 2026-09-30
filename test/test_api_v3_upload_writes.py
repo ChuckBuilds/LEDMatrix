@@ -110,7 +110,7 @@ class TestCalendarCredentials:
     def plugin_dir(self, tmp_path, api_v3_module):
         directory = tmp_path / "plugins" / "calendar"
         directory.mkdir(parents=True)
-        api_v3_module.api_v3.plugin_manager.get_plugin_directory.return_value = str(directory)
+        api_v3_module.api_v3.plugin_catalog.get_plugin_directory.return_value = str(directory)
         return directory
 
     def _post(self, client):

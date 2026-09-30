@@ -28,6 +28,7 @@ def client(monkeypatch):
 @pytest.mark.parametrize("url,path", [
     ("/static/v3/plugins_manager.js", "v3/plugins_manager.js"),
     ("/static/v3/app.css", "v3/app.css"),
+    ("/static/v3/tailwind.css", "v3/tailwind.css"),
 ])
 def test_static_text_asset_is_gzipped_and_round_trips(client, url, path):
     resp = client.get(url, headers={"Accept-Encoding": "gzip, deflate"})

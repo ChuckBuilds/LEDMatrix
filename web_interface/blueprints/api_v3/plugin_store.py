@@ -6,12 +6,40 @@ so their endpoint names do not depend on which module they live in.
 """
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, Path, _do_transactional_uninstall,
-    _non_plugin_id_error, _get_plugin_version, _plugin_directory, api_v3,
-    datetime, error_response, exception_error_response, json, jsonify, logger,
+    _non_plugin_id_error, _get_plugin_version, _plugin_directory,
+    _plugin_enabled_in_config, _store_restart_fields, api_v3,
+    error_response, exception_error_response, json, jsonify, logger,
     request, success_response, validate_request_json,
 )
 from src.common.path_safety import resolve_under, safe_path_component
 from typing import Optional
+
+
+def _compatibility_refusal(plugin_id: str) -> Optional[str]:
+    """Why the store just refused ``plugin_id`` as incompatible, or None.
+
+    The store records the reason under the id it was handed and, for a
+    reinstall, under the registry id it resolved to; both are cleared here.
+    """
+    store = api_v3.plugin_store_manager
+    ids = [plugin_id]
+    try:
+        entry = store.get_registry_info(plugin_id)
+    except Exception:  # noqa: BLE001 - only used to phrase an error
+        entry = None
+    if isinstance(entry, dict) and isinstance(entry.get('id'), str):
+        ids.append(entry['id'])
+    reason = store.pop_refusal(*ids)
+    return reason if isinstance(reason, str) and reason else None
+
+
+def _store_incompatibility(plugin: dict) -> Optional[str]:
+    """The pre-download compatibility verdict for a store listing entry."""
+    try:
+        reason = api_v3.plugin_store_manager.registry_incompatibility(plugin.get('id'), plugin)
+    except Exception:  # noqa: BLE001 - a listing must not fail over a hint
+        return None
+    return reason if isinstance(reason, str) and reason else None
 
 
 def _listed_plugin_dir(base: Path, name: str) -> Optional[Path]:
@@ -145,7 +173,9 @@ def update_plugin():
         remote_commit = remote_info.get('last_commit_sha') if remote_info else None
         remote_branch = remote_info.get('branch') if remote_info else None
 
-        # Update the plugin
+        # Update the plugin. A refusal left over from an earlier attempt
+        # (say, the automatic updater's) must not explain this one.
+        _compatibility_refusal(plugin_id)
         success = api_v3.plugin_store_manager.update_plugin(plugin_id)
 
         if success:
@@ -199,18 +229,15 @@ def update_plugin():
             if api_v3.schema_manager:
                 api_v3.schema_manager.invalidate_cache(plugin_id)
 
-            # Rediscover plugins
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
-                if plugin_id in api_v3.plugin_manager.plugins:
-                    api_v3.plugin_manager.reload_plugin(plugin_id)
+            # Rediscover plugins. The web process runs no plugin code, so
+            # there is nothing here to reload: the display keeps running the
+            # version it loaded until it restarts, which restart_required
+            # below asks for.
+            if api_v3.plugin_catalog:
+                api_v3.plugin_catalog.discover_plugins()
 
-            # Update state and history
-            if api_v3.plugin_state_manager:
-                api_v3.plugin_state_manager.update_plugin_state(
-                    plugin_id,
-                    {'last_updated': datetime.now()}
-                )
+            # Record in history (the only record of when it was updated;
+            # the version is the manifest on disk).
             if api_v3.operation_history:
                 version = _get_plugin_version(plugin_id)
                 api_v3.operation_history.record_operation(
@@ -232,10 +259,17 @@ def update_plugin():
                     'commit': updated_commit,
                     'update_status': update_status
                 },
-                message=message
+                message=message,
+                extra=_store_restart_fields(
+                    'update', _plugin_enabled_in_config(plugin_id),
+                    changed=update_status == 'updated'),
             )
         else:
-            if plugin_dir is None or not plugin_dir.exists():
+            refusal = _compatibility_refusal(plugin_id)
+            if refusal:
+                # The plugin is untouched; say why rather than "check logs".
+                client_msg = f'Plugin update refused: {refusal}'
+            elif plugin_dir is None or not plugin_dir.exists():
                 client_msg = 'Plugin update failed: plugin not found'
             else:
                 git_info = api_v3.plugin_store_manager._get_local_git_info(plugin_dir)
@@ -264,7 +298,8 @@ def update_plugin():
             return error_response(
                 ErrorCode.PLUGIN_UPDATE_FAILED,
                 client_msg,
-                status_code=500
+                # A refusal is the plugin's requirement, not a server fault.
+                status_code=409 if refusal else 500
             )
 
     except Exception as e:
@@ -307,6 +342,8 @@ def uninstall_plugin():
         if api_v3.operation_queue:
             def uninstall_callback(operation):
                 """Callback to execute plugin uninstallation via transactional helper."""
+                # Read before the uninstall removes the config section.
+                was_enabled = _plugin_enabled_in_config(plugin_id)
                 success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
                 if not success:
                     if api_v3.operation_history:
@@ -324,7 +361,9 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                return {'success': True, 'message': 'Plugin uninstalled successfully'}
+                return {'success': True, 'message': 'Plugin uninstalled successfully',
+                        **_store_restart_fields('uninstall', was_enabled,
+                                                preserve_config=preserve_config)}
 
             # Enqueue operation
             operation_id = api_v3.operation_queue.enqueue_operation(
@@ -339,6 +378,7 @@ def uninstall_plugin():
             )
         else:
             # Direct (non-queued) transactional uninstall
+            was_enabled = _plugin_enabled_in_config(plugin_id)
             success, error_msg = _do_transactional_uninstall(plugin_id, preserve_config)
 
             if success:
@@ -349,7 +389,10 @@ def uninstall_plugin():
                         status="success",
                         details={"preserve_config": preserve_config}
                     )
-                return success_response(message='Plugin uninstalled successfully')
+                return success_response(
+                    message='Plugin uninstalled successfully',
+                    extra=_store_restart_fields('uninstall', was_enabled,
+                                                preserve_config=preserve_config))
             else:
                 if api_v3.operation_history:
                     api_v3.operation_history.record_operation(
@@ -406,6 +449,7 @@ def install_plugin():
     if api_v3.operation_queue:
         def install_callback(operation):
             """Callback to execute plugin installation."""
+            _compatibility_refusal(plugin_id)  # clear any stale one
             success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
 
             if success:
@@ -413,14 +457,11 @@ def install_plugin():
                 if api_v3.schema_manager:
                     api_v3.schema_manager.invalidate_cache(plugin_id)
 
-                # Discover and load the new plugin
-                if api_v3.plugin_manager:
-                    api_v3.plugin_manager.discover_plugins()
-                    api_v3.plugin_manager.load_plugin(plugin_id)
-
-                # Update state manager
-                if api_v3.plugin_state_manager:
-                    api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+                # List the new plugin. The display loads it, from disk, when
+                # it is enabled; see restart_required below for one that
+                # already is.
+                if api_v3.plugin_catalog:
+                    api_v3.plugin_catalog.discover_plugins()
 
                 # Record in history
                 if api_v3.operation_history:
@@ -433,13 +474,17 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                return {'success': True, 'message': f'Plugin {plugin_id} installed successfully{branch_msg}'}
+                return {'success': True,
+                        'message': f'Plugin {plugin_id} installed successfully{branch_msg}',
+                        **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
                     error_msg += f' (branch: {branch})'
-                plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-                if not plugin_info:
+                refusal = _compatibility_refusal(plugin_id)
+                if refusal:
+                    error_msg += f': {refusal}'
+                elif not api_v3.plugin_store_manager.get_plugin_info(plugin_id):
                     error_msg += ' (plugin not found in registry)'
 
                 # Record failure in history
@@ -468,16 +513,14 @@ def install_plugin():
         )
     else:
         # Fallback to direct installation
+        _compatibility_refusal(plugin_id)  # clear any stale one
         success = api_v3.plugin_store_manager.install_plugin(plugin_id, branch=branch)
 
         if success:
             if api_v3.schema_manager:
                 api_v3.schema_manager.invalidate_cache(plugin_id)
-            if api_v3.plugin_manager:
-                api_v3.plugin_manager.discover_plugins()
-                api_v3.plugin_manager.load_plugin(plugin_id)
-            if api_v3.plugin_state_manager:
-                api_v3.plugin_state_manager.set_plugin_installed(plugin_id)
+            if api_v3.plugin_catalog:
+                api_v3.plugin_catalog.discover_plugins()
             if api_v3.operation_history:
                 version = _get_plugin_version(plugin_id)
                 api_v3.operation_history.record_operation(
@@ -488,13 +531,17 @@ def install_plugin():
                 )
 
             branch_msg = f" (branch: {branch})" if branch else ""
-            return success_response(message=f'Plugin installed successfully{branch_msg}')
+            return success_response(
+                message=f'Plugin installed successfully{branch_msg}',
+                extra=_store_restart_fields('install', _plugin_enabled_in_config(plugin_id)))
         else:
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:
                 error_msg += f' (branch: {branch})'
-            plugin_info = api_v3.plugin_store_manager.get_plugin_info(plugin_id)
-            if not plugin_info:
+            refusal = _compatibility_refusal(plugin_id)
+            if refusal:
+                error_msg += f': {refusal}'
+            elif not api_v3.plugin_store_manager.get_plugin_info(plugin_id):
                 error_msg += ' (plugin not found in registry)'
 
             if api_v3.operation_history:
@@ -509,7 +556,7 @@ def install_plugin():
             return error_response(
                 ErrorCode.PLUGIN_INSTALL_FAILED,
                 error_msg,
-                status_code=500
+                status_code=409 if refusal else 500
             )
 
 
@@ -547,10 +594,9 @@ def install_plugin_from_url():
         if api_v3.schema_manager and installed_plugin_id:
             api_v3.schema_manager.invalidate_cache(installed_plugin_id)
 
-        # Discover and load the new plugin
-        if api_v3.plugin_manager and installed_plugin_id:
-            api_v3.plugin_manager.discover_plugins()
-            api_v3.plugin_manager.load_plugin(installed_plugin_id)
+        # List the new plugin; the display loads it when it is enabled.
+        if api_v3.plugin_catalog and installed_plugin_id:
+            api_v3.plugin_catalog.discover_plugins()
 
         branch_msg = f" (branch: {result.get('branch', branch)})" if (result.get('branch') or branch) else ""
         response_data = {
@@ -561,6 +607,9 @@ def install_plugin_from_url():
         }
         if result.get('branch'):
             response_data['branch'] = result.get('branch')
+        if installed_plugin_id:
+            response_data.update(_store_restart_fields(
+                'install', _plugin_enabled_in_config(installed_plugin_id)))
         return jsonify(response_data)
     else:
         return jsonify({
@@ -719,7 +768,17 @@ def list_plugin_store():
             'version': plugin.get('latest_version') or plugin.get('version', ''),
             'branch': plugin.get('branch') or plugin.get('default_branch'),
             'default_branch': plugin.get('default_branch'),
-            'plugin_path': plugin.get('plugin_path', '')
+            'plugin_path': plugin.get('plugin_path', ''),
+            # Registry fields from after 3.7.0; absent (None) in an older
+            # plugins.json. `commit` is the one that introduced `version`.
+            'commit': plugin.get('commit') if isinstance(plugin.get('commit'), str) else None,
+            'ledmatrix_min_version': (plugin.get('ledmatrix_min_version')
+                                      if isinstance(plugin.get('ledmatrix_min_version'), str) else None),
+            'aliases': [a for a in plugin.get('aliases') or [] if isinstance(a, str)]
+                       if isinstance(plugin.get('aliases'), list) else [],
+            # What Install would answer, without trying: the same check the
+            # store runs before downloading.
+            'incompatible_reason': _store_incompatibility(plugin),
         })
 
     return jsonify({'status': 'success', 'data': {'plugins': formatted_plugins}})

@@ -23,13 +23,17 @@ web_interface/
 │   │                        #   plugins, system, backup, fonts, misc,
 │   │                        #   wifi, starlark)
 │   └── pages_v3.py          # Page routes
+├── tailwind/                 # Tailwind config + input CSS (build inputs,
+│                             #   not served; see "Styling" below)
 ├── templates/                # HTML templates
 │   └── v3/
 │       ├── base.html
 │       └── partials/
 └── static/                   # CSS/JS assets
     └── v3/
-        ├── app.css
+        ├── tailwind.css      # GENERATED utility classes (committed)
+        ├── plugin-frame.css  # GENERATED styles for plugin web_ui/ iframes
+        ├── app.css           # hand-written: tokens, components, dark theme
         ├── app.js
         ├── manifest.json     # PWA manifest
         ├── plugins_manager.js
@@ -37,6 +41,50 @@ web_interface/
         ├── js/               # Alpine, htmx, app shell, widgets, utils
         └── vendor/           # codemirror, fontawesome
 ```
+
+## Styling (Tailwind CSS)
+
+Templates and JS use [Tailwind](https://v3.tailwindcss.com/) utility
+classes. The CSS for them is generated on a dev machine or in CI and
+**committed**, so the Pi never builds anything and the UI needs no CDN
+(it has to work in AP mode, with no internet).
+
+- `static/v3/tailwind.css` holds the utilities. It is generated from the
+  classes found in `templates/v3/`, `static/v3/**/*.js` and `blueprints/`,
+  so it only contains what the UI uses.
+- `static/v3/app.css` is hand-written: theme tokens, base element styles,
+  components (`.btn`, `.card`, `.nav-tab`, ...) and the dark theme
+  (`[data-theme="dark"] ...` overrides). `base.html` loads it after
+  `tailwind.css`, so its rules win over utilities of equal specificity.
+  Don't add utility classes to it; use the class and rebuild.
+- `static/v3/plugin-frame.css` styles plugin `web_ui/` fragments served by
+  `/v3/plugin-ui/<plugin>/web-ui/<file>` in an iframe. Their markup lives in
+  plugin repos, so it can't be scanned; its config safelists the common
+  utility families instead.
+
+**After changing a template, a static JS file or anything in `tailwind/`,
+rebuild and commit the CSS with your change:**
+
+```bash
+python3 scripts/build_css.py          # rewrites tailwind.css and plugin-frame.css
+python3 scripts/build_css.py --check  # what CI runs: fails if they are stale
+```
+
+No Node or npm is needed. The script downloads Tailwind's standalone CLI
+(pinned version, SHA-256 checked) for your OS once and caches it outside
+the repo (`LEDMATRIX_TAILWIND_CACHE` overrides where). CI runs `--check`
+on every PR.
+
+Where to change what:
+
+- A class built at runtime (`` `bg-${color}-100` ``) is invisible to the
+  scanner: add it to `safelist` in `tailwind/tailwind.config.js`, or better,
+  write the full class names in the code.
+- Colours, font sizes and shadows that differ from stock Tailwind (darker
+  gray text, emerald/amber button fills, token-based shadows) are set in the
+  `theme` of `tailwind/tailwind.config.js`.
+- Dark mode is the `data-theme="dark"` attribute on `<html>`; the `dark:`
+  variant is configured to match it.
 
 ## Running the Web Interface
 

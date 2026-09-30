@@ -93,13 +93,12 @@ def env(tmp_path, api_v3_module):
     api = api_v3_module.api_v3
     api.config_manager = config_manager
     api.schema_manager = SchemaManager(plugins_dir=plugins_dir, project_root=tmp_path)
-    api.plugin_manager.plugin_manifests = {PLUGIN_ID: {"id": PLUGIN_ID},
+    api.plugin_catalog.plugin_manifests = {PLUGIN_ID: {"id": PLUGIN_ID},
                                            NEWS_ID: {"id": NEWS_ID}}
-    api.plugin_manager.get_plugin.return_value = None
 
     class Env:
         client = build_app(api).test_client()
-        plugin_manager = api.plugin_manager
+        plugin_catalog = api.plugin_catalog
 
         @staticmethod
         def stored(plugin_id=PLUGIN_ID):
@@ -183,19 +182,18 @@ class TestReset:
         assert calls == [True]
         assert env.stored()["stock_symbols"] == ["AAPL"]
 
-    def test_reset_notifies_the_plugin_with_its_prepared_config(self, env):
-        plugin = MagicMock()
-        env.plugin_manager.get_plugin.return_value = plugin
-        env.plugin_manager.prepare_plugin_config.side_effect = (
-            lambda _pid, raw: {**raw, "prepared": True})
+    def test_reset_runs_no_plugin_code_in_the_web_process(self, env):
+        # The running plugin gets the reset config from the display's config
+        # watcher (on_config_change there, with the prepared section). The
+        # catalog has no get_plugin, so a route that still reached for a
+        # plugin instance here would fail this request.
+        assert not hasattr(env.plugin_catalog, "get_plugin")
 
         response = env.client.post("/api/v3/plugins/config/reset",
                                    json={"plugin_id": PLUGIN_ID})
 
         assert response.status_code == 200, response.get_json()
-        handed_over = plugin.on_config_change.call_args.args[0]
-        assert handed_over["prepared"] is True
-        assert handed_over["stock_symbols"] == ["AAPL"]
+        assert env.stored()["stock_symbols"] == ["AAPL"]
 
     def test_a_failed_save_is_reported(self, env, monkeypatch):
         failed = MagicMock(message="disk full")

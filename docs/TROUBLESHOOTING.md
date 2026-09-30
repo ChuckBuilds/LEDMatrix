@@ -552,6 +552,64 @@ commit, then switches to releases on its own.
    python3 scripts/check_plugin.py --plugin plugin-id
    ```
 
+#### Panel Frozen, or the Display Restarts Every Few Minutes
+
+**Symptoms:**
+- The panel stops changing while `systemctl status ledmatrix` says `active`
+- The display restarts on its own, a couple of minutes after it froze
+- `/api/v3/health` shows `checks.display_loop.status` as `stalled`
+
+The display's render loop checks in with systemd every few seconds
+(`WatchdogSec=120` in `ledmatrix.service`) and writes a heartbeat to
+`/run/ledmatrix/display-heartbeat.json`. When the loop gets stuck -- almost
+always inside one plugin's `display()` -- the check-ins stop, and after two
+minutes systemd kills and restarts the display. The kill dumps every thread's
+stack into the log, so it says which plugin was stuck.
+
+**Solutions:**
+
+1. **Find the stuck plugin.** Look for the watchdog kill and the stack dump
+   after it. The render loop is the thread whose stack runs through
+   `display_controller.py` in `run` (usually the `Current thread` block);
+   the first `plugin-repos/...` file in it is the plugin:
+   ```bash
+   sudo journalctl -u ledmatrix --since "1 hour ago" | grep -A40 "Watchdog timeout"
+   ```
+
+2. **Check the heartbeat by hand.** Its age should stay under about ten
+   seconds while the display runs:
+   ```bash
+   cat /run/ledmatrix/display-heartbeat.json
+   curl -s http://localhost:5000/api/v3/health | python3 -m json.tool | grep -A3 display_loop
+   ```
+   `not_reported` means the display writes no heartbeat: it has not drawn
+   its first frame yet, or it runs an older version.
+
+3. **Disable the plugin** in the web UI and report it to its author with the
+   stack dump. Restarts that repeat back off from 10 seconds to two minutes
+   apart, so a plugin that hangs on every start does not restart the display
+   hundreds of times an hour.
+
+4. **Is the watchdog installed?** Installs from before it keep their old unit
+   until the installer is re-run (a startup warning says the unit differs
+   from its template):
+   ```bash
+   systemctl show -p WatchdogUSec ledmatrix   # 2min once running; 0 = not installed
+   sudo ./scripts/install/install_service.sh
+   ```
+   `WatchdogUSec` reads `15min` for the first minutes after a start: that is
+   the start-up allowance, narrowed to two minutes once the first frame is on
+   the panel.
+
+5. **A plugin that legitimately blocks longer** than two minutes (it should
+   not; `display()` runs on the render thread) can be given more time with a
+   drop-in, `sudo systemctl edit ledmatrix`:
+   ```ini
+   [Service]
+   WatchdogSec=300
+   ```
+   `WatchdogSec=0` turns the watchdog off.
+
 #### Stale Cache Data
 
 **Symptoms:**

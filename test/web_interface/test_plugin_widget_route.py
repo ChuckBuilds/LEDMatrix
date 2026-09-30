@@ -52,7 +52,7 @@ def make_client(tmp_path):
     """
     from web_interface.blueprints import pages_v3 as pv
 
-    original_pm = getattr(pv.pages_v3, "plugin_manager", None)
+    original_pm = getattr(pv.pages_v3, "plugin_catalog", None)
 
     def _build(plugins_dir=None, plugin_manager=_UNSET):
         base = PROJECT_ROOT / "web_interface"
@@ -64,7 +64,7 @@ def make_client(tmp_path):
         if plugin_manager is _UNSET:
             plugin_manager = MagicMock()
             plugin_manager.plugins_dir = str(plugins_dir or tmp_path)
-        pv.pages_v3.plugin_manager = plugin_manager
+        pv.pages_v3.plugin_catalog = plugin_manager
 
         app.register_blueprint(pv.pages_v3, url_prefix="")
         return app.test_client()
@@ -72,7 +72,7 @@ def make_client(tmp_path):
     try:
         yield _build
     finally:
-        pv.pages_v3.plugin_manager = original_pm
+        pv.pages_v3.plugin_catalog = original_pm
 
 
 URL = "/static/plugin-widgets/{}/{}.js"
@@ -211,7 +211,7 @@ def config_form(tmp_path):
     """Render a plugin's config partial with a temp plugin on disk."""
     from web_interface.blueprints import pages_v3 as pv
 
-    orig_pm = getattr(pv.pages_v3, "plugin_manager", None)
+    orig_pm = getattr(pv.pages_v3, "plugin_catalog", None)
     orig_cm = getattr(pv.pages_v3, "config_manager", None)
 
     def _render(plugin_id="soccer-scoreboard", schema=None, widgets=None,
@@ -226,8 +226,7 @@ def config_form(tmp_path):
         pm.get_plugin_info.return_value = {"id": plugin_id, "name": plugin_id}
         if version is not None:
             pm.get_plugin_info.return_value["version"] = version
-        pm.get_plugin.return_value = None
-        pv.pages_v3.plugin_manager = pm
+        pv.pages_v3.plugin_catalog = pm
 
         cm = MagicMock()
         cm.load_config.return_value = {plugin_id: {"enabled": True}}
@@ -244,7 +243,7 @@ def config_form(tmp_path):
     try:
         yield _render
     finally:
-        pv.pages_v3.plugin_manager = orig_pm
+        pv.pages_v3.plugin_catalog = orig_pm
         pv.pages_v3.config_manager = orig_cm
 
 

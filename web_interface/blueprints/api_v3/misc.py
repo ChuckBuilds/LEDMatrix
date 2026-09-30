@@ -14,9 +14,11 @@ from web_interface.blueprints.api_v3 import (
     subprocess, success_response, tempfile,
 )
 from src.common.path_safety import safe_path_component
+from src import display_watchdog
 from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
 from web_interface import display_preview
+from web_interface.auth import request_is_authenticated
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -75,7 +77,7 @@ def get_health():
 
         # Check plugin system
         try:
-            if api_v3.plugin_manager:
+            if api_v3.plugin_catalog:
                 plugin_count = len(_discovered_plugin_manifests())
                 health_status['checks']['plugin_system'] = {
                     'status': 'operational',
@@ -89,6 +91,34 @@ def get_health():
             logger.warning("Health check could not count plugins", exc_info=True)
             health_status['checks']['plugin_system'] = {
                 'status': 'error',
+                'error': 'see logs for details'
+            }
+
+        # Is the render loop still going round? The display rewrites this
+        # heartbeat every few seconds from the render thread itself, so a
+        # thread stuck inside a plugin lets it go stale even though the
+        # service is "active". No heartbeat at all (the dev server, an older
+        # display) is not a failure: the preview-frame check below is then
+        # the only signal, as it always was.
+        try:
+            heartbeat = display_watchdog.read_heartbeat(display_watchdog.HEARTBEAT_PATH)
+            age = display_watchdog.heartbeat_age(heartbeat) if heartbeat else None
+            if age is None:
+                health_status['checks']['display_loop'] = {
+                    'status': 'not_reported',
+                    'note': 'The display is not writing a heartbeat (not started yet, '
+                            'or a version or setup without one)',
+                }
+            else:
+                fresh = age < display_watchdog.HEARTBEAT_STALE_SECONDS
+                health_status['checks']['display_loop'] = {
+                    'status': 'running' if fresh else 'stalled',
+                    'heartbeat_age_seconds': round(age, 1),
+                }
+        except Exception:
+            logger.warning("Health check could not read the display heartbeat", exc_info=True)
+            health_status['checks']['display_loop'] = {
+                'status': 'unknown',
                 'error': 'see logs for details'
             }
 
@@ -116,14 +146,21 @@ def get_health():
             }
 
         # Determine overall health
+        # 'not_reported' is the absence of a signal, not a bad one.
         all_healthy = all(
-            check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active']
+            check.get('status') in ['accessible', 'operational', 'connected', 'running', 'active',
+                                    'not_reported']
             for check in health_status['checks'].values()
         )
 
         if not all_healthy:
             health_status['status'] = 'degraded'
 
+        if not request_is_authenticated():
+            # Web login is on and this caller has not logged in: the route
+            # stays open for uptime monitors, but says only up or degraded.
+            return jsonify({'status': 'success',
+                            'data': {'status': health_status['status']}})
         return jsonify({'status': 'success', 'data': health_status})
     except Exception as e:
         logger.error("%s failed", request.path, exc_info=True)
@@ -444,6 +481,8 @@ def get_mqtt_bridge():
                 'config': safe,
                 # Enough to render "a password is set" without disclosing it.
                 'password_set': bool(password),
+                # Likewise the web-login API token (only needed off-Pi).
+                'api_token_set': bool(config.get('ledmatrix_api_token')),
                 'env_override_prefix': 'LEDMATRIX_MQTT_',
             }
         })
@@ -497,6 +536,15 @@ def update_mqtt_bridge_config():
         else:
             config['mqtt_password'] = existing_password
 
+        # The web-login API token is write-only the same way.
+        if _coerce_to_bool(data.get('clear_api_token')):
+            config['ledmatrix_api_token'] = None
+        elif 'ledmatrix_api_token' in data and str(data['ledmatrix_api_token']).strip() != '':
+            new_token = str(data['ledmatrix_api_token']).strip()
+            if len(new_token) > 200:
+                return jsonify({'status': 'error', 'message': 'API token is too long'}), 400
+            config['ledmatrix_api_token'] = new_token
+
         # CWE-319: a password with TLS off is sent in the clear. On a trusted
         # LAN that is a normal, deliberate setup, so this is refused rather
         # than forbidden -- allow_insecure_mqtt is the explicit acknowledgement.
@@ -534,6 +582,7 @@ def update_mqtt_bridge_config():
             message += ' Restart the bridge for them to take effect.'
         return jsonify({'status': 'success', 'message': message,
                         'data': {'password_set': bool(config.get('mqtt_password')),
+                                 'api_token_set': bool(config.get('ledmatrix_api_token')),
                                  'restart_required': service['active']}})
     except Exception as e:
         logger.exception('Error saving MQTT bridge settings')

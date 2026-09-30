@@ -554,7 +554,7 @@ def client(monkeypatch, tmp_path):
     app.register_blueprint(api_v3, url_prefix='/api/v3')
     cm = FakeConfigManager({'auto_update': {'enabled': False}})
     monkeypatch.setattr(pkg.api_v3, 'config_manager', cm, raising=False)
-    monkeypatch.setattr(pkg.api_v3, 'plugin_manager', None, raising=False)
+    monkeypatch.setattr(pkg.api_v3, 'plugin_catalog', None, raising=False)
     repo = Repo(tmp_path)
     monkeypatch.setattr(system, 'PROJECT_ROOT', repo.device)
     c = app.test_client()

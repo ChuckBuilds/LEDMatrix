@@ -46,8 +46,8 @@ def prefixed_plugin(tmp_path, api_v3_module):
     }), encoding="utf-8")
 
     api = api_v3_module.api_v3
-    api.plugin_manager.plugins_dir = str(plugins_dir)
-    api.plugin_manager.get_plugin_directory = MagicMock(side_effect=_resolver(plugins_dir))
+    api.plugin_catalog.plugins_dir = str(plugins_dir)
+    api.plugin_catalog.get_plugin_directory = MagicMock(side_effect=_resolver(plugins_dir))
     api.plugin_store_manager.plugins_dir = str(plugins_dir)
     return plugin_dir
 
@@ -58,8 +58,7 @@ class TestInstalledList:
         api = api_v3_module.api_v3
         info = {"id": "demo", "name": "Demo", "version": "1.0.0",
                 "description": "stale cached copy", "loaded": False}
-        api.plugin_manager.get_all_plugin_info = MagicMock(return_value=[info])
-        api.plugin_manager.get_plugin = MagicMock(return_value=None)
+        api.plugin_catalog.get_all_plugin_info = MagicMock(return_value=[info])
         api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
         api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
         api.config_manager.load_config = MagicMock(return_value={})
@@ -87,9 +86,7 @@ class TestUpdateRoute:
         api.plugin_store_manager.get_plugin_info = MagicMock(return_value=None)
         api.plugin_store_manager.update_plugin = MagicMock(return_value=True)
         api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
-        api.plugin_manager.plugins = {}
         api.schema_manager = None
-        api.plugin_state_manager = None
         api.operation_history = None
         return client.post("/api/v3/plugins/update", json={"plugin_id": "demo"})
 
@@ -121,7 +118,6 @@ class TestUpdateRoute:
         api.plugin_store_manager.get_plugin_info = MagicMock(return_value=None)
         api.plugin_store_manager.update_plugin = MagicMock(return_value=False)
         api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
-        api.plugin_manager.plugins = {}
         api.operation_history = None
 
         response = api_v3_client.post("/api/v3/plugins/update", json={"plugin_id": "ghost"})
@@ -140,8 +136,7 @@ def pages(tmp_path, monkeypatch):
     plugins_dir.mkdir()
     plugin_manager = MagicMock()
     plugin_manager.plugins_dir = plugins_dir
-    plugin_manager.get_plugin.return_value = None
-    monkeypatch.setattr(module.pages_v3, "plugin_manager", plugin_manager, raising=False)
+    monkeypatch.setattr(module.pages_v3, "plugin_catalog", plugin_manager, raising=False)
     monkeypatch.setattr(module.pages_v3, "config_manager",
                         MagicMock(load_config=lambda: {}), raising=False)
     monkeypatch.setattr(module.pages_v3, "schema_manager", None, raising=False)

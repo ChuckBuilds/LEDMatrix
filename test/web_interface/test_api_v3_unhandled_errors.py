@@ -39,9 +39,9 @@ EXPECTED = {
     'details': describe_exception(FORCED),
 }
 
-MANAGERS = ("config_manager", "plugin_manager", "plugin_store_manager",
+MANAGERS = ("config_manager", "plugin_catalog", "plugin_store_manager",
             "saved_repositories_manager", "schema_manager", "operation_queue",
-            "plugin_state_manager", "operation_history", "cache_manager")
+            "operation_history", "cache_manager")
 
 
 class Boom:
@@ -222,7 +222,7 @@ class TestPluginActionStep1:
         from unittest.mock import MagicMock
         manager = MagicMock()
         manager.get_plugin_directory.return_value = str(plugin_dir)
-        monkeypatch.setattr(api_v3, "plugin_manager", manager, raising=False)
+        monkeypatch.setattr(api_v3, "plugin_catalog", manager, raising=False)
         app = Flask(__name__)
         app.register_blueprint(api_v3, url_prefix="/api/v3")
 

@@ -8,6 +8,7 @@ from web_interface.blueprints.api_v3 import (
     exception_error_response, json, jsonify, logger, os, request, stat,
     success_response, tempfile,
 )
+import web_interface.blueprints.api_v3 as _pkg
 
 
 @api_v3.route('/plugins/operation/<operation_id>', methods=['GET'])
@@ -81,54 +82,102 @@ def clear_operation_history() -> Response:
     return success_response(message='Operation history cleared')
 
 
+def _reconciler(store_manager=None):
+    """A StateReconciliation over config + disk (desired) and the display's
+    runtime snapshot (observed); None when the catalog is not set up."""
+    if not api_v3.plugin_catalog or not api_v3.config_manager:
+        return None
+    from src.plugin_system.state_reconciliation import StateReconciliation
+    return StateReconciliation(
+        config_manager=api_v3.config_manager,
+        plugins_dir=Path(api_v3.plugin_catalog.plugins_dir),
+        store_manager=store_manager,
+        runtime_source=_pkg._plugin_runtime_view,
+    )
+
+
+def _operation_times(plugin_ids):
+    """``installed_at`` / ``last_updated`` per plugin from the operation
+    history: the newest successful install, and the newest successful
+    install or update. None where the history has no record (it keeps the
+    last 1000 operations, and can be cleared)."""
+    times = {pid: {'installed_at': None, 'last_updated': None} for pid in plugin_ids}
+    history = getattr(api_v3, 'operation_history', None)
+    if not history or not times:
+        return times
+    try:
+        records = history.get_history(limit=100000)
+    except Exception:
+        logger.debug("[PluginState] Could not read the operation history", exc_info=True)
+        return times
+    for record in records:  # newest first
+        entry = times.get(record.plugin_id)
+        if entry is None or record.status != 'success':
+            continue
+        when = record.timestamp.isoformat()
+        if record.operation_type == 'install' and entry['installed_at'] is None:
+            entry['installed_at'] = when
+        if record.operation_type in ('install', 'update') and entry['last_updated'] is None:
+            entry['last_updated'] = when
+    return times
+
+
+def _plugin_state_status(record):
+    """The old plugin_state.json ``status`` vocabulary, derived."""
+    if record.get('state') == 'error':
+        return 'error'
+    if not record.get('installed'):
+        return 'unknown'
+    return 'enabled' if record.get('enabled') else 'disabled'
+
+
 @api_v3.route('/plugins/state', methods=['GET'])
 def get_plugin_state():
-    """Get plugin state from state manager"""
+    """Every plugin's state: desired (config + disk) and observed (the
+    display's runtime snapshot).
+
+    Built on each request -- there is no state file any more
+    (data/plugin_state.json is retired). ``loaded``, ``state``,
+    ``error_info``, ``loaded_version`` and ``loaded_at`` are null unless the
+    display's snapshot is live; ``runtime`` beside ``data`` says whether it is.
+    """
     try:
-        if not api_v3.plugin_state_manager:
+        reconciler = _reconciler()
+        if reconciler is None:
             return error_response(
                 ErrorCode.SYSTEM_ERROR,
-                'State manager not initialized',
+                'Plugin catalog not initialized',
                 status_code=500
             )
 
-        plugin_id = request.args.get('plugin_id')
+        states = reconciler.plugin_states()
+        times = _operation_times(states.keys())
+        for plugin_id, record in states.items():
+            record['status'] = _plugin_state_status(record)
+            record.update(times.get(plugin_id, {}))
+        runtime = _pkg._plugin_runtime_view().describe()
 
+        plugin_id = request.args.get('plugin_id')
         if plugin_id:
-            # Get state for specific plugin
-            state = api_v3.plugin_state_manager.get_plugin_state(plugin_id)
+            state = states.get(plugin_id)
             if not state:
                 return error_response(
                     ErrorCode.PLUGIN_NOT_FOUND,
-                    f'Plugin {plugin_id} not found in state manager',
+                    f'Plugin {plugin_id} is neither installed nor configured',
                     context={'plugin_id': plugin_id},
                     status_code=404
                 )
-            return success_response(data=state.to_dict())
-        else:
-            # Get all plugin states
-            all_states = api_v3.plugin_state_manager.get_all_states()
-            return success_response(data={
-                plugin_id: state.to_dict()
-                for plugin_id, state in all_states.items()
-            })
+            return success_response(data=state, extra={'runtime': runtime})
+        return success_response(data=states, extra={'runtime': runtime})
     except Exception as e:
         return exception_error_response(e, ErrorCode.SYSTEM_ERROR)
 
 
 @api_v3.route('/plugins/state/reconcile', methods=['POST'])
 def reconcile_plugin_state():
-    """Reconcile plugin state across all sources"""
+    """Reconcile desired state (config + disk) with what is installed and
+    what the display reports running."""
     try:
-        if not api_v3.plugin_state_manager or not api_v3.plugin_manager:
-            return error_response(
-                ErrorCode.SYSTEM_ERROR,
-                'State manager or plugin manager not initialized',
-                status_code=500
-            )
-
-        from src.plugin_system.state_reconciliation import StateReconciliation
-
         # Parse optional `force` flag from request body, guarding against
         # non-dict bodies (bare string, array, null) that would raise AttributeError.
         payload = request.get_json(silent=True)
@@ -136,12 +185,13 @@ def reconcile_plugin_state():
             payload = {}
         force = _coerce_to_bool(payload.get('force', False))
 
-        reconciler = StateReconciliation(
-            state_manager=api_v3.plugin_state_manager,
-            config_manager=api_v3.config_manager,
-            plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
-        )
+        reconciler = _reconciler()
+        if reconciler is None:
+            return error_response(
+                ErrorCode.SYSTEM_ERROR,
+                'Config manager or plugin catalog not initialized',
+                status_code=500
+            )
 
         result = reconciler.reconcile_state(force=force)
 
@@ -205,7 +255,7 @@ def _drop_stale_reconciliation_findings(unresolved):
         )
 
         cm = api_v3.config_manager
-        plugins_dir = getattr(api_v3.plugin_manager, 'plugins_dir', None)
+        plugins_dir = getattr(api_v3.plugin_catalog, 'plugins_dir', None)
         installed = disk_plugin_ids(plugins_dir) if plugins_dir else set()
         config_keys = config_plugin_ids(cm.load_config() or {},
                                        ignored_config_keys(cm, installed))

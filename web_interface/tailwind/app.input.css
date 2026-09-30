@@ -1,0 +1,40 @@
+/*
+ * Input for static/v3/tailwind.css. Don't edit the output; edit this file or
+ * tailwind.config.js and run `python3 scripts/build_css.py`.
+ *
+ * Custom CSS belongs in static/v3/app.css, which loads after this file, so
+ * its rules win over utilities of equal specificity.
+ */
+
+@tailwind base;
+
+@layer base {
+  /* The one piece of Tailwind's preflight the utilities depend on: border
+     utilities set only a width (`border`, `border-t`, `divide-y`), so every
+     element starts from zero width and a solid style. app.css sets the
+     default border colour. */
+  *,
+  ::before,
+  ::after {
+    border-width: 0;
+    border-style: solid;
+  }
+
+  /* The reset above would erase these; keep them visible. */
+  hr {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+
+  :where(
+      input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"]),
+      select,
+      textarea
+    ) {
+    border-width: 1px;
+  }
+}
+
+@tailwind components;
+@tailwind utilities;

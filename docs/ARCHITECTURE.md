@@ -48,14 +48,123 @@ each other. They share three things:
 | Error clear | cache `plugin_error_clear_request` | web | display |
 | Font usage | cache `font_usage_snapshot` | display: `FontUsagePublisher` ([`src/font_usage.py`](../src/font_usage.py)) | web: Fonts tab |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
+| Plugin runtime (loaded, state, last error, version) | cache `plugin_runtime_snapshot` | display: `PluginRuntimePublisher` ([`src/plugin_system/plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)) | web: `read_plugin_runtime()` for `/api/v3/plugins/installed`, `/plugins/state`, reconciliation |
 | Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py) | web: display SSE stream, `/api/v3/health` (file age) |
 | Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, while a preview is open | display: writes full-rate snapshots only while it is fresh |
 | Hardware init status | `/tmp/led_matrix_hw_status.json` | display | web: `/api/v3/hardware/status` |
+| Render-loop heartbeat | `/run/ledmatrix/display-heartbeat.json` (tmpfs) | display: the render thread, via [`display_watchdog`](../src/display_watchdog.py) | web: `/api/v3/health` (`checks.display_loop`); the update health check |
 
 The on-demand start route starts `ledmatrix.service` when it is not running
 (`start_service`, on by default) but never restarts a running one: the display
 reads the mailbox every `ON_DEMAND_POLL_INTERVAL` (0.25s), from its dwell
 sleep, its render loops and Vegas's interrupt check as well as the main loop.
+
+### Web and display processes: who runs plugins
+
+Only the display process imports plugin code, instantiates plugins and calls
+their lifecycle hooks (`update`, `display`, `on_config_change`, `on_enable`,
+`on_disable`). The web process is metadata-only: it reads plugins as files
+through `PluginCatalog`
+([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py))
+-- manifests, config schemas (through `SchemaManager`), each plugin's
+section of `config.json`, and installed versions. The catalog keeps the
+read-only method names of `PluginManager` and has nothing that can run a
+plugin (no `load_plugin`, `get_plugin` or `plugins`).
+
+How a web-side change reaches the running plugins:
+
+| Change | How the display picks it up |
+|---|---|
+| Plugin settings saved, config reset | `ConfigService` sees the new `config.json` and calls the plugin's `on_config_change` with the prepared section |
+| Plugin enabled or disabled | `ConfigService` → `_controller_config_change` flags a reconcile; `_reconcile_enabled_plugins` loads it (fresh from disk) or unloads it on the render thread |
+| Plugin uninstalled (config removed) | the removed section flips its `enabled` flag, and the reconcile unloads it |
+| Plugin installed, not enabled | nothing to do until it is enabled, which loads it |
+| Plugin installed while already enabled, updated while enabled, or uninstalled with its config kept | **not picked up**: the display keeps running what it loaded. The route answers `restart_required: true` and the UI shows its restart banner |
+
+`display_restart_required()` in `plugin_catalog.py` holds that last rule;
+routes return it as `restart_required` (with the banner's wording in
+`restart_message`), and `window.noteRestartRequired()` in
+`static/v3/app.js` raises the banner for any response that carries it,
+`POST /api/v3/config/main` included.
+
+Runtime state shown in the UI comes from what the display publishes to the
+shared cache: health and metrics (`/api/v3/plugins/health`,
+`/plugins/metrics`), errors (`/api/v3/errors/*`), the current mode, and the
+plugin runtime snapshot described below. `enabled` is read from
+`config.json` by the display's rule (a missing flag is disabled).
+
+Plugin code still runs in the web process in one place,
+`_import_plugin_code_in_web_process()` in
+[`api_v3/__init__.py`](../web_interface/blueprints/api_v3/__init__.py): the
+Starlark routes import the starlark-apps plugin's `tronbyte_repository` and
+`pixlet_renderer` helper modules (never the plugin class), and a web-UI
+action with `oauth_flow` imports its script for `get_auth_url()`. Every
+other web-UI action runs its script as a subprocess. A later, explicit
+**plugin web-entry contract** -- a declared entry point for plugin web code
+-- replaces that function.
+
+Next stages: a **control socket** from the web process to the display
+(reload one plugin, ask for its state) in place of `restart_required` and
+the cache-key mailboxes, and the plugin web-entry contract above.
+
+### Plugin state: desired, observed, and who owns it
+
+There is one plugin state machine, and the display owns it:
+`PluginStateManager` in
+[`plugin_state.py`](../src/plugin_system/plugin_state.py) (unloaded →
+loaded → enabled ⇄ running, error, disabled), held by the display's
+`PluginManager`. It also records, per loaded plugin, the manifest version it
+loaded and when. Nothing else keeps plugin state:
+
+| Question | Answered by |
+|---|---|
+| Is it installed, at which version? | the plugins directory (`manifest.json`) |
+| Should it run? | `config.json` (`<id>.enabled`, missing = disabled) |
+| Has the user uninstalled it for good? | the store's uninstalled-plugins record |
+| Is the display running it, at which version, and why not? | the display's runtime snapshot |
+
+**The runtime snapshot.** `PluginRuntimePublisher`
+([`plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)), started by
+`DisplayController` right after it creates the `PluginManager`, writes the
+cache key `plugin_runtime_snapshot`: per plugin `loaded`, `state`, `error`
+(type, a redacted message of at most 200 characters, when, recoverable),
+`version` and `loaded_at`, plus `published_at`, `stale_after` and `running`.
+The cache is on disk, usually the SD card, so it writes when something a
+reader sees changes -- throttled to once per 10 s -- and otherwise once a
+minute as a heartbeat. RUNNING, which every `update()` passes through, is
+published as ENABLED, so plugin updates alone never cause a write.
+`cleanup()` publishes `running: false`.
+
+**Reading it.** `read_plugin_runtime()` judges the snapshot before anyone
+uses it: `live` (fresh, from a running display), `stale` (older than
+`stale_after`, 3 minutes: a hung or crashed display), `stopped` or
+`unknown` (none, unreadable, or another schema). Only a live view reports
+per-plugin facts; every other status answers `null` for them, so stale
+truth cannot leak into a response. `/api/v3/plugins/installed` returns
+`loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` per
+plugin and `data.runtime` (`status`, `published_at`, `age_seconds`);
+`/api/v3/plugins/state` returns the same beside the desired state.
+
+**Reconciliation**
+([`state_reconciliation.py`](../src/plugin_system/state_reconciliation.py))
+compares desired state (config + disk) with observed state (the snapshot).
+It fixes desired-state gaps -- a plugin on disk with no config section gets
+`{"enabled": false}`, a configured plugin missing from disk is reinstalled
+unless the user uninstalled it -- and only reports observed-state gaps
+(enabled but not loaded, loaded at an older version): the display loads and
+unloads by config on its own, and a version gap needs a restart.
+
+**`data/plugin_state.json` is retired.** The web process used to keep a
+second `PluginStateManager` (`state_manager.py`) persisted to that file:
+per plugin an enabled flag copied from config, a version copied from the
+manifest (when set at all), a status derived from those, and install/update
+timestamps. Reconciliation mostly synced it back to config and backups
+merged it into their plugin list. Every field is derivable (the timestamps
+from the operation history), so nothing is migrated: no code reads or
+writes the file, and a copy left on a device is inert and safe to delete.
+The two classes shared a name but not a concern -- a persisted install
+record versus the live lifecycle -- so they were not merged; the persisted
+one had nothing left to hold and was removed.
 
 ## Display loop
 
@@ -105,7 +214,8 @@ then normal rotation.
   changes. The controller refreshes its cached settings; enabling or
   disabling a plugin queues `_reconcile_enabled_plugins()`, which loads or
   unloads it on the display thread; each plugin gets `on_config_change()`
-  for its own section. Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
+  for its own section, under its plugin lock
+  (`PluginManager.apply_config_change()`). Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
   Matrix hardware settings are only read at start-up.
 - **Vegas mode.** [`src/vegas_mode/`](../src/vegas_mode/): the display loop
   calls `VegasModeCoordinator.run_iteration()`
@@ -119,6 +229,43 @@ then normal rotation.
   `sync.role`: a leader sends a follower its share of each frame over UDP
   (port 5765).
 
+### Liveness
+
+A render thread stuck inside a plugin leaves the service "active" and the
+panel frozen, so liveness is reported by the render thread itself
+([`src/display_watchdog.py`](../src/display_watchdog.py), standard library
+only). `beat()` from any other thread is ignored: the update worker, Vegas's
+tick thread and the prefetcher keep running while the render thread is stuck,
+and must not vouch for it.
+
+- **Check-in points.** The top of `run()`'s loop (`loop_pass()`), every
+  dwell second (`_sleep_with_plugin_updates`), every frame of the per-screen
+  loops (`_display_once`), every frame of Vegas's own loop and static pause
+  (`coordinator.run_iteration`), each plugin fetched for a Vegas cycle
+  (`StreamManager._fetch_plugin_content`), each update on the
+  `synchronous_updates` path, and every frame pushed
+  (`DisplayManager.update_display` -> `note_frame()`). Beats are
+  rate-limited to one ping and one heartbeat write every 5 s.
+- **systemd watchdog.** `ledmatrix.service` is `Type=simple` with
+  `WatchdogSec=120` and `NotifyAccess=main`. `run.py` sends
+  `WATCHDOG_USEC` = 15 minutes before importing anything heavy (start-up loads
+  plugins and runs the 20 s update budget, and the watchdog clock starts with
+  the process). After the first frame -- or the first full pass, when there is
+  nothing to draw -- the loop sends `READY=1`, restores the unit's 120 s and
+  pings. `PluginManager.load_plugin()` on the render thread (a plugin enabled
+  from the web UI, or loaded for on-demand) gets 15 minutes again, since it
+  can run pip. A missed deadline is a SIGABRT; faulthandler, enabled on
+  arming, dumps every thread's stack to the journal.
+- **Heartbeat.** `/run/ledmatrix/display-heartbeat.json`
+  (`{"pid", "mono", "wall"}`; `RuntimeDirectory=ledmatrix`, 0755, file 0644 so
+  the web user can read it). Readers compare `mono` with their own
+  `time.monotonic()` -- CLOCK_MONOTONIC is shared by every process and does not
+  jump when NTP first sets an RTC-less Pi's clock. `/api/v3/health` calls it
+  `stalled` past 60 s; no file is `not_reported` and changes nothing. A clean
+  stop removes it. Without `RuntimeDirectory=` (an older unit) the display,
+  as root, creates the directory itself; off Linux, or without root, there
+  is no heartbeat.
+
 ## Plugin system
 
 [`src/plugin_system/`](../src/plugin_system/):
@@ -127,7 +274,8 @@ then normal rotation.
 |---|---|
 | Base class plugins implement | [`base_plugin.py`](../src/plugin_system/base_plugin.py) (`BasePlugin`, `VegasDisplayMode`) |
 | Finding a plugin's directory | [`plugin_dirs.py`](../src/plugin_system/plugin_dirs.py): manifest `id` first, then directory `<id>` or `ledmatrix-<id>` |
-| Discovery, load, unload, scheduled updates | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
+| Discovery, load, unload, scheduled updates (display process) | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
+| Manifest, schema, config and version reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
 | Import and instantiate | [`plugin_loader.py`](../src/plugin_system/plugin_loader.py) (`PluginLoader.load_plugin()`: dependencies, module, class) |
 | Timeouts | [`plugin_executor.py`](../src/plugin_system/plugin_executor.py) (`PluginExecutor`, 30 s default; a timed-out thread is abandoned, not killed) |
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |
@@ -154,8 +302,9 @@ everything else through `_reinstall_with_rollback()`.
 ## Web interface
 
 - **App.** [`web_interface/app.py`](../web_interface/app.py) builds the
-  Flask `app` at import time, creates the managers, and registers two
-  blueprints. `web_interface/start.py` runs it on port 5000.
+  Flask `app` at import time, creates the managers -- a `PluginCatalog`,
+  never a `PluginManager` -- and registers two blueprints.
+  `web_interface/start.py` runs it on port 5000.
 - **Pages.** [`blueprints/pages_v3.py`](../web_interface/blueprints/pages_v3.py)
   serves the shell `templates/v3/base.html` at `/` and each tab as a
   partial at `/partials/<name>` (templates in
@@ -210,9 +359,11 @@ everything else through `_reinstall_with_rollback()`.
   `ledmatrix-update-verify.path`, which runs the verifier as a separate unit
   (so restarting the web service does not kill it). The verifier restarts
   both services, waits for the web API to answer and the display service to
-  stay up, and on failure returns to where HEAD was (the branch, or detached
-  on the previous release; `old_ref` in the pending file), resets to the
-  previous commit and restarts again.
+  stay up -- and, when the display wrote a heartbeat before the update, to
+  keep one fresh from the restarted process (see Liveness) -- and on failure
+  returns to where HEAD was (the branch, or detached on the previous
+  release; `old_ref` in the pending file), resets to the previous commit
+  and restarts again.
   Plugin updates run only after a verified core update. State is in
   `data/auto_update_state.json` and `data/auto_update_pending.json`.
 - **Startup validator.** `StartupValidator`
@@ -220,7 +371,9 @@ everything else through `_reinstall_with_rollback()`.
   `DisplayController.__init__`: config and cache directory first, then
   enabled plugins once the plugin manager exists. It also warns when an
   installed systemd unit differs from its template in `systemd/`. Results
-  are logged; startup continues either way.
+  are logged; startup continues either way. Nothing rewrites installed units
+  on update: a unit change such as the watchdog reaches an existing install
+  only when `install_service.sh` is re-run.
 
 ## Where to start reading
 

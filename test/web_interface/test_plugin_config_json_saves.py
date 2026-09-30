@@ -72,8 +72,8 @@ STORED = {
     "skin_options": {"accent": "#00ff00"},
 }
 
-_ATTRS = ('config_manager', 'plugin_manager', 'plugin_store_manager',
-          'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+_ATTRS = ('config_manager', 'plugin_catalog', 'plugin_store_manager',
+          'saved_repositories_manager', 'schema_manager',
           'operation_queue', 'operation_history', 'cache_manager')
 
 
@@ -96,13 +96,12 @@ def env(tmp_path):
     plugin_manager = MagicMock()
     plugin_manager.plugin_manifests = {PLUGIN_ID: {"id": PLUGIN_ID}}
     plugin_manager.plugins_dir = plugins_dir
-    plugin_manager.get_plugin.return_value = None
 
     for name in _ATTRS:
         setattr(api_v3, name, MagicMock())
     api_v3.config_manager = config_manager
     api_v3.schema_manager = SchemaManager(plugins_dir=plugins_dir, project_root=tmp_path)
-    api_v3.plugin_manager = plugin_manager
+    api_v3.plugin_catalog = plugin_manager
     api_v3.operation_queue = None
 
     app = Flask(__name__)

@@ -149,6 +149,11 @@
       },
       "description": "Array of display mode names this plugin provides"
     },
+    "vegas_participation": {
+      "type": "string",
+      "enum": ["scroll", "pause", "exclude"],
+      "description": "How this plugin takes part in Vegas mode by default: 'scroll' (its content scrolls by), 'pause' (the scroll stops for its turn and display() draws it full screen) or 'exclude' (left out). A user's per-plugin vegas_participation setting overrides it. Omit it to derive the participation from get_vegas_display_mode() / get_vegas_content_type(). Cores before 3.8.0 ignore it."
+    },
     "api_requirements": {
       "type": "array",
       "items": {

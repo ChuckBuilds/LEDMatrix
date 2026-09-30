@@ -54,10 +54,12 @@ src/plugin_system/compatibility.py
 src/plugin_system/operation_history.py
 src/plugin_system/operation_queue.py
 src/plugin_system/operation_types.py
+src/plugin_system/plugin_catalog.py
 src/plugin_system/plugin_dirs.py
 src/plugin_system/plugin_executor.py
 src/plugin_system/plugin_health.py
 src/plugin_system/plugin_loader.py
+src/plugin_system/plugin_runtime.py
 src/plugin_system/plugin_state.py
 src/plugin_system/repo_urls.py
 src/plugin_system/resource_monitor.py

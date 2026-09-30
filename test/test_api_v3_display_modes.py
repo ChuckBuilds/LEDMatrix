@@ -34,7 +34,7 @@ CONFIG = {
 
 @pytest.fixture
 def client(api_v3_module, api_v3_client):
-    pm = api_v3_module.api_v3.plugin_manager
+    pm = api_v3_module.api_v3.plugin_catalog
     pm.plugin_manifests = MANIFESTS
     pm.discover_plugins = MagicMock(return_value=list(MANIFESTS))
     pm.get_plugin_display_modes = MagicMock(
@@ -85,17 +85,17 @@ class TestItWorksForACallerThatNeverOpensTheDashboard:
         """Discovery is lazy and normally runs because a person loaded the
         dashboard; a bridge or script would otherwise get an empty list."""
         client.get('/api/v3/display/modes')
-        api_v3_module.api_v3.plugin_manager.discover_plugins.assert_called_once()
+        api_v3_module.api_v3.plugin_catalog.discover_plugins.assert_called_once()
 
     def test_no_plugin_manager_is_a_clean_error(self, api_v3_module, api_v3_client):
-        api_v3_module.api_v3.plugin_manager = None
+        api_v3_module.api_v3.plugin_catalog = None
         response = api_v3_client.get('/api/v3/display/modes')
         assert response.status_code == 500
         assert response.get_json()['status'] == 'error'
 
     def test_a_plugin_with_no_declared_modes_still_appears(self, client, api_v3_module):
         """Its mode is its own id -- the same fallback the controller uses."""
-        pm = api_v3_module.api_v3.plugin_manager
+        pm = api_v3_module.api_v3.plugin_catalog
         pm.plugin_manifests = {'starlark-apps': {'name': 'Starlark Apps', 'display_modes': []}}
         pm.get_plugin_display_modes = MagicMock(return_value=[])
         api_v3_module.api_v3.config_manager.load_config = MagicMock(
@@ -116,7 +116,7 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
 
     @pytest.fixture
     def client_with_bad_section(self, api_v3_module, api_v3_client):
-        pm = api_v3_module.api_v3.plugin_manager
+        pm = api_v3_module.api_v3.plugin_catalog
         pm.plugin_manifests = MANIFESTS
         pm.discover_plugins = MagicMock(return_value=list(MANIFESTS))
         pm.get_plugin_display_modes = MagicMock(
@@ -143,7 +143,7 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
             self, api_v3_module, api_v3_client):
         """describe_exception, per test_web_error_detail's contract -- an
         opaque "see logs for details" is what that test exists to prevent."""
-        api_v3_module.api_v3.plugin_manager.discover_plugins = MagicMock(
+        api_v3_module.api_v3.plugin_catalog.discover_plugins = MagicMock(
             side_effect=RuntimeError("disk is gone"))
         resp = api_v3_client.get('/api/v3/display/modes')
         assert resp.status_code == 500
@@ -151,7 +151,7 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
 
     def test_credentials_in_the_exception_are_redacted(self, api_v3_module, api_v3_client):
         """describe_exception is what makes returning detail safe."""
-        api_v3_module.api_v3.plugin_manager.discover_plugins = MagicMock(
+        api_v3_module.api_v3.plugin_catalog.discover_plugins = MagicMock(
             side_effect=RuntimeError("GET https://x/y?api_key=SEC123 failed"))
         body = api_v3_client.get('/api/v3/display/modes').get_json()
         assert 'SEC123' not in json.dumps(body)
