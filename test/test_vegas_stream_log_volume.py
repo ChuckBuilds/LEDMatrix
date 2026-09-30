@@ -31,7 +31,6 @@ class _Plugin:
 
 def _stream(plugins):
     adapter = MagicMock()
-    adapter.get_content_type.return_value = 'multi'
     adapter.get_content.return_value = [Image.new('RGB', (20, 8))]
     return StreamManager(VegasModeConfig(), SimpleNamespace(plugins=plugins), adapter)
 

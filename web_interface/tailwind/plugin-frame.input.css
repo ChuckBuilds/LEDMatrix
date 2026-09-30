@@ -1,0 +1,12 @@
+/*
+ * Input for static/v3/plugin-frame.css, the stylesheet for plugin web_ui/
+ * fragments shown in an iframe. Don't edit the output; edit this file or
+ * plugin-frame.config.js and run `python3 scripts/build_css.py`.
+ *
+ * Includes Tailwind's preflight, as the v2 CDN build the fragments were
+ * written against did.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

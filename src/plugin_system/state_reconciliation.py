@@ -1,22 +1,34 @@
 """
 State reconciliation system.
 
-Detects and fixes inconsistencies between:
-- Config file state
-- Plugin manager state
-- Disk state (installed plugins)
-- State manager state
+Compares what the user wants with what is there and what runs:
+
+- desired: config.json (which plugins are configured, and enabled) plus the
+  plugins directory on disk (which are installed, at which version);
+- observed: the runtime snapshot the display publishes
+  (src/plugin_system/plugin_runtime.py) -- which plugins it has loaded, at
+  which version, and why one failed. Only a live snapshot is compared; a
+  stale, stopped or missing one is unknown and yields no findings.
+
+Desired-state gaps (on disk but not in config, in config but not on disk)
+are fixed here. Observed-state gaps (enabled but not loaded, loaded at an
+older version) are reported, never "fixed": the display reconciles its own
+loaded set against config, and a version gap needs a display restart.
+
+There is no third, persisted record any more. ``data/plugin_state.json``
+held a copy of config's enabled flags and the disk's versions, and this
+module mostly synced it back to config; it is no longer read or written.
 """
 
 import json
-from typing import Dict, Any, List, Set, cast
+from typing import Any, Callable, Dict, List, Optional, Set
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from src.core_config_keys import CORE_CONFIG_KEYS
+from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
 from src.plugin_system.plugin_dirs import PluginDirectoryIndex
-from src.plugin_system.state_manager import PluginStateManager
+from src.plugin_system.plugin_runtime import PluginRuntimeView, UNKNOWN
 from src.logging_config import get_logger
 
 
@@ -160,36 +172,40 @@ def still_unresolved(entries: List[Dict[str, Any]],
     return live
 
 
+RuntimeSource = Callable[[], PluginRuntimeView]
+
+
 class StateReconciliation:
     """
     State reconciliation system.
-    
-    Compares state from multiple sources and detects/fixes inconsistencies.
+
+    Compares desired state (config + disk) with observed state (the
+    display's runtime snapshot) and fixes what can safely be fixed.
     """
-    
+
     def __init__(
         self,
-        state_manager: PluginStateManager,
+        *,
         config_manager,
-        plugin_manager,
         plugins_dir: Path,
-        store_manager=None
+        store_manager=None,
+        runtime_source: Optional[RuntimeSource] = None,
     ):
         """
         Initialize reconciliation system.
 
         Args:
-            state_manager: PluginStateManager instance
             config_manager: ConfigManager instance
-            plugin_manager: PluginManager instance
             plugins_dir: Path to plugins directory
             store_manager: Optional PluginStoreManager for auto-repair
+            runtime_source: Returns the display's runtime snapshot as a
+                PluginRuntimeView (plugin_runtime.read_plugin_runtime bound to
+                a cache manager). None: observed state is unknown.
         """
-        self.state_manager = state_manager
         self.config_manager = config_manager
-        self.plugin_manager = plugin_manager
         self.plugins_dir = Path(plugins_dir)
         self.store_manager = store_manager
+        self.runtime_source = runtime_source
         self.logger = get_logger(__name__)
 
         # Plugin IDs that failed auto-repair and should NOT be retried this
@@ -230,30 +246,28 @@ class StateReconciliation:
         manual_fix_required = []
         
         try:
-            # Get state from all sources
+            # Desired: config + disk. Observed: the display's snapshot.
             config_state = self._get_config_state()
             disk_state = self._get_disk_state()
-            manager_state = self._get_manager_state()
-            state_manager_state = self._get_state_manager_state()
-            
-            # Find all unique plugin IDs
+            observed = self._get_observed_state()
+
+            # Plugins the display reports but neither config nor disk knows
+            # (removed while it still runs them) are not a finding of their
+            # own: the display unloads them when their section goes.
             all_plugin_ids: Set[str] = set()
             all_plugin_ids.update(config_state.keys())
             all_plugin_ids.update(disk_state.keys())
-            all_plugin_ids.update(manager_state.keys())
-            all_plugin_ids.update(state_manager_state.keys())
-            
+
             # Check each plugin for inconsistencies
             for plugin_id in all_plugin_ids:
                 plugin_inconsistencies = self._check_plugin_consistency(
                     plugin_id,
                     config_state,
                     disk_state,
-                    manager_state,
-                    state_manager_state
+                    observed,
                 )
                 inconsistencies.extend(plugin_inconsistencies)
-            
+
             # Attempt to fix auto-fixable inconsistencies
             for inconsistency in inconsistencies:
                 if inconsistency.can_auto_fix and inconsistency.fix_action == FixAction.AUTO_FIX:
@@ -293,11 +307,11 @@ class StateReconciliation:
     # Top-level config keys that are NOT plugins. The core keys come from the
     # shared list in src/core_config_keys.py -- a private copy here missed
     # #581's 'auto_update' and reported it as a plugin missing from disk.
-    # 'github'/'youtube' are the historical secrets-file keys. The secrets file
+    # CORE_SECRETS_KEYS are the core's own secrets-file keys. The secrets file
     # itself is read at run time too (ignored_config_keys): load_config() merges
     # it in, and naming its keys one by one let a 'data' key become a phantom
     # plugin permanently reported as "in config but not on disk".
-    _SYSTEM_CONFIG_KEYS = CORE_CONFIG_KEYS | frozenset({'github', 'youtube'})
+    _SYSTEM_CONFIG_KEYS = CORE_CONFIG_KEYS | CORE_SECRETS_KEYS
 
     def _get_config_state(self) -> Dict[str, Dict[str, Any]]:
         """Get plugin state from config file."""
@@ -309,8 +323,9 @@ class StateReconciliation:
             for plugin_id in config_plugin_ids(config, ignored):
                 plugin_config = config[plugin_id]
                 state[plugin_id] = {
-                    'enabled': plugin_config.get('enabled', True),
-                    'version': plugin_config.get('version'),
+                    # The display's rule: it runs a plugin only when its
+                    # section says "enabled": true.
+                    'enabled': bool(plugin_config.get('enabled', False)),
                     'exists_in_config': True
                 }
         except Exception as e:
@@ -339,45 +354,51 @@ class StateReconciliation:
             self.logger.warning(f"Error reading disk state: {e}")
         return state
     
-    def _get_manager_state(self) -> Dict[str, Dict[str, Any]]:
-        """Get plugin state from plugin manager."""
-        state = {}
+    def _get_observed_state(self) -> PluginRuntimeView:
+        """The display's runtime snapshot; unknown when there is no source or
+        it cannot be read. Only a live view is compared."""
+        if self.runtime_source is None:
+            return PluginRuntimeView(status=UNKNOWN)
         try:
-            if self.plugin_manager:
-                # Get discovered plugins
-                if hasattr(self.plugin_manager, 'plugin_manifests'):
-                    for plugin_id in self.plugin_manager.plugin_manifests.keys():
-                        state[plugin_id] = {
-                            'exists_in_manager': True,
-                            'loaded': plugin_id in getattr(self.plugin_manager, 'plugins', {})
-                        }
+            return self.runtime_source()
         except Exception as e:
-            self.logger.warning(f"Error reading manager state: {e}")
-        return state
-    
-    def _get_state_manager_state(self) -> Dict[str, Dict[str, Any]]:
-        """Get plugin state from state manager."""
-        state = {}
-        try:
-            all_states = self.state_manager.get_all_states()
-            for plugin_id, plugin_state in all_states.items():
-                state[plugin_id] = {
-                    'enabled': plugin_state.enabled,
-                    'status': plugin_state.status.value,
-                    'version': plugin_state.version,
-                    'exists_in_state_manager': True
-                }
-        except Exception as e:
-            self.logger.warning(f"Error reading state manager state: {e}")
-        return state
-    
+            self.logger.warning(f"Error reading the display's runtime state: {e}")
+            return PluginRuntimeView(status=UNKNOWN)
+
+    def plugin_states(self) -> Dict[str, Dict[str, Any]]:
+        """Desired and observed state for every plugin config or disk knows.
+
+        Per plugin: ``installed`` and ``version`` (disk), ``in_config`` and
+        ``enabled`` (config, by the display's rule), and the display's
+        ``loaded`` / ``state`` / ``error_info`` / ``loaded_version`` /
+        ``loaded_at`` (None unless its snapshot is live). What
+        /api/v3/plugins/state serves, in place of plugin_state.json.
+        """
+        config_state = self._get_config_state()
+        disk_state = self._get_disk_state()
+        observed = self._get_observed_state()
+        states: Dict[str, Dict[str, Any]] = {}
+        for plugin_id in sorted(set(config_state) | set(disk_state)):
+            if plugin_id in CORE_CONFIG_KEYS:
+                continue
+            config = config_state.get(plugin_id, {})
+            disk = disk_state.get(plugin_id, {})
+            states[plugin_id] = {
+                'plugin_id': plugin_id,
+                'installed': bool(disk.get('exists_on_disk')),
+                'version': disk.get('version'),
+                'in_config': bool(config.get('exists_in_config')),
+                'enabled': bool(config.get('enabled', False)),
+                **observed.plugin(plugin_id),
+            }
+        return states
+
     def _check_plugin_consistency(
         self,
         plugin_id: str,
         config_state: Dict[str, Dict[str, Any]],
         disk_state: Dict[str, Dict[str, Any]],
-        manager_state: Dict[str, Dict[str, Any]],
-        state_manager_state: Dict[str, Dict[str, Any]]
+        observed: PluginRuntimeView,
     ) -> List[Inconsistency]:
         """Check consistency for a single plugin."""
         inconsistencies: List[Inconsistency] = []
@@ -397,7 +418,6 @@ class StateReconciliation:
 
         config = config_state.get(plugin_id, {})
         disk = disk_state.get(plugin_id, {})
-        state_mgr = state_manager_state.get(plugin_id, {})
         
         # Check: Plugin exists on disk but not in config
         if disk.get('exists_on_disk') and not config.get('exists_in_config'):
@@ -442,21 +462,47 @@ class StateReconciliation:
                 can_auto_fix=can_repair
             ))
         
-        # Check: Enabled state mismatch
-        config_enabled = config.get('enabled', False)
-        state_mgr_enabled = state_mgr.get('enabled')
+        # Observed checks: only against a live snapshot, and only for a plugin
+        # that is both configured and installed (the checks above cover the
+        # rest). Reported, never fixed here: the display loads and unloads by
+        # config on its own, so a gap is either transient (it is catching up)
+        # or something only the user can act on (a failed load, a restart).
+        if (observed.live and config.get('exists_in_config')
+                and disk.get('exists_on_disk')):
+            runtime = observed.plugin(plugin_id)
+            config_enabled = bool(config.get('enabled', False))
+            loaded = bool(runtime.get('loaded'))
+            if config_enabled != loaded:
+                error = runtime.get('error_info') or {}
+                why = f" ({error.get('message')})" if error.get('message') else ""
+                inconsistencies.append(Inconsistency(
+                    plugin_id=plugin_id,
+                    inconsistency_type=InconsistencyType.PLUGIN_ENABLED_MISMATCH,
+                    description=(
+                        f"Plugin {plugin_id} is {'enabled' if config_enabled else 'disabled'} "
+                        f"in config but the display has it "
+                        f"{'loaded' if loaded else 'not loaded'} "
+                        f"(state {runtime.get('state')}){why}"),
+                    fix_action=FixAction.NO_ACTION,
+                    current_state={'loaded': loaded, 'state': runtime.get('state')},
+                    expected_state={'loaded': config_enabled},
+                    can_auto_fix=False
+                ))
+            loaded_version = runtime.get('loaded_version')
+            disk_version = disk.get('version')
+            if loaded and loaded_version and disk_version and loaded_version != disk_version:
+                inconsistencies.append(Inconsistency(
+                    plugin_id=plugin_id,
+                    inconsistency_type=InconsistencyType.PLUGIN_VERSION_MISMATCH,
+                    description=(
+                        f"Plugin {plugin_id} {disk_version} is installed but the display "
+                        f"is running {loaded_version}; restart the display to run it"),
+                    fix_action=FixAction.NO_ACTION,
+                    current_state={'version': loaded_version},
+                    expected_state={'version': disk_version},
+                    can_auto_fix=False
+                ))
 
-        if state_mgr_enabled is not None and config_enabled != state_mgr_enabled:
-            inconsistencies.append(Inconsistency(
-                plugin_id=plugin_id,
-                inconsistency_type=InconsistencyType.PLUGIN_ENABLED_MISMATCH,
-                description=f"Plugin {plugin_id} enabled state mismatch: config={config_enabled}, state_manager={state_mgr_enabled}",
-                fix_action=FixAction.AUTO_FIX,
-                current_state={'enabled': state_mgr_enabled},
-                expected_state={'enabled': config_enabled},
-                can_auto_fix=True
-            ))
-        
         return inconsistencies
     
     def _fix_inconsistency(self, inconsistency: Inconsistency) -> bool:
@@ -490,26 +536,6 @@ class StateReconciliation:
             
             elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_MISSING_ON_DISK:
                 return self._auto_repair_missing_plugin(inconsistency.plugin_id)
-
-            elif inconsistency.inconsistency_type == InconsistencyType.PLUGIN_ENABLED_MISMATCH:
-                # config.json is the user-editable source of truth for enabled state.
-                # Bring the state manager in sync with config rather than the reverse,
-                # so that manual config edits (or the state left behind after an
-                # uninstall+reinstall cycle) don't silently override the user's intent.
-                # Always set for this type (see _check_plugin_consistency).
-                config_enabled = cast(bool, inconsistency.expected_state.get('enabled'))
-                success = self.state_manager.set_plugin_enabled(inconsistency.plugin_id, config_enabled)
-                if success:
-                    self.logger.info(
-                        f"Fixed: Synced state manager enabled={config_enabled} for "
-                        f"{inconsistency.plugin_id} to match config"
-                    )
-                else:
-                    self.logger.warning(
-                        f"Failed to sync state manager enabled={config_enabled} for "
-                        f"{inconsistency.plugin_id}"
-                    )
-                return success
             
         except Exception as e:
             self.logger.error(f"Error fixing inconsistency: {e}", exc_info=True)

@@ -10,6 +10,9 @@ from web_interface.blueprints.api_v3 import (
     jsonify, logger, os, request, subprocess, success_response,
 )
 from src.common.path_safety import safe_path_component
+from src.plugin_system.base_plugin import (
+    configured_vegas_participation, vegas_participation_value,
+)
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -17,21 +20,56 @@ import web_interface.blueprints.api_v3 as _pkg
 # package is the only patch point that covers every caller.
 
 
+def _vegas_participation(plugin_id, plugin_config, manifest):
+    """What Vegas does with a plugin, as far as its files say, and from where.
+
+    The order the display resolves it in (resolve_vegas_participation), up
+    to where that needs the plugin's code: the user's ``vegas_participation`` setting
+    (``'config'``), then the manifest's declared ``vegas_participation``
+    (``'manifest'``). Past those the display asks the plugin itself -- a
+    get_vegas_participation() override or the legacy Vegas hooks -- which the
+    web process never runs, so the answer is ``(None, 'runtime')``: decided
+    at run time, not guessed here. A plugin that overrides
+    get_vegas_participation() can still differ from its manifest.
+    """
+    configured = configured_vegas_participation(plugin_id, plugin_config)
+    if configured is not None:
+        return configured, 'config'
+    declared = vegas_participation_value(
+        manifest.get('vegas_participation') if isinstance(manifest, dict) else None)
+    if declared is not None:
+        return declared, 'manifest'
+    return None, 'runtime'
+
+
 @api_v3.route('/plugins/installed', methods=['GET'])
 def get_installed_plugins():
-    """Get installed plugins"""
-    if not api_v3.plugin_manager or not api_v3.plugin_store_manager:
+    """Get installed plugins.
+
+    Metadata comes from the plugin catalog (manifests on disk), ``enabled``
+    from config.json. ``loaded``, ``state``, ``error_info``,
+    ``loaded_version`` and ``loaded_at`` come from the runtime snapshot the
+    display publishes (src/plugin_system/plugin_runtime.py), and only while
+    that snapshot is live: when the display is stopped, hung or has never
+    published, they are null and ``data.runtime.status`` says why
+    (``stale``, ``stopped``, ``unknown``) instead of passing on old truth.
+    Health, metrics and errors are served by /plugins/health,
+    /plugins/metrics and /errors.
+    """
+    if not api_v3.plugin_catalog or not api_v3.plugin_store_manager:
         return jsonify({'status': 'error', 'message': 'Plugin managers not initialized'}), 500
 
     # Re-discover plugins to ensure we have the latest list
     # This handles cases where plugins are added/removed after app startup
-    api_v3.plugin_manager.discover_plugins()
+    api_v3.plugin_catalog.discover_plugins()
 
-    # Get all installed plugin info from the plugin manager
-    all_plugin_info = api_v3.plugin_manager.get_all_plugin_info()
+    # Get all installed plugin info from the catalog
+    all_plugin_info = api_v3.plugin_catalog.get_all_plugin_info()
 
     # Load config once before the loop (not per-plugin)
     full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
+    # One read of the display's snapshot for the whole listing.
+    runtime = _pkg._plugin_runtime_view()
 
     def _build_plugin_entry(plugin_info):
         plugin_id = plugin_info.get('id')
@@ -42,18 +80,6 @@ def get_installed_plugins():
             return None
 
     def _build_plugin_entry_inner(plugin_info, plugin_id):
-        # Capture runtime state (state machine + error context) before the
-        # manifest merge below can shadow the 'state' key. get_all_plugin_info
-        # attaches this via PluginStateManager.get_state_info(); surfacing it
-        # lets the UI show *why* a plugin isn't running instead of just
-        # 'loaded: false'.
-        state_info = plugin_info.get('state')
-        plugin_state = None
-        plugin_error_info = None
-        if isinstance(state_info, dict):
-            plugin_state = state_info.get('state')
-            plugin_error_info = state_info.get('error_info')
-
         # Re-read manifest from disk to ensure we have the latest metadata.
         # Through the resolver, not plugins_dir/<id>: a plugin installed as
         # ledmatrix-<id> otherwise never had its manifest refreshed here.
@@ -71,16 +97,13 @@ def get_installed_plugins():
             except (FileNotFoundError, PermissionError, json.JSONDecodeError) as e:
                 logger.debug("Could not read fresh manifest for %s: %s", plugin_id, e)
 
-        # Enabled status: config is source of truth, fall back to instance
-        enabled = None
+        # Enabled status: config.json, read by the display's rule -- it runs
+        # a plugin only when its section says "enabled": true, so a missing
+        # flag is disabled here too.
         plugin_config = full_config.get(plugin_id, {})
-        if 'enabled' in plugin_config:
-            enabled = bool(plugin_config['enabled'])
-
-        # Single get_plugin() call shared for both enabled fallback and Vegas mode
-        plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-        if enabled is None:
-            enabled = plugin_instance.enabled if plugin_instance else True
+        if not isinstance(plugin_config, dict):
+            plugin_config = {}
+        enabled = bool(plugin_config.get('enabled', False))
 
         # Verified + latest published version from registry (no network call)
         store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
@@ -110,24 +133,16 @@ def get_installed_plugins():
         if store_info and not last_commit_message:
             last_commit_message = store_info.get('last_commit_message')
 
-        # Vegas mode from instance, overridden by explicit config value
-        vegas_mode = None
+        # Vegas mode as configured. What a plugin's code would choose on its
+        # own is only known to the display, which runs it.
+        vegas_mode = plugin_config.get('vegas_mode')
         vegas_content_type = None
-        if plugin_instance:
-            try:
-                if hasattr(plugin_instance, 'get_vegas_display_mode'):
-                    mode = plugin_instance.get_vegas_display_mode()
-                    vegas_mode = mode.value if hasattr(mode, 'value') else str(mode)
-            except (AttributeError, TypeError, ValueError) as e:
-                logger.debug("[%s] Failed to get vegas_display_mode: %s", plugin_id, e)
-            try:
-                if hasattr(plugin_instance, 'get_vegas_content_type'):
-                    vegas_content_type = plugin_instance.get_vegas_content_type()
-            except (AttributeError, TypeError, ValueError) as e:
-                logger.debug("[%s] Failed to get vegas_content_type: %s", plugin_id, e)
 
-        if 'vegas_mode' in plugin_config:
-            vegas_mode = plugin_config['vegas_mode']
+        # What Vegas does with it: 'scroll', 'pause' or 'exclude', or None
+        # when only the plugin's code (run by the display) decides. The Vegas
+        # order list badges a None as its configured vegas_mode, else Scroll.
+        vegas_participation, vegas_participation_source = _vegas_participation(
+            plugin_id, plugin_config, plugin_info)
 
         return {
             'id': plugin_id,
@@ -144,9 +159,9 @@ def get_installed_plugins():
             'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
             'enabled': enabled,
             'verified': verified,
-            'loaded': plugin_info.get('loaded', False),
-            'state': plugin_state,
-            'error_info': plugin_error_info,
+            # loaded, state, error_info, loaded_version, loaded_at: the
+            # display's snapshot, null unless it is live (see the docstring).
+            **runtime.plugin(plugin_id),
             'last_updated': last_updated,
             'last_commit': last_commit,
             'last_commit_message': last_commit_message,
@@ -154,6 +169,8 @@ def get_installed_plugins():
             'web_ui_actions': plugin_info.get('web_ui_actions', []),
             'vegas_mode': vegas_mode,
             'vegas_content_type': vegas_content_type,
+            'vegas_participation': vegas_participation,
+            'vegas_participation_source': vegas_participation_source,
         }
 
     from concurrent.futures import ThreadPoolExecutor
@@ -162,7 +179,8 @@ def get_installed_plugins():
     plugins = [r for r in results if r is not None]
     plugins.extend(_starlark_virtual_plugins())
 
-    return jsonify({'status': 'success', 'data': {'plugins': plugins}})
+    return jsonify({'status': 'success', 'data': {'plugins': plugins,
+                                                  'runtime': runtime.describe()}})
 
 
 @api_v3.route('/plugins/toggle', methods=['POST'])
@@ -171,7 +189,7 @@ def toggle_plugin():
     plugin_id = None
     enabled = None
     try:
-        if not api_v3.plugin_manager or not api_v3.config_manager:
+        if not api_v3.plugin_catalog or not api_v3.config_manager:
             return jsonify({'status': 'error', 'message': 'Plugin or config manager not initialized'}), 500
 
         # Support both JSON and form data (for HTMX submissions)
@@ -209,7 +227,7 @@ def toggle_plugin():
                 current_enabled = config.get(plugin_id, {}).get('enabled', False)
                 enabled = not current_enabled
 
-        # A Starlark app is not a plugin in plugin_manager's sense -- it is an
+        # A Starlark app is not a plugin in the catalog's sense -- it is an
         # entry in starlark-apps' own manifest -- so its enable/disable is
         # handled here rather than falling through to the check below, which
         # would answer "Plugin not found".
@@ -234,10 +252,6 @@ def toggle_plugin():
                 status_code=500
             )
 
-        # Update state manager if available
-        if api_v3.plugin_state_manager:
-            api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
-
         # Log operation
         if api_v3.operation_history:
             api_v3.operation_history.record_operation(
@@ -246,21 +260,9 @@ def toggle_plugin():
                 status="success"
             )
 
-        # If plugin is loaded, also call its lifecycle methods
-        # Wrap in try/except to prevent lifecycle errors from failing the toggle
-        plugin = api_v3.plugin_manager.get_plugin(plugin_id)
-        if plugin:
-            try:
-                if enabled:
-                    if hasattr(plugin, 'on_enable'):
-                        plugin.on_enable()
-                else:
-                    if hasattr(plugin, 'on_disable'):
-                        plugin.on_disable()
-            except Exception as lifecycle_error:
-                # Log the error but don't fail the toggle - config is already saved
-                logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
-
+        # No lifecycle hooks here: the display's config watcher sees the
+        # enabled flag change and loads or unloads the plugin itself
+        # (DisplayController._reconcile_enabled_plugins).
         return success_response(
             message=f"Plugin {plugin_id} {'enabled' if enabled else 'disabled'} successfully"
         )
@@ -499,16 +501,11 @@ sys.exit(proc.returncode)
                     # Step 1: Get initial data (like auth URL)
                     # For OAuth flows, we might need to import the script as a module
                     if action_def.get('oauth_flow'):
-                        # Import script as module to get auth URL
-                        import sys
-                        import importlib.util
-
-                        spec = importlib.util.spec_from_file_location("plugin_action", script_file)
-                        action_module = importlib.util.module_from_spec(spec)
-                        sys.modules["plugin_action"] = action_module
-
                         try:
-                            spec.loader.exec_module(action_module)
+                            # Plugin code in the web process: see the
+                            # function for why, and what replaces it.
+                            action_module = _pkg._import_plugin_code_in_web_process(
+                                "plugin_action", script_file, reuse=False)
 
                             # Try to get auth URL using common patterns
                             auth_url = None

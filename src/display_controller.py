@@ -219,6 +219,7 @@ class DisplayController:
         # Initialize Plugin System
         plugin_time = time.time()
         self.plugin_manager = None
+        self._plugin_runtime_publisher = None
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
@@ -322,6 +323,13 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
+
+            # The web UI's loaded / state / error_info for each plugin read
+            # what this publishes. Started before loading, so the loads that
+            # follow are published as they land.
+            from src.plugin_system.plugin_runtime import start_plugin_runtime_publisher
+            self._plugin_runtime_publisher = start_plugin_runtime_publisher(
+                self.cache_manager, self.plugin_manager.state_manager)
 
             # Activate the plugin health/metrics subsystem. PluginManager leaves
             # health_tracker/resource_monitor as None by default; wiring real
@@ -453,6 +461,12 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
+            # Its state machine no longer describes what runs; let the last
+            # snapshot go stale (readers then say unknown) rather than keep
+            # refreshing it.
+            if self._plugin_runtime_publisher is not None:
+                self._plugin_runtime_publisher.stop(publish_stopped=False)
+                self._plugin_runtime_publisher = None
 
         # The web UI's Fonts tab ("Used by") reads what this publishes.
         from src.font_usage import start_font_usage_publisher
@@ -1030,6 +1044,10 @@ class DisplayController:
             accepts_display_mode: Whether display() takes ``display_mode``.
             force_clear: Passed through to display().
 
+        Each call is timed (two monotonic reads) and handed to
+        PluginManager.note_display_duration, which logs and records slow
+        calls and counts one that ran past the executor's timeout as a hang.
+
         Returns:
             display()'s result, or True when the frame was skipped because
             the plugin's update() holds its lock (the panel keeps the last
@@ -1037,12 +1055,19 @@ class DisplayController:
         """
         # Every frame of both per-screen render loops comes through here.
         display_watchdog.watchdog.beat()
-        with self._display_lock_or_skip(getattr(plugin, 'plugin_id', None)) as can_display:
+        plugin_id = getattr(plugin, 'plugin_id', None)
+        with self._display_lock_or_skip(plugin_id) as can_display:
             if not can_display:
                 return True
-            if accepts_display_mode:
-                return plugin.display(display_mode=mode, force_clear=force_clear)
-            return plugin.display(force_clear=force_clear)
+            started = time.monotonic()
+            try:
+                if accepts_display_mode:
+                    return plugin.display(display_mode=mode, force_clear=force_clear)
+                return plugin.display(force_clear=force_clear)
+            finally:
+                note = getattr(self.plugin_manager, 'note_display_duration', None)
+                if note is not None and plugin_id:
+                    note(plugin_id, time.monotonic() - started)
 
     def _health_tracker(self):
         """The plugin circuit breaker, or None when it is not enabled."""
@@ -2514,6 +2539,7 @@ class DisplayController:
                         pm = self.plugin_manager
                         display_lock = pm.get_plugin_lock(plugin_id) if pm else None
                         can_display = display_lock is None or display_lock.acquire(blocking=False)
+                        display_hung = False
 
                         if display_lock is None:
                             # Only when plugin loading failed part-way.
@@ -2533,7 +2559,7 @@ class DisplayController:
                             # thread actually finishes it, rather than
                             # here when this dispatch merely returns.
                             release_guard = threading.Lock()
-                            released = {'done': False}
+                            released = {'done': False, 'started': False}
 
                             def _release_display_lock():
                                 with release_guard:
@@ -2544,6 +2570,7 @@ class DisplayController:
 
                             if _accepts_display_mode:
                                 def _display_target(display_mode=None, force_clear=False):
+                                    released['started'] = True
                                     try:
                                         return manager_to_display.display(
                                             display_mode=display_mode, force_clear=force_clear)
@@ -2551,11 +2578,13 @@ class DisplayController:
                                         _release_display_lock()
                             else:
                                 def _display_target(force_clear=False):
+                                    released['started'] = True
                                     try:
                                         return manager_to_display.display(force_clear=force_clear)
                                     finally:
                                         _release_display_lock()
 
+                            dispatch_start = time.monotonic()
                             try:
                                 result = pm.plugin_executor.execute_display(
                                     types.SimpleNamespace(display=_display_target),
@@ -2578,6 +2607,18 @@ class DisplayController:
                                 _release_display_lock()
                                 raise
 
+                            dispatch_seconds = time.monotonic() - dispatch_start
+                            if released['started'] and not released['done']:
+                                # The executor gave up waiting and display()
+                                # is still running on its thread, holding
+                                # the lock. A hang, not a success: recorded
+                                # so repeats open the circuit breaker, and
+                                # the update worker's bounded wait skips it.
+                                display_hung = True
+                                pm.record_display_hang(plugin_id, dispatch_seconds)
+                            else:
+                                pm.note_display_duration(plugin_id, dispatch_seconds)
+
                         logger.debug(f"display() returned: {result} (type: {type(result)})")
                         if isinstance(result, bool):
                             display_result = result
@@ -2591,7 +2632,7 @@ class DisplayController:
                         # be lost when display() finally does run.
                         if can_display:
                             health_tracker = self._health_tracker()
-                            if health_tracker is not None:
+                            if health_tracker is not None and not display_hung:
                                 health_tracker.record_success(plugin_id)
                             self.force_change = False
                     except Exception as exc:  # pylint: disable=broad-except
@@ -3290,8 +3331,18 @@ class DisplayController:
                         # says disabled, and on_config_change would switch
                         # the instance off mid-session.
                         new_config = {**new_config, 'enabled': True}
-                    _plugin.on_config_change(new_config)
-                    logger.debug("Plugin %s notified of config change", _pid)
+                    # Runs on ConfigService's watcher thread. Under the
+                    # plugin's lock, so it cannot interleave with update()
+                    # on the worker or display() on the render thread; a
+                    # lock held past the bound defers it to the worker.
+                    apply = getattr(self.plugin_manager, 'apply_config_change', None)
+                    if callable(apply):
+                        applied = apply(_pid, new_config, plugin_instance=_plugin)
+                    else:
+                        _plugin.on_config_change(new_config)
+                        applied = True
+                    logger.debug("Plugin %s notified of config change%s", _pid,
+                                 "" if applied else " (deferred: plugin busy)")
                 except Exception as e:
                     logger.error("Error in plugin %s config change handler: %s", _pid, e, exc_info=True)
 
@@ -3623,6 +3674,12 @@ class DisplayController:
                 logger.warning("Error shutting down config service: %s", e)
         if getattr(self, '_font_usage_publisher', None) is not None:
             self._font_usage_publisher.stop()
+        # Publishes "stopped", so the web UI stops reporting what was loaded.
+        if getattr(self, '_plugin_runtime_publisher', None) is not None:
+            try:
+                self._plugin_runtime_publisher.stop()
+            except Exception as e:
+                logger.warning("Error stopping the plugin runtime publisher: %s", e)
         logger.info("Cleaning up display controller...")
         if hasattr(self, 'display_manager'):
             self.display_manager.cleanup()

@@ -383,16 +383,27 @@ def _perform_core_update_locked(stash_local_changes=True):
 def execute_system_action():
     """Execute system actions (start/stop/reboot/etc)"""
     try:
-        # HTMX sends data as form data, not JSON
-        data = request.get_json(silent=True) or {}
-        if not data:
-            # Try to get from form data if JSON fails
+        data = request.get_json(silent=True)
+        if data is None and not request.is_json:
+            # Every caller in the interface sends JSON (the Quick Actions
+            # buttons use HTMX's json-enc). A form-encoded body is what a
+            # cross-site HTML form can send without a CORS preflight, and
+            # this route reboots, powers off and pulls code, so it is only
+            # accepted from HTMX: a cross-site form cannot set HX-Request.
+            # This backs up the app-wide Origin check (origin_guard.py).
+            if not request.headers.get('HX-Request'):
+                return jsonify({
+                    'status': 'error',
+                    'message': ('Send the action as JSON '
+                                '(Content-Type: application/json), '
+                                'e.g. {"action": "restart_display_service"}'),
+                }), 415
             data = {
                 'action': request.form.get('action'),
                 'mode': request.form.get('mode')
             }
 
-        if not data or 'action' not in data:
+        if not isinstance(data, dict) or not data.get('action'):
             return jsonify({'status': 'error', 'message': 'Action required'}), 400
 
         action = data['action']
@@ -495,7 +506,7 @@ def execute_system_action():
                 'output': "\n".join(outputs)
             })
         elif action == 'install_plugin_requirements':
-            active_pm = getattr(api_v3, 'plugin_manager', None)
+            active_pm = getattr(api_v3, 'plugin_catalog', None)
             if active_pm:
                 plugins_dir = Path(active_pm.plugins_dir)
             else:

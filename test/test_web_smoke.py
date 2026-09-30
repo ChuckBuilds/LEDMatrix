@@ -82,7 +82,7 @@ def client():
     # the originals and restore them on teardown so this fixture can't leak
     # its mocks into tests that run afterward.
     original_config_manager = getattr(pv.pages_v3, "config_manager", None)
-    original_plugin_manager = getattr(pv.pages_v3, "plugin_manager", None)
+    original_plugin_manager = getattr(pv.pages_v3, "plugin_catalog", None)
 
     mock_cm = MagicMock()
     mock_cm.load_config.return_value = SMOKE_CONFIG
@@ -92,7 +92,6 @@ def client():
     pv.pages_v3.config_manager = mock_cm
 
     mock_pm = MagicMock()
-    mock_pm.plugins = {}
     mock_pm.get_all_plugin_info.return_value = [
         {"id": "clock", "name": "Clock"},
         {"id": "ledmatrix-weather", "name": "Weather"},
@@ -100,7 +99,7 @@ def client():
     mock_pm.get_plugin_display_modes.side_effect = (
         lambda pid: PLUGIN_MODES.get(pid, [])
     )
-    pv.pages_v3.plugin_manager = mock_pm
+    pv.pages_v3.plugin_catalog = mock_pm
 
     # Same dual registration as web_interface/app.py: un-prefixed primary,
     # /v3 kept as a working legacy alias.
@@ -110,7 +109,7 @@ def client():
         yield app.test_client()
     finally:
         pv.pages_v3.config_manager = original_config_manager
-        pv.pages_v3.plugin_manager = original_plugin_manager
+        pv.pages_v3.plugin_catalog = original_plugin_manager
 
 
 # (path, [markers that must appear in the body])
@@ -144,6 +143,8 @@ def test_legacy_v3_alias_serves_the_same_partials(client, path):
 
 STATIC_ASSETS = [
     "/static/v3/app.css",
+    "/static/v3/tailwind.css",
+    "/static/v3/plugin-frame.css",
     "/static/v3/app.js",
     "/static/v3/manifest.json",
     "/static/v3/icons/icon-192.png",

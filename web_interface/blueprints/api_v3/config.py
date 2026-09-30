@@ -15,6 +15,7 @@ from src.display_geometry import ORIENTATION_ROTATE_DEGREES
 from src.matrix_support import INT_SETTING_LIMITS, describe_range, library_refusals, refusal_message
 from src.pi5_matrix_support import is_raspberry_pi_5
 from web_interface.cache import invalidate_cache
+from web_interface.auth import SECTION as _WEB_AUTH_SECTION, strip_auth_section
 import web_interface.blueprints.api_v3 as _pkg
 
 # Read through the module rather than bound by value: tests patch these
@@ -78,7 +79,11 @@ def get_main_config():
         return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
 
     config = api_v3.config_manager.load_config()
-    return jsonify({'status': 'success', 'data': _redact_credentials(config)})
+    # load_config() merges config_secrets.json in, web_auth (the login
+    # password hash, token hashes and cookie key) included. No client needs
+    # any of it; /api/v3/auth/* manages it.
+    return jsonify({'status': 'success',
+                    'data': _redact_credentials(strip_auth_section(config))})
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
     """Get current schedule configuration"""
@@ -469,6 +474,11 @@ def save_main_config():
             for key in ['web_display_autostart']:
                 if key in data:
                     data[key] = data[key] == 'on'
+
+        # The login settings are secrets with their own routes
+        # (/api/v3/auth/*); a web_auth key here would land in config.json.
+        if isinstance(data, dict):
+            data.pop(_WEB_AUTH_SECTION, None)
 
         if not data:
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
@@ -1004,7 +1014,7 @@ def save_main_config():
         plugin_manifests = _pkg._discovered_plugin_manifests()
         for key in data:
             # Check if this key is a plugin ID
-            if api_v3.plugin_manager and key in plugin_manifests:
+            if api_v3.plugin_catalog and key in plugin_manifests:
                 plugin_id = key
                 submitted_config = data[key]
                 if not isinstance(submitted_config, dict):
@@ -1020,7 +1030,7 @@ def save_main_config():
                 # the schema load are far enough apart that a later edit could
                 # separate them. Refuse rather than save without knowing which
                 # fields are secrets.
-                schema_path = resolve_under(api_v3.plugin_manager.plugins_dir,
+                schema_path = resolve_under(api_v3.plugin_catalog.plugins_dir,
                                             plugin_id, 'config_schema.json')
                 if schema_path is None:
                     return error_response(
@@ -1106,18 +1116,9 @@ def save_main_config():
 
         invalidate_cache()
 
-        # Notify saved plugins of their new config (with secrets merged), now
-        # that it is on disk.
-        for plugin_id in plugin_keys_to_remove:
-            try:
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance and hasattr(plugin_instance, 'on_config_change'):
-                    merged_config = api_v3.config_manager.load_config()
-                    plugin_instance.on_config_change(_pkg._prepared_plugin_config(
-                        plugin_id, merged_config.get(plugin_id, {})))
-            except Exception as hook_err:
-                # Don't fail the save if hook fails
-                logger.warning("on_config_change failed: %s", hook_err)
+        # Saved plugin sections reach the running plugins through the display
+        # process's config watcher (on_config_change there); nothing runs a
+        # plugin in this process.
 
         message = 'Configuration saved successfully'
         # Switching automatic updates on finishes their setup, which needs
@@ -1129,7 +1130,10 @@ def save_main_config():
                 message = f'{message}. {note}'
         except Exception:
             logger.warning("Automatic update setup could not be started", exc_info=True)
-        return success_response(message=message)
+        # Display hardware, rotation/durations and general settings take
+        # effect after a display restart; the UI shows its restart banner on
+        # this flag.
+        return success_response(message=message, extra={'restart_required': True})
     except Exception as e:
         logger.error("Error saving config", exc_info=True)
         return error_response(
@@ -1148,8 +1152,10 @@ def get_secrets_config():
     # credentials. It was handing all of them to anyone who could reach
     # the port. Values are masked; empty and YOUR_* placeholders are left
     # alone so a client can still tell "set" from "not set".
+    # web_auth is left out altogether, not masked: it is managed by
+    # /api/v3/auth/*, and the raw save below keeps whatever is stored.
     return jsonify({'status': 'success',
-                    'data': mask_all_secret_values(config)})
+                    'data': mask_all_secret_values(strip_auth_section(config))})
 def _raw_config_save_error(e):
     """The 500 both raw-config save routes answer a failed save with.
 
@@ -1245,6 +1251,10 @@ def save_raw_secrets_config():
         # The cost is that a secret can no longer be cleared by blanking it.
         # That needs its own affordance; a control that erases credentials as
         # a side effect of saving an unrelated one is not it.
+        # The login section never reaches this editor (see the GET above) and
+        # is not written from it: a hand-typed password_hash would be a
+        # plaintext that no password matches. The stored one is kept.
+        data.pop(_WEB_AUTH_SECTION, None)
         current = api_v3.config_manager.get_raw_file_content('secrets') or {}
         merged = deep_merge(current, strip_masked_values(data))
         api_v3.config_manager.save_raw_file_content('secrets', merged)

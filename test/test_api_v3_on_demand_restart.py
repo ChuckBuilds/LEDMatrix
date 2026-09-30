@@ -47,7 +47,7 @@ def service(api_v3_module):
     resolution (not what is under test here). The cache is the blueprint's
     MagicMock cache_manager, so mailbox writes are visible as set() calls.
     """
-    api_v3_module.api_v3.plugin_manager = None
+    api_v3_module.api_v3.plugin_catalog = None
     api_v3_module.api_v3.config_manager = None
     state = {"active": True}
 

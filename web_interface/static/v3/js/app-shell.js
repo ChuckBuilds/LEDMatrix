@@ -1366,6 +1366,8 @@ function markPanelLoadFailed(event) {
                 const data = await response.json();
 
                 showNotification(data.message, data.status);
+                // The display keeps running the old code until it restarts.
+                window.noteRestartRequired(data);
 
                 if (data.status === 'success') {
                     // Refresh the plugin list

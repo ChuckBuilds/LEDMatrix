@@ -33,6 +33,20 @@ is `CORE_PLUGIN_PROPERTIES` in `src/plugin_system/schema_manager.py`):
    - Read by `src/vegas_mode/plugin_adapter.py` and `BasePlugin`, which
      validate the values themselves and ignore a bad one with a log line
 
+5. **`vegas_participation`** (string enum: `"scroll"`, `"pause"`,
+   `"exclude"`; no default)
+   - Description: how this plugin takes part in Vegas mode — its content
+     scrolls by, the scroll pauses for its turn and shows it full screen, or
+     it is left out
+   - Overrides the plugin's own default (its manifest's
+     `vegas_participation`, else what its legacy Vegas hooks say); unset
+     means "use the plugin's default"
+   - Deliberately has no default: one would be written into every plugin's
+     config and override what each plugin declares
+   - Read by `resolve_vegas_participation()` in
+     `src/plugin_system/base_plugin.py`; see
+     [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)
+
 `skin` and `skin_options` were core properties until the skin system was
 removed. A plugin config saved with them still loads and saves; the keys are
 dropped on the next save (see `RETIRED_PLUGIN_KEYS` in `schema_manager.py`).

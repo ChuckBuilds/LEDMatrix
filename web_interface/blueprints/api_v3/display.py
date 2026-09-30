@@ -77,19 +77,19 @@ def get_display_modes():
             for the duration -- so they are reported with enabled: false
             rather than omitted.
     """
-    if not api_v3.plugin_manager:
-        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_catalog:
+        return jsonify({'status': 'error', 'message': 'Plugin catalog not initialized'}), 500
 
     # Discovery is lazy and normally triggered by whichever endpoint runs
     # first, which is a person opening the dashboard. A caller that never
     # visits it would otherwise see an empty list.
-    api_v3.plugin_manager.discover_plugins()
+    api_v3.plugin_catalog.discover_plugins()
 
     include_disabled = request.args.get('include_disabled') in ('1', 'true', 'True')
     full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
 
     modes = []
-    for plugin_id, manifest in sorted(api_v3.plugin_manager.plugin_manifests.items()):
+    for plugin_id, manifest in sorted(api_v3.plugin_catalog.plugin_manifests.items()):
         # A hand-edited or migrated config.json can hold a non-dict under a
         # plugin id; DisplayController._reconcile guards the same shape, so
         # it happens in practice. Without this, .get() raises AttributeError,
@@ -107,7 +107,7 @@ def get_display_modes():
         if not enabled and not include_disabled:
             continue
         plugin_name = (manifest or {}).get('name') or plugin_id
-        plugin_modes = api_v3.plugin_manager.get_plugin_display_modes(plugin_id) or [plugin_id]
+        plugin_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id) or [plugin_id]
         for mode in plugin_modes:
             # A single-mode plugin's mode is the plugin, so its own name is
             # the readable label. Multi-mode plugins have no per-mode name
@@ -162,21 +162,21 @@ def start_on_demand_display():
     resolved_plugin = plugin_id
     resolved_mode = mode
 
-    if api_v3.plugin_manager:
+    if api_v3.plugin_catalog:
         if resolved_plugin and resolved_plugin not in _pkg._discovered_plugin_manifests(resolved_plugin):
             return jsonify({'status': 'error', 'message': f'Plugin {resolved_plugin} not found'}), 404
 
         if resolved_plugin and not resolved_mode:
-            modes = api_v3.plugin_manager.get_plugin_display_modes(resolved_plugin)
+            modes = api_v3.plugin_catalog.get_plugin_display_modes(resolved_plugin)
             resolved_mode = modes[0] if modes else resolved_plugin
         elif resolved_mode and not resolved_plugin:
             _pkg._discovered_plugin_manifests()
-            resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+            resolved_plugin = api_v3.plugin_catalog.find_plugin_for_mode(resolved_mode)
             if not resolved_plugin:
                 # Not among what was discovered: the plugin that declares
                 # it may have been installed since. Scan once more.
                 _pkg._discovered_plugin_manifests(rescan=True)
-                resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+                resolved_plugin = api_v3.plugin_catalog.find_plugin_for_mode(resolved_mode)
             if not resolved_plugin:
                 return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 

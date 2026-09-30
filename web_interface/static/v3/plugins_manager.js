@@ -453,6 +453,7 @@ window.handleGitHubPluginInstall = function() {
             urlInput.value = '';
 
             showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
+            window.noteRestartRequired(data);
 
             setTimeout(() => window.pluginManager.loadInstalledPlugins(true).catch(() => {}), 1000);
         } else {
@@ -1548,6 +1549,9 @@ function runUpdateAllPlugins() {
             // a no-op update is "already up to date", not "updated".
             const summary = window.PluginInstallManager.summarizeUpdateResults(results);
             showNotification(summary.text, summary.type);
+            // An updated plugin the display is running keeps its old code
+            // until the display restarts.
+            window.noteRestartRequired(window.PluginInstallManager.restartRequest(results));
         })
         .catch(error => {
             console.error('Error updating all plugins:', error);
@@ -2062,6 +2066,7 @@ window.uninstallPlugin = function(pluginId) {
             pollOperationStatus(operationId, pluginId, pluginName);
         } else if (data.status === 'success') {
             // Direct uninstall completed immediately
+            window.noteRestartRequired(data);
             handleUninstallSuccess(pluginId);
         } else {
             // Error response
@@ -2104,6 +2109,9 @@ function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
                 const status = operation.status;
 
                 if (status === 'completed') {
+                    // The operation's result says whether the display picks
+                    // the change up by itself or needs a restart.
+                    window.noteRestartRequired(operation.result);
                     onComplete();
                 } else if (status === 'failed') {
                     onFailed(operation.error || operation.message);
@@ -2267,7 +2275,10 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
     // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
     const pluginPath = pluginIdOrPlugin.plugin_path || '';
     const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
-    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId));
+    // Newer registries also list the other ids outright (the manifest id).
+    const aliases = Array.isArray(pluginIdOrPlugin.aliases) ? pluginIdOrPlugin.aliases : [];
+    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId)
+        || aliases.includes(p.id));
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
@@ -2425,6 +2436,16 @@ function renderPluginStore(plugins) {
         const installed = isStorePluginInstalled(plugin);
         // Registry data: only open real web links, never javascript: URLs.
         const repoLink = plugin.repo && /^https?:\/\//i.test(plugin.repo) ? plugin.repo : '';
+        // The commit that introduced this version (newer registries only).
+        // Checked as a hex SHA before it goes anywhere near a URL.
+        const commit = typeof plugin.commit === 'string' && /^[0-9a-f]{7,40}$/i.test(plugin.commit) ? plugin.commit : '';
+        const commitUrl = commit && repoLink
+            ? repoLink.replace(/\/+$/, '').replace(/\.git$/, '') + '/tree/' + commit
+              + (plugin.plugin_path ? '/' + plugin.plugin_path.split('/').map(encodeURIComponent).join('/') : '')
+            : '';
+        const commitHtml = !commit ? '' : (commitUrl
+            ? `<a href="${escapeAttribute(commitUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-gray-500 hover:underline" title="Source of this version: commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</a>`
+            : `<span class="text-xs font-mono text-gray-500" title="Commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</span>`);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
@@ -2435,10 +2456,11 @@ function renderPluginStore(plugins) {
                         ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
                         ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
+                        ${plugin.incompatible_reason ? `<span class="badge badge-warning" title="${escapeAttribute(plugin.incompatible_reason)}"><i class="fas fa-exclamation-triangle mr-1"></i>Needs LEDMatrix ${escapeHtml(plugin.ledmatrix_min_version || 'update')}+</span>` : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
                         <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        ${plugin.version ? `<p class="flex items-center"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}</p>` : ''}
+                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${commitHtml}</p>` : ''}
                         <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
                     </div>
                     <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
@@ -2535,6 +2557,7 @@ window.installPlugin = function(pluginId, branch = null) {
             });
         } else {
             // No operation queue configured - install already completed synchronously.
+            window.noteRestartRequired(data);
             enableAfterInstall();
         }
     })
@@ -2565,6 +2588,7 @@ window.installFromCustomRegistry = function(pluginId, registryUrl, pluginPath, b
     .then(data => {
         if (data.status === 'success') {
             showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
+            window.noteRestartRequired(data);
             // Refresh installed plugins and re-render custom registry
             loadInstalledPlugins().catch(() => {});
             // Re-render custom registry to update install buttons
@@ -2757,6 +2781,7 @@ function attachInstallButtonHandler() {
                             pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${escapeHtml(data.plugin_id)}</span>`;
                         }
                         pluginUrlInput.value = '';
+                        window.noteRestartRequired(data);
 
                         // Refresh installed plugins list
                         setTimeout(() => {

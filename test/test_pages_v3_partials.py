@@ -17,7 +17,7 @@ from web_interface.blueprints import pages_v3 as module  # noqa: E402
 def client(tmp_path, monkeypatch):
     plugin_manager = MagicMock()
     plugin_manager.plugins_dir = tmp_path
-    monkeypatch.setattr(module.pages_v3, "plugin_manager", plugin_manager, raising=False)
+    monkeypatch.setattr(module.pages_v3, "plugin_catalog", plugin_manager, raising=False)
     monkeypatch.setattr(module.pages_v3, "config_manager",
                         MagicMock(load_config=lambda: {}), raising=False)
     app = Flask(__name__, template_folder=str(
@@ -63,3 +63,17 @@ def test_web_ui_page_uses_the_ledmatrix_prefix_fallback(client, tmp_path):
 
     assert response.status_code == 200
     assert "radar panel" in response.get_data(as_text=True)
+
+
+def test_web_ui_page_styles_come_from_the_pi_not_a_cdn(client, tmp_path):
+    """In AP mode there is no internet; a CDN stylesheet left fragments unstyled."""
+    web_ui = tmp_path / "radar" / "web_ui"
+    web_ui.mkdir(parents=True)
+    (web_ui / "panel.html").write_text("<p>radar panel</p>", encoding="utf-8")
+
+    body = client.get("/plugin-ui/radar/web-ui/panel.html").get_data(as_text=True)
+
+    assert '<link rel="stylesheet" href="/static/v3/plugin-frame.css' in body
+    assert "cdnjs" not in body and "https://" not in body
+    assert (Path(module.__file__).resolve().parents[1]
+            / "static" / "v3" / "plugin-frame.css").is_file()

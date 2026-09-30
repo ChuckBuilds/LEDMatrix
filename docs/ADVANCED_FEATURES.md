@@ -10,22 +10,27 @@ This guide covers advanced LEDMatrix features for users and developers, includin
 
 Vegas scroll mode displays content from multiple plugins in a continuous horizontal scroll, similar to news tickers seen in Las Vegas casinos. Plugins contribute content segments that flow across the display in a seamless ticker-style presentation.
 
-### Display Modes
+### How a Plugin Takes Part
 
-**SCROLL (Continuous Scrolling):**
-- Content scrolls continuously left
-- Smooth, fluid motion
-- Best for news-ticker style displays
+Each plugin has a *Vegas participation*:
 
-**FIXED_SEGMENT (Fixed-Width Block):**
-- Plugin gets fixed-width block on display
-- Content doesn't scroll out of its segment
-- Multiple plugins can share the display simultaneously
+**`scroll` (the default):**
+- The plugin's content scrolls by with everyone else's
+- Best for news-ticker style content: scores, headlines, prices, the time
 
-**STATIC (Scroll Pauses):**
-- Scrolling pauses when content is fully visible
-- Displays for specified duration, then resumes scrolling
-- Best for content that needs to be fully read
+**`pause`:**
+- The scroll stops when the plugin's turn comes round
+- The plugin draws the whole panel for its display duration, then the
+  scroll resumes
+- Best for content that needs to be read in full, or alerts
+
+**`exclude`:**
+- The plugin is left out of Vegas mode
+
+A plugin declares its default; set `vegas_participation` in a plugin's
+config to override it (see [Per-Plugin Configuration](#per-plugin-configuration)).
+Older documentation also describes a *fixed segment* mode; Vegas never
+implemented one, and it has always behaved exactly like `scroll`.
 
 ### Configuration
 
@@ -164,8 +169,7 @@ Override Vegas behavior for specific plugins:
 {
   "my_plugin": {
     "enabled": true,
-    "vegas_mode": "scroll",
-    "vegas_panel_count": 2,
+    "vegas_participation": "pause",
     "display_duration": 10
   }
 }
@@ -175,19 +179,30 @@ Override Vegas behavior for specific plugins:
 
 | Setting | Values | Description |
 |---------|--------|-------------|
-| `vegas_mode` | `scroll`, `fixed`, `static` | Display mode for this plugin |
-| `vegas_panel_count` | any positive integer | Width in panels (1 panel = display width) |
-| `display_duration` | seconds | Pause duration for STATIC mode |
+| `vegas_participation` | `scroll`, `pause`, `exclude` | How this plugin takes part: its content scrolls by, the scroll pauses for its turn and shows it full screen, or it is left out. Unset uses the plugin's own default |
+| `display_duration` | seconds | How long a `pause` plugin holds the screen |
+| `vegas_width_pct` | 10–100 | Width of this plugin's card, as a percentage of the panel |
+| `vegas_overflow` | `rotate`, `truncate` | What to do when its content is wider than its allowance |
+| `vegas_max_width_screens` | number of screens | The widest its card may be |
 
-Plugins may also set `vegas_overflow` and `vegas_max_width_screens` in
-their config section to control how oversized content is handled (see
-`PluginManager` in `src/plugin_system/plugin_manager.py`).
+These are core-owned settings (see
+[PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md)): every
+plugin accepts them whether or not its own schema lists them. Set them in
+the plugin's section of config.json, in the web UI's **Config Editor**
+tab.
+
+Some plugins also offer a `vegas_mode` setting of their own (`scroll`,
+`fixed` or `static`). It still works — `static` pauses, the other two scroll
+— but `vegas_participation` takes precedence, and `fixed` has never done
+anything different from `scroll`. The old `vegas_panel_count` setting never
+had an effect and is deprecated (removed in 3.9.0).
 
 ### Plugin Integration (Developer Guide)
 
 All of these have defaults in
 [`BasePlugin`](../src/plugin_system/base_plugin.py); override only what you
-need.
+need. The reference is
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-scroll-hooks).
 
 **1. Implement Content Method:**
 
@@ -203,43 +218,41 @@ If it returns `None` (the default), Vegas falls back to the plugin's
 (`PluginAdapter.get_content()` in
 [`src/vegas_mode/plugin_adapter.py`](../src/vegas_mode/plugin_adapter.py)).
 
-**2. Specify Content Type:**
+**2. Declare how the plugin takes part:**
 
-```python
-def get_vegas_content_type(self):
-    # 'multi' | 'static' | 'none'  -- default is 'static'
-    return 'multi'
+Most plugins need nothing: the default is `scroll`. A plugin that should
+pause the scroll, or stay out of Vegas, says so in `manifest.json`:
+
+```json
+{
+  "vegas_participation": "pause"
+}
 ```
 
-`'none'` excludes the plugin from Vegas mode.
-
-**3. Optionally Specify Display Mode:**
-
-These return `VegasDisplayMode` members, not strings:
+The user's own `vegas_participation` setting overrides the manifest. When
+the answer depends on state, override the method instead:
 
 ```python
-from src.plugin_system.base_plugin import VegasDisplayMode
-
-def get_vegas_display_mode(self):
-    return VegasDisplayMode.SCROLL
-
-def get_supported_vegas_modes(self):
-    return [VegasDisplayMode.SCROLL, VegasDisplayMode.STATIC]
+def get_vegas_participation(self):
+    # 'scroll' | 'pause' | 'exclude'
+    return 'pause' if self._alert_is_live() else 'scroll'
 ```
 
-`VegasDisplayMode` has `SCROLL` (`"scroll"`), `FIXED_SEGMENT` (`"fixed"`) and
-`STATIC` (`"static"`). The default `get_vegas_display_mode()` uses the
-plugin's `vegas_mode` config value if set, otherwise maps the content type
-(`multi` to `SCROLL`, anything else to `FIXED_SEGMENT`).
+A plugin written for an older core that declares nothing keeps its
+behaviour: `get_vegas_display_mode()` returning `VegasDisplayMode.STATIC`
+pauses, `get_vegas_content_type()` returning `'none'` excludes, and
+everything else scrolls. `get_supported_vegas_modes()`,
+`get_vegas_segment_width()` and the SCROLL / FIXED_SEGMENT distinction are
+deprecated (removed in 3.9.0): Vegas never read them.
 
 ### Content Rendering Guidelines
 
 **Image Dimensions:**
 - **Height:** Must match display height (typically 32 pixels)
-- **Width:** Varies by mode:
-  - SCROLL: Any width (recommended 64-512 pixels)
-  - FIXED_SEGMENT: `panel_count * display_width`
-  - STATIC: Any width, optimized for readability
+- **Width:** Any width for `scroll` (recommended 64-512 pixels);
+  `get_vegas_render_width()` is the width Vegas would like, and it narrows
+  `display_manager` to match while it asks. A `pause` plugin draws the
+  whole panel in `display()`.
 
 **Color Mode:**
 - Use RGB color mode
@@ -289,16 +302,9 @@ class WeatherPlugin(BasePlugin):
     def get_vegas_content(self):
         """Return cached Vegas image"""
         return self.vegas_image
-
-    def get_vegas_content_type(self):
-        return 'multi'
-
-    def get_vegas_display_mode(self):
-        return 'scroll'
-
-    def get_supported_vegas_modes(self):
-        return ['scroll', 'static']
 ```
+
+It scrolls, the default participation, so it declares nothing else.
 
 ### System Architecture
 
@@ -382,7 +388,8 @@ Vegas mode consists of four core components working together to provide smooth 1
 
 **Responsibilities:**
 - Convert plugin content to scrollable images
-- Handle different Vegas display modes (SCROLL, FIXED, STATIC)
+- Fetch the content of `scroll` plugins (a `pause` plugin is drawn by
+  its own `display()` when the scroll pauses; see StreamManager)
 - Manage fallback for plugins without Vegas support
 - Cache plugin content for performance
 
@@ -391,21 +398,16 @@ Vegas mode consists of four core components working together to provide smooth 1
    - Calls `get_vegas_content()` if available
    - Falls back to `display()` method if not
 
-2. **Handle display mode:**
-   - SCROLL: Returns image as-is for continuous scrolling
-   - FIXED_SEGMENT: Creates fixed-width block (panel_count * display_width)
-   - STATIC: Marks content for pause-when-visible behavior
-
-3. **Content type handling:**
-   - `multi`: Multiple segments (list of images)
-   - `static`: Single static image
-   - `none`: Skip this plugin in current cycle
+2. **Participation** is decided by the StreamManager, not here
+   (`resolve_vegas_participation()` in
+   [`base_plugin.py`](../src/plugin_system/base_plugin.py)): `exclude`
+   plugins never reach the adapter, and `pause` plugins are not fetched.
 
 **Fallback Behavior:**
 - If plugin doesn't implement Vegas methods:
   - Calls plugin's `display()` method
   - Captures rendered display as static image
-  - Treats as fixed segment
+  - Scrolls it by as one block
 - Ensures all plugins work in Vegas mode without explicit support
 
 #### 4. RenderPipeline
@@ -508,7 +510,7 @@ All components use thread-safe patterns:
 If a plugin doesn't implement Vegas methods:
 - System calls the plugin's `display()` method
 - Captures the rendered display as a static image
-- Treats it as a fixed segment
+- Scrolls it by as one block
 
 This ensures all plugins work in Vegas mode, even without explicit support.
 
