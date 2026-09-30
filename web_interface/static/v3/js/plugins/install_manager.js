@@ -69,10 +69,20 @@ const PluginInstallManager = {
             if (onProgress) onProgress(i + 1, plugins.length, plugin.id);
             // Each plugin gets its own pass over the backoff schedule.
             const pendingDelays = retryDelays.slice();
+            let lostAnswer = false;
             for (;;) {
                 try {
                     const result = await window.PluginAPI.updatePlugin(plugin.id);
-                    results.push({ pluginId: plugin.id, success: true, result });
+                    const entry = { pluginId: plugin.id, success: true, result };
+                    if (lostAnswer) {
+                        // An earlier attempt got no answer, so it may have
+                        // updated the plugin before the connection dropped,
+                        // and this answer then says up_to_date. restartRequest()
+                        // reads these two.
+                        entry.afterLostAnswer = true;
+                        entry.enabled = plugin.enabled === true;
+                    }
+                    results.push(entry);
                     break;
                 } catch (error) {
                     // No HTTP answer at all (connection refused/reset, e.g. the
@@ -81,6 +91,7 @@ const PluginInstallManager = {
                     // back rather than skipping it. An HTTP error response is
                     // the server's answer and is not retried.
                     if (error && error.error_code === 'NETWORK_ERROR' && pendingDelays.length > 0) {
+                        lostAnswer = true;
                         await sleep(pendingDelays.shift());
                         continue;
                     }
@@ -90,9 +101,14 @@ const PluginInstallManager = {
             }
         }
 
-        // Reload plugin list once at the end
+        // Reload plugin list once at the end. A failed refresh must not
+        // lose the results: they carry the restart flags.
         if (window.PluginStateManager) {
-            await window.PluginStateManager.loadInstalledPlugins();
+            try {
+                await window.PluginStateManager.loadInstalledPlugins();
+            } catch (error) {
+                console.warn('Could not refresh the installed plugin list after updating:', error);
+            }
         }
 
         return results;
@@ -148,6 +164,42 @@ const PluginInstallManager = {
             text: parts.join(', '),
             type
         };
+    },
+
+    /**
+     * The first update answer that says the display needs a restart, or null.
+     *
+     * The display keeps running the code it loaded until it restarts, so an
+     * update of a plugin it runs answers `restart_required: true` (with the
+     * banner's wording in `restart_message`). One restart covers every
+     * plugin in the run, so one answer is enough; pass it to
+     * window.noteRestartRequired.
+     *
+     * Failing that, an enabled plugin whose first request got no answer and
+     * whose re-sent one says up_to_date may have been updated by the lost
+     * request, which nothing reported: that asks for a restart too, since a
+     * needless restart is cheaper than the display running old code.
+     *
+     * @param {Array} results - updateAll()'s results
+     * @returns {Object|null}
+     */
+    restartRequest(results) {
+        const entries = Array.isArray(results) ? results : [];
+        for (const entry of entries) {
+            const body = entry && entry.success ? entry.result : null;
+            if (body && body.restart_required === true) return body;
+        }
+        for (const entry of entries) {
+            if (entry && entry.success && entry.afterLostAnswer && entry.enabled
+                    && this.updateOutcome(entry) === 'up_to_date') {
+                return {
+                    restart_required: true,
+                    restart_message: `Plugin ${entry.pluginId} may have been updated before the `
+                        + 'connection dropped — restart the display to be sure it runs the new version',
+                };
+            }
+        }
+        return null;
     }
 };
 

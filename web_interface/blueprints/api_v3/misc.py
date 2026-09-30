@@ -76,7 +76,7 @@ def get_health():
 
         # Check plugin system
         try:
-            if api_v3.plugin_manager:
+            if api_v3.plugin_catalog:
                 plugin_count = len(_discovered_plugin_manifests())
                 health_status['checks']['plugin_system'] = {
                     'status': 'operational',

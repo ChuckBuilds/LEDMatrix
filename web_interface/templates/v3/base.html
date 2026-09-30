@@ -456,10 +456,11 @@
         </div>
     </div>
 
-    <!-- Restart-pending banner: shown after a main-config save (display
-         hardware, rotation order, durations, general settings) — those only
-         take effect after the display service restarts. Plugin config saves
-         apply live and don't trigger this. Wired in app.js. -->
+    <!-- Restart-pending banner: shown when a response says restart_required
+         -- a main-config save (display hardware, rotation order, durations,
+         general settings), or a plugin install, update or uninstall the
+         running display cannot pick up live. Plugin config saves apply live
+         and don't trigger this. Wired in app.js (noteRestartRequired). -->
     <div id="restart-pending-banner" style="display:none"
          class="update-banner border-b transition-all duration-300 ease-in-out">
         <div class="mx-auto px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16 py-2" style="max-width:100%">

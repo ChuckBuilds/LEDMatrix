@@ -33,7 +33,7 @@ def client():
     app = Flask(__name__)
     app.config["TESTING"] = True
     from web_interface.blueprints.api_v3 import api_v3
-    for attr in ("config_manager", "plugin_manager", "cache_manager"):
+    for attr in ("config_manager", "plugin_catalog", "cache_manager"):
         setattr(api_v3, attr, MagicMock())
     if "api_v3" not in app.blueprints:
         app.register_blueprint(api_v3, url_prefix="/api/v3")

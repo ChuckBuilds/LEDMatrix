@@ -120,10 +120,10 @@ def get_plugin_state():
 def reconcile_plugin_state():
     """Reconcile plugin state across all sources"""
     try:
-        if not api_v3.plugin_state_manager or not api_v3.plugin_manager:
+        if not api_v3.plugin_state_manager or not api_v3.plugin_catalog:
             return error_response(
                 ErrorCode.SYSTEM_ERROR,
-                'State manager or plugin manager not initialized',
+                'State manager or plugin catalog not initialized',
                 status_code=500
             )
 
@@ -139,8 +139,8 @@ def reconcile_plugin_state():
         reconciler = StateReconciliation(
             state_manager=api_v3.plugin_state_manager,
             config_manager=api_v3.config_manager,
-            plugin_manager=api_v3.plugin_manager,
-            plugins_dir=Path(api_v3.plugin_manager.plugins_dir)
+            plugin_manager=api_v3.plugin_catalog,
+            plugins_dir=Path(api_v3.plugin_catalog.plugins_dir)
         )
 
         result = reconciler.reconcile_state(force=force)
@@ -205,7 +205,7 @@ def _drop_stale_reconciliation_findings(unresolved):
         )
 
         cm = api_v3.config_manager
-        plugins_dir = getattr(api_v3.plugin_manager, 'plugins_dir', None)
+        plugins_dir = getattr(api_v3.plugin_catalog, 'plugins_dir', None)
         installed = disk_plugin_ids(plugins_dir) if plugins_dir else set()
         config_keys = config_plugin_ids(cm.load_config() or {},
                                        ignored_config_keys(cm, installed))

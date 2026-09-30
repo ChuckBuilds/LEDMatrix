@@ -57,7 +57,7 @@ def render(config):
     # pages_v3 is a module-level singleton shared across the test process;
     # restore whatever the previous test left on it.
     original_cm = getattr(pv.pages_v3, "config_manager", None)
-    original_pm = getattr(pv.pages_v3, "plugin_manager", None)
+    original_pm = getattr(pv.pages_v3, "plugin_catalog", None)
 
     mock_cm = MagicMock()
     mock_cm.load_config.return_value = config
@@ -65,10 +65,9 @@ def render(config):
     pv.pages_v3.config_manager = mock_cm
 
     mock_pm = MagicMock()
-    mock_pm.plugins = {}
     mock_pm.get_all_plugin_info.return_value = []
     mock_pm.get_plugin_display_modes.side_effect = lambda pid: []
-    pv.pages_v3.plugin_manager = mock_pm
+    pv.pages_v3.plugin_catalog = mock_pm
 
     app.register_blueprint(pv.pages_v3, url_prefix="")
     try:
@@ -77,7 +76,7 @@ def render(config):
         return resp.get_data(as_text=True)
     finally:
         pv.pages_v3.config_manager = original_cm
-        pv.pages_v3.plugin_manager = original_pm
+        pv.pages_v3.plugin_catalog = original_pm
 
 
 def timezone_step(body):

@@ -15,7 +15,8 @@ from src.web_interface.errors import ErrorCode, WebInterfaceError
 def success_response(
     data: Any = None,
     message: Optional[str] = None,
-    metadata: Optional[Dict] = None
+    metadata: Optional[Dict] = None,
+    extra: Optional[Dict[str, Any]] = None
 ):
     """
     Create a standardized success response.
@@ -24,11 +25,15 @@ def success_response(
         data: Response data
         message: Optional success message
         metadata: Optional metadata (timing, version, etc.)
+        extra: Optional top-level fields beside ``status``/``data``, such as
+            ``restart_required``; they cannot replace the standard keys
     
     Returns:
         Flask jsonify response
     """
     response_data = create_success_response(data, message, metadata)
+    for key, value in (extra or {}).items():
+        response_data.setdefault(key, value)
 
     # Timing is merged into whatever the caller passed, without inventing a
     # metadata block for responses that have neither.

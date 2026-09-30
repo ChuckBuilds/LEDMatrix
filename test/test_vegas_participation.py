@@ -434,28 +434,46 @@ class TestSchema:
 
 
 class TestInstalledPluginsApi:
+    """The web process runs no plugin code (it has a PluginCatalog, not a
+    PluginManager), so it reports what the files say -- the user's setting,
+    then the manifest -- and leaves the rest to the display."""
+
     @pytest.fixture
-    def installed(self, api_v3_module, api_v3_client, tmp_path):
-        def _get(instance, config):
+    def installed(self, api_v3_module, api_v3_client):
+        def _get(config, manifest_extra=None):
             api = api_v3_module.api_v3
-            info = {'id': 'demo', 'name': 'Demo', 'version': '1.0.0', 'loaded': True}
-            api.plugin_manager.plugins_dir = str(tmp_path)
-            api.plugin_manager.get_all_plugin_info = MagicMock(return_value=[info])
-            api.plugin_manager.get_plugin = MagicMock(return_value=instance)
+            info = {'id': 'demo', 'name': 'Demo', 'version': '1.0.0',
+                    **(manifest_extra or {})}
+            api.plugin_catalog.get_all_plugin_info = MagicMock(return_value=[info])
+            api.plugin_catalog.get_plugin_directory = MagicMock(return_value=None)
             api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
             api.config_manager.load_config = MagicMock(return_value={'demo': config})
             response = api_v3_client.get('/api/v3/plugins/installed')
             assert response.status_code == 200
-            return [p for p in response.get_json()['data']['plugins']
-                    if p['id'] == 'demo'][0]
+            entry = [p for p in response.get_json()['data']['plugins']
+                     if p['id'] == 'demo'][0]
+            return entry['vegas_participation'], entry['vegas_participation_source']
         return _get
 
-    def test_a_loaded_plugin_reports_its_participation(self, installed):
-        plugin = _plugin({'vegas_mode': 'static'})
-        assert installed(plugin, plugin.config)['vegas_participation'] == 'pause'
+    def test_the_user_setting_wins(self, installed):
+        assert installed({'vegas_participation': 'exclude'},
+                         {'vegas_participation': 'pause'}) == ('exclude', 'config')
 
-    def test_an_unloaded_plugin_reports_only_the_user_setting(self, installed):
-        assert installed(None, {'vegas_participation': 'exclude'})[
-            'vegas_participation'] == 'exclude'
-        assert installed(None, {})['vegas_participation'] is None
+    def test_then_the_manifest_declaration(self, installed):
+        assert installed({}, {'vegas_participation': 'Pause'}) == ('pause', 'manifest')
+        # An invalid setting is ignored, as the display ignores it.
+        assert installed({'vegas_participation': 'fixed'},
+                         {'vegas_participation': 'scroll'}) == ('scroll', 'manifest')
+
+    def test_otherwise_it_is_decided_at_run_time(self, installed):
+        # The legacy hooks would say 'pause' for vegas_mode 'static', but
+        # only the display runs them: nothing is guessed here.
+        assert installed({'vegas_mode': 'static'}) == (None, 'runtime')
+        assert installed({}, {'vegas_participation': 'sometimes'}) == (None, 'runtime')
+
+    def test_it_matches_the_display_where_the_files_decide(self, installed):
+        for config, manifest in (({'vegas_participation': 'pause'}, None),
+                                 ({}, {'vegas_participation': 'exclude'})):
+            plugin = _plugin(config, manifest)
+            assert installed(config, manifest)[0] == resolve_vegas_participation(plugin)
 

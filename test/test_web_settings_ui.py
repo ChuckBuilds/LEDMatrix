@@ -78,7 +78,7 @@ def client():
     mock_cm.get_config_path.return_value = "config/config.json"
     mock_cm.get_secrets_path.return_value = "config/config_secrets.json"
     pv.pages_v3.config_manager = mock_cm
-    pv.pages_v3.plugin_manager = MagicMock(plugins={})
+    pv.pages_v3.plugin_catalog = MagicMock()
 
     app.register_blueprint(pv.pages_v3, url_prefix="/v3")
     return app.test_client()

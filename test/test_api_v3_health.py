@@ -32,7 +32,7 @@ def _checks(client):
 
 
 def test_plugin_count_is_the_number_of_discovered_plugins(api_v3_client, api_v3_module):
-    api_v3_module.api_v3.plugin_manager.plugin_manifests = {
+    api_v3_module.api_v3.plugin_catalog.plugin_manifests = {
         "clock": {"id": "clock"}, "weather": {"id": "weather"}, "stocks": {"id": "stocks"},
     }
 
@@ -42,7 +42,7 @@ def test_plugin_count_is_the_number_of_discovered_plugins(api_v3_client, api_v3_
 
 
 def test_plugin_count_discovers_when_nothing_is_discovered_yet(api_v3_client, api_v3_module):
-    pm = api_v3_module.api_v3.plugin_manager
+    pm = api_v3_module.api_v3.plugin_catalog
     pm.plugin_manifests = {}
 
     def discover():
