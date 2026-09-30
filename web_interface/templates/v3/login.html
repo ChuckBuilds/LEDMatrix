@@ -20,6 +20,8 @@
     })();
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='v3/vendor/fontawesome/css/all.min.css') }}">
+    <!-- Utilities from scripts/build_css.py; app.css second, as in base.html. -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='v3/tailwind.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='v3/app.css') }}">
     <style>
         .login-wrap { max-width: 24rem; margin: 0 auto; padding: 4rem 1rem; }

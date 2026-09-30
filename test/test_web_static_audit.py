@@ -177,12 +177,20 @@ def test_runtime_built_colour_classes_are_generated():
 
 def test_tailwind_loads_before_app_css():
     """app.css overrides utilities of equal specificity (components, dark
-    theme), which only works if it comes second."""
-    base = (TEMPLATES / "v3" / "base.html").read_text(encoding="utf-8")
-    tw = base.find("filename='v3/tailwind.css'")
-    app = base.find("filename='v3/app.css'")
-    assert tw != -1 and app != -1
-    assert tw < app
+    theme), which only works if it comes second. Every page that links
+    app.css needs tailwind.css too: app.css no longer holds the utilities, so
+    a standalone page (login.html) without it renders unstyled."""
+    pages = []
+    for path in _template_files():
+        text = path.read_text(encoding="utf-8")
+        app = text.find("filename='v3/app.css'")
+        if app == -1:
+            continue
+        pages.append(path.name)
+        tw = text.find("filename='v3/tailwind.css'")
+        assert tw != -1, f"{path.relative_to(PROJECT_ROOT)} links app.css but not tailwind.css"
+        assert tw < app, f"{path.relative_to(PROJECT_ROOT)} links tailwind.css after app.css"
+    assert "base.html" in pages
 
 
 def test_every_static_url_for_points_to_a_real_file():
