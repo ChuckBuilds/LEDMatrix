@@ -19,8 +19,25 @@ class PluginTimeoutError(Exception):
     """Raised when a plugin operation times out."""
 
 
+class PluginBusyError(PluginTimeoutError):
+    """A plugin's lock stayed held past its bound.
+
+    Not raised; recorded. The lock is held by the plugin's own display(),
+    update(), on_config_change() or a Vegas content render -- slow, or hung
+    -- so the caller skipped the plugin rather than wait on it. Report-only:
+    it is kept as the plugin's state error info and counted as a busy skip in
+    health, never as a failure, so it cannot open the circuit breaker.
+    """
+
+
 class PluginExecutor:
     """Handles plugin execution with timeout and error isolation."""
+
+    #: A display() call at least this long is logged and counted as slow.
+    #: A frame is milliseconds; two seconds is a plugin doing I/O in display().
+    SLOW_DISPLAY_SECONDS = 2.0
+    #: An update() call at least this long is logged as slow.
+    SLOW_UPDATE_SECONDS = 5.0
     
     def __init__(
         self,
@@ -117,15 +134,15 @@ class PluginExecutor:
             True if update succeeded, False otherwise
         """
         try:
-            start_time = time.time()
+            start_time = time.monotonic()
             self.execute_with_timeout(
                 lambda: plugin.update(),
                 timeout=timeout,
                 plugin_id=plugin_id
             )
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
             
-            if duration > 5.0:  # Warn if update takes more than 5 seconds
+            if duration > self.SLOW_UPDATE_SECONDS:
                 self.logger.warning(
                     "Plugin %s update() took %.2fs (consider optimizing)",
                     plugin_id,
@@ -175,7 +192,7 @@ class PluginExecutor:
             True if display succeeded, False otherwise
         """
         try:
-            start_time = time.time()
+            start_time = time.monotonic()
             
             # Does display() take a display_mode keyword? The caller usually
             # knows and caches the answer, so prefer what it passed.
@@ -206,9 +223,9 @@ class PluginExecutor:
                     plugin_id=plugin_id
                 )
             
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
             
-            if duration > 2.0:  # Warn if display takes more than 2 seconds
+            if duration > self.SLOW_DISPLAY_SECONDS:
                 self.logger.warning(
                     "Plugin %s display() took %.2fs (consider optimizing)",
                     plugin_id,

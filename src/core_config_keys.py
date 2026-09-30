@@ -43,11 +43,14 @@ CORE_CONFIG_KEYS = frozenset({
 })
 
 #: Top-level keys of ``config_secrets.json`` that belong to the core rather than
-#: to a plugin: the GitHub token the Plugin Store reads, and the historical
-#: ``youtube`` section. Plugin secrets are namespaced by plugin id, so anything
-#: deciding whether a secrets section is a plugin's needs this as well as
-#: ``CORE_CONFIG_KEYS``.
+#: to a plugin: the GitHub token the Plugin Store reads, the historical
+#: ``youtube`` section, and ``web_auth`` (the optional web login's password
+#: hash and API-token hashes, web_interface/auth.py) -- which orphan-plugin
+#: cleanup would otherwise delete, logging everyone out. Plugin secrets are
+#: namespaced by plugin id, so anything deciding whether a secrets section is a
+#: plugin's needs this as well as ``CORE_CONFIG_KEYS``.
 CORE_SECRETS_KEYS = frozenset({
     'github',
     'youtube',
+    'web_auth',
 })

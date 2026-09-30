@@ -1369,29 +1369,6 @@ class PluginAdapter:
             logger.debug("[%s] Cleared plugin scroll cache", plugin_id)
         return cleared
 
-    def get_content_type(self, plugin: 'BasePlugin', plugin_id: str) -> str:
-        """
-        Get the type of content a plugin provides.
-
-        Args:
-            plugin: Plugin instance
-            plugin_id: Plugin identifier
-
-        Returns:
-            'multi' for multiple items, 'static' for single frame, 'none' for excluded
-        """
-        if hasattr(plugin, 'get_vegas_content_type'):
-            try:
-                return plugin.get_vegas_content_type()
-            except (AttributeError, TypeError, ValueError):
-                logger.exception(
-                    "Error calling get_vegas_content_type() on %s",
-                    plugin_id
-                )
-
-        # Default to static for plugins without explicit type
-        return 'static'
-
     def cleanup(self) -> None:
         """Clean up resources."""
         with self._cache_lock:
