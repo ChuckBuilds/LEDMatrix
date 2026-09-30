@@ -37,6 +37,7 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | `prove_security.py` | keep | Security property checks run by pre-commit |
 | `render_bench.py` | diagnostic | Benchmarks the render loop against the panel's real refresh rate on a synthetic strip |
 | `render_plugin.py` | dev-only | Runs a plugin's `update()` + `display()` and saves the frame as a PNG |
+| `reset_web_password.py` | keep | Turns the optional web login off when the password is lost (`sudo python3 scripts/reset_web_password.py`; docs/WEB_INTERFACE_GUIDE.md) |
 | `run_plugin_tests.py` | dev-only | Discovers and runs plugin test suites |
 | `scroll_speeds.py` | keep | Shows and tries the scroll speeds your panel can display cleanly |
 | `sports_drift_report.py` | keep | Counts the different bodies of each method across the nine scoreboards in a `ledmatrix-plugins` checkout (report-only CI job; docs/SPORTS_UNIFICATION.md) |

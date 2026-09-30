@@ -105,7 +105,8 @@ then normal rotation.
   changes. The controller refreshes its cached settings; enabling or
   disabling a plugin queues `_reconcile_enabled_plugins()`, which loads or
   unloads it on the display thread; each plugin gets `on_config_change()`
-  for its own section. Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
+  for its own section, under its plugin lock
+  (`PluginManager.apply_config_change()`). Set `LEDMATRIX_HOT_RELOAD=false` to turn this off.
   Matrix hardware settings are only read at start-up.
 - **Vegas mode.** [`src/vegas_mode/`](../src/vegas_mode/): the display loop
   calls `VegasModeCoordinator.run_iteration()`
