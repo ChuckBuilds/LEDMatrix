@@ -19,7 +19,8 @@ from src.common.scroll_config import solve_crisp
 from src.common.scroll_helper import ScrollHelper
 from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
 from src.vegas_mode.config import VegasModeConfig
-from src.vegas_mode.elements import ElementMeta, ElementRecord, meta_of
+from src.vegas_mode.elements import ElementMeta, ElementRecord, LivePatch, LiveView, meta_of
+from src.vegas_mode.live_worker import LEGACY_PREFETCH_JOIN_S, VegasWorker
 from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
 
@@ -78,6 +79,26 @@ class RenderPipeline:
     # anything computed against the old strip can tell.
     _strip_gen: int = 0
 
+    # Live updates (see apply_live_patches and src/vegas_mode/live_worker.py).
+    # Where the viewport is, published every frame for the worker.
+    _view: Optional[LiveView] = None
+    # Set by the coordinator for a run in which live elements are on.
+    _live_enabled: bool = False
+    _live_worker: Optional[VegasWorker] = None
+    # The last worker stopped: it finishes its current job, and hands over
+    # what it has of a group, before the one-shot prefetch fetches another.
+    _retired_worker: Optional[VegasWorker] = None
+    #: Patches applied between two frames at most, and the bytes they may
+    #: copy, in screens of pixels (at least one patch is always applied).
+    LIVE_PATCHES_PER_FRAME = 4
+    LIVE_PATCH_BUDGET_SCREENS = 2
+    #: A worker that dies this often in this many seconds is not restarted
+    #: again this run; live updates stop and the one-shot prefetch returns.
+    LIVE_WORKER_MAX_DEATHS = 3
+    LIVE_WORKER_DEATH_WINDOW = 600.0
+    #: Frames between checks that the worker is still alive.
+    LIVE_SUPERVISE_FRAMES = 256
+
     def __init__(
         self,
         config: VegasModeConfig,
@@ -129,6 +150,16 @@ class RenderPipeline:
         self._cycle_complete = False
         self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
         self._record_by_seq: Dict[int, ElementRecord] = {}
+        # Live updates. _applied: per record, the (epoch, digest) of the
+        # pixels the strip holds. _live_slots / _live_ready: the worker's
+        # hand-over, one slot per record (latest wins) and the order they
+        # arrived in. Written by the worker, consumed by the render thread;
+        # single-key dict operations and deque append/popleft only.
+        self._applied: Dict[int, Tuple[int, Any]] = {}
+        self._live_slots: Dict[int, LivePatch] = {}
+        self._live_ready: Deque[int] = deque()
+        self._worker_deaths: Deque[float] = deque()
+        self._live_frames = 0
 
         # The sub-pixel path's pacing; the crisp path solves its own (frame_interval).
         self._frame_interval = config.get_frame_interval()
@@ -474,23 +505,43 @@ class RenderPipeline:
         if not self.config.continuous_scroll:
             return
 
+        # With live elements in the strip, the live-element worker fetches
+        # groups too, one plugin at a time between its redraws, so that only
+        # one thread ever draws for the strip.
+        worker = self._live_worker
+        if worker is not None and worker.is_alive():
+            with self._prefetch_lock:
+                if self._prepared_group is not None:
+                    return
+            worker.request_group()
+            return
+
         with self._prefetch_lock:
             if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
                 return
             if self._prepared_group is not None:
                 return  # already have one waiting
             generation = self._prefetch_generation
+            retired = self._retired_worker
 
             def _work():
-                # Deprioritise against the render loop. Linux applies nice
-                # per-thread, and the heavy lifting here is PIL and numpy work
-                # that releases the GIL, so the scheduler can actually act on
-                # it — without this the prefetch competes for the same cores and
-                # costs frames.
+                # Deprioritise against the render loop for CPU time (Linux
+                # applies nice per thread). Nice does nothing about the GIL,
+                # which Pillow's drawing holds (docs/OFFSCREEN_RENDERING.md,
+                # risk 5); the render gate below is what keeps this thread off
+                # it while the render thread needs it.
                 try:
                     os.nice(10)
                 except (OSError, AttributeError):
                     pass
+                # A live-element worker just stopped finishes its current job
+                # and hands over what it has of a group. Wait for it, so only
+                # one thread draws and a group it handed over is not replaced.
+                if retired is not None and retired is not threading.current_thread()                         and retired.is_alive():
+                    retired.join(LEGACY_PREFETCH_JOIN_S)
+                with self._prefetch_lock:
+                    if generation != self._prefetch_generation                             or self._prepared_group is not None:
+                        return
                 # With vegas_scroll.prefetch_gate on, run only while the render
                 # thread waits on vsync; see src/common/render_gate.py.
                 gate = getattr(self.display_manager, 'render_gate', None)
@@ -503,7 +554,8 @@ class RenderPipeline:
                 with self._prefetch_lock:
                     if generation != self._prefetch_generation:
                         return  # Vegas was reset while this was fetching
-                    self._prepared_group = group
+                    if self._prepared_group is None:
+                        self._prepared_group = group
 
             self._prefetch_thread = threading.Thread(
                 target=_work, daemon=True, name="vegas-strip-prefetch")
@@ -825,8 +877,12 @@ class RenderPipeline:
         if new:
             self._elements = self._elements + tuple(new)
             by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            applied = self.__dict__.setdefault('_applied', {})
             for record in new:
                 by_seq[record.seq] = record
+                applied[record.seq] = (record.epoch, record.digest)
+            if self._live_enabled:
+                self._ensure_live_worker()
         return len(new)
 
     def _forget_trimmed_records(self, cut: int) -> None:
@@ -841,9 +897,13 @@ class RenderPipeline:
         kept = tuple(r for r in records if r.abs_x + r.width > origin)
         if len(kept) != len(records):
             by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            applied = self.__dict__.setdefault('_applied', {})
+            slots = self.__dict__.setdefault('_live_slots', {})
             for record in records:
                 if record.abs_x + record.width <= origin:
                     by_seq.pop(record.seq, None)
+                    applied.pop(record.seq, None)
+                    slots.pop(record.seq, None)
             self._elements = kept
 
     def _reset_records(self) -> None:
@@ -852,6 +912,145 @@ class RenderPipeline:
         self._strip_origin = 0
         self._elements = ()
         self._record_by_seq = {}
+        self._applied = {}
+        # Patches still queued belong to the old strip; apply would drop them
+        # on their generation anyway, but there is no reason to keep them.
+        self._live_slots = {}
+        self._live_ready = deque()
+        self._view = None
+
+    def has_live_records(self) -> bool:
+        """Whether the strip holds any live element."""
+        return bool(self._elements)
+
+    # -- live updates ---------------------------------------------------------
+
+    def set_live(self, enabled: bool) -> None:
+        """Switch live updates on or off for this run (the coordinator decides)."""
+        self._live_enabled = enabled
+        if enabled:
+            if self._elements:
+                self._ensure_live_worker()
+        elif self._stop_live_worker():
+            # The worker was fetching the strip's groups as well. Hand that
+            # back to the one-shot prefetch now: nothing else asks for a group
+            # until the next extension, which would find none prepared and
+            # fetch inline, stalling the scroll.
+            self.start_prefetch()
+
+    def notify_live_data(self, plugin_id: str) -> None:
+        """A plugin's data may have changed: wake the worker, if one runs."""
+        worker = self._live_worker
+        if worker is not None:
+            worker.notify_data(plugin_id)
+
+    def _ensure_live_worker(self) -> None:
+        """Start the live-element worker, or restart one that died.
+
+        Started lazily, by the first live element placed: an install with no
+        plugin that has live elements keeps the one-shot prefetch thread and
+        never runs this worker at all. A worker that keeps dying is given up
+        on for the run; live updates stop and the one-shot prefetch returns.
+        """
+        if not self._live_enabled:
+            return
+        worker = self._live_worker
+        if worker is not None and worker.is_alive():
+            return
+        if worker is None and not self._elements:
+            # Nothing live in the strip: the one-shot prefetch does the work
+            # until a live element is placed (_register_elements).
+            return
+        deaths = self.__dict__.setdefault('_worker_deaths', deque())
+        now = time.monotonic()
+        if worker is not None:
+            deaths.append(now)
+            while deaths and now - deaths[0] > self.LIVE_WORKER_DEATH_WINDOW:
+                deaths.popleft()
+            if len(deaths) >= self.LIVE_WORKER_MAX_DEATHS:
+                logger.error(
+                    "Vegas live worker stopped %d times in %.0fs; live updates "
+                    "are off until Vegas restarts", len(deaths),
+                    self.LIVE_WORKER_DEATH_WINDOW)
+                self._live_enabled = False
+                self._live_worker = None
+                # Whatever group the dead worker was fetching is lost.
+                self.start_prefetch()
+                return
+            logger.warning("Vegas live worker was not running; restarting it")
+        worker = VegasWorker(self)
+        self._live_worker = worker
+        worker.start()
+        # Whatever the one-shot prefetch was asked for, the worker now does.
+        with self._prefetch_lock:
+            wanted = self._prepared_group is None
+        if wanted and self.config.continuous_scroll:
+            worker.request_group()
+
+    def _stop_live_worker(self) -> bool:
+        """Ask the worker to stop after its current job. Whether one was running."""
+        worker, self._live_worker = self._live_worker, None
+        if worker is None:
+            return False
+        self._retired_worker = worker
+        worker.stop()
+        return True
+
+    def apply_live_patches(self) -> int:
+        """Copy the worker's finished redraws into the strip. Render thread only.
+
+        Called between two frames (coordinator.run_frame). The only work here
+        is popping prepared patches and a numpy slice copy per patch -- no
+        drawing, no locks, no allocation -- bounded to LIVE_PATCHES_PER_FRAME
+        patches or LIVE_PATCH_BUDGET_SCREENS screens of bytes, whichever comes
+        first (always at least one). A patch is dropped when it no longer
+        fits: made for an older strip, for an element trimmed away or already
+        behind the screen, or older than what the strip already shows.
+
+        Returns:
+            Patches applied.
+        """
+        if self._live_enabled:
+            self._live_frames = self.__dict__.get('_live_frames', 0) + 1
+            if self._live_frames % self.LIVE_SUPERVISE_FRAMES == 0:
+                self._ensure_live_worker()
+        ready = self.__dict__.get('_live_ready')
+        if not ready:
+            return 0
+        slots = self._live_slots
+        if getattr(self, 'sync_manager', None) is not None:
+            # Defensive: live elements are never on under sync, and the
+            # follower would not see a patch.
+            ready.clear()
+            slots.clear()
+            return 0
+        budget = (self.LIVE_PATCH_BUDGET_SCREENS * self.display_width
+                  * self.display_height * 3)
+        helper = self.scroll_helper
+        left_edge = int(helper.scroll_position)
+        applied = 0
+        moved = 0
+        while ready and applied < self.LIVE_PATCHES_PER_FRAME \
+                and (applied == 0 or moved < budget):
+            seq = ready.popleft()
+            patch = slots.pop(seq, None)
+            if patch is None:
+                continue        # a newer patch for this record already went
+            record = self._record_by_seq.get(seq)
+            if record is None or patch.strip_gen != self._strip_gen:
+                continue
+            previous = self._applied.get(seq)
+            if previous is not None and patch.epoch < previous[0]:
+                continue
+            x = record.abs_x - self._strip_origin
+            if x + record.width <= left_edge:
+                continue        # scrolled past; nobody will see it
+            moved += helper.patch_columns(x, patch.pixels)
+            self._applied[seq] = (patch.epoch, patch.digest)
+            applied += 1
+        if applied:
+            self._note_op('patch', moved)
+        return applied
 
     def live_records(self) -> Tuple[ElementRecord, ...]:
         """The live elements in the strip, in the order they were placed."""
@@ -875,6 +1074,13 @@ class RenderPipeline:
 
             # Update scroll position
             self.scroll_helper.update_scroll_position()
+            # Where the viewport is now, for the live-element worker: one
+            # tuple store, read by the worker without a lock.
+            left = self._strip_origin + int(self.scroll_helper.scroll_position)
+            self._view = LiveView(
+                abs_left=left, abs_right=left + self.display_width,
+                abs_end=self._strip_origin + self.scroll_helper.total_scroll_width,
+                t_mono=time.monotonic())
 
             # Determine if the cycle is done.
             #
@@ -1187,6 +1393,7 @@ class RenderPipeline:
             self._prepared_group = None
             self._deferred_queue = []
         self._static_markers = ()
+        self._stop_live_worker()
         self._reset_records()
 
         self.display_manager.set_scrolling_state(False)

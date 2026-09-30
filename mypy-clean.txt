@@ -72,13 +72,17 @@ src/plugin_system/testing/loading.py
 src/plugin_system/testing/mocks.py
 src/plugin_system/testing/plugin_test_base.py
 src/plugin_system/testing/sizes.py
+src/plugin_system/testing/vegas.py
+src/plugin_system/vegas_elements.py
 src/redaction.py
 src/scan_order.py
 src/startup_validator.py
 src/vegas_mode/__init__.py
 src/vegas_mode/config.py
 src/vegas_mode/coordinator.py
+src/vegas_mode/elements.py
 src/vegas_mode/geometry.py
+src/vegas_mode/live_worker.py
 src/vegas_mode/stream_manager.py
 src/web_interface/api_helpers.py
 src/web_interface/config_arrays.py

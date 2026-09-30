@@ -67,7 +67,7 @@ def _as_vegas_canvas(plugin: Any, display_manager: Any, width: int) -> Iterator[
 
 
 def render_vegas_elements(plugin: Any, display_manager: Any,
-                          width: Optional[int] = None) -> Optional[list]:
+                          width: Optional[int] = None) -> Any:
     """Call ``plugin.get_vegas_elements()`` as the Vegas ticker does."""
     render_width = int(width or display_manager.width)
     with _as_vegas_canvas(plugin, display_manager, render_width):
@@ -151,8 +151,9 @@ def check_vegas_elements(plugin: Any, display_manager: Any) -> VegasElementRepor
             report.errors.append(f"{where} appears twice; keys must be unique")
             continue
         seen.add(key)
-        if not isinstance(element.image, Image.Image):
-            report.errors.append(f"{where} image is a {type(element.image).__name__}")
+        image: Any = element.image      # typed Image, but a plugin may pass anything
+        if not isinstance(image, Image.Image):
+            report.errors.append(f"{where} image is a {type(image).__name__}")
             continue
         if element.image.height != height:
             report.errors.append(
@@ -296,12 +297,12 @@ def check_plugin_vegas_elements(plugin_id: str, plugin_dir: Any, config: dict,
     if run_update:
         try:
             plugin.update()
-        except _TOLERATED_UPDATE_ERRORS as exc:
+        except Exception as exc:  # noqa: BLE001 - a plugin's update can raise anything
+            if not isinstance(exc, _TOLERATED_UPDATE_ERRORS):
+                report.errors.append(f"update() raised {exc!r}")
+                return report
             report.warnings.append(f"update() had no network ({exc!r}); checked "
                                    "with whatever data the plugin starts with")
-        except Exception as exc:  # noqa: BLE001 - a plugin's update can raise anything
-            report.errors.append(f"update() raised {exc!r}")
-            return report
     checked = check_vegas_elements(plugin, display_manager)
     checked.warnings[:0] = report.warnings
     return checked

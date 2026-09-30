@@ -1,9 +1,10 @@
 # Offscreen Rendering
 
-**Status (2026-09-24):** step 1, offscreen rendering, is implemented
+**Status (2026-09-30):** offscreen rendering is implemented
 (`DisplayManager.offscreen()`, the adapter on the prefetch thread, the plugin
-lock). Steps 2 and 3 are proposed. When all three land, this file becomes the
-reference for how plugin content is rendered off the render thread.
+lock), and so are live elements, which grew out of steps 2 and 3 below: see
+*Live elements*. The segment strip proposed as step 2 was not needed; *Why not
+a SegmentStrip* says why.
 
 First soak of step 1 on hdpi (50 px/s, `pwm_bits` 7, preview open, 8-minute
 runs, A/B/B/A):
@@ -153,136 +154,101 @@ particular keeps presenting while a plugin draws elsewhere.
   fetch left is the inline fallback when no prepared group is ready, which in
   practice is the first extension. Prefetching at start removes that too.
 
-## Keeping live content fresh
+## Live elements: content that changes while it scrolls
 
-Offscreen rendering is also what makes fresh sports scores possible. Today a
-plugin's segment is drawn when its group is prefetched, and the strip carries
-7,000–10,000 px of content ahead of the viewport (hdpi logs: "7153px still
-ahead", "9842px ahead"). At ~100 px/s, a score drawn now reaches the screen
-70–100 seconds later. When a plugin reports new data, Vegas only drops its
-cache (`invalidate_pending_updates`), so the change is drawn on the plugin's
-*next* turn, several minutes later. A segment already in the strip scrolls by
-with the data it was drawn with.
+Offscreen rendering is also what makes fresh content possible. A plugin's
+segment is drawn when its group is prefetched, and the strip carries
+7,000-10,000 px of content ahead of the viewport, so at ~100 px/s a score drawn
+then reaches the screen 70-100 seconds later -- and once in the strip it never
+changed: when a plugin reported new data, Vegas only dropped its caches, so the
+change appeared on the plugin's *next* turn, minutes later.
 
-That was the right trade while every redraw of a canvas-bound plugin stalled
-the scroll. Off the render thread a redraw costs the scroll nothing, so the
-strip can afford three things.
+A plugin can now hand Vegas **live elements** instead of pictures
+(`BasePlugin.get_vegas_elements()`, see "Live Vegas elements" in
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#live-vegas-elements)):
+named, fixed-width pieces of content -- one per game card, one for a map. Vegas
+records where each lands in the strip and, when the plugin's data changes,
+redraws just the changed ones off the render thread and copies their pixels
+over the old ones between two frames. A card already crossing the panel
+changes; nothing next to it moves.
 
-### 1. Refresh at the gate
+### Why not redraw every frame
 
-Before a segment enters the viewport, check whether its plugin has updated
-since the segment was drawn. If it has, redraw it offscreen and replace it
-while it is still out of sight. Width changes are fine here, because
-everything from that segment onward is still invisible.
+On a Pi the render thread has about 4 ms of slack per refresh at 512x64 after
+the ~6 ms blit, and a scoreboard card is ~29 ms of Pillow work that holds the
+GIL. Drawing on the render thread is out of the question at any rate, so the
+render thread only ever *copies* pixels that are already drawn. Measured on a
+Pi 4 (ledpi): writing a 35 KB card into a 20,000 px strip takes 8.5 µs, a
+101 KB map 17 µs, four cards (the per-frame cap) 34 µs -- against 124 µs for
+the viewport slice every frame already does.
 
-The gate sits `lead` pixels ahead of the viewport's right edge:
-`lead = max(one screen, speed × (render time + margin))`. The render time is
-the plugin's own, measured on each render (sports cards take the longest,
-hundreds of ms up to seconds per the prefetch notes). A plugin whose render
-does not finish before its segment reaches the viewport keeps the old segment.
-The scroll never waits for it.
+### How an update reaches the screen
 
-Content is then at most `lead / speed` seconds old when it appears, a few
-seconds instead of minutes, without changing how far ahead the rotation
-fetches.
+1. A plugin's `update()` completes. The update worker calls
+   `PluginManager._note_update_completed`, which calls the update listeners
+   (`add_update_listener`) there and then, with the plugin's lock still held.
+   Vegas's listener moves the plugin's **epoch** on
+   (`src/vegas_mode/elements.py`, `LiveEpochs`) and wakes the live worker.
+2. The **live worker** (`src/vegas_mode/live_worker.py`), the one background
+   thread that draws for the strip once it holds a live element, finds the
+   plugin's elements whose recorded epoch is older than its current one,
+   nearest the screen first, and calls `get_vegas_elements()` under the
+   plugin's lock (0.25 s wait, then a 1 s backoff). Elements whose `version`
+   is unchanged cost nothing; the rest are pinned and checksummed, and each
+   whose pixels changed becomes a patch in a one-per-element slot (the latest
+   wins).
+3. Between two frames the render thread
+   (`RenderPipeline.apply_live_patches`, from `coordinator.run_frame`) pops at
+   most four patches or two screens of bytes and copies each into the strip
+   with `ScrollHelper.patch_columns`. It takes no lock and draws nothing. A
+   patch made for an older strip, for an element trimmed away or already
+   behind the screen, or from older data than the strip shows, is dropped.
 
-### 2. Replace ahead of the screen
+End to end, a new score reaches a card already on screen within one poll of
+the data source (30 s for live games) plus about a second: the listener is
+immediate, and while live elements exist the update tick that schedules
+plugins runs every second instead of every four.
 
-When a plugin reports new data (the Vegas update tick already names them), any
-of its segments that are **anywhere ahead of the viewport** are redrawn and
-replaced straight away, not only at the gate. That covers the long stretch of
-strip between prefetch and the gate.
+Elements that change with **time** rather than data (an aircraft moving
+between position reports) ask for `refresh_hz`; the worker calls
+`redraw_vegas_element()` -- without the plugin's lock, from state the plugin
+publishes in one assignment -- that often while the element is on or within
+`live_lead_screens` of the screen, capped by `live_max_hz` (5), at 1 Hz
+without the render gate, and halved for an element whose redraws average over
+50 ms.
 
-### 3. Update on screen
+### Geometry
 
-A segment that is already **visible** is patched in place when the redrawn
-version has the same geometry: the same total width, and the same width for
-each card (a sports plugin returns one image per game, joined with
-`intra_plugin_gap`). Scoreboard cards keep a fixed layout, so a score change
-patches in and the digits update as the card scrolls past. The patch is a
-pixel copy of one card (a 150×64 card is ~29 KB) applied by the render thread
-between frames, so a frame never shows half of a patch.
+A live element is never trimmed to its ink: the adapter pads it with
+`content_padding` black columns either side and pins its width, and a redraw
+at any other width is refused (it shows the next time the plugin comes round).
+Records keep **absolute** strip columns -- the strip column plus everything
+trimmed off the front since the strip was composed -- so a trim moves one
+origin rather than every record. Nothing on screen is ever moved, inserted or
+resized; a game added to a slate appears on the plugin's next turn.
 
-When the geometry differs (a game added or dropped, a card that grew), the
-visible part cannot change without a jump. Only the cards not yet on screen
-are replaced, and only if the geometry up to that point is unchanged. Otherwise
-the segment keeps its snapshot until it has scrolled off.
+### Why not a SegmentStrip
 
-### Avoiding wasted work
+The proposal here was to replace the single strip with a list of segments.
+In-place patching of the single strip meets every goal without that: the
+patch is O(element) and the strip layout never changes. What a segment list
+would still buy is cheaper extensions, and most of that came from making the
+strip's PIL copy lazy instead (`ScrollHelper.cached_image`: an extension used
+to rebuild it twice, 1.7-3.8 ms each on a Pi 4). The `extend` row of
+`frame_soak.py`'s "after work" table says whether the rest is worth it.
 
-- **Change detection.** `run_scheduled_updates_with_changes()` names a plugin
-  whenever its `update()` ran, not when its data changed. On hdpi
-  `clock-simple` and `ledmatrix-music` are named on every 4-second tick. A
-  redraw whose pixels hash the same as the segment's is discarded without a
-  swap.
-- **Redraw on real updates only.** Vegas makes no API calls. Each plugin
-  fetches on its own schedule, and a redraw is triggered only when the
-  plugin's `update()` has run since its segment was drawn. On hdpi live
-  football, baseball and hockey poll every 30 s (live odds every 60 s,
-  everything else hourly), so a live sports card is redrawn once per poll.
-- **Floor.** A plugin is redrawn at most once per
-  `vegas_scroll.refresh_min_interval` (proposed 10 s), and never while its
-  previous redraw is still running. The floor never holds back a sports card
-  polling every 30 s. It exists for chatty plugins: `clock-simple` updates
-  every second and `ledmatrix-music` polls every 2 s.
-- **One worker.** Redraws go through the same background worker as prefetch,
-  one plugin at a time at `nice 10`, under the plugin's lock.
+### When it is off
 
-Data freshness is still bounded by each plugin's own fetch interval (how often
-it polls live scores). Drawing faster cannot beat the data source.
-
-### The strip becomes a list of segments
-
-All three need the strip to be replaceable by segment. Today it is one
-image (`ScrollHelper.cached_array`, 8,000–20,000 px wide, 1.5–3.8 MB), and
-`append_content()` rebuilds the whole thing on the render thread for every
-appended block. That is also a pause source.
-
-Proposed `SegmentStrip`, used by Vegas in place of the single image:
-
-- an ordered list of segments: plugin id, card boundaries, a pixel array, the
-  render time, and the plugin data version it was drawn from, plus its
-  x-offset in the strip;
-- `visible(x, width)` assembles the viewport by slicing across at most a few
-  segments: the same ~100 KB copy per frame that slicing the single image
-  costs today;
-- append and trim become O(block) list operations, not a copy of the strip;
-- replace swaps one list entry and shifts the offsets of the segments after it
-  (dozens at most). A same-geometry patch copies pixels into the existing array.
-
-Every mutation is prepared off the render thread and applied by the render
-thread at a frame boundary, so the strip the render loop reads is never
-half-changed.
-
-### Multi-display sync
-
-The follower renders from its own copy of the strip, offset from the leader's
-scroll position. Today the leader sends that copy whole, and only in
-`start_new_cycle()` (`send_scroll_image`), plus the scroll position every
-frame. Continuous scroll, the default, extends and trims the strip without
-starting a new cycle, and nothing sends those changes. From reading the code,
-the follower therefore probably falls out of step after the first extension
-already, before any of this design. That is untested; it needs a two-Pi rig.
-
-With a segment strip, keeping the follower identical becomes **replaying the
-leader's operations**:
-
-- Every strip mutation (append, trim, replace, patch) is one operation in
-  strip coordinates. The leader applies it and sends the same operation to the
-  follower over the existing TCP channel. Segments are small: a card is ~29 KB
-  raw and compresses well.
-- Operations on off-screen segments apply on arrival. A patch to a segment
-  that is on either panel carries an *apply at scroll position X* stamp a
-  couple of hundred milliseconds ahead. Both sides apply it when their scroll
-  position passes X, so both panels change on the same frame, within the
-  existing position-sync jitter.
-- Each operation carries a sequence number. A follower that sees a gap (a
-  reconnect, a dropped message) asks for a full snapshot, which is today's
-  `send_scroll_image` path.
-
-That also fixes the probable continuous-mode gap as a side effect, since
-appends and trims become operations too. Until it is in place, fresh-content
-updates are disabled while sync is active.
+- `display.vegas_scroll.live_refresh: false` (the kill switch; also in the
+  web UI), or `vegas_live: false` in one plugin's section.
+- Always under multi-display sync: the follower mirrors whole strips only, so
+  a patch would never reach it. (Continuous-mode sync has a separate problem:
+  the follower is not sent extensions or trims at all.)
+- In swap mode (`continuous_scroll: false`) and with `offscreen_prefetch:
+  false`.
+- For plugins without the hook, which are drawn and placed exactly as before,
+  and on the paths that fetch without the plugin's lock (the first strip of a
+  run, the render thread's fallback fetch), which use `get_vegas_content()`.
 
 ## Risks, and what was checked
 
@@ -328,11 +294,10 @@ updates are disabled while sync is active.
   source of the single-refresh late frames. Holding frames for two refreshes
   (≈50 px/s) doubles the budget. Cutting the blit itself is the native-presenter
   step.
-- **Live refreshes pushed from `update()`.** Some sports plugins call
-  `display()` and `update_display()` from inside `update()`, which runs on the
-  update worker and can push to the panel mid-Vegas. That is a separate
-  hazard. `offscreen()` gives a tool for it (run the update worker offscreen
-  while Vegas owns the panel), but it is out of scope here.
+- **Multi-display sync in continuous mode.** The follower is sent the whole
+  strip only at a new cycle and on connect, never the extensions and trims of
+  continuous mode, so it drifts from the leader after the first extension.
+  Live elements stay off under sync for that reason.
 
 ## Test plan
 
@@ -348,14 +313,15 @@ updates are disabled while sync is active.
 - **Emulator integration:** a stub canvas-bound plugin whose `display()` sleeps
   300 ms. The Vegas render loop never goes a frame without presenting (frame
   timing recorder: zero freezes).
-- **Unit, `SegmentStrip`:** the viewport assembled across segment boundaries
-  matches slicing one concatenated image, pixel for pixel. Append, trim,
-  replace-ahead and same-geometry patch each leave every other column
-  unchanged. A geometry-changing patch of a visible segment is refused.
-- **Freshness:** a stub sports plugin whose score changes every second. The
-  score on screen is never older than `lead / speed` plus the plugin's fetch
-  interval. A visible card's digits change without the frame-timing recorder
-  seeing a late frame. An unchanged redraw is discarded.
+- **Live elements** (`test/test_vegas_live_*.py`,
+  `test/test_vegas_elements_*.py`, `test/test_scroll_helper_patch.py`): every
+  record points at exactly its element's pixels through any sequence of
+  compose, extend and trim; a patch changes only its element's columns (a
+  property test against a twin strip that is never patched); the render
+  thread's apply takes no lock and draws nothing; the worker's priorities,
+  floors, backoff and hand-over; and, end to end on the emulator with the stub
+  plugin (`test/fixtures/plugins/vegas-live-stub`), an update changes a card
+  already in the strip and an animated element moves with no update at all.
 - **Hardware:** an hdpi soak, A/B against the #628 build, alternating order.
   Targets: no freezes, an empty 6+ bucket, the 3–5 bucket near zero, and the late
   rate below 0.66%. Plus, for freshness: log each segment's age when it enters
@@ -363,26 +329,23 @@ updates are disabled while sync is active.
 
 ## Rollout
 
-Three changes, each soaked on hdpi before the next:
+1. **Offscreen rendering** (shipped): `offscreen()`, the adapter on the
+   prefetch thread, and the plugin lock. Removed the render-thread pauses.
+2. **Measurement and the lazy strip image:** late frames attributed to the
+   render-thread work before them (`FrameTimingRecorder.note_op`, the "after
+   work" table), and extensions no longer rebuilding the strip's PIL copy.
+3. **Live elements:** the plugin API, the records, the worker and in-place
+   patches, with the sports scoreboards and the flight map adopting it.
 
-1. **Offscreen rendering:** `offscreen()`, the adapter on the prefetch thread,
-   and the plugin lock. Removes the render-thread pauses.
-2. **`SegmentStrip`:** Vegas's strip becomes a list of segments. Removes the
-   whole-strip copy on append. No visible behaviour change.
-3. **Fresh content:** refresh at the gate, replace ahead, patch on screen,
-   with change detection and the rate limit.
-
-`display.vegas_scroll.offscreen_prefetch` (default `true`) restores today's
+`display.vegas_scroll.offscreen_prefetch` (default `true`) restores the
 deferred path when `false`, and `display.vegas_scroll.live_refresh` (default
-`true`) turns off step 3. Keep both for one release, then delete the old paths.
+`true`) turns live elements off. Keep both for one release, then delete the
+old paths.
 
 ## Open questions
 
-1. Keep the kill switch, or ship without one?
-2. Plugin lock timeout: skip the plugin and keep its cached segment (proposed),
-   or wait longer?
-3. `refresh_min_interval`: 10 s proposed. It only limits chatty plugins;
-   live sports are redrawn once per 30 s poll regardless.
-4. Multi-display sync: is there a two-Pi rig to test on? Operation replay is
-   proposed as part of the segment strip (step 2), with fresh content
-   disabled under sync until it has been verified on real hardware.
+1. Multi-display sync: is there a two-Pi rig to test on? Replaying strip
+   operations to the follower (append, trim, patch, in absolute columns) would
+   fix continuous-mode sync and let live elements run under it.
+2. Is the `extend` cost worth a segment list after the lazy image? The soak's
+   "after work" table answers it per rig.

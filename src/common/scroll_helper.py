@@ -780,6 +780,43 @@ class ScrollHelper:
         )
         return cut
 
+    def patch_columns(self, x: int, pixels: np.ndarray) -> int:
+        """Overwrite the strip's columns from ``x`` with ``pixels``, in place.
+
+        What a live Vegas element update is (src/vegas_mode/elements.py): the
+        strip keeps its width, the scroll keeps its position, and only these
+        columns change. Call it between frames on the thread that draws them;
+        every frame copies its slice out of the strip (get_visible_portion),
+        so no frame already handed on can see half a patch.
+
+        Clipped to the strip at both ends. Refused (0) for an array this
+        helper may not write -- the multi-display follower adopts a read-only
+        one -- or for pixels of another height. The PIL image is deferred, so
+        a later read of cached_image shows the patch.
+
+        Args:
+            x: Strip column of the first column of ``pixels``
+            pixels: uint8 array (height, width, 3)
+
+        Returns:
+            Bytes written.
+        """
+        strip = self.cached_array
+        if strip is None or not strip.flags.writeable:
+            return 0
+        if pixels.ndim != 3 or pixels.shape[0] != strip.shape[0] \
+                or pixels.shape[2] != strip.shape[2]:
+            return 0
+        width = pixels.shape[1]
+        lo, hi = max(0, int(x)), min(strip.shape[1], int(x) + width)
+        if hi <= lo:
+            return 0
+        strip[:, lo:hi] = pixels[:, lo - int(x):hi - int(x)]
+        if self.__dict__.get('_cached_image') is not None \
+                or self.__dict__.get('_image_source') is not None:
+            self._defer_image()
+        return (hi - lo) * strip.shape[0] * strip.shape[2]
+
     def remaining_unscrolled(self) -> int:
         """Columns of strip still to the right of the viewport."""
         if not self.has_strip():
