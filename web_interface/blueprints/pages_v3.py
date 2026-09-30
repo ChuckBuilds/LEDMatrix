@@ -301,10 +301,12 @@ def serve_plugin_web_ui(plugin_id, filename):
             # but we also Unicode-escape HTML meta-chars as defence in depth.
             f'  window.PLUGIN_ID = {safe_plugin_id_js};\n'
             '</script>\n'
-            # Tailwind v2 CDN — same version used by the parent LEDMatrix UI
-            '<link rel="stylesheet" '
-            'href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" '
-            'crossorigin="anonymous">\n'
+            # Served locally (not from a CDN) so fragments are styled in AP
+            # mode with no internet. Built by scripts/build_css.py; see
+            # web_interface/tailwind/plugin-frame.config.js.
+            '<link rel="stylesheet" href="'
+            + url_for('static', filename='v3/plugin-frame.css')
+            + '">\n'
             '<style>body{margin:0;padding:0;background:#fff;}</style>\n'
             '</head>\n'
             '<body>\n'

@@ -113,6 +113,25 @@ jobs:
           REQUIRE_DOM: "1"
         run: node test/js/run_all.js
 
+  css-build:
+    name: Tailwind CSS is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # Downloads the pinned standalone Tailwind CLI (SHA-256 checked; no
+      # Node), rebuilds static/v3/tailwind.css and plugin-frame.css from the
+      # templates and JS, and fails if the committed files differ. Fix a
+      # failure by running `python3 scripts/build_css.py` and committing.
+      - name: Check the committed CSS matches a fresh build
+        run: python scripts/build_css.py --check
+
   type-check:
     name: Type check (mypy ratchet)
     runs-on: ubuntu-latest

@@ -482,7 +482,9 @@ The web interface uses modern web technologies:
 
 - **Backend:** Flask with Blueprint-based modular design
 - **Frontend:** HTMX for dynamic content, Alpine.js for reactive components
-- **Styling:** Tailwind CSS for responsive design
+- **Styling:** Tailwind CSS utilities, generated at development time and
+  committed (the Pi never builds CSS; see
+  [`web_interface/README.md`](../web_interface/README.md#styling-tailwind-css))
 - **Real-Time:** Server-Sent Events (SSE) for live updates
 
 ### File Locations
