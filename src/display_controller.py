@@ -2497,9 +2497,8 @@ class DisplayController:
                 
                 # DEBUG, not INFO: "Switching to mode" already logged this mode. Every
                 # routine rotation line lands in the persistent journal, and on an SD
-                # card each one costs far more than its bytes (several scattered
-                # journal pages, flushed every 30 s): measured on ledpi, the display's
-                # ~21 lines/min were about 500 KiB/min of card writes.
+                # card each one costs far more than its bytes: measured on ledpi, about
+                # 9 KB of card writes per stored line.
                 logger.debug("Processing mode: %s (%d available)", active_mode, len(self.available_modes))
                 logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
                 

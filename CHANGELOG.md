@@ -252,14 +252,14 @@ read any of them:
 
 ### Fixes
 
-- Less SD-card wear from routine logging. Every rotation logged each mode
-  twice ("Switching to mode", then "Processing mode"), and a mode with
-  nothing to show added "display() returned False" and "No content to
-  display". Those three repeats are now DEBUG; "Switching to mode" stays
-  INFO, and `--debug` shows the rest. The persistent journal the installer
-  enables turns each log line into several scattered page writes: on ledpi
-  the display's ~21 lines/min accounted for about 500 KiB/min of the card's
-  writes (display running vs stopped, 5-minute phases).
+- Quieter routine logging. Every rotation logged each mode twice
+  ("Switching to mode", then "Processing mode"), and a mode with nothing to
+  show added "display() returned False" and "No content to display". Those
+  three repeats are now DEBUG; "Switching to mode" stays INFO, and `--debug`
+  shows the rest. On ledpi this cut the display's journal lines by about 30%
+  (~105 to ~75 per 5 minutes). Each stored line costs roughly 9 KB of SD-card
+  writes through the persistent journal (display at INFO vs WARNING: about
+  190 KiB/min apart), so the saving is real but small.
 - Reinstalling a plugin by its registry id when it is installed under its
   manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
   the install then fails. The safety copy was taken of `weather/`, which did
