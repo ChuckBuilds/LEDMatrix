@@ -260,8 +260,11 @@ class TestReleasingThePlugin:
 
         callback({}, {'enabled': False, 'color': 'red'})
 
+        # The change goes through the manager's locked apply_config_change
+        # (which calls on_config_change under the plugin's lock).
         plugin = controller.plugin_modes['preview_a']
-        plugin.on_config_change.assert_called_once_with({'enabled': True, 'color': 'red'})
+        controller.plugin_manager.apply_config_change.assert_called_once_with(
+            'preview-me', {'enabled': True, 'color': 'red'}, plugin_instance=plugin)
 
 
 class TestRestoredSession:
