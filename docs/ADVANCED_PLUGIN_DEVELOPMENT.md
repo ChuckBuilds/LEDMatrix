@@ -27,7 +27,7 @@ Advanced patterns, examples, and best practices for developing LEDMatrix plugins
 
 The Display Manager's icon methods — `draw_weather_icon()`, `draw_sun()`,
 `draw_cloud()`, `draw_rain()`, `draw_snow()` and `draw_text_with_icons()` —
-are deprecated, removed in 3.7.0. Draw your own icons instead: render them
+are deprecated, removed in 3.8.0. Draw your own icons instead: render them
 onto a PIL image and paste it onto `self.display_manager.image`, or ship
 icon images with the plugin. The weather plugin's `WeatherIcons` class is an
 example. See [Deprecated APIs](PLUGIN_API_REFERENCE.md#deprecated-apis).
@@ -194,7 +194,7 @@ def update(self):
     sport_key = "nhl"
     cache_key = f"{self.plugin_id}_{sport_key}_games"
     
-    # get_background_cached_data() is deprecated, removed in 3.7.0 — use get()
+    # get_background_cached_data() is deprecated, removed in 3.8.0 — use get()
     cached = self.cache_manager.get(cache_key, max_age=60)
     
     if cached:
@@ -596,7 +596,7 @@ def update(self):
 
 ```python
 def update(self):
-    # get_enabled_plugins() is deprecated, removed in 3.7.0 — check the
+    # get_enabled_plugins() is deprecated, removed in 3.8.0 — check the
     # instance's `enabled` flag instead
     weather_plugin = self.plugin_manager.get_plugin("weather")
     if weather_plugin is not None and weather_plugin.enabled:

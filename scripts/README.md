@@ -34,6 +34,7 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | `frame_soak.py` | diagnostic | Soaks a running display and reports how often frames reached the panel late (docs/SCROLL_PERFORMANCE.md) |
 | `install_dependencies_apt.py` | keep | Dependency installer that tries apt packages first, then pip (installer Step 7, plugin loader) |
 | `install_plugin_dependencies.sh` | diagnostic | Installs plugin requirements by hand when the automatic install fails |
+| `plugin_api_usage.py` | dev-only | Scans core, the plugin monorepo and the registry's third-party plugins for callers of every `@deprecated` core method; its output is [docs/DEPRECATIONS_3.8.md](../docs/DEPRECATIONS_3.8.md) |
 | `prove_security.py` | keep | Security property checks run by pre-commit |
 | `render_bench.py` | diagnostic | Benchmarks the render loop against the panel's real refresh rate on a synthetic strip |
 | `render_plugin.py` | dev-only | Runs a plugin's `update()` + `display()` and saves the frame as a PNG |

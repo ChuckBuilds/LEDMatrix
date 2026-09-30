@@ -844,7 +844,7 @@ class PluginManager:
         """
         return self.plugins.copy()
     
-    @deprecated("3.7.0", "check each plugin's enabled flag in plugins")
+    @deprecated("3.8.0", "check each plugin's enabled flag in plugins")
     def get_enabled_plugins(self) -> List[str]:
         """
         Get list of enabled plugin IDs.
