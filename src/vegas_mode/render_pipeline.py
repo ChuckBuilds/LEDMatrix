@@ -32,6 +32,51 @@ logger = logging.getLogger(__name__)
 SYNC_SEND_INTERVAL = 1.0 / 90
 
 
+def join_plugin_rows(
+    images: List[Image.Image], config: VegasModeConfig
+) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
+    """Join one plugin's images into the block the strip will hold.
+
+    Returns ``(block, layout)``, layout being ``(x, meta, width)`` for every
+    image tagged as a live element (src/vegas_mode/elements.py), x measured
+    from the block's left edge. A single image is returned as it is.
+
+    A module function so tooling (scripts/render_plugin.py --vegas) lays a
+    plugin out exactly as the ticker does.
+    """
+    if len(images) == 1:
+        meta = meta_of(images[0])
+        layout = [(0, meta, images[0].width)] if meta is not None else []
+        return images[0], layout
+
+    floor = max(0, config.intra_plugin_gap)
+    target = max(0, config.min_content_separation)
+    threshold = config.trim_threshold
+
+    # Space by measured separation, not a flat gap. Rows drawn flush to their
+    # own edges (sports score cards) would otherwise end up nearly touching,
+    # while rows that already carry wide margins would be pushed needlessly
+    # further apart.
+    gaps = [
+        separation_gap(images[i], images[i + 1], target, floor, threshold)
+        for i in range(len(images) - 1)
+    ]
+
+    width = sum(img.width for img in images) + sum(gaps)
+    height = max(img.height for img in images)
+
+    block = Image.new('RGB', (width, height), (0, 0, 0))
+    layout: List[Tuple[int, ElementMeta, int]] = []
+    x = 0
+    for i, img in enumerate(images):
+        block.paste(img, (x, 0))
+        meta = meta_of(img)
+        if meta is not None:
+            layout.append((x, meta, img.width))
+        x += img.width + (gaps[i] if i < len(gaps) else 0)
+    return block, layout
+
+
 class RenderPipeline:
     """
     High-performance render pipeline for Vegas scroll mode.
@@ -787,42 +832,9 @@ class RenderPipeline:
     ) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
         """_join_plugin_rows, plus where each live element landed in the block.
 
-        Returns ``(block, layout)``, layout being ``(x, meta, width)`` for
-        every image tagged as a live element (src/vegas_mode/elements.py), x
-        measured from the block's left edge. The offsets were always computed
-        here; they used to be thrown away.
+        See join_plugin_rows.
         """
-        if len(images) == 1:
-            meta = meta_of(images[0])
-            layout = [(0, meta, images[0].width)] if meta is not None else []
-            return images[0], layout
-
-        floor = max(0, self.config.intra_plugin_gap)
-        target = max(0, self.config.min_content_separation)
-        threshold = self.config.trim_threshold
-
-        # Space by measured separation, not a flat gap. Rows drawn flush to
-        # their own edges (sports score cards) would otherwise end up nearly
-        # touching, while rows that already carry wide margins would be pushed
-        # needlessly further apart.
-        gaps = [
-            separation_gap(images[i], images[i + 1], target, floor, threshold)
-            for i in range(len(images) - 1)
-        ]
-
-        width = sum(img.width for img in images) + sum(gaps)
-        height = max(img.height for img in images)
-
-        block = Image.new('RGB', (width, height), (0, 0, 0))
-        layout: List[Tuple[int, ElementMeta, int]] = []
-        x = 0
-        for i, img in enumerate(images):
-            block.paste(img, (x, 0))
-            meta = meta_of(img)
-            if meta is not None:
-                layout.append((x, meta, img.width))
-            x += img.width + (gaps[i] if i < len(gaps) else 0)
-        return block, layout
+        return join_plugin_rows(images, self.config)
 
     # -- live element records ---------------------------------------------
     #

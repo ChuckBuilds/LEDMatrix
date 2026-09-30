@@ -37,6 +37,7 @@ src/common/sports_celebration.py
 src/common/sports_fetch.py
 src/common/sports_scroll.py
 src/common/sports_timezone.py
+src/common/sports_vegas.py
 src/config_service.py
 src/core_config_keys.py
 src/deprecation.py

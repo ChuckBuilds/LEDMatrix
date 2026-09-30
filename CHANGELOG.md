@@ -384,6 +384,28 @@ read any of them:
   the Vegas update tick runs every second instead of every four.
 - Web UI: "Update live content while it scrolls" under Vegas mode's Cycle
   Pacing (`display.vegas_scroll.live_refresh`).
+- **Live cards for the scoreboards (shared code).** New module
+  `src/common/sports_vegas.py`: `game_key()`, `dedupe_games()`,
+  `VegasCardCache` (draws a card only when its fingerprint changes) and
+  `StickyOdds` (keeps a card's odds through a live poll that left them out),
+  `finished_games()` and `with_finished_games()` (a game that just went final
+  keeps its card, showing FINAL, where its live card was).
+  `SportsScrollDisplay` gains `make_vegas_renderer()` (the override point; a
+  sport that does not implement it keeps its ordinary Vegas content),
+  `render_vegas_card()`, `vegas_separator()` and `build_vegas_elements()`,
+  and `SportsScrollDisplayManager` gains `get_vegas_elements_for()`.
+  `SportsLiveSharedMixin` gains `_record_finished_game()` /
+  `finished_games_snapshot()`, so a game that goes final keeps a card to show
+  FINAL on until the hourly recent list takes it over.
+- `scripts/render_plugin.py --vegas` renders a plugin's block of the Vegas
+  strip as the ticker lays it out (live elements, or with `--no-live` its
+  ordinary content) and writes the live elements' keys and columns beside
+  it. `--timeline ROWS` stacks the block at successive moments as the
+  ticker would update it in place (`--timeline-step`, and
+  `--timeline-update` to run `update()` between rows).
+  `render_vegas_strip()` and `render_vegas_timeline()` in
+  `src/plugin_system/testing/vegas.py`; the join is now
+  `render_pipeline.join_plugin_rows()`.
 
 ### Scrolling
 
