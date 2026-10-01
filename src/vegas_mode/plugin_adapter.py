@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager, nullcontext
-from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
+from typing import Dict, Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
 from src.common.scroll_helper import ScrollHelper
@@ -18,6 +18,7 @@ from src.plugin_system.vegas_elements import VegasElement
 from src.vegas_mode.elements import (
     ElementMeta,
     LiveEpochs,
+    RenderedElement,
     meta_of,
     pin_element,
     pixel_digest,
@@ -109,6 +110,11 @@ class PluginAdapter:
         # Element problems already reported, so a plugin with a bad hook logs
         # once rather than on every fetch.
         self._element_warnings: set = set()
+        # (plugin_id, key) -> (version, source image, (padding, height),
+        # pinned pixels, digest) of the last conversion, so an element handed
+        # back unchanged is not converted again. Only the live-element worker
+        # reads or writes it; invalidate_cache() swaps in a fresh one.
+        self._element_memo: Dict[Tuple[str, str], Tuple[Any, ...]] = {}
 
         logger.debug(
             "PluginAdapter initialized: display=%dx%d",
@@ -198,18 +204,20 @@ class PluginAdapter:
         return bool(raw)
 
     @contextmanager
-    def _plugin_lock(self, plugin_id: str):
+    def _plugin_lock(self, plugin_id: str, timeout: Optional[float] = None):
         """Hold the plugin's update/display lock, waiting a bounded time.
 
         Yields whether it was acquired. Yields True, holding nothing, when
         there is no plugin manager to ask -- the behaviour before the lock was
-        taken here at all.
+        taken here at all. ``timeout`` defaults to PLUGIN_LOCK_TIMEOUT; 0
+        does not wait at all.
         """
         if not hasattr(self.plugin_manager, 'get_plugin_lock'):
             yield True
             return
         lock = self.plugin_manager.get_plugin_lock(plugin_id)
-        acquired = lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT)
+        wait = self.PLUGIN_LOCK_TIMEOUT if timeout is None else timeout
+        acquired = lock.acquire(timeout=wait) if wait > 0 else lock.acquire(blocking=False)
         try:
             yield acquired
         finally:
@@ -455,18 +463,21 @@ class PluginAdapter:
         if isinstance(plugin_cfg, dict):
             raw = plugin_cfg.get('vegas_width_pct')
             if raw not in (None, ''):
+                # Reported once per value: the live paths resolve the width on
+                # every redraw, several times a second for an animated element.
                 try:
                     candidate = int(raw)
                 except (TypeError, ValueError):
-                    logger.warning(
-                        "[%s] Invalid vegas_width_pct %r, ignoring", plugin_id, raw)
+                    self._warn_element_once(
+                        plugin_id, "Invalid vegas_width_pct %r, ignoring", raw,
+                        once_key=repr(raw))
                 else:
                     if 10 <= candidate <= 100:
                         pct = candidate
                     else:
-                        logger.warning(
-                            "[%s] vegas_width_pct %d out of range 10-100, ignoring",
-                            plugin_id, candidate)
+                        self._warn_element_once(
+                            plugin_id, "vegas_width_pct %d out of range 10-100, ignoring",
+                            candidate, once_key=repr(raw))
 
         if pct >= 100:
             return self.display_width
@@ -675,8 +686,7 @@ class PluginAdapter:
 
         if len(images) == 1:
             only = images[0]
-            pad = self.config.content_padding if self.config.auto_trim else 0
-            if meta_of(only) is not None and only.width - 2 * pad <= budget:
+            if meta_of(only) is not None and only.width - 2 * self._padding() <= budget:
                 # A live element's pinned margins are not content. One whose
                 # drawing fits the budget is kept whole, and live, rather than
                 # cut for the sake of its own blank padding.
@@ -840,9 +850,14 @@ class PluginAdapter:
         )
         return img.crop((start, 0, end, img.height))
 
-    def _warn_element_once(self, plugin_id: str, problem: str, *args: Any) -> None:
-        """Report a plugin's element problem once per process, then quietly."""
-        key = (plugin_id, problem)
+    def _warn_element_once(self, plugin_id: str, problem: str, *args: Any,
+                           once_key: Optional[str] = None) -> None:
+        """Report a plugin's problem once per process, then quietly.
+
+        Once per ``problem`` (the format string), or per ``once_key`` within it
+        when given, so a different bad value is still reported.
+        """
+        key = (plugin_id, problem, once_key)
         if key in self._element_warnings:
             logger.debug("[%s] " + problem, plugin_id, *args)
             return
@@ -885,16 +900,98 @@ class PluginAdapter:
                 "be used (%r); using its get_vegas_content() instead", exc)
             return None
 
-    def _images_from_elements(
-        self, result: Any, plugin_id: str, epoch: int
-    ) -> Optional[List[Image.Image]]:
-        """Turn get_vegas_elements()'s answer into images for the pipeline.
+    def render_live_elements(
+        self, plugin: 'BasePlugin', plugin_id: str, lock_timeout: float
+    ) -> Optional[Tuple[int, Dict[str, RenderedElement]]]:
+        """Redraw a plugin's live elements for the live-element worker.
 
-        Live elements come out pinned (RGB, display height, content_padding
-        black each side, never trimmed afterwards) and tagged with their
-        ElementMeta; plain ones (``live=False``) come out as ordinary content.
-        Anything that is not a usable element is dropped with a warning; a
-        duplicate key keeps its first element.
+        Like the keyed fetch, but for a strip that already holds the elements:
+        no cache (the caller knows the plugin's data moved on), and each live
+        element comes back as a RenderedElement to compare with what the strip
+        shows. An element whose ``version`` is the one already redrawn reuses
+        its pinned pixels and digest, so an unchanged scoreboard costs the
+        plugin's own version check and no conversion.
+
+        Returns ``(epoch, {key: element})``, the epoch read under the lock; an
+        empty dict when the plugin had nothing (or failed, logged once). None
+        only when the lock could not be had within ``lock_timeout`` -- the
+        caller tries again later.
+        """
+        with self._plugin_lock(plugin_id, timeout=lock_timeout) as acquired:
+            if not acquired:
+                return None
+            epochs = self.live_epochs
+            epoch = epochs.get(plugin_id) if epochs is not None else 0
+            render_width = self.resolve_render_width(plugin, plugin_id)
+            plugin._vegas_render_width = render_width
+            try:
+                with self._isolated_canvas(render_width):
+                    result = plugin.get_vegas_elements()
+            except Exception as exc:  # pylint: disable=broad-except
+                self._warn_element_once(
+                    plugin_id, "get_vegas_elements() raised %r while redrawing; "
+                    "its elements keep what they show", exc)
+                return epoch, {}
+            finally:
+                plugin._vegas_render_width = None
+        return epoch, self._rendered_from_elements(result, plugin_id, epoch)
+
+    @staticmethod
+    def has_lock_free_redraw(plugin: Any) -> bool:
+        """Whether the plugin's class overrides BasePlugin.redraw_vegas_element."""
+        method = getattr(type(plugin), 'redraw_vegas_element', None)
+        return method is not None and method is not _BasePlugin.redraw_vegas_element
+
+    def redraw_live_element(
+        self, plugin: 'BasePlugin', plugin_id: str, key: str, width: int,
+        height: int, at: float
+    ) -> Optional[RenderedElement]:
+        """One element redrawn for a moment in time, without the plugin's lock.
+
+        ``width`` is the element's width in the strip (pinned); the plugin is
+        asked for that less its padding, exactly, and anything else is
+        refused. None when the plugin has no lock-free redraw, returns None,
+        or fails (logged once).
+        """
+        if not self.has_lock_free_redraw(plugin):
+            return None
+        padding = self._padding()
+        inner = width - 2 * padding
+        if inner <= 0:
+            return None
+        epochs = self.live_epochs
+        epoch = epochs.get(plugin_id) if epochs is not None else 0
+        render_width = self.resolve_render_width(plugin, plugin_id)
+        plugin._vegas_render_width = render_width
+        try:
+            with self._isolated_canvas(render_width):
+                image = plugin.redraw_vegas_element(key, inner, height, at)
+        except Exception as exc:  # pylint: disable=broad-except
+            self._warn_element_once(
+                plugin_id, "redraw_vegas_element(%r) raised %r", key, exc)
+            return None
+        finally:
+            plugin._vegas_render_width = None
+        if image is None:
+            return None
+        if not isinstance(image, Image.Image) or image.size != (inner, height):
+            self._warn_element_once(
+                plugin_id, "redraw_vegas_element(%r) returned %s, expected an "
+                "image of %dx%d; ignoring it", key,
+                f"{image.width}x{image.height}" if isinstance(image, Image.Image)
+                else type(image).__name__, inner, height)
+            return None
+        _pinned, pixels = pin_element(image, padding)
+        return RenderedElement(key=key, epoch=epoch, version=None, pixels=pixels,
+                               digest=pixel_digest(pixels), width=pixels.shape[1])
+
+    def _valid_elements(self, result: Any, plugin_id: str) -> Optional[List[VegasElement]]:
+        """The usable elements in a get_vegas_elements() answer, in order.
+
+        None for no answer (the plugin wants its ordinary content). Anything
+        that is not a VegasElement with a key and a non-empty image is
+        dropped, and a duplicate key keeps its first element, each reported
+        once.
         """
         if result is None:
             return None
@@ -903,11 +1000,8 @@ class PluginAdapter:
                 plugin_id, "get_vegas_elements() returned %s, expected a list "
                 "of VegasElement", type(result).__name__)
             return None
-
-        padding = self.config.content_padding if self.config.auto_trim else 0
-        now = time.monotonic()
         seen = set()
-        images: List[Image.Image] = []
+        valid: List[VegasElement] = []
         for element in result:
             if not (isinstance(element, VegasElement)
                     and isinstance(element.key, str) and element.key
@@ -917,36 +1011,123 @@ class PluginAdapter:
                     "not a VegasElement with a key and an image (%s); skipping it",
                     type(element).__name__)
                 continue
+            if element.image.width <= 0 or element.image.height <= 0:
+                self._warn_element_once(
+                    plugin_id, "get_vegas_elements() returned an empty image for "
+                    "%r; skipping it", element.key)
+                continue
             if element.key in seen:
                 self._warn_element_once(
                     plugin_id, "get_vegas_elements() returned key %r twice; "
                     "keeping the first", element.key)
                 continue
             seen.add(element.key)
+            valid.append(element)
+        return valid
 
-            image = element.image
-            if image.height != self.display_height:
-                image = image.resize((image.width, self.display_height),
-                                     Image.Resampling.LANCZOS)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
+    def _element_image(self, element: VegasElement) -> Image.Image:
+        """An element's image at the display's height, in RGB."""
+        image = element.image
+        if image.height != self.display_height:
+            image = image.resize((image.width, self.display_height),
+                                 Image.Resampling.LANCZOS)
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        return image
 
-            if not element.live:
-                # Plain content; a tag copied from a reused image must not
-                # make it live by accident.
-                images.append(untag(image.copy()) if meta_of(image) else image)
-                continue
+    def _padding(self) -> int:
+        """Black columns a live element carries each side: what trimming would leave."""
+        return self.config.content_padding if self.config.auto_trim else 0
 
-            pinned, pixels = pin_element(image, padding)
+    @staticmethod
+    def _refresh_hz(element: VegasElement) -> float:
+        try:
+            return max(0.0, float(element.refresh_hz or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _images_from_elements(
+        self, result: Any, plugin_id: str, epoch: int
+    ) -> Optional[List[Image.Image]]:
+        """Turn get_vegas_elements()'s answer into images for the pipeline.
+
+        Live elements come out pinned (RGB, display height, content_padding
+        black each side, never trimmed afterwards) and tagged with their
+        ElementMeta; plain ones (``live=False``) come out as ordinary content.
+        """
+        elements = self._valid_elements(result, plugin_id)
+        if elements is None:
+            return None
+        padding = self._padding()
+        now = time.monotonic()
+        images: List[Image.Image] = []
+        for element in elements:
             try:
-                refresh_hz = max(0.0, float(element.refresh_hz or 0.0))
-            except (TypeError, ValueError):
-                refresh_hz = 0.0
+                image = self._element_image(element)
+                if not element.live:
+                    # Plain content; a tag copied from a reused image must not
+                    # make it live by accident.
+                    images.append(untag(image.copy()) if meta_of(image) else image)
+                    continue
+                pinned, pixels = pin_element(image, padding)
+            except Exception as exc:  # pylint: disable=broad-except
+                # An image Pillow cannot resize or convert (an odd mode, a
+                # closed file) costs that element, not its neighbours.
+                self._warn_element_once(
+                    plugin_id, "element %r could not be converted (%r); skipping it",
+                    element.key, exc)
+                continue
             images.append(tag(pinned, ElementMeta(
                 plugin_id=plugin_id, key=element.key, epoch=epoch,
                 digest=pixel_digest(pixels), rendered_at=now,
-                refresh_hz=refresh_hz, version=element.version)))
+                refresh_hz=self._refresh_hz(element), version=element.version)))
         return images or None
+
+    def _rendered_from_elements(
+        self, result: Any, plugin_id: str, epoch: int
+    ) -> Dict[str, RenderedElement]:
+        """RenderedElements for the live elements in a get_vegas_elements() answer.
+
+        An element handed back as the very image last converted for its key,
+        with the same ``version``, reuses that conversion's pinned pixels and
+        digest, so nothing is converted or checksummed. The image must be the
+        same object: a plugin redrawn for a new config (new colours, a
+        different font) can keep its data version, and must not keep its old
+        pixels with it.
+        """
+        elements = self._valid_elements(result, plugin_id) or []
+        padding = self._padding()
+        memo = self._element_memo
+        rendered: Dict[str, RenderedElement] = {}
+        for element in elements:
+            if not element.live:
+                continue
+            memo_key = (plugin_id, element.key)
+            cached = memo.get(memo_key)
+            if cached is not None and element.version is not None \
+                    and cached[0] == element.version and cached[1] is element.image \
+                    and cached[2] == (padding, self.display_height):
+                pixels, digest = cached[3], cached[4]
+            else:
+                try:
+                    _pinned, pixels = pin_element(self._element_image(element), padding)
+                except Exception as exc:  # pylint: disable=broad-except
+                    self._warn_element_once(
+                        plugin_id, "element %r could not be converted (%r); it "
+                        "keeps what it shows", element.key, exc)
+                    continue
+                digest = pixel_digest(pixels)
+                memo[memo_key] = (element.version, element.image,
+                                  (padding, self.display_height), pixels, digest)
+            rendered[element.key] = RenderedElement(
+                key=element.key, epoch=epoch, version=element.version,
+                pixels=pixels, digest=digest, width=pixels.shape[1])
+        # Forget keys the plugin no longer has, so the memo stays its size.
+        stale = [k for k in list(memo)
+                 if k[0] == plugin_id and k[1] not in rendered]
+        for memo_key in stale:
+            memo.pop(memo_key, None)
+        return rendered
 
     def _get_native_content(
         self, plugin: 'BasePlugin', plugin_id: str, restricted: bool = False
@@ -1510,6 +1691,9 @@ class PluginAdapter:
                 self._content_cache.pop(plugin_id, None)
             else:
                 self._content_cache.clear()
+                # A config change, most often. Swapped rather than cleared:
+                # the live-element worker may be iterating the old one.
+                self._element_memo = {}
 
     def invalidate_plugin_scroll_cache(
         self, plugin: 'BasePlugin', plugin_id: str

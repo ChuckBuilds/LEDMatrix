@@ -368,6 +368,22 @@ read any of them:
 - `scripts/check_plugin.py` checks the element contract for any plugin that
   implements it (`src/plugin_system/testing/vegas.py`), and
   `test/fixtures/plugins/vegas-live-stub` is a working example.
+- **Live elements update in place.** When a plugin's `update()` completes,
+  one background worker (`src/vegas_mode/live_worker.py`) redraws its live
+  elements that are on or ahead of the screen, nearest first, and hands the
+  ones whose pixels changed to the render thread, which copies them into the
+  strip between two frames (`RenderPipeline.apply_live_patches`,
+  `ScrollHelper.patch_columns`): at most four patches or two screens of bytes
+  a frame, no drawing and no locks on the render thread. Elements with
+  `refresh_hz` are redrawn that often while near the screen, through the
+  plugin's lock-free `redraw_vegas_element()`. The worker also takes over
+  group prefetching once the strip holds a live element, so one thread
+  still does all the drawing; it runs inside the render gate, starts only
+  when a live element is placed, and is restarted if it dies (three times in
+  ten minutes turns live updates off for the run). While live elements exist,
+  the Vegas update tick runs every second instead of every four.
+- Web UI: "Update live content while it scrolls" under Vegas mode's Cycle
+  Pacing (`display.vegas_scroll.live_refresh`).
 
 ### Scrolling
 

@@ -419,7 +419,7 @@ class MyScoreboard(BasePlugin):
 |---|---|
 | `key` | Names the element across redraws; unique in the list, stable for the same logical item (`"game:nfl:401547417"`, `"map"`). |
 | `image` | The element now, at the display's height. A live element's **width must not depend on its data**: a redraw at another width is never swapped in (it appears the next time the plugin comes round), because nothing on screen may move. |
-| `version` | Anything hashable that changes exactly when the pixels would; lets the ticker skip unchanged elements. `None` means "compare pixels". |
+| `version` | Anything hashable that changes exactly when the pixels would. Handed back with the **same image object** as last time, it lets the ticker skip converting the element; a new image is always converted and compared by its pixels, so a redraw for new settings is never missed. `None` means "compare pixels". |
 | `live` | `False` places it as plain content (trimmed, never refreshed): separators, decoration. |
 | `refresh_hz` | For content that changes with **time** rather than data (an aircraft moving between position reports): the ticker calls `redraw_vegas_element()` about this often while the element is on or near the screen, capped by `vegas_scroll.live_max_hz` and at 1 Hz without the rebuilt rgbmatrix binding. |
 

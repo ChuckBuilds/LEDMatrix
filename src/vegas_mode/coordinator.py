@@ -387,6 +387,9 @@ class VegasModeCoordinator:
         adapter = getattr(self, 'plugin_adapter', None)
         if adapter is not None:
             adapter.live_elements_enabled = active
+        pipeline = getattr(self, 'render_pipeline', None)
+        if pipeline is not None and hasattr(pipeline, 'set_live'):
+            pipeline.set_live(active)
         plugin_manager = getattr(self, 'plugin_manager', None)
         add = getattr(plugin_manager, 'add_update_listener', None)
         remove = getattr(plugin_manager, 'remove_update_listener', None)
@@ -405,9 +408,11 @@ class VegasModeCoordinator:
         """Update listener: a plugin's data may have changed.
 
         Runs on the update worker with the plugin's lock held, so it only
-        moves the plugin's epoch on; whatever redraws happen later read it.
+        moves the plugin's epoch on and wakes the live-element worker, which
+        redraws once the lock is free.
         """
         self.live_epochs.bump(plugin_id)
+        self.render_pipeline.notify_live_data(plugin_id)
 
     def _install_render_gate(self) -> None:
         """Gate the prefetch thread on the render thread's swaps; see VegasModeConfig."""
@@ -503,6 +508,12 @@ class VegasModeCoordinator:
             # rendering whatever it was first built from — last night's live
             # game still shown as live the next morning.
             self.render_pipeline.refresh_updated_plugins()
+
+            # Copy any live-element redraws the worker has finished into the
+            # strip, between this frame and the last. A deque check when there
+            # are none.
+            if self.live_active:
+                self.render_pipeline.apply_live_patches()
 
             # Extend the strip before the scroll can reach its end, so the next
             # group arrives from the right and motion never stops. No cycle
@@ -715,7 +726,12 @@ class VegasModeCoordinator:
             # main loop's _tick_plugin_updates() finds all intervals already
             # satisfied on return, so the inter-iteration gap is <1 ms and the
             # display never shows a frozen frame between iterations.
-            _UPDATE_TICK_FRAMES = max(1, int(self.render_pipeline.target_fps * 4))  # every 4 s regardless of FPS
+            # Every 4 s, or every 1 s while the strip holds live elements:
+            # plugins are only scheduled on this tick, so its period is added
+            # to how late a live update can be.
+            tick_seconds = (1.0 if self.live_active
+                            and self.render_pipeline.has_live_records() else 4.0)
+            _UPDATE_TICK_FRAMES = max(1, int(self.render_pipeline.target_fps * tick_seconds))
             if (self._update_callback and
                     frame_count % _UPDATE_TICK_FRAMES == 0 and
                     not self._update_tick_running):

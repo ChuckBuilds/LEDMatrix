@@ -60,6 +60,41 @@ class ElementRecord(NamedTuple):
     refresh_hz: float
 
 
+class RenderedElement(NamedTuple):
+    """One live element freshly redrawn by the worker, ready to compare and swap."""
+    key: str
+    #: The plugin's data epoch it was drawn from.
+    epoch: int
+    version: object
+    #: Pinned pixels (see pin_element), read-only.
+    pixels: np.ndarray
+    digest: Tuple[Tuple[int, ...], int]
+    #: Pinned width, the width it would occupy in the strip.
+    width: int
+
+
+class LivePatch(NamedTuple):
+    """A redraw handed from the worker to the render thread for one record."""
+    seq: int
+    #: The strip generation it was made against; a patch for an older strip
+    #: is dropped.
+    strip_gen: int
+    epoch: int
+    pixels: np.ndarray
+    digest: Tuple[Tuple[int, ...], int]
+    made_at: float
+
+
+class LiveView(NamedTuple):
+    """Where the viewport is, in absolute strip columns, published every frame."""
+    abs_left: int
+    abs_right: int
+    #: The end of the strip: how far ahead content exists.
+    abs_end: int
+    #: time.monotonic() when published. An old one means frames have stopped.
+    t_mono: float
+
+
 def tag(image: Image.Image, meta: ElementMeta) -> Image.Image:
     """Mark ``image`` as the live element ``meta`` describes. Returns it."""
     image.info[INFO_KEY] = meta
