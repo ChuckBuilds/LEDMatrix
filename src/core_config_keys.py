@@ -29,6 +29,7 @@ CORE_CONFIG_KEYS = frozenset({
     'display',
     'sync',
     'plugin_system',
+    'fetch_service',
     # Older or optional core sections still found in existing config files.
     'logging',
     'network',

@@ -27,6 +27,7 @@ Rules for the package:
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
 | [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | 3.6.0 |
+| [`fetch_service`](#fetch_service) | Pooled, merged, budgeted and counted HTTP for core fetch paths | No, core-internal (reached through `api_helper` and `espn_dates`) | n/a |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
 | [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
 | [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | 3.5.0 |
@@ -108,7 +109,9 @@ and truncates results when `limit` is above 500. `fetch_espn_scoreboard()`
 splits a range into month and day requests ESPN accepts and merges the
 results; `espn_date_chunks()`, `fetch_espn_date_chunks()`,
 `clamp_espn_limit()` and `merge_scoreboard_payloads()` are the pieces.
-Scoreboard plugins also bundle a copy for older cores.
+Every request goes through [`fetch_service`](#fetch_service), the chunks
+counted against the plugin that asked. Scoreboard plugins also bundle a copy
+for older cores.
 
 ### favorite_team_check
 
@@ -120,6 +123,23 @@ league, on a daemon thread, and logs a bad code with the nearest real one, or
 says the league has nothing on yet; `reset()` re-arms it after a config edit.
 Diagnostics only: every failure is swallowed. Scoreboard plugins also bundle
 a copy for older cores.
+
+### fetch_service
+
+[`fetch_service.py`](fetch_service.py). Core-internal for now. Every core
+fetch path -- `APIHelper.get`/`post`, `espn_dates` (so every scoreboard's
+ESPN scoreboard fetch and `SportsFetchMixin`), `BackgroundDataService` and
+`BaseOddsManager` -- calls `fetch_get(session, url, ...)` instead of
+`session.get(url, ...)`. Same arguments, return value and exceptions; on top
+it shares one connection pool per host per retry policy
+(`share_connection_pool`), merges identical GETs in flight, applies per-host
+token buckets (`fetch_service.rate_limits` in config.json; ESPN gets 20/s,
+burst 200), revalidates with server-sent `ETag`/`Last-Modified` and counts
+requests per plugin and per host. The display publishes the counters
+(`FetchStatsPublisher`) for `GET /api/v3/plugins/fetch-stats`. Which plugin
+made a request comes from `plugin_scope()`, set by the plugin executor, or
+else from the plugin directory on the stack. See
+[docs/PLUGIN_API_REFERENCE.md](../../docs/PLUGIN_API_REFERENCE.md#fetching-data).
 
 ### font_layout
 
