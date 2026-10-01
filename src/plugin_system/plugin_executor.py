@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Callable
 from threading import Thread
 import logging
 
+from src.common.fetch_service import plugin_scope
 from src.exceptions import PluginError
 from src.logging_config import get_logger
 from src.error_aggregator import record_error
@@ -83,7 +84,10 @@ class PluginExecutor:
         
         def target():
             try:
-                result_container['value'] = operation()
+                # Fetches made by the operation (and by threads the core
+                # starts from it) are counted against this plugin.
+                with plugin_scope(plugin_id):
+                    result_container['value'] = operation()
                 result_container['completed'] = True
             except Exception as e:
                 result_container['exception'] = e

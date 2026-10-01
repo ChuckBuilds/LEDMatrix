@@ -11,10 +11,10 @@ import time
 from datetime import datetime
 from types import MappingProxyType
 from src.common.espn_dates import ESPN_MAX_LIMIT
+from src.common.fetch_service import fetch_get, fetch_post, share_connection_pool
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 if TYPE_CHECKING:
@@ -45,7 +45,11 @@ class APIHelper:
 
     - Requests go through one ``requests.Session`` that retries GET, HEAD
       and OPTIONS on 429 and 5xx with exponential backoff, and sends
-      :data:`DEFAULT_HTTP_HEADERS`.
+      :data:`DEFAULT_HTTP_HEADERS`. Its connection pool is shared with every
+      other helper using the same retry policy, and requests go through the
+      core fetch service (``src/common/fetch_service.py``): identical GETs in
+      flight are merged, hosts with a budget are paced, and requests are
+      counted per plugin. Return values and errors are unchanged.
     - Consecutive requests from one helper are spaced at least
       ``set_rate_limit()`` seconds apart (1 second by default). A cache hit
       does not count.
@@ -81,9 +85,10 @@ class APIHelper:
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET", "HEAD", "OPTIONS"]
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
+        # The shared adapter for this retry policy: the same retries as a
+        # private HTTPAdapter(max_retries=retry_strategy), with the connection
+        # pool shared by every helper (fetch_service).
+        share_connection_pool(self.session, retry_strategy)
         
         self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
@@ -128,7 +133,8 @@ class APIHelper:
                 request_headers.update(headers)
             
             # Make request
-            response = self.session.get(
+            response = fetch_get(
+                self.session,
                 url, 
                 params=params,
                 headers=request_headers,
@@ -255,7 +261,8 @@ class APIHelper:
             if headers:
                 request_headers.update(headers)
             
-            response = self.session.post(
+            response = fetch_post(
+                self.session,
                 url,
                 data=data,
                 json=json_data,

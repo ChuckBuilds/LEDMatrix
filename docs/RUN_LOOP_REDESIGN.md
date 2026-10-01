@@ -41,12 +41,19 @@ Each pass, in order:
    brightness target.
 4. **Scheduled off:** blank, dwell up to 60 s. `_blank_while_scheduled_off`
 5. **Follower:** render one frame from the leader. `_run_follower_frame`
-6. **WiFi notice** (unless on-demand): draw it, dwell 0.5 s. `_show_wifi_notice`
+6. **WiFi notice** (unless on-demand): draw it, dwell 0.5 s. `_show_wifi_notice`.
+   It is also polled mid-screen (`_wifi_notice_pending`): the frame loops,
+   the dwell sleep and an interrupted Vegas iteration end within about a
+   second when one arrives, and a screen cut short resumes after it.
 7. **Live priority** (unless on-demand, or Vegas keeps live content in the
-   ticker): switch to the next live mode, or resume the rotation.
+   ticker): switch to the next live mode, or resume the rotation. A game
+   that goes live during a screen is caught sooner, by
+   `_check_live_takeover` in the frame loops and the dwell sleep (at most
+   once a second, and not while a live mode is showing).
 8. **Vegas** (unless on-demand, or live content preempts it): run one
    iteration of up to `max_cycle_duration`. A completed iteration ends the
-   pass. An interrupted one falls through to step 9 in the same pass.
+   pass, and so does one that yielded for a WiFi notice or the schedule.
+   Any other interrupted one falls through to step 9 in the same pass.
 9. **One screen:** pick the mode (`_resolve_active_mode`), the plugin
    (`_plugin_for_mode`), draw the first frame through the executor
    (`_dispatch_first_frame`). On no content, rotate at once
@@ -192,8 +199,8 @@ that the harness patches in today.
    WiFi message, schedule state) are collected first, so `decide()` stays
    pure.
 3. Unit-test `decide()` with tables. The golden traces must not change.
-   This includes the missed WiFi notice described below: fixing it is a
-   separate PR.
+   The Wifi Source must keep the mid-screen preemption described in step 6
+   of "What `run()` does today".
 
 Follower and Wifi go first because each is one self-contained branch that
 ends the pass. They prove the plumbing without touching the frame loops.
@@ -250,18 +257,21 @@ and its per-screen INFO line drops to DEBUG.
 
 ## Behaviour the traces pin down that may be wrong
 
-These are recorded as they are today. Each one should be fixed in its own
-PR, which updates the affected trace and explains why. None of them is
-changed by the restructure.
+Stage 1 recorded six behaviours as they were, each to be fixed in its own
+PR that updates the affected trace and explains why. All six are fixed:
 
-1. **A WiFi notice is only checked between screens.** A 5 s notice posted
-   during a 20 s screen expires before the screen ends and is never shown
-   (`wifi_notice`, t=25).
-2. **Vegas yields to a WiFi notice, then shows a rotation screen instead of
-   the notice.** An interrupted iteration falls through to step 9 in the
-   same pass, and the notice has expired by the next pass (`vegas`, t=200).
-3. **Vegas yields to live content, then shows a rotation screen first.**
-   The live game appears one screen later (`vegas`, t=70-90).
-4. **Live priority only takes over between screens.** A game that goes
-   live mid-screen waits for that screen to end (`live_priority`: live at
-   t=50, shown at t=60).
+- A WiFi notice was only checked between screens, and Vegas yielded to one
+  and then showed a rotation screen instead. Notices now preempt within
+  about a second, and Vegas yields straight to them (#712; `wifi_notice`,
+  `vegas`).
+- A live game only took over between screens, and Vegas yielded to one and
+  then showed a rotation screen first. Games now take over within about a
+  second, and Vegas yields straight to them (#713; `live_priority`,
+  `vegas`).
+- An on-demand session that ended during scheduled-off kept the panel on
+  until the next minute, and a schedule window's end minute counted as on
+  only sometimes. Windows are now half-open `[start, end)`, and the panel
+  blanks as soon as on-demand ends in off hours (#714; `schedule`).
+
+A new one found later goes the same way: record it here with the trace that
+shows it, then fix it in its own PR, not inside a restructure stage.
