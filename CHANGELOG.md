@@ -17,6 +17,25 @@ release that ships it.
 accepts both, but the store flags the old spelling as deprecated
 (`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
 
+## Unreleased
+
+### Tooling
+
+- Golden trace tests for the display loop. `test/test_run_loop_golden.py`
+  runs the real `DisplayController.run()` against fake plugins on a fake
+  clock (`test/_run_loop_harness.py`), with no hardware and no real sleeps,
+  and compares which mode was shown, for how long and why it ended with
+  `test/fixtures/run_loop_golden/`. It has 15 scenarios: rotation,
+  empty and failing modes, dynamic duration, live priority, on-demand
+  (including pinned and resumed after a restart), the schedule and dim
+  schedule, WiFi notices, sync follower and Vegas. The whole file runs in
+  about a second. This is stage 1 of restructuring `run()`, described in
+  `docs/RUN_LOOP_REDESIGN.md`. The other part of stage 1 is internal and
+  changes no behaviour: twelve blocks of `run()` move into named helpers
+  (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
+  `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
+  identical before and after the move.
+
 ## 3.8.0
 
 Live Vegas elements: plugin content that keeps changing while it scrolls
