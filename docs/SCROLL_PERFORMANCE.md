@@ -73,6 +73,10 @@ Sample ladder for a 100 Hz panel:
  100.0 px/s  (1px every 1 refresh  = 100.0 fps, smooth)
 ```
 
+The Vegas **Scroll Speed** slider in the web UI shows the same thing live: a
+line under it says what your speed will run as on this panel, and links to the
+nearest smooth speeds.
+
 ### How a slow speed stays crisp
 
 `SwapOnVSync(canvas, framerate_fraction)` holds each frame for N panel

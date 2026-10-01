@@ -457,7 +457,7 @@
             <div id="vegas_scroll_settings" class="space-y-4" style="{% if not main_config.display.get('vegas_scroll', {}).get('enabled', false) %}display: none;{% endif %}">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="form-group" id="setting-display-vegas_scroll_speed" data-setting-key="display.vegas_scroll.scroll_speed">
-                        <label for="vegas_scroll_speed" class="block text-sm font-medium text-gray-700">Scroll Speed (pixels/second){{ ui.help_tip('How fast the Vegas ticker scrolls (10–200 px/s).\nDefault: 50. Higher is faster but harder to read.', 'Scroll Speed') }}</label>
+                        <label for="vegas_scroll_speed" class="block text-sm font-medium text-gray-700">Scroll Speed (pixels/second){{ ui.help_tip('How fast the Vegas ticker scrolls (10–200 px/s).\nDefault: 50. Higher is faster but harder to read. Only some speeds look perfectly smooth on a given panel; the note below the slider shows which.', 'Scroll Speed') }}</label>
                         <div class="flex items-center space-x-2">
                             <input type="range"
                                    id="vegas_scroll_speed"
@@ -465,10 +465,11 @@
                                    value="{{ main_config.display.get('vegas_scroll', {}).get('scroll_speed', 50) }}"
                                    min="10"
                                    max="200"
-                                   step="5"
+                                   step="1"
                                    class="flex-1">
                             <span id="vegas_scroll_speed_value" class="text-sm font-medium w-12">{{ main_config.display.get('vegas_scroll', {}).get('scroll_speed', 50) }}</span>
                         </div>
+                        <p id="vegas_scroll_speed_hint" class="mt-1 text-xs text-gray-600" aria-live="polite"></p>
                     </div>
 
                     <div class="form-group" id="setting-display-vegas_separator_width" data-setting-key="display.vegas_scroll.separator_width">
@@ -922,6 +923,64 @@ document.getElementById('brightness').addEventListener('input', function() {
     if (scrollSpeedSlider && scrollSpeedValue) {
         scrollSpeedSlider.addEventListener('input', function() {
             scrollSpeedValue.textContent = this.value;
+            refreshScrollSpeedHint();
+        });
+        refreshScrollSpeedHint();
+    }
+
+    // Tell the user what the panel will really do with this speed. Only
+    // speeds that advance a whole number of pixels per refresh look smooth,
+    // and which those are depends on the panel, so the server works it out.
+    let scrollHintTimer = null;
+    let scrollHintSeq = 0;
+    function refreshScrollSpeedHint() {
+        clearTimeout(scrollHintTimer);
+        scrollHintTimer = setTimeout(function() {
+            const hint = document.getElementById('vegas_scroll_speed_hint');
+            if (!hint) return;
+            const seq = ++scrollHintSeq;
+            const q = new URLSearchParams({
+                speed: scrollSpeedSlider.value,
+                min: scrollSpeedSlider.min,
+                max: scrollSpeedSlider.max
+            });
+            fetch('/api/v3/config/scroll-speed-advice?' + q)
+                .then(function(r) { return r.json(); })
+                .then(function(body) {
+                    if (seq !== scrollHintSeq || body.status !== 'success') return;
+                    renderScrollSpeedHint(hint, body.data);
+                })
+                .catch(function() { hint.textContent = ''; });
+        }, 150);
+    }
+
+    function renderScrollSpeedHint(hint, a) {
+        const ap = a.applied;
+        const motion = ap.pixels_per_frame + ' px every ' + ap.frame_hold +
+            ' refresh' + (ap.frame_hold === 1 ? '' : 'es');
+        hint.textContent = '';
+        hint.className = 'mt-1 text-xs ' + (a.smooth && a.exact ? 'text-green-700' : 'text-amber-700');
+        const line = document.createElement('span');
+        if (a.smooth && a.exact) {
+            line.textContent = 'Smooth on this panel (' + motion + ', ' + a.refresh_hz + ' Hz).';
+        } else {
+            line.textContent = a.requested + ' px/s will run as ' + ap.pixels_per_second +
+                ' px/s (' + motion + ', ' + ap.steppiness + ') on this ' + a.refresh_hz +
+                ' Hz panel.' + (a.alternatives.length ? ' Smooth speeds: ' : '');
+        }
+        hint.appendChild(line);
+        a.alternatives.forEach(function(alt, i) {
+            if (i > 0) hint.appendChild(document.createTextNode(' '));
+            const value = Math.round(alt.pixels_per_second);
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'underline font-medium';
+            btn.textContent = value + ' px/s';
+            btn.addEventListener('click', function() {
+                scrollSpeedSlider.value = value;
+                scrollSpeedSlider.dispatchEvent(new Event('input', {bubbles: true}));
+            });
+            hint.appendChild(btn);
         });
     }
 

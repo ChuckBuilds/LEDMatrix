@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Scroll speed
+
+- The Vegas Scroll Speed slider now says what the panel will do with the speed
+  it is on, and offers the nearest smooth ones to click. Only speeds that advance
+  a whole number of pixels per refresh look smooth, and which those are depends
+  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
+  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
+  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
+- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
+  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
+  which move one pixel at a time. 100 Hz panels are unaffected.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,

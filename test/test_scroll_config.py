@@ -13,6 +13,7 @@ from src.common.scroll_config import (  # noqa: E402
     MAX_PIXELS_PER_FRAME,
     crisp_ladder,
     solve_crisp,
+    speed_advice,
     MAX_PIXELS_PER_SECOND,
     MIN_PIXELS_PER_SECOND,
     ScrollSettings,
@@ -465,3 +466,35 @@ class TestFrameHoldIsReportedNotApplied:
             display_manager=dm)
         assert dm.calls == [], "configure() must not apply the hold itself"
         assert settings.frame_hold == 4, "but it must report what to apply"
+
+
+class TestSpeedAdvice:
+    def test_default_speed_on_a_120hz_panel_is_not_left_stepped(self):
+        """50 px/s used to snap to 48 (2px every 5 refreshes, 24fps)."""
+        got = solve_crisp(50, 120)
+        assert got.steppiness == "smooth"
+        assert got.pixels_per_frame == 1
+
+    def test_unchanged_choices_on_a_100hz_panel(self):
+        assert solve_crisp(50, 100).pixels_per_second == pytest.approx(50.0)
+        assert solve_crisp(60, 100).pixels_per_second == pytest.approx(66.667, abs=0.01)
+
+    def test_smooth_exact_speed_needs_no_alternatives(self):
+        advice = speed_advice(60, 120)
+        assert advice["exact"] and advice["smooth"]
+        assert advice["alternatives"] == []
+
+    def test_off_ladder_speed_offers_the_nearest_smooth_ones(self):
+        advice = speed_advice(50, 120, 10, 200)
+        assert advice["applied"]["steppiness"] == "smooth"
+        offered = [a["pixels_per_second"] for a in advice["alternatives"]]
+        assert offered == [40.0, 60.0]
+        assert all(a["steppiness"] == "smooth" for a in advice["alternatives"])
+
+    def test_alternatives_stay_inside_the_requested_range(self):
+        advice = speed_advice(50, 120, 45, 200)
+        assert all(45 <= a["pixels_per_second"] <= 200 for a in advice["alternatives"])
+
+    def test_a_whole_number_near_the_panels_speed_counts_as_exact(self):
+        """The UI sends 63 for a 62.9 px/s panel."""
+        assert speed_advice(63, 125.74)["exact"]

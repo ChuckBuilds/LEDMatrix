@@ -157,7 +157,11 @@ def crisp_ladder(
 #: when 30 was asked for -- being 11% slow is worth far less than looking bad.
 _STEP_PENALTY = 0.05
 _SLOW_FPS_PENALTY = 0.25   # below 20fps
-_LOWISH_FPS_PENALTY = 0.10  # below 25fps
+_LOWISH_FPS_PENALTY = 0.16  # below 25fps
+# 0.16, not less: asked for 50px/s on a 120Hz panel, 48px/s (2px every 5
+# refreshes, 24fps) costs 0.04 + 0.05 + this, and has to lose to both 60px/s
+# and 40px/s (1px, smooth, 20% off = 0.20). At 0.10 it won and shipped a
+# visibly stepped scroll to anyone asking for the default.
 
 
 def _quality_cost(candidate: "CrispSpeed", target: float) -> float:
@@ -474,3 +478,61 @@ def refresh_hz_from_config(global_config: Optional[Dict[str, Any]]) -> float:
     if not isinstance(hardware, dict):
         return DEFAULT_REFRESH_HZ
     return _coerce(hardware.get("limit_refresh_rate_hz")) or DEFAULT_REFRESH_HZ
+
+
+#: Smooth options offered next to a speed that is not one itself.
+_ADVICE_ALTERNATIVES = 2
+
+
+def speed_advice(
+    requested_pixels_per_second: float,
+    refresh_hz: float,
+    min_pixels_per_second: float = MIN_PIXELS_PER_SECOND,
+    max_pixels_per_second: float = MAX_PIXELS_PER_SECOND,
+) -> Dict[str, Any]:
+    """What the panel will do with a requested speed, for showing in a UI.
+
+    ``applied`` is what :func:`solve_crisp` picks, i.e. what really runs.
+    ``smooth`` is true when that is single-pixel-ish, 30fps-or-better motion.
+    ``alternatives`` are the smooth ladder entries nearest the request inside
+    the given range, for a click-to-apply suggestion; empty when the request
+    already is one.
+    """
+    hz = _coerce(refresh_hz) or DEFAULT_REFRESH_HZ
+    requested = max(MIN_PIXELS_PER_SECOND,
+                    min(MAX_PIXELS_PER_SECOND, _coerce(requested_pixels_per_second) or 0.0))
+    applied = solve_crisp(requested, hz)
+
+    def as_dict(c: CrispSpeed) -> Dict[str, Any]:
+        return {
+            "pixels_per_second": round(c.pixels_per_second, 1),
+            "pixels_per_frame": c.pixels_per_frame,
+            "frame_hold": c.frame_hold,
+            "frames_per_second": round(c.frames_per_second, 1),
+            "steppiness": c.steppiness,
+        }
+
+    smooth_ladder = [
+        c for c in crisp_ladder(hz)
+        if c.steppiness == "smooth"
+        and min_pixels_per_second <= c.pixels_per_second <= max_pixels_per_second
+    ]
+    # 2%: a UI hands over whole numbers, and 63 asked of a 62.9 px/s panel is
+    # as good as exact.
+    exact = abs(applied.pixels_per_second - requested) <= max(0.05, 0.02 * requested)
+    smooth = applied.steppiness == "smooth"
+    alternatives: List[CrispSpeed] = []
+    if not (exact and smooth):
+        alternatives = sorted(
+            smooth_ladder,
+            key=lambda c: abs(c.pixels_per_second - requested),
+        )[:_ADVICE_ALTERNATIVES]
+        alternatives.sort(key=lambda c: c.pixels_per_second)
+    return {
+        "requested": round(requested, 1),
+        "refresh_hz": round(hz, 1),
+        "applied": as_dict(applied),
+        "exact": exact,
+        "smooth": smooth,
+        "alternatives": [as_dict(c) for c in alternatives],
+    }
