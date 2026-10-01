@@ -51,7 +51,7 @@ from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
 from collections import OrderedDict, deque
-from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 import zlib
 import freetype
 
@@ -221,6 +221,11 @@ def _per_thread_canvas_attr(name: str) -> property:
 
     return property(fget, fset, doc=f"The plugin-facing ``{name}``, per thread.")
 
+
+
+#: A held frame is only split when its blit takes less than this share of a
+#: refresh: the second blit has to land before the next vsync.
+_SPLIT_BLIT_FRACTION = 0.5
 
 
 class DisplayManager:
@@ -971,27 +976,35 @@ class DisplayManager:
                 # mode the logical screen is first tiled across the full chain.
                 blit_started = time.perf_counter()
                 if self._double_sided is not None:
-                    self.offscreen_canvas.SetImage(self._composite_double_sided())
+                    segments = [(self._composite_double_sided(), self._frame_hold)]
                 else:
-                    self.offscreen_canvas.SetImage(self._scan_compensated(self.image))
-                blit_done = time.perf_counter()
-
-                # Swap buffers immediately. framerate_fraction holds the frame
-                # for N refreshes; SwapOnVSync blocks for all of them, which is
-                # what paces the render loop to the chosen frame rate.
+                    segments = self._scan_segments(self.image)
                 gate = self.render_gate
+                blit_time = swap_time = 0.0
+                # Usually one segment: the frame, held for _frame_hold
+                # refreshes. SwapOnVSync blocks for all of them, which is what
+                # paces the render loop to the chosen frame rate. Scan-order
+                # compensation on a held frame splits it, so the lagging rows
+                # change one refresh after the rest.
                 if gate is not None:
                     gate.before_swap(self._frame_hold)
-                self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
+                for index, (shown, hold) in enumerate(segments):
+                    if index:
+                        blit_started = time.perf_counter()
+                    self.offscreen_canvas.SetImage(shown)
+                    blit_done = time.perf_counter()
+                    blit_time += blit_done - blit_started
+                    self.matrix.SwapOnVSync(self.offscreen_canvas, hold)
+                    swap_time += time.perf_counter() - blit_done
+                    # Swap our canvas references
+                    self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
                 if gate is not None:
                     gate.after_swap(self._frame_hold)
                 presented_at = time.perf_counter()
+                self._last_blit_seconds = blit_time / len(segments)
                 self.frame_timing.record(
-                    blit_done - blit_started, presented_at - blit_done,
+                    blit_time, swap_time,
                     self._frame_hold, self.is_currently_scrolling(), presented_at)
-
-                # Swap our canvas references
-                self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
 
                 self._last_pushed_digest = digest
 
@@ -1038,23 +1051,35 @@ class DisplayManager:
             ", ".join(f"rows {top}-{bottom - 1} show {lag} refresh(es) behind"
                       for top, bottom, lag in bands))
 
-    def _scan_compensated(self, image: Image.Image) -> Image.Image:
-        """The frame to present, with lagging rows taken from earlier frames.
+    def _scan_segments(self, image: Image.Image) -> List[Tuple[Image.Image, int]]:
+        """What to present for this frame: ``[(image, refreshes), ...]``.
 
-        Only mid-scroll at one frame per refresh: that is when consecutive
-        frames are consecutive refreshes. At a longer hold, or on a static
-        screen, the history is dropped and the frame goes out as it is.
+        Mid-scroll with compensation on, lagging rows are taken from earlier
+        refreshes (see src/scan_order.py). At one refresh per frame that is one
+        image. A frame held longer is split at the refresh where the lagging
+        rows catch up, so those rows step a refresh after the rest. The split
+        needs a second blit inside the refresh that follows the first swap, so
+        it is skipped when a blit is too slow to fit. A static screen goes out
+        as it is, and drops the history.
         """
+        hold = self._frame_hold
         bands = getattr(self, '_scan_lag_bands', None)
-        if not bands:
-            return image
-        if self._frame_hold != 1 or not self.is_currently_scrolling():
-            self._scan_history.clear()
-            return image
-        presented = scan_order.compose(image, self._scan_history, bands)
+        if not bands or not self.is_currently_scrolling():
+            if bands:
+                self._scan_history.clear()
+            return [(image, hold)]
+        if hold > 1:
+            blit = getattr(self, '_last_blit_seconds', 0.0)
+            if blit > _SPLIT_BLIT_FRACTION / max(1.0, self.refresh_hz):
+                self._scan_history.clear()
+                return [(image, hold)]
+        segments = [
+            (scan_order.compose(image, self._scan_history, bands, backs), count)
+            for backs, count in scan_order.refresh_plan(bands, hold)
+        ]
         # A copy: plugins draw into the same image object frame after frame.
         self._scan_history.appendleft(image.copy())
-        return presented
+        return segments
 
     def clear(self):
         """Clear the display completely."""
