@@ -2358,12 +2358,13 @@ class DisplayController:
         self._sleep_with_plugin_updates(0.5)
         return True
 
-    def _resolve_active_mode(self) -> Optional[str]:
+    def _resolve_active_mode(self):
         """The mode this pass shows: the on-demand session's current mode
         while one is active, else the rotation's.
 
         Moves current_display_mode onto the on-demand mode (forcing a clear)
         when they differ, and ends an on-demand session that has no modes.
+        None when the rotation has no current mode.
         """
         if not self.on_demand_active:
             return self.current_display_mode
@@ -2725,7 +2726,7 @@ class DisplayController:
             )
         return needs_high_fps
 
-    def _advance_after_screen(self, active_mode: str) -> None:
+    def _advance_after_screen(self, active_mode: Optional[str]) -> None:
         """Pick the next mode once a screen has run its course.
 
         An on-demand session moves to its next mode (one with no modes left
