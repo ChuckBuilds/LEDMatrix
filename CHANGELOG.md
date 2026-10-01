@@ -36,6 +36,18 @@ accepts both, but the store flags the old spelling as deprecated
   `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
   identical before and after the move.
 
+### Fixes
+
+- A plugin whose `display()` raises now opens its circuit breaker. The first
+  frame of each screen goes through the plugin executor, which caught the
+  exception and returned False. The display read that as "no content" and
+  recorded a success, which reset the plugin's failure streak, so the breaker
+  never tripped. The plugin stayed in rotation and logged a traceback on
+  every screen. The raise now counts as a failure, so after three in a row
+  the plugin leaves rotation until the cooldown ends, the same as a raising
+  `update()`. The display still moves straight on to the next mode. A hung
+  `display()` is still recorded once, as a hang.
+
 ## 3.8.0
 
 Live Vegas elements: plugin content that keeps changing while it scrolls

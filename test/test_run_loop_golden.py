@@ -61,8 +61,9 @@ def scenario_all_empty(h: RunLoopHarness):
 def scenario_plugin_error(h: RunLoopHarness):
     # broken's dispatch raises (no display lock: loading failed part-way),
     # so all its modes are skipped together; two failures open the breaker.
-    # crashy's display() raises inside the executor, which reports False:
-    # an empty pass ("raised"), not a failure, so its modes are not skipped.
+    # crashy's display() raises inside the executor: an empty pass
+    # ("raised") that also counts as a breaker failure, so after two raises
+    # it is skipped by the breaker. Its modes are not skipped together.
     h.add_plugin(FakePlugin("clock", ["clock"], duration=10))
     h.add_plugin(FakePlugin("broken", ["broken_a", "broken_b"], duration=10), lock=False)
     h.add_plugin(FakePlugin("weather", ["weather"], duration=10))

@@ -12,16 +12,18 @@
     [50.0, "broken_a", 0.0, "breaker", 0, null],
     [50.0, "broken_b", 0.0, "breaker", 0, null],
     [50.0, "weather", 10.0, "duration", 10, true],
-    [60.0, "crashy", 0.0, "raised", 1, true],
+    [60.0, "crashy", 0.0, "breaker", 0, null],
     [60.0, "clock", 10.0, "duration", 10, true],
     [70.0, "broken_a", 0.0, "breaker", 0, null],
     [70.0, "broken_b", 0.0, "breaker", 0, null],
     [70.0, "weather", 10.0, "duration", 10, true],
-    [80.0, "crashy", 0.0, "raised", 1, true],
+    [80.0, "crashy", 0.0, "breaker", 0, null],
     [80.0, "clock", 10.0, "horizon", 10, true]
   ],
   "events": [
     [10.0, "health-failure", "broken"],
-    [30.0, "health-failure", "broken"]
+    [20.0, "health-failure", "crashy"],
+    [30.0, "health-failure", "broken"],
+    [40.0, "health-failure", "crashy"]
   ]
 }

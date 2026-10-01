@@ -271,7 +271,3 @@ changed by the restructure.
 6. **A schedule window's end minute is inclusive**, and whether the panel
    turns off at the start of that minute or the end depends on when in the
    minute the first check runs.
-7. **A plugin whose `display()` raises inside the executor counts as "no
-   content"**, and the circuit breaker records it as a success, so it never
-   trips (`plugin_error`, `crashy`). Only an exception raised outside the
-   executor counts as a failure.
