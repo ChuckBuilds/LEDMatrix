@@ -458,14 +458,14 @@ read any of them:
 - The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
   not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
   "will be removed in LEDMatrix 3.7.0". The warning, the docs and
-  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+  `test/test_deprecation.py` now say 3.8.0. They are removed in this
+  release (see Removed, below).
 - New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
   scans core, the plugin monorepo and the registry's third-party plugins for
   calls and overrides, telling real uses from unrelated methods of the same
   name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
-  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
-  `CacheManager.get_memory_cache_stats` is still called by core's own
-  `log_memory_cache_stats()`, so it stays until that call migrates.
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`); no plugin uses any of
+  the 35.
 - `test/test_deprecation.py` fails while any `@deprecated` marker names a
   release at or below `src.__version__`, so a release can no longer ship
   warning about a removal it has already passed.
@@ -491,7 +491,9 @@ plugin that still calls one gets an `AttributeError`;
   `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`, and with them
   the `WEATHER_COLORS` table and the private `_draw_sun`/`_draw_cloud`/
   `_draw_rain`/`_draw_snow`/`_draw_storm` helpers.
-  `VisualTestDisplayManager` keeps its own copies of the icon methods.
+  `VisualTestDisplayManager` (the plugin test harness) drops its copies of
+  the icon methods too, so a plugin's visual tests fail the way the real
+  display would instead of passing against methods that no longer exist.
 - `FontManager`: `set_override`, `remove_override`, `get_overrides`,
   `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
   `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
