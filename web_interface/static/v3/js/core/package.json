@@ -1,0 +1,4 @@
+{
+  "//": "Marks the files in this directory as ES modules for node (the JS tests import them). Browsers ignore this file: base.html loads them with <script type=\"module\">. See docs/WEB_FRONTEND_ARCHITECTURE.md.",
+  "type": "module"
+}

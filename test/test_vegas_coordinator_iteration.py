@@ -58,11 +58,16 @@ def test_an_iteration_does_not_poll_every_plugin_for_its_mode(caplog):
 
 
 def _live_coordinator(live):
-    """A coordinator running the real run_frame(), with a switchable live check."""
+    """A coordinator running the real run_frame(), with a switchable live check.
+
+    live_in_ticker off: these pin the full-screen takeover, which is no longer
+    the default.
+    """
     coord = _coordinator({})
     del coord.run_frame  # the real one: it is what refuses frames while paused
     coord.vegas_config = VegasModeConfig.from_config({'display': {'vegas_scroll': {
-        'enabled': True, 'max_cycle_duration': 0, 'continuous_scroll': True}}})
+        'enabled': True, 'max_cycle_duration': 0, 'continuous_scroll': True,
+        'live_in_ticker': False}}})
     coord.render_pipeline.has_deferred.return_value = False
     coord.render_pipeline.needs_extension.return_value = False
     coord.render_pipeline.render_frame.return_value = True

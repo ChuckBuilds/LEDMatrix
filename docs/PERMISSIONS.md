@@ -29,6 +29,8 @@ in again (services pick them up on restart).
 | `assets/` | web user | dirs `755`, files `644` | Root writes downloaded logos regardless |
 | `/var/cache/ledmatrix/` | `root:ledmatrix` | `2775` (setgid) | Shared cache: see below |
 | Cache files | creator : `ledmatrix` | `660` | |
+| `/run/ledmatrix/` | `root` | `755` | tmpfs; `RuntimeDirectory=` in `ledmatrix.service`, removed when the display stops |
+| `/run/ledmatrix/control.sock` | `root` : cache directory's group (`ledmatrix`) | `660` | The display's control socket; only root and that group can connect. See [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md#security-model) |
 | `scripts/fix_perms/safe_plugin_rm.sh`, `safe_pip_install.sh` | `root:root` | `755` | Run as root through sudo, so the web user must not be able to edit them |
 | `/etc/sudoers.d/ledmatrix_web`, `ledmatrix_wifi` | `root` | `440` | |
 
