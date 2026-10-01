@@ -47,6 +47,14 @@ accepts both, but the store flags the old spelling as deprecated
   the plugin leaves rotation until the cooldown ends, the same as a raising
   `update()`. The display still moves straight on to the next mode. A hung
   `display()` is still recorded once, as a hang.
+- A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
+  within about a second of being posted. It was only checked between
+  screens, so a 5 s notice posted during a 20 s screen expired before that
+  screen ended and never appeared. The screen it interrupts comes back in
+  full once the notice ends. When Vegas stops scrolling for a notice, the
+  notice is what shows next, and Vegas resumes after it; before, a rotation
+  screen showed instead and the notice expired behind it. An active
+  on-demand session still holds the panel until it ends.
 
 ## 3.8.0
 

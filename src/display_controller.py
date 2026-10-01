@@ -1137,9 +1137,10 @@ class DisplayController:
 
         Also services pending changes (see _service_pending_changes), and
         returns early when one of them changes what the panel should show --
-        an on-demand start or stop, or the display schedule turning the panel
-        on or off -- so the caller can act on it instead of finishing a dwell
-        that could be a minute long (sixty seconds while scheduled off).
+        an on-demand start or stop, the display schedule turning the panel
+        on or off, or a WiFi notice arriving -- so the caller can act on it
+        instead of finishing a dwell that could be a minute long (sixty
+        seconds while scheduled off).
         """
         if duration <= 0:
             return
@@ -1149,6 +1150,9 @@ class DisplayController:
         mode = self.current_display_mode
         display_active = self.is_display_active
         on_demand = self.on_demand_active
+        # Edge-triggered: the notice's own dwell starts with it pending and
+        # must not cut itself short; any other dwell ends when one arrives.
+        wifi_pending = self._wifi_notice_pending()
 
         while True:
             remaining = end_time - time.time()
@@ -1164,7 +1168,9 @@ class DisplayController:
             self._service_pending_changes()
             if (self.current_display_mode != mode
                     or self.is_display_active != display_active
-                    or self.on_demand_active != on_demand):
+                    or self.on_demand_active != on_demand
+                    or (not wifi_pending and self.is_display_active
+                        and self._wifi_notice_pending())):
                 break
 
     def _note_empty_pass(self) -> None:
@@ -2420,6 +2426,22 @@ class DisplayController:
         self._sleep_with_plugin_updates(0.5)
         return True
 
+    def _wifi_notice_pending(self) -> bool:
+        """True when a WiFi notice is waiting that _show_wifi_notice would draw.
+
+        Polled from the frame loops, the dwell sleep and after a Vegas
+        iteration yields, so a notice preempts whatever is on the panel
+        within about a second instead of waiting for the screen to end --
+        by which time a short notice has usually expired unseen. Cheap at
+        frame rate: _check_wifi_status_message stats the file at most once
+        a second. On-demand outranks the notice, as in _show_wifi_notice.
+        """
+        if self.on_demand_active:
+            return False
+        status = self._check_wifi_status_message()
+        # The 1 s throttle can hand back a result that has expired since.
+        return bool(status) and time.time() < status['expires_at']
+
     def _resolve_active_mode(self):
         """The mode this pass shows: the on-demand session's current mode
         while one is active, else the rotation's.
@@ -2983,6 +3005,11 @@ class DisplayController:
                                     # Scheduled off mid-iteration: blank the
                                     # panel now rather than render a screen.
                                     continue
+                                if self._wifi_notice_pending():
+                                    # It yielded for a WiFi notice: the next
+                                    # pass shows it, not a rotation screen
+                                    # that would outlast a short notice.
+                                    continue
                         except Exception:
                             logger.exception("Vegas mode error")
                             # Fall through to normal rotation on error
@@ -3153,7 +3180,8 @@ class DisplayController:
                             time.sleep(_remaining if _remaining > 0 else 0.001)
 
                             if (self.current_display_mode != active_mode
-                                    or not self.is_display_active):
+                                    or not self.is_display_active
+                                    or self._wifi_notice_pending()):
                                 logger.debug("Mode changed during high-FPS loop, breaking early")
                                 break
 
@@ -3216,7 +3244,8 @@ class DisplayController:
 
                             self._service_pending_changes()
                             if (self.current_display_mode != active_mode
-                                    or not self.is_display_active):
+                                    or not self.is_display_active
+                                    or self._wifi_notice_pending()):
                                 logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                 break
 
@@ -3239,9 +3268,12 @@ class DisplayController:
                     # _activate_on_demand already sets force_change=True and clears the
                     # display, so the next loop iteration renders the new mode immediately.
                     # Likewise if the schedule turned the display off
-                    # mid-screen: the next iteration blanks it.
+                    # mid-screen (the next iteration blanks it), or a WiFi
+                    # notice arrived (the next iteration shows it, then this
+                    # mode resumes rather than rotating past it).
                     if (self.current_display_mode != active_mode
-                            or not self.is_display_active):
+                            or not self.is_display_active
+                            or (not loop_completed and self._wifi_notice_pending())):
                         continue
 
                     # Ensure we honour minimum duration when not dynamic and loop ended early
@@ -3254,6 +3286,11 @@ class DisplayController:
                         remaining_sleep = max(0.0, max_duration - elapsed)
                         if remaining_sleep > 0:
                             self._sleep_with_plugin_updates(remaining_sleep)
+                            # Cut short by a WiFi notice: show it, then
+                            # resume this mode rather than rotating past it.
+                            if (self._wifi_notice_pending()
+                                    and time.time() - start_time < max_duration):
+                                continue
 
                     if dynamic_enabled:
                         elapsed_total = time.time() - start_time

@@ -766,7 +766,14 @@ def reduce_trace(events, horizon: float) -> Dict[str, Any]:
     rows = []
     for i, screen in enumerate(screens):
         end = screens[i + 1]["t"] if i + 1 < len(screens) else horizon
-        exit_reason = screen["exit"] or ("horizon" if i + 1 == len(screens) else "duration")
+        nxt = screens[i + 1] if i + 1 < len(screens) else None
+        # A WiFi notice logs no event at the moment it takes the panel (the
+        # file is written earlier), so a screen followed by one is labelled
+        # "wifi". Its duration column shows whether it was cut short.
+        exit_reason = screen["exit"] or (
+            "horizon" if nxt is None
+            else "wifi" if nxt["mode"] == "<wifi>" and screen["mode"] != "<wifi>"
+            else "duration")
         rows.append([screen["t"], screen["mode"], round(end - screen["t"], 3),
                      exit_reason, screen["frames"], screen["clear"]])
     return {"screens": rows, "events": notable}
