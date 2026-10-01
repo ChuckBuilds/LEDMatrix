@@ -42,6 +42,7 @@ from src.cache_manager import CacheManager
 from src.font_manager import FontManager
 from src.logging_config import get_logger
 from src.common.sync_manager import DisplaySyncManager, SyncRole
+from src.ipc.server import ControlServer, start_control_server
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -251,6 +252,10 @@ class DisplayController:
         # Monotonic stamp of the last _service_pending_changes pass; same
         # "None means never" convention as _last_on_demand_poll.
         self._last_pending_service: Optional[float] = None
+        # The control socket (src/ipc), started by run(). None when it is not
+        # served (Windows, LEDMATRIX_CONTROL_SOCKET=off, a bind failure);
+        # the file mailbox works either way.
+        self._control_server = None
         # A brightness set_brightness() refused, so the periodic service pass
         # doesn't retry (and log) the same failure several times a second.
         self._failed_brightness_target: Optional[int] = None
@@ -1313,10 +1318,12 @@ class DisplayController:
 
     def _get_on_demand_remaining(self) -> Optional[float]:
         """Calculate remaining time for an active on-demand session."""
-        if not self.on_demand_active or self.on_demand_expires_at is None:
+        # Read once: the control socket's status command calls this from
+        # its own thread, while the render thread may be clearing the field.
+        expires_at = self.on_demand_expires_at
+        if not self.on_demand_active or expires_at is None:
             return None
-        remaining = self.on_demand_expires_at - time.time()
-        return max(0.0, remaining)
+        return max(0.0, expires_at - time.time())
 
     def _publish_current_mode_state(self) -> None:
         """Publish the currently active display mode/plugin to cache for the web UI."""
@@ -1350,23 +1357,27 @@ class DisplayController:
                 or time.monotonic() - self._last_published_at >= CURRENT_STATE_REFRESH_SECONDS):
             self._publish_current_mode_state()
 
+    def _on_demand_state(self) -> Dict[str, Any]:
+        """The on-demand state as published to the cache and the control socket."""
+        return {
+            'active': self.on_demand_active,
+            'mode': self.on_demand_mode,
+            'plugin_id': self.on_demand_plugin_id,
+            'requested_at': self.on_demand_requested_at,
+            'expires_at': self.on_demand_expires_at,
+            'duration': self.on_demand_duration,
+            'pinned': self.on_demand_pinned,
+            'status': self.on_demand_status,
+            'error': self.on_demand_last_error,
+            'last_event': self.on_demand_last_event,
+            'remaining': self._get_on_demand_remaining(),
+            'last_updated': time.time()
+        }
+
     def _publish_on_demand_state(self) -> None:
         """Publish current on-demand state to cache for external consumers."""
         try:
-            state = {
-                'active': self.on_demand_active,
-                'mode': self.on_demand_mode,
-                'plugin_id': self.on_demand_plugin_id,
-                'requested_at': self.on_demand_requested_at,
-                'expires_at': self.on_demand_expires_at,
-                'duration': self.on_demand_duration,
-                'pinned': self.on_demand_pinned,
-                'status': self.on_demand_status,
-                'error': self.on_demand_last_error,
-                'last_event': self.on_demand_last_event,
-                'remaining': self._get_on_demand_remaining(),
-                'last_updated': time.time()
-            }
+            state = self._on_demand_state()
             self.cache_manager.set('display_on_demand_state', state)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to publish on-demand state: %s", err, exc_info=True)
@@ -1426,6 +1437,9 @@ class DisplayController:
     #: whole cost is one monotonic-clock compare.
     PENDING_CHANGES_INTERVAL = ON_DEMAND_POLL_INTERVAL
 
+    #: Class-level default for controllers built without __init__ (tests).
+    _control_server: Optional[ControlServer] = None
+
     def _service_pending_changes(self) -> None:
         """Apply changes made elsewhere while the display thread is busy.
 
@@ -1446,7 +1460,10 @@ class DisplayController:
         """
         now = time.monotonic()
         last = self._last_pending_service
-        if last is not None and now - last < self.PENDING_CHANGES_INTERVAL:
+        # A command queued on the control socket skips the floor: it is in
+        # memory, so applying it now costs no disk read.
+        if (last is not None and now - last < self.PENDING_CHANGES_INTERVAL
+                and not (self._control_server and self._control_server.has_pending)):
             return
         self._last_pending_service = now
 
@@ -1588,8 +1605,49 @@ class DisplayController:
         except (OSError, AttributeError, KeyError) as err:
             logger.debug("Could not clear the on-demand request mailbox: %s", err)
 
+    def _start_control_server(self) -> None:
+        """Serve the control socket (src/ipc/server.py). Never raises.
+
+        Its handlers only queue commands; _drain_control_commands applies
+        them on the render thread, where the mailbox is read.
+        """
+        if self._control_server is not None:
+            return
+        try:
+            self._control_server = start_control_server(
+                status_provider=self._control_status,
+                cache_dir=getattr(self.cache_manager, 'cache_dir', None))
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Control socket not started; using the file mailbox only")
+
+    def _control_status(self) -> Dict[str, Any]:
+        """The socket's on_demand.status answer. Runs on the socket's thread: reads only."""
+        return {'on_demand': self._on_demand_state(),
+                'current_mode': self.current_display_mode,
+                'display_active': self.is_display_active}
+
+    def _drain_control_commands(self) -> None:
+        """Apply on-demand commands that arrived over the control socket.
+
+        Each goes through _handle_on_demand_request, the mailbox's own
+        handler, so both ways in behave the same, and a request that came
+        both ways (a client that timed out and fell back) has one request
+        id and is processed once.
+        """
+        server = self._control_server
+        if server is None or not server.has_pending:
+            return
+        for command in server.drain():
+            try:
+                self._handle_on_demand_request(command.as_on_demand_request())
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to apply control socket command %s",
+                                 command.request_id)
+
     def _poll_on_demand_requests(self) -> None:
         """Poll cache for new on-demand requests from external controllers."""
+        # Socket commands are already in memory: no disk read, so no floor.
+        self._drain_control_commands()
         now = time.monotonic()
         if (self._last_on_demand_poll is not None
                 and now - self._last_on_demand_poll < self.ON_DEMAND_POLL_INTERVAL):
@@ -1614,7 +1672,10 @@ class DisplayController:
 
         if not request:
             return
+        self._handle_on_demand_request(request)
 
+    def _handle_on_demand_request(self, request: Dict[str, Any]) -> None:
+        """Process one on-demand request, from the mailbox or the control socket."""
         request_id = request.get('request_id')
         if not request_id:
             return
@@ -2248,6 +2309,7 @@ class DisplayController:
         # vouch for: beats from any other thread are ignored, so a render
         # thread stuck inside a plugin stops them.
         display_watchdog.watchdog.bind_render_thread()
+        self._start_control_server()
 
         try:
             # Initialize with cached data for fast startup - let background updates refresh naturally
@@ -3644,6 +3706,13 @@ class DisplayController:
         # First: a clean stop is not a hang, and a heartbeat left behind
         # would read as a frozen panel to the web interface.
         display_watchdog.watchdog.stopping()
+        # Stop taking commands; the socket file goes with it.
+        if self._control_server is not None:
+            try:
+                self._control_server.close()
+            except Exception as e:
+                logger.warning("Error closing the control socket: %s", e)
+            self._control_server = None
         # Stop the async update worker first so no in-flight update() call
         # is still touching display/cache-backed resources while they're
         # torn down below.

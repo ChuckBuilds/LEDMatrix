@@ -45,6 +45,10 @@ src/display_geometry.py
 src/dynamic_team_resolver.py
 src/exceptions.py
 src/font_usage.py
+src/ipc/__init__.py
+src/ipc/client.py
+src/ipc/contract.py
+src/ipc/server.py
 src/logging_config.py
 src/logo_downloader.py
 src/matrix_support.py

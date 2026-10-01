@@ -447,12 +447,22 @@ Request a specific plugin to display on-demand.
     "mode": "nfl_live",
     "duration": 45,
     "pinned": true,
-    "service": { "active": true, "returncode": 0, "stdout": "", "stderr": "" }
+    "service": { "active": true, "returncode": 0, "stdout": "", "stderr": "" },
+    "transport": "socket"
   }
 }
 ```
 
 `service` is `null` when `start_service` is false.
+
+`transport` says how the request reached the display: `"socket"` means the
+display's control socket acknowledged it (it is queued for the render thread;
+see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
+written to the cache mailbox the display polls, as before the socket existed.
+With `"mailbox"`, `socket_error` gives the reason the socket was not used
+(`no_socket` when the display is stopped or predates the socket, `timeout`,
+`refused`, `busy`, ...). Either way the request is applied the same way;
+`request_id` is the same id in both.
 
 ### Stop On-Demand Display
 
@@ -476,10 +486,13 @@ Stop the current on-demand display.
   "status": "success",
   "data": {
     "request_id": "uuid-here",
-    "service": null
+    "service": null,
+    "transport": "socket"
   }
 }
 ```
+
+`transport` and `socket_error` are as for start.
 
 ---
 

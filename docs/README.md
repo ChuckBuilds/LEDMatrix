@@ -72,6 +72,7 @@ Going deeper:
 ## Contributing to LEDMatrix itself
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — processes, display loop, plugin system, web UI; where to start reading
+- [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md) — the display's control socket: protocol, security model, stage plan
 - [DEVELOPMENT.md](DEVELOPMENT.md) — environment setup
 - [HOW_TO_RUN_TESTS.md](HOW_TO_RUN_TESTS.md) — running the test suite
 - [MULTI_ROOT_WORKSPACE_SETUP.md](MULTI_ROOT_WORKSPACE_SETUP.md) — multi-repo workspace

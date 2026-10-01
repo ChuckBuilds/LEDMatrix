@@ -19,6 +19,42 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Control socket (stage 1: on-demand)
+
+- **The display now serves a control socket**,
+  `/run/ledmatrix/control.sock`. It carries versioned JSON commands, one per
+  line, and every command gets an answer
+  ([docs/IPC_CONTROL_SOCKET.md](docs/IPC_CONTROL_SOCKET.md)).
+  - On-demand start, stop and status are the first commands, plus `hello`
+    (version negotiation) and `ping`.
+  - Start and stop are acknowledged once the render thread has them queued.
+    The render thread applies them through the same handler as the file
+    mailbox, at its next on-demand check. On a scrolling screen that is the
+    next frame (the mailbox waits up to 0.25 s). On a static screen it is up
+    to 1 s, the same as the mailbox.
+  - The server's threads never touch rendering. Garbage, oversize messages
+    and slow or vanishing clients are answered or dropped without blocking the
+    display.
+  - New core modules: `src/ipc/contract.py`, `server.py` and `client.py`.
+    They are internal, not a plugin API.
+- **`POST /api/v3/display/on-demand/start` and `/stop` try the socket
+  first.** On any failure (the display is stopped or predates the socket, a
+  timeout, a refusal), they write the `display_on_demand_request` mailbox
+  exactly as before. The response's new `transport` field says which path
+  was used (`"socket"` or `"mailbox"`), and `socket_error` gives the reason
+  for a fallback. Both paths carry the same `request_id`, so a request that
+  arrives both ways runs once. The mailbox, and the plugins that write it
+  directly, keep working for at least one more release.
+- **Permissions.** The socket is `0660` and owned by the group the two
+  services already share (the cache directory's group, `ledmatrix` on an
+  installed device). On Linux the server also checks each connection's
+  `SO_PEERCRED`: root, the display's own user, or a member of that group.
+  `/run/ledmatrix` comes from the existing `RuntimeDirectory=` (#687), or the
+  display creates it as root under an older unit, so no installer or unit
+  change is needed. `LEDMATRIX_CONTROL_SOCKET` overrides the path for both
+  processes, or turns the socket off with `off`. A non-root dev run uses a
+  private per-user path under the temp directory.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,
