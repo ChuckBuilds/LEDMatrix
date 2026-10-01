@@ -40,11 +40,9 @@ def test_cleanup_and_stats_follow_a_replaced_component(cm):
     assert cm._memory_cache_component.get("stale") is None
     assert cm._memory_cache_component.get("fresh") == {"v": 1}
 
-    stats = cm.get_memory_cache_stats()
-    assert stats["size"] == 1
-    assert stats["max_size"] == 7
-    assert stats["cleanup_interval"] == 11.0
-    assert stats["usage_percent"] == pytest.approx(100 / 7)
+    with patch.object(cm.logger, "info") as info:
+        cm.log_memory_cache_stats()
+    assert "Size: 1/7 (14.3%)" in info.call_args[0][0]
 
 
 def test_periodic_cleanup_is_throttled_and_records_its_run(cm):
@@ -60,16 +58,16 @@ def test_periodic_cleanup_is_throttled_and_records_its_run(cm):
     before = time.time()
     cm.get_cached_data("missing")          # triggers the periodic sweep
     assert mem.size() == 0
-    assert cm.get_memory_cache_stats()["last_cleanup"] >= before
+    assert mem.get_stats()["last_cleanup"] >= before
 
 
-def test_stats_have_the_documented_shape(cm):
+def test_memory_stats_log_reads_the_live_tier(cm):
     cm.set("k", {"v": 1})
-    stats = cm.get_memory_cache_stats()
-    assert set(stats) == {"size", "max_size", "usage_percent",
-                          "last_cleanup", "cleanup_interval"}
-    assert stats["size"] == 1
-    assert stats["max_size"] == cm._memory_cache_component.max_size()
+    with patch.object(cm.logger, "info") as info:
+        cm.log_memory_cache_stats()
+    message = info.call_args[0][0]
+    assert f"Size: 1/{cm._memory_cache_component.max_size()}" in message
+    assert "Last cleanup:" in message
 
 
 def test_listing_the_cache_dir_does_not_hold_the_memory_lock(cm, tmp_path):

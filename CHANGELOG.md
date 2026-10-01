@@ -538,17 +538,51 @@ read any of them:
 - The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
   not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
   "will be removed in LEDMatrix 3.7.0". The warning, the docs and
-  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+  `test/test_deprecation.py` now say 3.8.0. They are removed in this
+  release (see Removed, below).
 - New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
   scans core, the plugin monorepo and the registry's third-party plugins for
   calls and overrides, telling real uses from unrelated methods of the same
   name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
-  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
-  `CacheManager.get_memory_cache_stats` is still called by core's own
-  `log_memory_cache_stats()`, so it stays until that call migrates.
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`); no plugin uses any of
+  the 35.
 - `test/test_deprecation.py` fails while any `@deprecated` marker names a
   release at or below `src.__version__`, so a release can no longer ship
   warning about a removal it has already passed.
+
+### Removed
+
+The 35 plugin-facing methods deprecated in 3.5.0 (each has logged a warning
+on first call since, announced for 3.7.0 and then moved to 3.8.0) are gone.
+The usage scan (`docs/DEPRECATIONS_3.8.md`, re-run 2026-10-01) found no call
+or override of any of them in the 46 monorepo plugins or the 8 third-party
+plugins `plugins.json` lists, and core's own last callers went with them. A
+plugin that still calls one gets an `AttributeError`;
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` lists what to use instead.
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`. The
+  private change-detection helpers behind `has_data_changed`
+  (`_has_weather_changed` and friends, `_is_market_open`) went with it.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`, and with them
+  the `WEATHER_COLORS` table and the private `_draw_sun`/`_draw_cloud`/
+  `_draw_rain`/`_draw_snow`/`_draw_storm` helpers.
+  `VisualTestDisplayManager` (the plugin test harness) drops its copies of
+  the icon methods too, so a plugin's visual tests fail the way the real
+  display would instead of passing against methods that no longer exist.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`, plus the `size_tokens` attribute and the private
+  `_save_overrides` and `_clear_plugin_font_cache`. `resolve_font()` still
+  applies `config/font_overrides.json`.
+- `PluginManager.get_enabled_plugins` (check `enabled` on the entries in
+  `plugin_manager.plugins`).
 
 ### Web UI styling: a real Tailwind build
 
