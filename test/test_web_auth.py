@@ -190,6 +190,22 @@ class TestTurnedOn:
         assert r.status_code == 401
         assert 'tokens' not in secrets_on_disk(config_manager)['web_auth']
 
+    def test_the_update_channel_needs_login(self, config_manager, api_v3_module):
+        # It decides what code the next update installs: no route of its own
+        # opts out of the login, so the default rule covers it.
+        app = build(config_manager, api_v3_module)
+        signed_in = enable(app)
+        stranger = lan_client(app)
+        assert stranger.get('/api/v3/system/update-channel').status_code == 401
+        r = stranger.post('/api/v3/system/update-channel', json={'channel': 'beta'})
+        assert r.status_code == 401
+        # (The config template's migration writes the default, stable.)
+        assert config_manager.load_config()['auto_update'].get('channel') != 'beta'
+
+        r = signed_in.post('/api/v3/system/update-channel', json={'channel': 'beta'})
+        assert r.status_code == 200, r.get_json()
+        assert config_manager.load_config()['auto_update']['channel'] == 'beta'
+
     def test_unknown_paths_do_not_leak_a_404_first(self, config_manager, api_v3_module):
         app = build(config_manager, api_v3_module)
         enable(app)

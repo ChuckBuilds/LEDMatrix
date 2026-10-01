@@ -119,6 +119,35 @@ class TestJsonPartialSaves:
                     'continuous_scroll', 'smooth_scroll'):
             assert vegas[key] is True, key
 
+    def test_vegas_speed_only_keeps_live_updates_as_stored(self, api_v3_client, saved):
+        resp = _post_json(api_v3_client, {'vegas_scroll_speed': 70})
+        assert resp.status_code == 200, resp.get_json()
+        assert 'live_refresh' not in saved['config']['display']['vegas_scroll']
+
+    def test_live_updates_can_be_switched_off_and_on(self, api_v3_client, saved):
+        resp = _post_json(api_v3_client, {'vegas_live_refresh': False})
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['display']['vegas_scroll']['live_refresh'] is False
+        resp = _post_json(api_v3_client, {'__form_section': 'display',
+                                          'vegas_scroll_speed': '50',
+                                          'vegas_live_refresh': 'on'})
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['display']['vegas_scroll']['live_refresh'] is True
+
+    def test_live_games_can_be_kept_in_the_ticker_or_not(self, api_v3_client, saved):
+        resp = _post_json(api_v3_client, {'vegas_live_in_ticker': False})
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['display']['vegas_scroll']['live_in_ticker'] is False
+        # An unticked box is absent from a submitted form: that is false too.
+        resp = _post_json(api_v3_client, {'__form_section': 'display',
+                                          'vegas_scroll_speed': '50',
+                                          'vegas_live_in_ticker': 'on'})
+        assert saved['config']['display']['vegas_scroll']['live_in_ticker'] is True
+        resp = _post_json(api_v3_client, {'__form_section': 'display',
+                                          'vegas_scroll_speed': '50'})
+        assert resp.status_code == 200, resp.get_json()
+        assert saved['config']['display']['vegas_scroll']['live_in_ticker'] is False
+
     def test_double_sided_axis_only_keeps_enabled(self, api_v3_client, saved):
         resp = _post_json(api_v3_client, {'double_sided_axis': 'horizontal'})
         assert resp.status_code == 200, resp.get_json()

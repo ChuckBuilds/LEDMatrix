@@ -835,6 +835,10 @@ if [ ! -f "$PROJECT_ROOT_DIR/config/config.json" ]; then
         cat > "$PROJECT_ROOT_DIR/config/config.json" <<'EOF'
 {
     "web_display_autostart": true,
+    "auto_update": {
+        "enabled": false,
+        "channel": "stable"
+    },
     "timezone": "America/Chicago",
     "display": {
         "hardware": {

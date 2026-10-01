@@ -2206,7 +2206,7 @@ class DisplayController:
         """Whether live content should stay in the ticker instead of preempting it."""
         coordinator = self.vegas_coordinator
         config = getattr(coordinator, 'vegas_config', None)
-        return bool(getattr(config, 'live_in_ticker', False))
+        return bool(getattr(config, 'live_in_ticker', True))
 
     def _check_live_priority(self, advance=False):
         """Return the live-priority mode to display, or None if nothing is live.

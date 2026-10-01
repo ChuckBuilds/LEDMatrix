@@ -40,11 +40,16 @@ Rules for the package:
 | [`sports_card`](#sports_card) | Scoreboard card settings, colours, fonts, dates | Yes (scoreboards) | 3.3.0 |
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
+| [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | Unreleased |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
+| [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | Unreleased |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
+| [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | Unreleased |
+| [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | Unreleased |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
+| [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
 | [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
@@ -238,6 +243,16 @@ The colour helpers are free functions (`logo_palette()`, `lift_color()`,
 `mix_color()`, ...). Deciding *when* to celebrate stays in the plugin, which
 builds the celebration dict the docstring describes.
 
+### sports_display_rules
+
+[`sports_display_rules.py`](sports_display_rules.py). Two `SportsCore`
+mixins: `SportsCardOptionsMixin` (`_card_option()`, which never lets the
+upcoming scorebug lose both its date and time, and `_recent_date_text()`;
+list it before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+(`_filtered_or_all()`, the no-favourites quality filter that fails open, and
+`_effective_live_duration()`, the shorter dwell for a non-favourite live
+game).
+
 ### sports_fetch
 
 [`sports_fetch.py`](sports_fetch.py). `SportsFetchMixin`: the `SportsCore`
@@ -245,6 +260,13 @@ methods that decide which requests a scoreboard makes --
 `_fetch_season_directly()` (a season, in chunks ESPN accepts),
 `_background_fetches_espn_ranges()`, `_needs_previous_day()` (the live
 lookback) and `_wants_live_odds()` (odds only for games near the screen).
+
+### sports_font_path
+
+[`sports_font_path.py`](sports_font_path.py). `resolve_font_path(path)`: the
+path as given when it exists (relative to the cwd), else
+`font_layout.resolve_asset_path(path)`. What the scoreboards'
+`_resolve_font_path` copies return on a core that ships it.
 
 ### sports_game_renderer
 
@@ -263,6 +285,25 @@ what differs.
 `_odds_color` and `_upcoming_date_and_time_text` under their existing names.
 Nothing in core uses it.
 
+### sports_live_scroll
+
+[`sports_live_scroll.py`](sports_live_scroll.py). `SportsLiveScrollMixin`:
+keeps a live scroll strip current. It fingerprints the live games (the clock
+and the display pipeline's own keys excluded, via the host's
+`LIVE_VOLATILE_FIELDS`), rebuilds when they change, rate-limited by what a
+rebuild costs, and `_preserving_scroll_position()` keeps the marquee where
+it was. Pairs with `SportsPluginHostMixin`, whose `_dispatch_switch_refresh()`
+it uses.
+
+### sports_plugin_host
+
+[`sports_plugin_host.py`](sports_plugin_host.py). `SportsPluginHostMixin`:
+helpers of a scoreboard's `BasePlugin` subclass. `get_vegas_priority_weight()`
+(more Vegas slots while a favourite plays, found across every plugin's data
+shape), `_dispatch_switch_refresh()` (a manager refresh on a daemon thread, so
+`display()` never waits on the network), `get_vegas_content_type()` and small
+dynamic-duration helpers. List it before `BasePlugin`.
+
 ### sports_scroll
 
 [`sports_scroll.py`](sports_scroll.py). `SportsScrollDisplay` and
@@ -279,6 +320,17 @@ that were identical in every scoreboard (game selection and rotation,
 fonts, colours, dates, the switch-mode upcoming card). The docstring lists
 the attributes the host class must have and the three methods deliberately
 left out.
+
+### sports_vegas
+
+[`sports_vegas.py`](sports_vegas.py). What a scoreboard needs for live Vegas
+cards (one element per game, swapped in place while it scrolls):
+`game_key()`, `game_fingerprint()`, `dedupe_games()`, `VegasCardCache` (draws
+a card only when its fingerprint changes), `StickyOdds` (keeps a card's odds
+through a live poll that left them out), and `finished_games()` /
+`with_finished_games()` (a game that just went final keeps its card, showing
+FINAL). `SportsScrollDisplay.build_vegas_elements()` in `sports_scroll` puts
+them together; a scoreboard not built on it (UFC) uses them directly.
 
 ### sports_timezone
 

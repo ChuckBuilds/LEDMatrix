@@ -904,6 +904,23 @@
     ]
   ],
   [
+    "/api/v3/system/update-channel",
+    "api_v3.get_update_channel",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
+    "/api/v3/system/update-channel",
+    "api_v3.set_update_channel",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
     "/api/v3/system/version",
     "api_v3.get_system_version",
     [

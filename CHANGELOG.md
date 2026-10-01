@@ -19,6 +19,57 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: ES modules and one form model (stage 1)
+
+- The web UI gains a native ES-module layer, loaded with
+  `<script type="module">` and served as-is (no bundler, nothing built on
+  the Pi): `static/v3/js/core/` (`boot.js`, `registry.js`, `api.js`,
+  `facade.js`) and `static/v3/js/pages/`. `window.LEDMatrix` is its one
+  global: `api`, `pages`, `notify`, `escape`, `widgets` and `deprecate`, the
+  last keeping old `window.*` names working as aliases that warn once.
+- Tab partials can become page modules: a partial whose root says
+  `data-page="<name>"` carries no inline script, and the page registry calls
+  the page's `init` once when htmx swaps it in and `destroy` when it is
+  swapped out, aborting a signal that removes its listeners and cancels its
+  requests. The Cache tab is converted as the reference
+  (`js/pages/cache.js`); `window.deleteCacheFile` remains as an alias.
+- Static `.js` files are always served as `text/javascript`, which module
+  scripts require, and a `.js` request without the `?v=` content version
+  (how modules import each other) is revalidated instead of cached as
+  immutable for a year.
+- `src/plugin_system/field_model.py`: `build_field_model(schema, config)`
+  describes a plugin's config form as one JSON field model. Nothing renders
+  from it yet; `test/test_field_model_parity.py` checks it names exactly the
+  form controls and starting values the `render_field` macro emits, for every
+  schema available (all 46 official plugins, when a checkout is present).
+- `docs/WEB_FRONTEND_ARCHITECTURE.md`: the target architecture, the
+  page-by-page migration order, and how forms switch to the model and to
+  JSON submit behind a flag.
+
+### Update channels
+
+- Devices no longer pick up every merge to `main`. A new setting,
+  `auto_update.channel`, picks what Update Code and the weekly automatic
+  update install: `stable` follows the newest release tag (`vX.Y.Z` by
+  semantic version; pre-releases and other tags are ignored) and checks it
+  out with a detached HEAD, and `beta` follows `main` as every device did
+  before. New installs default to `stable` (config template and installer).
+- Nobody is moved backwards. A device running code newer than the newest
+  release, which is any device that pulled `main` since that release, keeps
+  following `main` until a release contains its commit, then moves to it and
+  follows releases. A config written before channels existed behaves the
+  same way and is saved as `stable` when that move happens. Switching from
+  beta to stable says so instead of installing an older version.
+- Switch channels on the General tab (Update Channel, under Automatic
+  Updates) or with `GET`/`POST /api/v3/system/update-channel`. The Overview
+  update banner compares release tags on stable ("LEDMatrix v3.8.0 is
+  available") rather than commits on `main`. A detached checkout newer
+  than the newest release gets no banner: Update Code leaves it where it
+  is until a release includes it.
+- A move between `main` and a release tag carries local edits across as the
+  pull's `--autostash` does, and the automatic update's health check rolls
+  it back to where HEAD was: the branch, or the detached release.
+
 ### Frozen-panel detection
 
 A render loop stuck inside a plugin's `display()` left `ledmatrix.service`
@@ -315,9 +366,128 @@ read any of them:
   lock stays busy past the same 5s bound the change is handed to the update
   worker, which applies the latest one as soon as the lock frees, and before
   the plugin's next update() at the latest. The plugin API is unchanged.
+- With a Vegas width budget set (`max_plugin_width_ratio` or a plugin's
+  `vegas_max_width_screens`), a single image over the budget with no gaps
+  between items -- a map, one long headline -- no longer takes a pass of its
+  own showing four blank columns. The cut landed in the middle of the blank
+  margin trimming leaves at the image's edge; margins are no longer cut
+  points, so such an image is cropped to the budget as intended.
+
+### Live Vegas elements (plugin API)
+
+- New plugin hooks for content that can change while it scrolls:
+  `BasePlugin.get_vegas_elements()` returns `VegasElement`s -- named,
+  fixed-width pieces of Vegas content -- instead of pictures;
+  `redraw_vegas_element(key, width, height, at)` redraws one without the
+  plugin lock for content that changes with time; and
+  `notify_vegas_data_changed()` reports data that arrived outside
+  `update()`. New module `src/plugin_system/vegas_elements.py`
+  (`VegasElement`, also re-exported from `base_plugin`). See "Live Vegas
+  elements" in `docs/PLUGIN_API_REFERENCE.md`.
+- The ticker asks a plugin that implements the hook for elements on its
+  background fetch (under the plugin's lock, on a canvas of its own) and
+  records where each one lands in the strip, in absolute columns a trim does
+  not move (`src/vegas_mode/elements.py`). Live elements are never trimmed to
+  their ink: each is padded with `content_padding` black columns either side.
+  Every other path -- the first strip, the render-thread fallback, plugins
+  without the hook -- is unchanged. Swapping redraws into the strip builds
+  on this.
+- `PluginManager.add_update_listener()` / `remove_update_listener()` /
+  `notify_data_changed()`: a listener hears a plugin id the moment its
+  `update()` completes, rather than at the next ~4s Vegas poll.
+- New `display.vegas_scroll` settings: `live_refresh` (default `true`; the
+  kill switch), `live_max_hz`, `live_min_interval`, `live_lead_screens`, and
+  a per-plugin core-owned `vegas_live`. Live elements are off whatever these
+  say under multi-display sync, in swap mode and with `offscreen_prefetch`
+  off.
+- `scripts/check_plugin.py` checks the element contract for any plugin that
+  implements it (`src/plugin_system/testing/vegas.py`), and
+  `test/fixtures/plugins/vegas-live-stub` is a working example.
+- **Live elements update in place.** When a plugin's `update()` completes,
+  one background worker (`src/vegas_mode/live_worker.py`) redraws its live
+  elements that are on or ahead of the screen, nearest first, and hands the
+  ones whose pixels changed to the render thread, which copies them into the
+  strip between two frames (`RenderPipeline.apply_live_patches`,
+  `ScrollHelper.patch_columns`): at most four patches or two screens of bytes
+  a frame, no drawing and no locks on the render thread. Elements with
+  `refresh_hz` are redrawn that often while near the screen, through the
+  plugin's lock-free `redraw_vegas_element()`. The worker also takes over
+  group prefetching once the strip holds a live element, so one thread
+  still does all the drawing; it runs inside the render gate, starts only
+  when a live element is placed, and is restarted if it dies (three times in
+  ten minutes turns live updates off for the run). While live elements exist,
+  the Vegas update tick runs every second instead of every four.
+- Web UI: "Update live content while it scrolls" under Vegas mode's Cycle
+  Pacing (`display.vegas_scroll.live_refresh`).
+- **Live cards for the scoreboards (shared code).** New module
+  `src/common/sports_vegas.py`: `game_key()`, `dedupe_games()`,
+  `VegasCardCache` (draws a card only when its fingerprint changes) and
+  `StickyOdds` (keeps a card's odds through a live poll that left them out),
+  `finished_games()` and `with_finished_games()` (a game that just went final
+  keeps its card, showing FINAL, where its live card was).
+  `SportsScrollDisplay` gains `make_vegas_renderer()` (the override point; a
+  sport that does not implement it keeps its ordinary Vegas content),
+  `render_vegas_card()`, `vegas_separator()` and `build_vegas_elements()`,
+  and `SportsScrollDisplayManager` gains `get_vegas_elements_for()`.
+  `SportsLiveSharedMixin` gains `_record_finished_game()` /
+  `finished_games_snapshot()`, so a game that goes final keeps a card to show
+  FINAL on until the hourly recent list takes it over.
+- `scripts/render_plugin.py --vegas` renders a plugin's block of the Vegas
+  strip as the ticker lays it out (live elements, or with `--no-live` its
+  ordinary content) and writes the live elements' keys and columns beside
+  it. `--timeline ROWS` stacks the block at successive moments as the
+  ticker would update it in place (`--timeline-step`, and
+  `--timeline-update` to run `update()` between rows).
+  `render_vegas_strip()` and `render_vegas_timeline()` in
+  `src/plugin_system/testing/vegas.py`; the join is now
+  `render_pipeline.join_plugin_rows()`.
+- **Behaviour change: live games stay in the Vegas ticker by default.**
+  `display.vegas_scroll.live_in_ticker` now defaults to `true`: the marquee
+  keeps running through a live game, which takes extra turns in it, instead
+  of giving way to the full-screen scoreboard. Existing configs all held the
+  old `false`, copied from the template, so the first start turns it on once
+  (`ConfigManager._migrate_live_in_ticker_default`; the previous config is
+  kept as `config.json.backup` and `live_in_ticker_migrated` records that it
+  ran). To keep the full-screen scoreboard, untick the new **Keep live games
+  in the ticker** under Vegas mode; a `false` set after the migration stays.
+
+### Scrolling
+
+- A Vegas strip extension no longer costs a late frame. Appending the next
+  group rebuilt the whole strip (`np.concatenate`, 2-2.6ms for a 10-14k px
+  strip at 512x64 on a Pi 4) and trimming copied what was left (1.2-1.8ms),
+  so on hdpi every extension frame missed its refresh. The strip now lives in
+  a buffer with spare room (`ScrollHelper.STRIP_SPARE_FACTOR`): an append
+  writes only the new columns (~0.2ms), a trim only moves the start, and the
+  one full copy happens when the buffer is reallocated, about once every two
+  strip-lengths scrolled. A strip set from outside (the multi-display
+  follower's) is never written through.
+- A Vegas strip extension costs the render thread about a third of what it
+  did. Appending the next group and trimming what has scrolled past each
+  rebuilt the strip's PIL image from its numpy array in full
+  (`Image.fromarray`: 1.7ms for an 8,000px strip, 3.8ms for 20,000px, on a
+  Pi 4 -- twice per extension), though every frame is cut from the array and
+  nothing on the frame path reads the image's pixels. `ScrollHelper` now
+  builds `cached_image` only when something reads it, which in Vegas means
+  only a multi-display sync push, and the strip is no longer held in memory
+  twice. Assigning `cached_image` still stores exactly what was assigned.
+  New `ScrollHelper.has_strip()` says whether there is a strip without
+  building its image; the frame path and Vegas use it.
 
 ### Tooling
 
+- The frame-timing recorder says which render-thread work a late frame
+  followed. Work done between two frames calls
+  `FrameTimingRecorder.note_op(kind, nbytes)` and the next presented frame
+  carries the tag; the stats gain `op_frames`, `late_op_frames`, `op_freezes`
+  and `op_bytes` per kind (additive; the file's schema version is unchanged).
+  Vegas tags every strip `compose` and `extend`, and `frame_soak.py` prints an
+  "after work" table with each kind's own late rate.
+  `scripts/render_bench.py` can drive the same work on a panel with nothing
+  else running: `--strip-screens` for a Vegas-sized strip, `--patch-bytes /
+  --patch-every / --patch-where` for in-place column writes, and
+  `--extend-every-screens` for appending and trimming on a fixed cadence.
+  See "Soaking a rig" in `docs/SCROLL_PERFORMANCE.md`.
 - `scripts/sports_drift_report.py`: for a ledmatrix-plugins checkout, counts
   how many different bodies each method family has across the nine
   scoreboards' `sports.py`, `manager.py` and `game_renderer.py`, lists the
@@ -373,6 +543,38 @@ read any of them:
 - Plugin `web_ui/` pages no longer load Tailwind from a CDN, which failed
   in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
   with the v2 palette they were written against.
+
+### New modules (sports consolidation stage 4)
+
+A plugin may import these via `src.*` once it floors on the release that
+ships them (the first release cut from this section). All four hold code the
+scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
+`56c4f15`), moved without behaviour change under the plugins' own names;
+each docstring lists what the host class must provide. Nothing in core uses
+them yet. The plugins delete their copies when they floor on that release.
+
+- `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
+  of the scoreboard plugin class (`manager.py`) identical in all nine:
+  `_dispatch_switch_refresh` (with `_SWITCH_REFRESH_MIN_GAP_SECONDS`),
+  `get_vegas_priority_weight`, `_favorite_team_is_live`,
+  `_favorite_scan_targets`, `_favorite_scan_games`, `_game_involves`,
+  `get_vegas_content_type`, `_dynamic_feature_enabled`,
+  `_get_total_games_for_manager` and `_build_manager_key`. List it before
+  `BasePlugin`: two of these override its defaults.
+- `src/common/sports_live_scroll.py` — `SportsLiveScrollMixin`, the eight
+  `manager.py` methods that rebuild a live scroll strip mid-cycle without
+  moving the marquee (`_live_scroll_needs_rebuild`,
+  `_preserving_scroll_position`, ...), with `LIVE_SCROLL_REBUILD_MIN_SECONDS`
+  and `LIVE_SCROLL_REBUILD_DUTY_DIVISOR`; identical in the eight scoreboards
+  with a strip (not ufc). `LIVE_VOLATILE_FIELDS` stays in each plugin.
+- `src/common/sports_display_rules.py` — `SportsCardOptionsMixin`
+  (`_card_option`, `_recent_date_text`; the eight team scoreboards; list it
+  before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+  (`_filtered_or_all`, `_effective_live_duration`; all nine).
+- `src/common/sports_font_path.py` — `resolve_font_path`, what every
+  scoreboard's `_resolve_font_path` (nine `sports.py`, eight
+  `game_renderer.py`) returns on a core that ships it: the path as given when
+  it exists, else `font_layout.resolve_asset_path`.
 
 ## 3.7.0
 
