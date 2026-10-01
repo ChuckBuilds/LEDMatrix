@@ -401,6 +401,20 @@ read any of them:
 
 ### Tooling
 
+- Golden trace tests for the display loop. `test/test_run_loop_golden.py`
+  runs the real `DisplayController.run()` against fake plugins on a fake
+  clock (`test/_run_loop_harness.py`), with no hardware and no real sleeps,
+  and compares which mode was shown, for how long and why it
+  ended with `test/fixtures/run_loop_golden/`. It has 15 scenarios: rotation,
+  empty and failing modes, dynamic duration, live priority, on-demand
+  (including pinned and resumed after a restart), the schedule and dim
+  schedule, WiFi notices, sync follower and Vegas. The whole file runs in
+  about a second. This is stage 1 of restructuring `run()`, described in
+  `docs/RUN_LOOP_REDESIGN.md`. The other part of stage 1 is internal and
+  changes no behaviour: twelve blocks of `run()` move into named helpers
+  (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
+  `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
+  identical before and after the move.
 - The frame-timing recorder says which render-thread work a late frame
   followed. Work done between two frames calls
   `FrameTimingRecorder.note_op(kind, nbytes)` and the next presented frame

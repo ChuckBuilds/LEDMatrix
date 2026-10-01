@@ -181,7 +181,8 @@ the scheduler), and sets up Vegas mode.
 enable/disable, poll on-demand requests, run scheduled plugin updates, check
 the on/off schedule and brightness, then show one screen. Priority is
 on-demand, then WiFi status messages, then live priority, then Vegas mode,
-then normal rotation.
+then normal rotation. [RUN_LOOP_REDESIGN.md](RUN_LOOP_REDESIGN.md) is the
+plan for restructuring this loop and lists its golden trace tests.
 
 - **Rotation.** `available_modes` is the ordered list of display modes;
   `current_mode_index` advances after each screen.
