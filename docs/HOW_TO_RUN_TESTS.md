@@ -170,6 +170,31 @@ pytest test/test_config_manager.py
 pytest
 ```
 
+### Web UI JavaScript Tests
+
+The suites in `test/js` need node; the DOM ones also need jsdom and a running
+web interface (details in [`test/js/README.md`](../test/js/README.md)):
+
+```bash
+npm install --no-audit --no-fund --prefix test/js   # jsdom; node_modules is gitignored
+EMULATOR=true python3 web_interface/app.py           # in another shell
+BASE=http://localhost:5000 REQUIRE_DOM=1 node test/js/run_all.js
+```
+
+`pytest test/test_js_unit_suites.py` runs just the unit suites.
+
+### Plugin Config Form Parity
+
+`test/test_field_model_parity.py` checks `build_field_model` against the
+`render_field` macro for every plugin schema it finds
+([WEB_FRONTEND_ARCHITECTURE.md](WEB_FRONTEND_ARCHITECTURE.md)). It always
+covers `plugin-repos/` and the test fixtures; point it at a checkout of the
+official plugins to cover those too:
+
+```bash
+LEDMATRIX_MONOREPO_PLUGINS=../ledmatrix-plugins/plugins pytest test/test_field_model_parity.py
+```
+
 ### Debug a Failing Test
 
 ```bash

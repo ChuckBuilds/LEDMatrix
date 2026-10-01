@@ -1,6 +1,7 @@
 from flask import Flask, request, redirect, url_for, jsonify, Response, send_from_directory
 import json
 import logging
+import mimetypes
 import os
 import queue
 import re
@@ -48,6 +49,15 @@ _VCGENCMD = shutil.which('vcgencmd')
 
 from web_interface import display_preview
 from web_interface.system_metrics import collect_system_metrics
+
+# Static files get their Content-Type from the mimetypes table, which reads the
+# host's own files (/etc/mime.types, the Windows registry). Browsers refuse to
+# run a <script type="module"> served as anything but JavaScript (the
+# static/v3/js/core and js/pages modules), and X-Content-Type-Options: nosniff
+# below makes them strict about classic scripts too. Pin it rather than trust
+# whatever the host says.
+mimetypes.add_type('text/javascript', '.js')
+mimetypes.add_type('text/javascript', '.mjs')
 
 # Create Flask app
 app = Flask(__name__)
@@ -618,6 +628,13 @@ def _apply_gzip(response, compressed):
     return response
 
 
+def _is_unversioned_static_script():
+    """A /static/ .js or .mjs request with no ``v`` (content version) parameter."""
+    return (request.path.startswith('/static/')
+            and request.path.endswith(('.js', '.mjs'))
+            and 'v' not in request.args)
+
+
 # Add security headers and caching to all responses
 @app.after_request
 def add_security_headers(response):
@@ -629,7 +646,14 @@ def add_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
     # Add caching headers for static assets
-    if request.path.startswith(_VERSIONED_ASSET_PREFIXES):
+    if _is_unversioned_static_script():
+        # A script requested without the ?v= content version. ES modules
+        # (static/v3/js/core, js/pages) import each other by plain relative
+        # URL, which url_for never sees, so a year-long immutable copy would
+        # keep running the old module after an update. Let the browser keep
+        # it but revalidate (a 304 when unchanged).
+        response.headers['Cache-Control'] = 'no-cache'
+    elif request.path.startswith(_VERSIONED_ASSET_PREFIXES):
         # Cache static assets for 1 year (with versioning via query params)
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         response.headers['Expires'] = (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')

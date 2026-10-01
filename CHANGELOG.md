@@ -19,6 +19,33 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: ES modules and one form model (stage 1)
+
+- The web UI gains a native ES-module layer, loaded with
+  `<script type="module">` and served as-is (no bundler, nothing built on
+  the Pi): `static/v3/js/core/` (`boot.js`, `registry.js`, `api.js`,
+  `facade.js`) and `static/v3/js/pages/`. `window.LEDMatrix` is its one
+  global: `api`, `pages`, `notify`, `escape`, `widgets` and `deprecate`, the
+  last keeping old `window.*` names working as aliases that warn once.
+- Tab partials can become page modules: a partial whose root says
+  `data-page="<name>"` carries no inline script, and the page registry calls
+  the page's `init` once when htmx swaps it in and `destroy` when it is
+  swapped out, aborting a signal that removes its listeners and cancels its
+  requests. The Cache tab is converted as the reference
+  (`js/pages/cache.js`); `window.deleteCacheFile` remains as an alias.
+- Static `.js` files are always served as `text/javascript`, which module
+  scripts require, and a `.js` request without the `?v=` content version
+  (how modules import each other) is revalidated instead of cached as
+  immutable for a year.
+- `src/plugin_system/field_model.py`: `build_field_model(schema, config)`
+  describes a plugin's config form as one JSON field model. Nothing renders
+  from it yet; `test/test_field_model_parity.py` checks it names exactly the
+  form controls and starting values the `render_field` macro emits, for every
+  schema available (all 46 official plugins, when a checkout is present).
+- `docs/WEB_FRONTEND_ARCHITECTURE.md`: the target architecture, the
+  page-by-page migration order, and how forms switch to the model and to
+  JSON submit behind a flag.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,

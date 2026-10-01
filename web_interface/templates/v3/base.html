@@ -228,6 +228,9 @@
                         el.setAttribute('data-loaded', 'true');
                         if (typeof htmx !== 'undefined') htmx.process(el);
                         if (window.Alpine) window.Alpine.initTree(el);
+                        // No htmx swap events here, so start converted pages
+                        // (data-page roots) directly; see js/core/registry.js.
+                        if (window.LEDMatrix && window.LEDMatrix.pages) window.LEDMatrix.pages.refresh();
                         if (id === 'plugins-content' && window.initPluginsPage) {
                             if (window.pluginManager) {
                                 window.pluginManager.initialized = false;
@@ -948,7 +951,15 @@
          or when a card is clicked, so it must follow all of them. No other
          script defines the same globals. -->
     <script src="{{ url_for('static', filename='v3/plugins_manager.js') }}" defer></script>
-    
+
+    <!-- ES modules: window.LEDMatrix and the page lifecycle (js/core/), and
+         the converted tab pages (js/pages/), loaded on first use. Module
+         scripts are deferred like the scripts above and run after them; they
+         rely on none of them at load time, and a tab partial that arrived
+         first is started when the registry starts. Served as-is, no bundler:
+         see docs/WEB_FRONTEND_ARCHITECTURE.md. -->
+    <script type="module" src="{{ url_for('static', filename='v3/js/core/boot.js') }}"></script>
+
     <!-- Custom feeds table helpers live in js/widgets/custom-feeds.js (the
          deferred widget's window assignments always shadowed the inline
          copies that used to sit here, so the duplicates were removed) -->
