@@ -498,8 +498,10 @@ class SportsScrollDisplay:
         if key not in memo:
             memo[key] = self.make_vegas_renderer(card_width, rankings_cache)
         renderer = memo[key]
-        if rankings_cache and hasattr(renderer, 'set_rankings_cache'):
-            renderer.set_rankings_cache(rankings_cache)
+        if hasattr(renderer, 'set_rankings_cache'):
+            # Every time, empty included: the renderer is reused across
+            # slates, and ranks cleared since must not stay drawn.
+            renderer.set_rankings_cache(rankings_cache or {})
         return renderer
 
     def build_vegas_elements(

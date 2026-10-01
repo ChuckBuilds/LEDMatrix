@@ -405,3 +405,11 @@ def test_the_default_card_type_follows_the_game_state(state, expected):
     display = _display()
     display.build_vegas_elements([_game("1", state=state)], ["nfl"], fingerprint=_fp)
     assert display.renderer.calls[0][1] == expected
+
+
+def test_ranks_cleared_since_are_not_kept_by_the_reused_renderer():
+    display = _display()
+    display.build_vegas_elements([_game("1")], ["nfl"], {"HOM": 5}, fingerprint=_fp)
+    assert display.renderer.rankings == {"HOM": 5}
+    display.build_vegas_elements([_game("1")], ["nfl"], None, fingerprint=_fp)
+    assert display.renderer.rankings == {}
