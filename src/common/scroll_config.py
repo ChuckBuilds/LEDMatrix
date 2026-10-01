@@ -157,7 +157,9 @@ def crisp_ladder(
 #: when 30 was asked for -- being 11% slow is worth far less than looking bad.
 _STEP_PENALTY = 0.05
 _SLOW_FPS_PENALTY = 0.25   # below 20fps
-_LOWISH_FPS_PENALTY = 0.16  # below 25fps
+_LOWISH_FPS_PENALTY = 0.16  # below 30fps, i.e. "slightly stepped"
+# Up to 30fps, matching CrispSpeed.steppiness: a measured 125.7Hz panel makes
+# 50.3px/s (2px every 5 refreshes) 25.1fps, which a 25fps cutoff let through.
 # 0.16, not less: asked for 50px/s on a 120Hz panel, 48px/s (2px every 5
 # refreshes, 24fps) costs 0.04 + 0.05 + this, and has to lose to both 60px/s
 # and 40px/s (1px, smooth, 20% off = 0.20). At 0.10 it won and shipped a
@@ -177,7 +179,7 @@ def _quality_cost(candidate: "CrispSpeed", target: float) -> float:
     fps = candidate.frames_per_second
     if fps < 20:
         cost += _SLOW_FPS_PENALTY
-    elif fps < 25:
+    elif fps < 30:
         cost += _LOWISH_FPS_PENALTY
     return cost
 

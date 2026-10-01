@@ -498,3 +498,9 @@ class TestSpeedAdvice:
     def test_a_whole_number_near_the_panels_speed_counts_as_exact(self):
         """The UI sends 63 for a 62.9 px/s panel."""
         assert speed_advice(63, 125.74)["exact"]
+
+    def test_a_measured_rate_does_not_let_a_stepped_speed_through(self):
+        """125.74Hz: 50.3px/s is 2px every 5 refreshes at 25.1fps."""
+        got = solve_crisp(50, 125.74)
+        assert got.steppiness == "smooth"
+        assert got.pixels_per_frame == 1
