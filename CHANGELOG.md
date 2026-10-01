@@ -418,6 +418,15 @@ read any of them:
 
 ### Scrolling
 
+- A Vegas strip extension no longer costs a late frame. Appending the next
+  group rebuilt the whole strip (`np.concatenate`, 2-2.6ms for a 10-14k px
+  strip at 512x64 on a Pi 4) and trimming copied what was left (1.2-1.8ms),
+  so on hdpi every extension frame missed its refresh. The strip now lives in
+  a buffer with spare room (`ScrollHelper.STRIP_SPARE_FACTOR`): an append
+  writes only the new columns (~0.2ms), a trim only moves the start, and the
+  one full copy happens when the buffer is reallocated, about once every two
+  strip-lengths scrolled. A strip set from outside (the multi-display
+  follower's) is never written through.
 - A Vegas strip extension costs the render thread about a third of what it
   did. Appending the next group and trimming what has scrolled past each
   rebuilt the strip's PIL image from its numpy array in full
