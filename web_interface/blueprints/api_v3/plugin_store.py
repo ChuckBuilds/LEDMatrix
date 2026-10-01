@@ -7,7 +7,7 @@ so their endpoint names do not depend on which module they live in.
 from web_interface.blueprints.api_v3 import (
     ErrorCode, OperationType, Path, _do_transactional_uninstall,
     _non_plugin_id_error, _get_plugin_version, _plugin_directory,
-    _plugin_enabled_in_config, _store_restart_fields, api_v3,
+    _plugin_enabled_in_config, _reload_after_store_update, _store_restart_fields, api_v3,
     error_response, exception_error_response, json, jsonify, logger,
     request, success_response, validate_request_json,
 )
@@ -181,12 +181,20 @@ def update_plugin():
         if success:
             updated_last_updated = current_last_updated
             updated_version = current_version
+            # The id the display knows the plugin by (and keys its config
+            # section on) is the manifest's, which can differ from the
+            # store id this route was given (an alias such as weather /
+            # ledmatrix-weather).
+            display_plugin_id = plugin_id
             try:
                 if manifest_path is not None and manifest_path.exists():
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
                         updated_last_updated = manifest.get('last_updated', current_last_updated)
                         updated_version = manifest.get('version', current_version)
+                        manifest_id = manifest.get('id')
+                        if isinstance(manifest_id, str) and safe_path_component(manifest_id):
+                            display_plugin_id = manifest_id
             except Exception as e:
                 logger.debug("Could not read updated manifest after update: %s", e)
 
@@ -230,11 +238,18 @@ def update_plugin():
                 api_v3.schema_manager.invalidate_cache(plugin_id)
 
             # Rediscover plugins. The web process runs no plugin code, so
-            # there is nothing here to reload: the display keeps running the
-            # version it loaded until it restarts, which restart_required
-            # below asks for.
+            # there is nothing to reload here: the display reloads it, asked
+            # over the control socket below, or keeps running the version it
+            # loaded until a restart, which restart_required then asks for.
             if api_v3.plugin_catalog:
                 api_v3.plugin_catalog.discover_plugins()
+
+            restart_fields = _reload_after_store_update(
+                display_plugin_id,
+                _store_restart_fields('update', _plugin_enabled_in_config(display_plugin_id),
+                                      changed=update_status == 'updated'))
+            if restart_fields.get('reloaded'):
+                message += '; the display is running the new version'
 
             # Record in history (the only record of when it was updated;
             # the version is the manifest on disk).
@@ -260,9 +275,7 @@ def update_plugin():
                     'update_status': update_status
                 },
                 message=message,
-                extra=_store_restart_fields(
-                    'update', _plugin_enabled_in_config(plugin_id),
-                    changed=update_status == 'updated'),
+                extra=restart_fields,
             )
         else:
             refusal = _compatibility_refusal(plugin_id)

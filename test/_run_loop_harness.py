@@ -391,8 +391,9 @@ class FakeVegas:
 
     run_iteration() renders frames at 125 Hz on the fake clock for
     ``cycle`` seconds and returns True, or returns False as soon as the
-    interrupt checker (every 10 frames) or the live-priority checker (every
-    0.25 s) asks it to yield -- the same cadence the real coordinator uses.
+    interrupt checker (every 10 frames, or at the next frame when the
+    ``urgent`` test says so) or the live-priority checker (every 0.25 s)
+    asks it to yield -- the same cadence the real coordinator uses.
     A live-priority pause is lifted by the next call, as in the real one.
     """
 
@@ -408,14 +409,16 @@ class FakeVegas:
         self.vegas_config = SimpleNamespace(live_in_ticker=live_in_ticker)
         self.render_pipeline = None
         self._interrupt: Optional[Callable[[], bool]] = None
+        self._urgent: Optional[Callable[[], bool]] = None
         self._live: Optional[Callable[[], Any]] = None
         self._paused_for_live = False
 
     def set_live_priority_checker(self, fn):
         self._live = fn
 
-    def set_interrupt_checker(self, fn, check_interval=10):
+    def set_interrupt_checker(self, fn, check_interval=10, urgent=None):
         self._interrupt = fn
+        self._urgent = urgent
 
     def apply_pending_config_if_idle(self):
         pass
@@ -444,11 +447,66 @@ class FakeVegas:
             h.log("vegas-frame", None, quiet=True)
             clock.sleep(self.FRAME)
             frames += 1
-            if self._interrupt and frames % self.INTERRUPT_EVERY == 0 and self._interrupt():
+            due = frames % self.INTERRUPT_EVERY == 0 or (self._urgent and self._urgent())
+            if self._interrupt and due and self._interrupt():
                 h.log("vegas-interrupt")
                 return False
             if clock.now - start >= self.cycle:
                 return True
+
+
+class FakeControlServer:
+    """The ControlServer surface run() uses (src/ipc/server.py), on the fake clock.
+
+    ``post()`` queues a real QueuedCommand when the clock reaches ``t``, as a
+    connection thread would. ``wait_for_command`` advances the clock to the
+    first of: a command being queued, or the timeout -- the timed Event wait
+    the real server does, without threads.
+    """
+
+    def __init__(self, harness: "RunLoopHarness"):
+        self._h = harness
+        self.queue: List[Any] = []
+        self.posted: List[Any] = []
+        self.closed = False
+
+    @property
+    def has_pending(self) -> bool:
+        return bool(self.queue)
+
+    def drain(self) -> List[Any]:
+        out, self.queue = self.queue, []
+        return out
+
+    def wait_for_command(self, timeout: float) -> bool:
+        clock = self._h.clock
+        target = clock.now + max(0.0, timeout)
+        while not self.queue:
+            nxt = clock._alarms[0][0] if clock._alarms else None
+            if nxt is None or nxt > target:
+                clock.sleep(target - clock.now)
+                return bool(self.queue)
+            clock.sleep(max(0.0, nxt - clock.now))
+        return True
+
+    def post(self, t: float, cmd: str, args: Dict[str, Any], request_id: str = "sock"):
+        from src.ipc.contract import AWAITED_COMMANDS, parse_args
+        from src.ipc.server import CommandOutcome, QueuedCommand
+
+        command = QueuedCommand(
+            request_id=request_id, cmd=cmd, args=parse_args(cmd, args),  # type: ignore[arg-type]
+            received_at=0.0,
+            outcome=CommandOutcome() if cmd in AWAITED_COMMANDS else None)
+        self.posted.append(command)
+
+        def enqueue():
+            self._h.log("socket", cmd)
+            self.queue.append(command)
+        self._h.clock.at(t, enqueue)
+        return command
+
+    def close(self):
+        self.closed = True
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +727,12 @@ class RunLoopHarness:
                 encoding="utf-8")
         self.clock.at(t, write)
 
+    def control_socket(self) -> FakeControlServer:
+        """Serve the control socket (a FakeControlServer) for this run."""
+        server = FakeControlServer(self)
+        self.controller._control_server = server
+        return server
+
     def enable_vegas(self, cycle: float = 30.0, live_in_ticker: bool = False) -> FakeVegas:
         """Install FakeVegas, wired up as _initialize_vegas_mode wires the real one."""
         dc = self.controller
@@ -676,7 +740,7 @@ class RunLoopHarness:
         vegas.set_live_priority_checker(dc._check_live_priority)
         vegas.set_interrupt_checker(
             lambda: dc._check_vegas_interrupt() or dc.sync_manager.is_follower_active(),
-            check_interval=10)
+            check_interval=10, urgent=dc._control_command_pending)
         dc.vegas_coordinator = vegas
         return vegas
 

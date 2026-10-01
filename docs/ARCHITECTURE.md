@@ -86,7 +86,8 @@ How a web-side change reaches the running plugins:
 | Plugin enabled or disabled | `ConfigService` → `_controller_config_change` flags a reconcile; `_reconcile_enabled_plugins` loads it (fresh from disk) or unloads it on the render thread |
 | Plugin uninstalled (config removed) | the removed section flips its `enabled` flag, and the reconcile unloads it |
 | Plugin installed, not enabled | nothing to do until it is enabled, which loads it |
-| Plugin installed while already enabled, updated while enabled, or uninstalled with its config kept | **not picked up**: the display keeps running what it loaded. The route answers `restart_required: true` and the UI shows its restart banner |
+| Plugin updated while enabled | the update route asks the display over the control socket (`plugin.reload`) to reload it on the render thread, and answers `restart_required: false` once the new code runs. Without the socket, as the next row |
+| Plugin installed while already enabled, updated while enabled and not reloaded, or uninstalled with its config kept | **not picked up**: the display keeps running what it loaded. The route answers `restart_required: true` and the UI shows its restart banner |
 
 `display_restart_required()` in `plugin_catalog.py` holds that last rule;
 routes return it as `restart_required` (with the banner's wording in
@@ -110,9 +111,11 @@ other web-UI action runs its script as a subprocess. A later, explicit
 **plugin web-entry contract** -- a declared entry point for plugin web code
 -- replaces that function.
 
-Next stages: a **control socket** from the web process to the display
-(reload one plugin, ask for its state) in place of `restart_required` and
-the cache-key mailboxes, and the plugin web-entry contract above.
+The **control socket** from the web process to the display
+([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)) carries on-demand
+commands and reloads an updated plugin; its next stages stream the
+display's state and retire the cache-key mailboxes. The plugin web-entry
+contract above is still to come.
 
 ### Plugin state: desired, observed, and who owns it
 

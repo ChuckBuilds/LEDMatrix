@@ -152,6 +152,8 @@ class VegasModeCoordinator:
         # Interrupt checker for yielding control back to display controller
         self._interrupt_check: Optional[Callable[[], bool]] = None
         self._interrupt_check_interval: int = 10  # Check every N frames
+        # Checked every frame; True runs the interrupt check at once.
+        self._interrupt_urgent: Optional[Callable[[], bool]] = None
 
         # Plugin update callback — fired from a background thread inside the loop
         # so the main loop's _tick_plugin_updates() finds nothing due when Vegas
@@ -226,7 +228,8 @@ class VegasModeCoordinator:
     def set_interrupt_checker(
         self,
         checker: Callable[[], bool],
-        check_interval: int = 10
+        check_interval: int = 10,
+        urgent: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Set the callback for checking if Vegas should yield control.
@@ -237,9 +240,25 @@ class VegasModeCoordinator:
         Args:
             checker: Callable that returns True if Vegas should yield
             check_interval: Check every N frames (default 10)
+            urgent: A cheap per-frame test; when it is True the checker
+                runs at this frame instead of waiting for the interval (the
+                display controller passes "a control socket command is
+                queued", so a command waits one frame, not ten)
         """
         self._interrupt_check = checker
         self._interrupt_check_interval = max(1, check_interval)
+        self._interrupt_urgent = urgent
+
+    def _interrupt_is_urgent(self) -> bool:
+        """The per-frame test set with ``urgent``; never raises."""
+        urgent = getattr(self, '_interrupt_urgent', None)
+        if urgent is None:
+            return False
+        try:
+            return bool(urgent())
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Urgent interrupt test failed", exc_info=True)
+            return False
 
     def set_update_callback(self, callback: Callable[[], None]) -> None:
         """
@@ -709,7 +728,8 @@ class VegasModeCoordinator:
                 frame_times.clear()
 
             if (self._interrupt_check and
-                    frame_count % self._interrupt_check_interval == 0):
+                    (frame_count % self._interrupt_check_interval == 0
+                     or self._interrupt_is_urgent())):
                 try:
                     if self._interrupt_check():
                         logger.debug(

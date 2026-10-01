@@ -4,8 +4,9 @@ Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
 so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
+    _QUIET_SOCKET_REASONS, _REPORTABLE_SOCKET_REASONS,  # noqa: F401 - tests read them here
     _coerce_to_bool, _ensure_display_service_running,
-    _get_display_service_status, _stop_display_service, api_v3,
+    _get_display_service_status, _socket_reason_code, _stop_display_service, api_v3,
     jsonify, logger, request, uuid,
 )
 from web_interface import display_preview
@@ -30,24 +31,6 @@ def _cache_manager():
     return cache
 
 
-#: Socket failures that only mean "this display has no socket": stopped,
-#: older than the socket, Windows, or switched off. Not worth a log line.
-_QUIET_SOCKET_REASONS = frozenset({'no_socket', 'disabled', 'unsupported'})
-
-#: Every reason code a response may echo as ``socket_error``: the client's
-#: transport reasons plus the display's ErrorCode values. Anything else is
-#: reported as ``other``, so no text taken from an exception reaches a reply.
-_REPORTABLE_SOCKET_REASONS = (
-    'disabled', 'unsupported', 'no_socket', 'refused', 'timeout', 'closed',
-    'bad_response', 'invalid_request',
-    'bad_json', 'bad_request', 'message_too_large', 'unsupported_version',
-    'unknown_command', 'invalid_args', 'busy', 'forbidden', 'internal',
-)
-
-
-def _socket_reason_code(reason):
-    """``reason`` as one of _REPORTABLE_SOCKET_REASONS, else ``'other'``."""
-    return next((code for code in _REPORTABLE_SOCKET_REASONS if code == reason), 'other')
 
 
 def _deliver_on_demand(payload):

@@ -43,7 +43,15 @@ from src.font_manager import FontManager
 from src.logging_config import get_logger
 from src.exceptions import PluginError
 from src.common.sync_manager import DisplaySyncManager, SyncRole
-from src.ipc.server import ControlServer, start_control_server
+from src.ipc.contract import (
+    BrightnessResult,
+    BrightnessSetArgs,
+    Command as ControlCommand,
+    ErrorCode as ControlErrorCode,
+    PluginReloadArgs,
+    PluginReloadResult,
+)
+from src.ipc.server import ControlServer, QueuedCommand, start_control_server
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -578,9 +586,13 @@ class DisplayController:
             # Set up interrupt checker for on-demand/wifi status and follower mode
             def _vegas_interrupt():
                 return self._check_vegas_interrupt() or self.sync_manager.is_follower_active()
+            # Every 10 frames (~80ms at 125 FPS, ~0.4 s at the 24 a Pi 4
+            # often manages), or at the next frame when a control socket
+            # command is queued: that check is one Event read per frame.
             self.vegas_coordinator.set_interrupt_checker(
                 _vegas_interrupt,
-                check_interval=10  # Check every 10 frames (~80ms at 125 FPS)
+                check_interval=10,
+                urgent=self._control_command_pending,
             )
 
             # Run plugin updates inside the Vegas loop so the inter-iteration
@@ -711,6 +723,10 @@ class DisplayController:
 
         # Check for wifi status that needs display
         if self._check_wifi_status_message():
+            return True
+
+        # A plugin reload waits for the top of the loop, outside the iteration.
+        if self._plugin_reload_pending:
             return True
 
         return False
@@ -1153,12 +1169,15 @@ class DisplayController:
         Also services pending changes (see _service_pending_changes), and
         returns early when one of them changes what the panel should show --
         an on-demand start or stop, the display schedule turning the panel
-        on or off, a WiFi notice arriving, or a live game taking over
-        (_check_live_takeover) -- so the caller can act on it instead of
-        finishing a dwell that could be a minute long (sixty seconds while
-        scheduled off).
+        on or off, a WiFi notice arriving, a live game taking over
+        (_check_live_takeover), or a plugin reload waiting for the top of
+        the loop -- so the caller can act on it instead of finishing a dwell
+        that could be a minute long (sixty seconds while scheduled off).
+
+        The waits between checks wake for a control socket command, so one
+        is applied within milliseconds rather than at the next 0.25 s tick.
         """
-        if duration <= 0:
+        if duration <= 0 or self._plugin_reload_pending:
             return
 
         end_time = time.time() + duration
@@ -1176,7 +1195,9 @@ class DisplayController:
                 break
 
             sleep_time = min(tick_interval, remaining)
-            time.sleep(sleep_time)
+            # Woken early by a control socket command, which
+            # _service_pending_changes then applies without its floor.
+            self._wait_for_control(sleep_time)
             # A dwell can be a minute long (sixty seconds while scheduled
             # off); the watchdog must hear from this thread throughout.
             display_watchdog.watchdog.beat()
@@ -1187,7 +1208,8 @@ class DisplayController:
                     or self.is_display_active != display_active
                     or self.on_demand_active != on_demand
                     or (not wifi_pending and self.is_display_active
-                        and self._wifi_notice_pending())):
+                        and self._wifi_notice_pending())
+                    or self._plugin_reload_pending):
                 break
 
     def _note_empty_pass(self) -> None:
@@ -1656,22 +1678,192 @@ class DisplayController:
                 'display_active': self.is_display_active}
 
     def _drain_control_commands(self) -> None:
-        """Apply on-demand commands that arrived over the control socket.
+        """Apply the commands that arrived over the control socket.
 
-        Each goes through _handle_on_demand_request, the mailbox's own
-        handler, so both ways in behave the same, and a request that came
-        both ways (a client that timed out and fell back) has one request
-        id and is processed once.
+        On-demand commands go through _handle_on_demand_request, the
+        mailbox's own handler, so both ways in behave the same, and a
+        request that came both ways (a client that timed out and fell back)
+        has one request id and is processed once. A brightness is applied
+        here. A plugin reload waits for the top of the next loop pass, where
+        no plugin is on the stack (_apply_pending_plugin_reloads); until
+        then the current screen ends early (_plugin_reload_pending).
         """
         server = self._control_server
         if server is None or not server.has_pending:
             return
         for command in server.drain():
             try:
-                self._handle_on_demand_request(command.as_on_demand_request())
+                if command.cmd == ControlCommand.BRIGHTNESS_SET:
+                    self._apply_control_brightness(command)
+                elif command.cmd == ControlCommand.PLUGIN_RELOAD:
+                    self._pending_plugin_reloads = self._pending_plugin_reloads + (command,)
+                else:
+                    self._handle_on_demand_request(command.as_on_demand_request())
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to apply control socket command %s",
                                  command.request_id)
+                command.fail(ControlErrorCode.INTERNAL, 'the display failed to apply it')
+
+    def _wait_for_control(self, timeout: float) -> bool:
+        """Sleep up to ``timeout``, waking early for a control socket command.
+
+        True when a command is waiting. Without a socket (Windows, switched
+        off, tests) this is the plain sleep it replaces.
+        """
+        server = self._control_server
+        wait = getattr(server, 'wait_for_command', None) if server is not None else None
+        if wait is None:
+            time.sleep(timeout)
+            return False
+        return bool(wait(timeout))
+
+    def _control_command_pending(self) -> bool:
+        """A socket command is queued: Vegas checks this every frame."""
+        server = self._control_server
+        return bool(server is not None and server.has_pending)
+
+    def _screen_preempted(self, active_mode: Optional[str]) -> bool:
+        """What ends a screen mid-way: the checks the frame loops make."""
+        return (self.current_display_mode != active_mode
+                or not self.is_display_active
+                or self._wifi_notice_pending()
+                or self._plugin_reload_pending)
+
+    def _wait_frame_interval(self, interval: float, active_mode: Optional[str]) -> bool:
+        """The static screen's sleep between frames, woken by socket commands.
+
+        Each command that arrives is applied at once (_service_pending_changes
+        skips its floor while one is queued). True when that ended the
+        screen; otherwise the wait carries on to the end of the interval, so
+        the frame cadence is unchanged by a command that does not change the
+        screen (a brightness, say).
+        """
+        if self._control_server is None:
+            time.sleep(interval)
+            return False
+        deadline = time.monotonic() + interval
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if not self._wait_for_control(remaining):
+                return False
+            self._service_pending_changes()
+            if self._screen_preempted(active_mode):
+                return True
+
+    def _apply_control_brightness(self, command: QueuedCommand) -> None:
+        """``brightness.set``: the new normal brightness, on the panel now.
+
+        It replaces the configured value in memory only, the way a saved
+        config would once the config watcher saw it, so the dim schedule and
+        the scheduled-off rules treat it exactly like the setting; the next
+        config the watcher loads replaces it again.
+        """
+        args = command.args
+        if not isinstance(args, BrightnessSetArgs):
+            command.fail(ControlErrorCode.INTERNAL, 'not a brightness command')
+            return
+        self._normal_brightness = args.brightness
+        # The dim schedule's per-minute cache holds the old normal level.
+        self._dim_checked_minute = None
+        # An explicit request retries a level the panel refused before.
+        self._failed_brightness_target = None
+        self._apply_brightness_target(repaint=True)
+        if self.is_display_active:
+            target = self._check_dim_schedule()   # cached for the minute: no new work
+            if self.current_brightness != target:
+                command.fail(ControlErrorCode.FAILED,
+                             f'the panel did not take brightness {target}')
+                return
+        logger.info("Brightness set to %d%% over the control socket (panel %s%%)",
+                    args.brightness, self.current_brightness)
+        result: BrightnessResult = {
+            'brightness': args.brightness,
+            'panel_brightness': int(self.current_brightness),
+            'dimmed': bool(self.is_dimmed),
+            'display_active': bool(self.is_display_active),
+        }
+        command.succeed(dict(result))
+
+    #: Plugin reloads from the control socket, waiting for the top of the
+    #: next loop pass. A tuple, replaced rather than mutated.
+    _pending_plugin_reloads: Tuple[QueuedCommand, ...] = ()
+
+    @property
+    def _plugin_reload_pending(self) -> bool:
+        return bool(self._pending_plugin_reloads)
+
+    def _apply_pending_plugin_reloads(self) -> None:
+        """Reload the plugins the control socket asked for. Render thread,
+        top of the loop pass: no display() and no Vegas iteration on the stack.
+
+        The same steps as disabling and re-enabling the plugin live
+        (_unregister_plugin, then load and _register_loaded_plugin), with the
+        manifest re-read from disk, so the running set ends up as a restart
+        would build it. A plugin that fails to load stays out of the
+        rotation, as it would after a restart.
+        """
+        commands, self._pending_plugin_reloads = self._pending_plugin_reloads, ()
+        for command in commands:
+            try:
+                self._reload_plugin_for_command(command)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Plugin reload over the control socket failed")
+                command.fail(ControlErrorCode.INTERNAL, 'the display failed to reload it')
+
+    def _reload_plugin_for_command(self, command: QueuedCommand) -> None:
+        args = command.args
+        if not isinstance(args, PluginReloadArgs):
+            command.fail(ControlErrorCode.INTERNAL, 'not a reload command')
+            return
+        plugin_id = args.plugin_id
+        if self.plugin_manager is None or plugin_id not in self.plugin_display_modes:
+            command.fail(ControlErrorCode.NOT_LOADED, f'{plugin_id} is not running')
+            return
+        if plugin_id in self._on_demand_loaded_plugins:
+            # Loaded only for an on-demand session (config says disabled);
+            # reloading would have to repeat that special load.
+            command.fail(ControlErrorCode.BUSY,
+                         f'{plugin_id} is loaded only for on-demand; restart to reload it')
+            return
+
+        previous_mode = self.current_display_mode
+        previous_order = {mode: i for i, mode in enumerate(self.available_modes)}
+        logger.info("Reloading plugin %s over the control socket", plugin_id)
+        self._unregister_plugin(plugin_id, action='Unloaded')
+        loaded = bool(self.plugin_manager.reload_plugin(plugin_id))
+        modes: List[str] = []
+        if loaded:
+            modes = list(self._register_loaded_plugin(plugin_id))
+            # Registering appends; put its modes back where they were in the
+            # rotation (a mode the new version added goes last).
+            self.available_modes.sort(
+                key=lambda mode: previous_order.get(mode, len(previous_order)))
+        self._apply_plugin_rotation_order()
+        self._resync_mode_index_after_change(previous_mode)
+        if not loaded:
+            logger.error("Plugin %s did not load after its update; it is out of the "
+                         "rotation until it loads", plugin_id)
+            command.fail(ControlErrorCode.FAILED,
+                         f'{plugin_id} did not load; see the display log')
+            return
+        vegas = getattr(self, 'vegas_coordinator', None)
+        if vegas is not None:
+            try:
+                # Fetch its content again rather than scroll the old copy.
+                vegas.mark_plugin_updated(plugin_id)
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Vegas did not take the reload of %s", plugin_id, exc_info=True)
+        manifest = (getattr(self.plugin_manager, 'plugin_manifests', None) or {}).get(plugin_id)
+        version = manifest.get('version') if isinstance(manifest, dict) else None
+        logger.info("Reloaded plugin %s (version %s, modes %s)", plugin_id, version, modes)
+        result: PluginReloadResult = {
+            'plugin_id': plugin_id, 'reloaded': True,
+            'version': version if isinstance(version, str) else None,
+            'modes': modes,
+        }
+        command.succeed(dict(result))
 
     def _poll_on_demand_requests(self) -> None:
         """Poll cache for new on-demand requests from external controllers."""
@@ -2990,6 +3182,12 @@ class DisplayController:
                 if self._pending_plugin_reconcile and not self.on_demand_active:
                     self._service_pending_reconcile()
 
+                # Plugin reloads from the control socket (a store update),
+                # here for the same reason: nothing of the plugin's is on the
+                # stack. The screen that was showing ended early for them.
+                if self._pending_plugin_reloads:
+                    self._apply_pending_plugin_reloads()
+
                 if not self.available_modes:
                     # Nothing to render yet. Re-check _pending_plugin_reconcile
                     # every ~1s (rather than a long sleep) so enabling a plugin
@@ -3090,6 +3288,10 @@ class DisplayController:
                                 if not self.is_display_active:
                                     # Scheduled off mid-iteration: blank the
                                     # panel now rather than render a screen.
+                                    continue
+                                if self._plugin_reload_pending:
+                                    # Reload first (top of the loop), then
+                                    # the ticker carries on.
                                     continue
                                 if self._wifi_notice_pending():
                                     # It yielded for a WiFi notice: the next
@@ -3278,9 +3480,7 @@ class DisplayController:
                             # update threads and the web UI are not starved of the GIL.
                             time.sleep(_remaining if _remaining > 0 else 0.001)
 
-                            if (self.current_display_mode != active_mode
-                                    or not self.is_display_active
-                                    or self._wifi_notice_pending()):
+                            if self._screen_preempted(active_mode):
                                 logger.debug("Mode changed during high-FPS loop, breaking early")
                                 break
 
@@ -3311,7 +3511,13 @@ class DisplayController:
                         )
 
                         while True:
-                            time.sleep(display_interval)
+                            # Wakes for a control socket command and applies
+                            # it at once, instead of up to a second later.
+                            if self._wait_frame_interval(display_interval, active_mode):
+                                logger.info("Mode changed during display loop from %s to %s, "
+                                            "breaking early", active_mode,
+                                            self.current_display_mode)
+                                break
                             self._tick_plugin_updates()
 
                             elapsed = time.time() - start_time
@@ -3343,9 +3549,7 @@ class DisplayController:
 
                             self._service_pending_changes()
                             self._check_live_takeover()
-                            if (self.current_display_mode != active_mode
-                                    or not self.is_display_active
-                                    or self._wifi_notice_pending()):
+                            if self._screen_preempted(active_mode):
                                 logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                 break
 
@@ -3375,6 +3579,9 @@ class DisplayController:
                             or not self.is_display_active
                             or (not loop_completed and self._wifi_notice_pending())):
                         continue
+                    # A screen cut short for a plugin reload is over: the
+                    # make-up dwell below returns at once, the rotation
+                    # advances, and the next pass reloads before it draws.
 
                     # Ensure we honour minimum duration when not dynamic and loop ended early
                     if (
@@ -3703,9 +3910,10 @@ class DisplayController:
         self._plugin_accepts_display_mode.pop(plugin_id, None)
         return display_modes
 
-    def _unregister_plugin(self, plugin_id: str) -> None:
+    def _unregister_plugin(self, plugin_id: str, action: str = 'Disabled') -> None:
         """Remove a plugin's modes, config subscription and instance, then
-        unload it. Used by live disable hot-reload."""
+        unload it. Used by live disable hot-reload, and by a reload
+        (``action`` names which in the log line)."""
         with self._plugin_modes_lock:
             modes = self.plugin_display_modes.pop(plugin_id, [])
         for mode in modes:
@@ -3737,7 +3945,7 @@ class DisplayController:
         except Exception as e:
             logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
 
-        logger.info("Disabled plugin %s live (removed modes: %s)", plugin_id, modes)
+        logger.info("%s plugin %s live (removed modes: %s)", action, plugin_id, modes)
 
     def _enabled_set_changed(self, old_config: Dict[str, Any], new_config: Dict[str, Any]) -> bool:
         """True if any top-level section's ``enabled`` flag differs between two

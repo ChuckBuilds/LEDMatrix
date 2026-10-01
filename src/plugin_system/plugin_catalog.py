@@ -238,7 +238,9 @@ def display_restart_required(action: str, plugin_enabled: bool, *,
       config carried over) is not picked up until a restart.
     - ``update``: the display keeps running the code it loaded until it
       restarts, if it runs the plugin at all -- only when it is enabled.
-      ``changed=False`` (already up to date) needs nothing.
+      ``changed=False`` (already up to date) needs nothing. The update route
+      first asks the display to reload it over the control socket
+      (``_reload_after_store_update``); this answer stands when it cannot.
     - ``uninstall``: removing the plugin's config section flips its enabled
       flag, and the reconcile unloads it. With ``preserve_config`` the flag
       stays, and an enabled plugin keeps running until a restart.
