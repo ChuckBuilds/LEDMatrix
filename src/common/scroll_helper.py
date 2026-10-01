@@ -752,7 +752,9 @@ class ScrollHelper:
     def _extended_strip(self, addition: np.ndarray) -> np.ndarray:
         """The strip with ``addition`` after it, written in place when it fits."""
         live = self.cached_array
-        assert live is not None
+        if live is None:
+            # append_content builds a first strip itself and never comes here.
+            raise RuntimeError("no strip to extend")
         width = live.shape[1]
         added = addition.shape[1]
         buffer = self._strip_buffer
