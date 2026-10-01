@@ -210,7 +210,10 @@ plan for restructuring this loop and lists its golden trace tests.
   to it, rotating between several live games.
 - **Schedule and dim schedule.** `_check_schedule()` reads `schedule`;
   `_check_dim_schedule()` reads `dim_schedule` and
-  `display.hardware.brightness`. Both are re-evaluated once a minute.
+  `display.hardware.brightness`. Both are re-evaluated once a minute, and
+  both windows are half-open: on (or dimmed) from the start time, off at
+  the end time. When an on-demand session ends, the on/off schedule is
+  re-checked at once rather than at the next minute.
 - **Long screens.** While a screen is showing (a dwell, a scroll, a Vegas
   iteration), `_service_pending_changes()` repeats the on-demand, schedule
   and brightness checks every 0.25 s, so a change does not wait for the

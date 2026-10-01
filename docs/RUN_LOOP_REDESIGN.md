@@ -265,9 +265,3 @@ changed by the restructure.
 4. **Live priority only takes over between screens.** A game that goes
    live mid-screen waits for that screen to end (`live_priority`: live at
    t=50, shown at t=60).
-5. **An on-demand session that expires during scheduled-off keeps the panel
-   on** until the next minute boundary, because the schedule check runs at
-   most once a minute (`schedule`, t=190-210).
-6. **A schedule window's end minute is inclusive**, and whether the panel
-   turns off at the start of that minute or the end depends on when in the
-   minute the first check runs.

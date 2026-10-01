@@ -141,7 +141,8 @@ def scenario_schedule(h: RunLoopHarness):
                                 "end_time": "23:01", "dim_brightness": 30}
     h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
     h.add_plugin(FakePlugin("weather", ["weather"], duration=20))
-    # An on-demand request during scheduled downtime overrides it.
+    # An on-demand request during scheduled downtime overrides it; when it
+    # expires the panel blanks at once, not at the next minute.
     h.on_demand_request(170, "s1", plugin_id="weather", duration=20)
 
 

@@ -721,10 +721,18 @@ class DisplayController:
 
     @staticmethod
     def _in_window(start, end, now) -> bool:
-        """Whether ``now`` is within [start, end], a window that may span midnight."""
+        """Whether ``now`` is within [start, end), a window that may span midnight.
+
+        Half-open: on from the start minute, off at exactly the end minute.
+        A closed end made the end minute count as inside, and because ``now``
+        carries seconds, only a check at hh:mm:00.000 saw it that way -- so
+        whether the panel went off at the start or the end of that minute
+        depended on when the minute's one check ran. ``start == end`` is an
+        empty window, as it effectively was before.
+        """
         if start <= end:
-            return start <= now <= end
-        return now >= start or now <= end
+            return start <= now < end
+        return now >= start or now < end
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
@@ -1409,6 +1417,11 @@ class DisplayController:
         self.on_demand_expires_at = None
         self.on_demand_pinned = False
         self.on_demand_schedule_override = False
+        # While the session ran, _evaluate_schedule may have forced
+        # is_display_active on over a scheduled-off answer. Drop the minute
+        # gate so the next _check_schedule recomputes it; otherwise the panel
+        # stayed on until the next clock minute.
+        self._schedule_checked_minute = None
 
     def _advance_on_demand(self) -> None:
         """Move an active on-demand session to its next mode and publish it.
