@@ -73,6 +73,10 @@ Sample ladder for a 100 Hz panel:
  100.0 px/s  (1px every 1 refresh  = 100.0 fps, smooth)
 ```
 
+The Vegas **Scroll Speed** slider in the web UI shows the same thing live: a
+line under it says what your speed will run as on this panel, and links to the
+nearest smooth speeds.
+
 ### How a slow speed stays crisp
 
 `SwapOnVSync(canvas, framerate_fraction)` holds each frame for N panel
@@ -517,18 +521,24 @@ On the 2×128×64 chain above, which refreshes at about 130 Hz flat out
 
 ### What the display does about it
 
-At one pixel per refresh, the fastest crisp speed, the step is exactly one
-refresh's worth of motion, so it can be cancelled: show one half of the panel
+The step is the motion of one refresh, so it can be cancelled: show one half of the panel
 a refresh behind the other -- the half whose row at the seam lights at the
 start of each refresh. The two rows either side of the seam then show the same
 moment again. What is left is a
 lean of one pixel per half from top to bottom, continuous across the panel,
 which reads as nothing where the step read as a tear. `DisplayManager` does
-this while something scrolls at one frame per refresh
+this while something scrolls
 (`display.scan_order_compensation`, `"auto"` by default, `"off"` to disable;
 the geometry is in `src/scan_order.py`). The lagging rows come from the
 previous frame the display presented, so it works for Vegas and every plugin
 ticker without knowing how they scroll.
+
+A frame held for several refreshes (any crisp speed below the panel's full
+refresh rate, e.g. 60 px/s at 120 Hz) is presented as two swaps instead of one:
+the lagging half shows the previous frame for the first refresh and the new one
+for the rest, so it steps one refresh after the rest rather than one frame.
+That costs a second blit inside the refresh after the first swap, so it is
+skipped when a blit takes more than half a refresh.
 
 Checked on hdpi (4×128×64 on one chain, rotated 180, 2026-09-24) before it was
 written: `scan_mode: 1` (interlaced) made the step vanish but turned moving
@@ -537,9 +547,6 @@ frame. With the compensation the step is gone at 90 px/s.
 
 It is left off where the row order is unknown or the maths does not hold:
 
-- **Slower speeds**, where each frame is held for two or more refreshes. The
-  offset there is half a pixel or less, and cancelling it would need a lag of
-  a fraction of a frame.
 - **Other layouts:** pixel mappers other than a 0 or 180 degree rotation
   (U-mapper, 90/270), non-zero `multiplexing`, interlaced `scan_mode`, and a
   canvas remapped to another height (double-sided mode).

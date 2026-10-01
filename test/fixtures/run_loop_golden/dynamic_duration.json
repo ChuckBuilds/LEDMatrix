@@ -1,0 +1,24 @@
+{
+  "screens": [
+    [0.0, "scroller", 20.008, "cycle-complete", 2502, false],
+    [20.008, "news", 40.0, "duration", 40, true],
+    [60.008, "board", 11.0, "cycle-complete", 12, true],
+    [71.008, "clock", 10.0, "duration", 10, true],
+    [81.008, "scroller", 20.007, "cycle-complete", 2502, true],
+    [101.015, "news", 40.0, "duration", 40, true],
+    [141.015, "board", 11.0, "cycle-complete", 12, true],
+    [152.015, "clock", 10.0, "duration", 10, true],
+    [162.015, "scroller", 20.008, "cycle-complete", 2502, true],
+    [182.023, "news", 37.977, "horizon", 38, true]
+  ],
+  "events": [
+    [0.0, "cycle-reset", "scroller"],
+    [20.008, "cycle-reset", "news"],
+    [60.008, "cycle-reset", "board"],
+    [81.008, "cycle-reset", "scroller"],
+    [101.015, "cycle-reset", "news"],
+    [141.015, "cycle-reset", "board"],
+    [162.015, "cycle-reset", "scroller"],
+    [182.023, "cycle-reset", "news"]
+  ]
+}
