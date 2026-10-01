@@ -336,6 +336,9 @@ to rebuild it twice, 1.7-3.8 ms each on a Pi 4). The `extend` row of
    work" table), and extensions no longer rebuilding the strip's PIL copy.
 3. **Live elements:** the plugin API, the records, the worker and in-place
    patches, with the sports scoreboards and the flight map adopting it.
+4. **Live games in the ticker by default:** `live_in_ticker` true, so a live
+   game's cards update in the marquee instead of the full-screen scoreboard
+   replacing it; existing configs are switched once (`ConfigManager`).
 
 `display.vegas_scroll.offscreen_prefetch` (default `true`) restores the
 deferred path when `false`, and `display.vegas_scroll.live_refresh` (default

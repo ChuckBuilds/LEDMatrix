@@ -152,7 +152,7 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `max_cycle_duration` | int, `240` |
 | `frame_based_scrolling` | bool, `true` — does not step or set a frame rate; motion is by elapsed time either way. When `true`, `scroll_speed` passes through a clamp of 0.1–5 px per `scroll_delay` (see next row) |
 | `scroll_delay` | float, `0.02` — not a frame period. Only used with `frame_based_scrolling`: the applied speed is `clamp(scroll_speed × scroll_delay, 0.1, 5) / scroll_delay` px/s, so at `0.02` speeds under 5 px/s run at 5, and at `0.001` nothing runs slower than 100 px/s |
-| `live_in_ticker` | bool, `false` — keep scrolling during live games instead of handing the display to a full-screen scoreboard |
+| `live_in_ticker` | bool, `true` — keep scrolling during live games instead of handing the display to a full-screen scoreboard. `false` was the default before 3.8.0; the first start on 3.8.0 turns a stored `false` on once and sets `live_in_ticker_migrated` |
 | `live_weight` | int, `3` (1–10) — slots per cycle for a plugin with live content |
 | `favorite_live_weight` | int, `5` (1–10) — slots per cycle when a plugin reports a favorite team is live |
 

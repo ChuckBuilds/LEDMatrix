@@ -406,6 +406,15 @@ read any of them:
   `render_vegas_strip()` and `render_vegas_timeline()` in
   `src/plugin_system/testing/vegas.py`; the join is now
   `render_pipeline.join_plugin_rows()`.
+- **Behaviour change: live games stay in the Vegas ticker by default.**
+  `display.vegas_scroll.live_in_ticker` now defaults to `true`: the marquee
+  keeps running through a live game, which takes extra turns in it, instead
+  of giving way to the full-screen scoreboard. Existing configs all held the
+  old `false`, copied from the template, so the first start turns it on once
+  (`ConfigManager._migrate_live_in_ticker_default`; the previous config is
+  kept as `config.json.backup` and `live_in_ticker_migrated` records that it
+  ran). To keep the full-screen scoreboard, untick the new **Keep live games
+  in the ticker** under Vegas mode; a `false` set after the migration stays.
 
 ### Scrolling
 
