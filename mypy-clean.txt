@@ -34,7 +34,11 @@ src/common/snapshot_policy.py
 src/common/sports_card.py
 src/common/sports_card_wrappers.py
 src/common/sports_celebration.py
+src/common/sports_display_rules.py
 src/common/sports_fetch.py
+src/common/sports_font_path.py
+src/common/sports_live_scroll.py
+src/common/sports_plugin_host.py
 src/common/sports_scroll.py
 src/common/sports_timezone.py
 src/common/sports_vegas.py
