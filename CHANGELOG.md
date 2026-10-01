@@ -17,7 +17,31 @@ release that ships it.
 accepts both, but the store flags the old spelling as deprecated
 (`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
 
-## Unreleased
+## 3.8.0
+
+Live Vegas elements: plugin content that keeps changing while it scrolls
+(scores on the scoreboards' cards, the flight map's gliding aircraft, the
+weather radar's loop), with live games kept in the ticker by default. Also
+stable/beta update channels, the systemd display watchdog, optional web
+login, and the removal of the 35 plugin APIs deprecated since 3.5.0 (see
+Removed).
+
+### New modules
+
+A plugin may import these via `src.*` once it floors on 3.8.0 (and should
+guard the import, since the loader's version check is advisory).
+
+- `src/plugin_system/vegas_elements.py` -- `VegasElement`, the unit a
+  plugin's `get_vegas_elements()` returns (also re-exported from
+  `base_plugin`). See "Live Vegas elements" below.
+- `src/plugin_system/testing/vegas.py` -- the harness for those hooks:
+  `render_vegas_elements`, `check_vegas_elements`, `render_vegas_timeline`.
+- `src/common/sports_vegas.py` -- what a scoreboard needs for live cards:
+  `game_key`, `game_fingerprint`, `dedupe_games`, `VegasCardCache`,
+  `StickyOdds`, `finished_games`.
+- `src/display_watchdog.py`, `src/plugin_system/plugin_catalog.py` and
+  `src/plugin_system/plugin_runtime.py` -- new core modules (described
+  below) that plugins do not normally import.
 
 ### Update channels
 
@@ -438,6 +462,14 @@ read any of them:
   twice. Assigning `cached_image` still stores exactly what was assigned.
   New `ScrollHelper.has_strip()` says whether there is a strip without
   building its image; the frame path and Vegas use it.
+- The frame after a Vegas strip extension is no longer late on a Pi 4. The
+  render thread also laid out every plugin block of the new group (joining
+  its rows, measuring the separation between each pair) and pasted the
+  blocks into one image, about 37ms on hdpi against ~3.75ms of slack. The
+  thread that fetches the group now does that as each plugin arrives, and
+  the extension only writes the prepared pixels into the strip
+  (`ScrollHelper.append_content` takes RGB arrays): 3.2ms. In a 4 x 8 minute
+  A/B soak, extension frames went from 10 of 10 late to 3 of 10.
 
 ### Tooling
 
