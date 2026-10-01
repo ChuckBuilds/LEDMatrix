@@ -19,6 +19,142 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Tooling
+
+- Golden trace tests for the display loop. `test/test_run_loop_golden.py`
+  runs the real `DisplayController.run()` against fake plugins on a fake
+  clock (`test/_run_loop_harness.py`), with no hardware and no real sleeps,
+  and compares which mode was shown, for how long and why it ended with
+  `test/fixtures/run_loop_golden/`. It has 15 scenarios: rotation,
+  empty and failing modes, dynamic duration, live priority, on-demand
+  (including pinned and resumed after a restart), the schedule and dim
+  schedule, WiFi notices, sync follower and Vegas. The whole file runs in
+  about a second. This is stage 1 of restructuring `run()`, described in
+  `docs/RUN_LOOP_REDESIGN.md`. The other part of stage 1 is internal and
+  changes no behaviour: twelve blocks of `run()` move into named helpers
+  (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
+  `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
+  identical before and after the move.
+
+### Fixes
+
+- A plugin whose `display()` raises now opens its circuit breaker. The first
+  frame of each screen goes through the plugin executor, which caught the
+  exception and returned False. The display read that as "no content" and
+  recorded a success, which reset the plugin's failure streak, so the breaker
+  never tripped. The plugin stayed in rotation and logged a traceback on
+  every screen. The raise now counts as a failure, so after three in a row
+  the plugin leaves rotation until the cooldown ends, the same as a raising
+  `update()`. The display still moves straight on to the next mode. A hung
+  `display()` is still recorded once, as a hang.
+
+## 3.8.0
+
+Live Vegas elements: plugin content that keeps changing while it scrolls
+(scores on the scoreboards' cards, the flight map's gliding aircraft, the
+weather radar's loop), with live games kept in the ticker by default. Also
+stable/beta update channels, the display control socket, the systemd
+display watchdog, optional web login, ES-module web UI pages, sports
+consolidation stage 4, and the removal of the 35 plugin APIs deprecated
+since 3.5.0 (see Removed).
+
+### New modules
+
+A plugin may import these via `src.*` once it floors on 3.8.0 (and should
+guard the import, since the loader's version check is advisory).
+
+- `src/plugin_system/vegas_elements.py` -- `VegasElement`, the unit a
+  plugin's `get_vegas_elements()` returns (also re-exported from
+  `base_plugin`). See "Live Vegas elements" below.
+- `src/plugin_system/testing/vegas.py` -- the harness for those hooks:
+  `render_vegas_elements`, `check_vegas_elements`, `render_vegas_timeline`.
+- `src/common/sports_vegas.py` -- what a scoreboard needs for live cards:
+  `game_key`, `game_fingerprint`, `dedupe_games`, `VegasCardCache`,
+  `StickyOdds`, `finished_games`.
+- `src/common/sports_plugin_host.py`, `sports_live_scroll.py`,
+  `sports_display_rules.py` and `sports_font_path.py` -- sports
+  consolidation stage 4; see "New modules (sports consolidation stage 4)"
+  below.
+- `src/display_watchdog.py`, `src/plugin_system/plugin_catalog.py`,
+  `src/plugin_system/plugin_runtime.py`, `src/plugin_system/field_model.py`
+  and the `src/ipc/` package -- new core modules (described below) that
+  plugins do not normally import.
+
+### Web UI: ES modules and one form model (stage 1)
+
+- The web UI gains a native ES-module layer, loaded with
+  `<script type="module">` and served as-is (no bundler, nothing built on
+  the Pi): `static/v3/js/core/` (`boot.js`, `registry.js`, `api.js`,
+  `facade.js`) and `static/v3/js/pages/`. `window.LEDMatrix` is its one
+  global: `api`, `pages`, `notify`, `escape`, `widgets` and `deprecate`, the
+  last keeping old `window.*` names working as aliases that warn once.
+- Tab partials can become page modules: a partial whose root says
+  `data-page="<name>"` carries no inline script, and the page registry calls
+  the page's `init` once when htmx swaps it in and `destroy` when it is
+  swapped out, aborting a signal that removes its listeners and cancels its
+  requests. The Cache tab is converted as the reference
+  (`js/pages/cache.js`); `window.deleteCacheFile` remains as an alias.
+- Static `.js` files are always served as `text/javascript`, which module
+  scripts require, and a `.js` request without the `?v=` content version
+  (how modules import each other) is revalidated instead of cached as
+  immutable for a year.
+- `src/plugin_system/field_model.py`: `build_field_model(schema, config)`
+  describes a plugin's config form as one JSON field model. Nothing renders
+  from it yet; `test/test_field_model_parity.py` checks it names exactly the
+  form controls and starting values the `render_field` macro emits, for every
+  schema available (all 46 official plugins, when a checkout is present).
+- `docs/WEB_FRONTEND_ARCHITECTURE.md`: the target architecture, the
+  page-by-page migration order, and how forms switch to the model and to
+  JSON submit behind a flag.
+
+### Control socket (stage 1: on-demand)
+
+- **The display now serves a control socket**,
+  `/run/ledmatrix/control.sock`. It carries versioned JSON commands, one per
+  line, and every command gets an answer
+  ([docs/IPC_CONTROL_SOCKET.md](docs/IPC_CONTROL_SOCKET.md)).
+  - On-demand start, stop and status are the first commands, plus `hello`
+    (version negotiation) and `ping`.
+  - Start and stop are acknowledged once the render thread has them queued.
+    The render thread applies them through the same handler as the file
+    mailbox, at its next on-demand check. On a scrolling screen that is the
+    next frame (the mailbox waits up to 0.25 s). On a static screen it is up
+    to 1 s, the same as the mailbox.
+  - The server's threads never touch rendering. Garbage, oversize messages
+    and slow or vanishing clients are answered or dropped without blocking the
+    display.
+  - New core modules: `src/ipc/contract.py`, `server.py` and `client.py`.
+    They are internal, not a plugin API.
+- **`POST /api/v3/display/on-demand/start` and `/stop` try the socket
+  first.** On any failure (the display is stopped or predates the socket, a
+  timeout, a refusal), they write the `display_on_demand_request` mailbox
+  exactly as before. The response's new `transport` field says which path
+  was used (`"socket"` or `"mailbox"`), and `socket_error` gives the reason
+  for a fallback. Both paths carry the same `request_id`, so a request that
+  arrives both ways runs once. The mailbox, and the plugins that write it
+  directly, keep working for at least one more release.
+- **Permissions.** The socket is `0660` and owned by the group the two
+  services already share (the cache directory's group, `ledmatrix` on an
+  installed device). On Linux the server also checks each connection's
+  `SO_PEERCRED`: root, the display's own user, or a member of that group.
+  `/run/ledmatrix` comes from the existing `RuntimeDirectory=` (#687), or the
+  display creates it as root under an older unit, so no installer or unit
+  change is needed. `LEDMATRIX_CONTROL_SOCKET` overrides the path for both
+  processes, or turns the socket off with `off`. A non-root dev run uses a
+  private per-user path under the temp directory.
+
+### Scroll speed
+
+- The Vegas Scroll Speed slider now says what the panel will do with the speed
+  it is on, and offers the nearest smooth ones to click. Only speeds that advance
+  a whole number of pixels per refresh look smooth, and which those are depends
+  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
+  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
+  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
+- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
+  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
+  which move one pixel at a time. 100 Hz panels are unaffected.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,
@@ -276,15 +412,14 @@ read any of them:
 
 ### Fixes
 
-- A plugin whose `display()` raises now opens its circuit breaker. The first
-  frame of each screen goes through the plugin executor, which caught the
-  exception and returned False. The display read that as "no content" and
-  recorded a success, which reset the plugin's failure streak, so the breaker
-  never tripped. The plugin stayed in rotation and logged a traceback on
-  every screen. The raise now counts as a failure, so after three in a row
-  the plugin leaves rotation until the cooldown ends, the same as a raising
-  `update()`. The display still moves straight on to the next mode. A hung
-  `display()` is still recorded once, as a hang.
+- Quieter routine logging. Every rotation logged each mode twice
+  ("Switching to mode", then "Processing mode"), and a mode with nothing to
+  show added "display() returned False" and "No content to display". Those
+  three repeats are now DEBUG; "Switching to mode" stays INFO, and `--debug`
+  shows the rest. On ledpi this cut the display's journal lines by about 30%
+  (~105 to ~75 per 5 minutes). Each stored line costs roughly 9 KB of SD-card
+  writes through the persistent journal (display at INFO vs WARNING: about
+  190 KiB/min apart), so the saving is real but small.
 - Reinstalling a plugin by its registry id when it is installed under its
   manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
   the install then fails. The safety copy was taken of `weather/`, which did
@@ -427,6 +562,15 @@ read any of them:
 
 ### Scrolling
 
+- A Vegas strip extension no longer costs a late frame. Appending the next
+  group rebuilt the whole strip (`np.concatenate`, 2-2.6ms for a 10-14k px
+  strip at 512x64 on a Pi 4) and trimming copied what was left (1.2-1.8ms),
+  so on hdpi every extension frame missed its refresh. The strip now lives in
+  a buffer with spare room (`ScrollHelper.STRIP_SPARE_FACTOR`): an append
+  writes only the new columns (~0.2ms), a trim only moves the start, and the
+  one full copy happens when the buffer is reallocated, about once every two
+  strip-lengths scrolled. A strip set from outside (the multi-display
+  follower's) is never written through.
 - A Vegas strip extension costs the render thread about a third of what it
   did. Appending the next group and trimming what has scrolled past each
   rebuilt the strip's PIL image from its numpy array in full
@@ -438,6 +582,14 @@ read any of them:
   twice. Assigning `cached_image` still stores exactly what was assigned.
   New `ScrollHelper.has_strip()` says whether there is a strip without
   building its image; the frame path and Vegas use it.
+- The frame after a Vegas strip extension is no longer late on a Pi 4. The
+  render thread also laid out every plugin block of the new group (joining
+  its rows, measuring the separation between each pair) and pasted the
+  blocks into one image, about 37ms on hdpi against ~3.75ms of slack. The
+  thread that fetches the group now does that as each plugin arrives, and
+  the extension only writes the prepared pixels into the strip
+  (`ScrollHelper.append_content` takes RGB arrays): 3.2ms. In a 4 x 8 minute
+  A/B soak, extension frames went from 10 of 10 late to 3 of 10.
 
 ### Tooling
 
@@ -467,17 +619,51 @@ read any of them:
 - The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
   not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
   "will be removed in LEDMatrix 3.7.0". The warning, the docs and
-  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+  `test/test_deprecation.py` now say 3.8.0. They are removed in this
+  release (see Removed, below).
 - New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
   scans core, the plugin monorepo and the registry's third-party plugins for
   calls and overrides, telling real uses from unrelated methods of the same
   name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
-  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
-  `CacheManager.get_memory_cache_stats` is still called by core's own
-  `log_memory_cache_stats()`, so it stays until that call migrates.
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`); no plugin uses any of
+  the 35.
 - `test/test_deprecation.py` fails while any `@deprecated` marker names a
   release at or below `src.__version__`, so a release can no longer ship
   warning about a removal it has already passed.
+
+### Removed
+
+The 35 plugin-facing methods deprecated in 3.5.0 (each has logged a warning
+on first call since, announced for 3.7.0 and then moved to 3.8.0) are gone.
+The usage scan (`docs/DEPRECATIONS_3.8.md`, re-run 2026-10-01) found no call
+or override of any of them in the 46 monorepo plugins or the 8 third-party
+plugins `plugins.json` lists, and core's own last callers went with them. A
+plugin that still calls one gets an `AttributeError`;
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` lists what to use instead.
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`. The
+  private change-detection helpers behind `has_data_changed`
+  (`_has_weather_changed` and friends, `_is_market_open`) went with it.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`, and with them
+  the `WEATHER_COLORS` table and the private `_draw_sun`/`_draw_cloud`/
+  `_draw_rain`/`_draw_snow`/`_draw_storm` helpers.
+  `VisualTestDisplayManager` (the plugin test harness) drops its copies of
+  the icon methods too, so a plugin's visual tests fail the way the real
+  display would instead of passing against methods that no longer exist.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`, plus the `size_tokens` attribute and the private
+  `_save_overrides` and `_clear_plugin_font_cache`. `resolve_font()` still
+  applies `config/font_overrides.json`.
+- `PluginManager.get_enabled_plugins` (check `enabled` on the entries in
+  `plugin_manager.plugins`).
 
 ### Web UI styling: a real Tailwind build
 
@@ -508,6 +694,37 @@ read any of them:
 - Plugin `web_ui/` pages no longer load Tailwind from a CDN, which failed
   in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
   with the v2 palette they were written against.
+
+### New modules (sports consolidation stage 4)
+
+A plugin may import these via `src.*` once it floors on 3.8.0. All four hold code the
+scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
+`56c4f15`), moved without behaviour change under the plugins' own names;
+each docstring lists what the host class must provide. Nothing in core uses
+them yet. The plugins delete their copies when they floor on 3.8.0.
+
+- `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
+  of the scoreboard plugin class (`manager.py`) identical in all nine:
+  `_dispatch_switch_refresh` (with `_SWITCH_REFRESH_MIN_GAP_SECONDS`),
+  `get_vegas_priority_weight`, `_favorite_team_is_live`,
+  `_favorite_scan_targets`, `_favorite_scan_games`, `_game_involves`,
+  `get_vegas_content_type`, `_dynamic_feature_enabled`,
+  `_get_total_games_for_manager` and `_build_manager_key`. List it before
+  `BasePlugin`: two of these override its defaults.
+- `src/common/sports_live_scroll.py` — `SportsLiveScrollMixin`, the eight
+  `manager.py` methods that rebuild a live scroll strip mid-cycle without
+  moving the marquee (`_live_scroll_needs_rebuild`,
+  `_preserving_scroll_position`, ...), with `LIVE_SCROLL_REBUILD_MIN_SECONDS`
+  and `LIVE_SCROLL_REBUILD_DUTY_DIVISOR`; identical in the eight scoreboards
+  with a strip (not ufc). `LIVE_VOLATILE_FIELDS` stays in each plugin.
+- `src/common/sports_display_rules.py` — `SportsCardOptionsMixin`
+  (`_card_option`, `_recent_date_text`; the eight team scoreboards; list it
+  before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+  (`_filtered_or_all`, `_effective_live_duration`; all nine).
+- `src/common/sports_font_path.py` — `resolve_font_path`, what every
+  scoreboard's `_resolve_font_path` (nine `sports.py`, eight
+  `game_renderer.py`) returns on a core that ships it: the path as given when
+  it exists, else `font_layout.resolve_asset_path`.
 
 ## 3.7.0
 

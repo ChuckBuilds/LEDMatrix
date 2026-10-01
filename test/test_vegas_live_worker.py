@@ -93,7 +93,8 @@ def _pipeline(gate=True, **cfg):
         display_width=W, display_height=H, frame_interval=0.01,
         config=VegasModeConfig(**cfg),
         display_manager=SimpleNamespace(render_gate=_Gate() if gate else None),
-        stream_manager=_Stream(adapter), _prefetch_thread=None)
+        stream_manager=_Stream(adapter), _prefetch_thread=None, prepared=[])
+    p.prepare_group_member = p.prepared.append
     return p, adapter
 
 
@@ -364,6 +365,9 @@ def test_a_group_is_fetched_a_member_at_a_time_and_published():
         assert p._prepared_group is None
         worker._run(worker._pick(NOW))
     assert p._prepared_group == [("a", ["img-a"]), ("b", ["img-b"]), ("c", ["img-c"])]
+    # Each member was laid out for the strip here, as it arrived, not by the
+    # render thread at the extension.
+    assert p.prepared == p._prepared_group
     assert p.stream_manager.plans == [None]
     assert all(offscreen for _pid, offscreen in p.stream_manager.fetched)
     assert worker._pick(NOW) is None      # the slot is full

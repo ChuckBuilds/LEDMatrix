@@ -25,8 +25,12 @@
  *                      state_manager.js, install_manager.js, list_filter.js,
  *                      the widget bundle (web_interface/widget_bundle.py),
  *                      plugins_manager.js
+ *   end of <body>, type=module (deferred, runs last): js/core/boot.js --
+ *                      window.LEDMatrix and the page registry
  *   Tab partials arrive later through htmx; their inline scripts run on
- *   htmx:afterSwap (js/htmx-config.js).
+ *   htmx:afterSwap (js/htmx-config.js). A partial converted to a page module
+ *   (data-page root, js/pages/<name>.js) has no inline script; the registry
+ *   starts it (js/core/registry.js, docs/WEB_FRONTEND_ARCHITECTURE.md).
  *
  * Layout: a few handlers defined up front, outside any IIFE, because the
  * cards and other scripts call them through window (configurePlugin,

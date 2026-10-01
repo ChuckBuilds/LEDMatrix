@@ -91,6 +91,16 @@ class _DM:
 def _pipeline(groups):
     p = RenderPipeline(VegasModeConfig(continuous_scroll=True, lead_in_width=0,
                                        separator_width=12), _DM(), _Stream(groups))
+    start_prefetch = p.start_prefetch
+
+    def prefetch_now():
+        # Done before the next extension, so both twins append the same
+        # groups the same way (prepared ahead) whatever the thread timing.
+        start_prefetch()
+        if p._prefetch_thread is not None:
+            p._prefetch_thread.join(5)
+
+    p.start_prefetch = prefetch_now
     assert p.compose_scroll_content()
     return p
 
