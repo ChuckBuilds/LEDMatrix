@@ -437,12 +437,17 @@ class SportsScrollDisplay:
         raise NotImplementedError(
             f"{type(self).__name__} has no live Vegas cards (make_vegas_renderer)")
 
+    def _determine_game_type(self, game: Dict[str, Any]) -> str:
+        """The card a game is drawn as: 'live', 'recent' or 'upcoming'.
+
+        From the game's state; a sport whose scroll display decides it
+        differently (most define their own) overrides this.
+        """
+        return {'in': 'live', 'post': 'recent'}.get(sports_vegas._state(game), 'upcoming')
+
     def render_vegas_card(self, renderer: Any, game: Dict[str, Any]) -> Image.Image:
         """Draw one game's card. Override only if the renderer is called differently."""
-        determine = getattr(self, '_determine_game_type', None)
-        game_type = determine(game) if callable(determine) else {
-            'in': 'live', 'post': 'recent'}.get(sports_vegas._state(game), 'upcoming')
-        card: Image.Image = renderer.render_game_card(game, game_type)
+        card: Image.Image = renderer.render_game_card(game, self._determine_game_type(game))
         return card
 
     def vegas_separator(self, league: str) -> Optional[Image.Image]:
