@@ -19,6 +19,7 @@ import json
 from typing import Dict, Any, Optional, List, cast
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
+from src.common.fetch_service import fetch_get, share_connection_pool
 
 
 
@@ -59,7 +60,13 @@ class BaseOddsManager:
         # Deliberately no retry adapter, unlike api_helper: retries multiply
         # request_timeout, which is set to 5s precisely to stay inside that
         # budget. One try, then the cooldown below.
+        #
+        # Every scoreboard league manager builds one of these, so the session
+        # mounts the fetch service's shared no-retry adapter: the same single
+        # try, over one connection pool per host for all of them instead of
+        # one pool per instance.
         self.session = requests.Session()
+        share_connection_pool(self.session, max_retries=0)
         self.session.headers.update(DEFAULT_HTTP_HEADERS)
         
         # Configuration with defaults
@@ -168,7 +175,7 @@ class BaseOddsManager:
             url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
             self.logger.debug(f"Requesting odds from URL: {url}")
             
-            response = self.session.get(url, timeout=self.request_timeout)
+            response = fetch_get(self.session, url, timeout=self.request_timeout)
             response.raise_for_status()
             raw_data = response.json()
 
