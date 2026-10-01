@@ -1,25 +1,31 @@
 """Reusing an unchanged recent/upcoming strip (SportsScrollDisplayManager).
 
-Building a strip draws every card on the render thread, and the panel stands
-frozen for it -- 1.1-1.6s on a Pi 4 at the start of every turn. A strip whose
-inputs have not changed is now rewound and shown again instead.
+Building a strip draws every card while the render thread waits for it, the
+panel frozen on its last frame -- ~1.4s for seven football cards at 192x48 on
+a Pi 4, at the start of every turn. A strip whose inputs have not changed is
+now rewound and shown again instead.
 
 What these pin down:
 
 * it is reused only when nothing it is drawn from changed, and drawn again on
   any doubt (live, a raised or failed build, clear_all, a strip replaced
   behind the manager's back, two builds overlapping, age, date, config,
-  rankings, panel size);
-* two leagues taking turns on one game type each keep their strip -- with one
-  shared display, NFL then NCAA then NFL never found its own strip again;
+  rankings, panel size, a game dict changed in place or while it was drawn);
+* two leagues taking turns on one game type each keep their strip and their
+  own league's pacing -- with one shared display, NFL then NCAA then NFL
+  never found its own strip again;
 * everything a caller reads (get_scroll_display, _scroll_displays,
   display_frame, is_complete, get_all_vegas_content_items) answers as it did
   when there was one display per game type;
-* the extra strips kept are bounded, by count and by bytes.
+* the extra strips kept are bounded, by count and by bytes, and the ones let
+  go are the least recently shown.
 
-All against the real ScrollHelper, so "reused" means the pixels on the panel.
+All against the real ScrollHelper, so "reused" means the pixels on the panel;
+with LEDMATRIX_PLUGINS set, against real football and hockey scoreboards too.
 """
 
+import os
+import subprocess
 import sys
 import time as real_time
 from pathlib import Path
@@ -149,6 +155,27 @@ def _scroll(manager, game_type, frames=50):
         manager.display_frame(game_type)
 
 
+def _pacing(display):
+    """How a display's strip scrolls, and where it is."""
+    helper = display.scroll_helper
+    state = {name: getattr(helper, name) for name in (
+        "scroll_speed", "fixed_pixels_per_frame", "frame_based_scrolling",
+        "calculated_duration", "min_duration", "max_duration",
+        "total_scroll_width", "scroll_position", "total_distance_scrolled",
+        "scroll_complete")}
+    state["frame_hold"] = display._scroll_frame_hold()
+    state["settings_league"] = getattr(display, "_settings_league", None)
+    return state
+
+
+def _parked_bytes(manager):
+    """What the strips of displays not on screen hold, as the budget counts it."""
+    shown = {id(display) for display in manager._scroll_displays.values()}
+    return sum(manager._strip_bytes(slot.display)
+               for pool in manager._strip_pools.values()
+               for slot in pool.values() if id(slot.display) not in shown)
+
+
 # ---------------------------------------------------------------------------
 # Reuse
 # ---------------------------------------------------------------------------
@@ -224,6 +251,34 @@ class TestDrawnAgain:
     def test_a_changed_game(self, manager, display_class):
         manager.prepare_and_display(NFL, "recent", ["nfl"])
         manager.prepare_and_display([NFL[0], _game("2", home=24)], "recent", ["nfl"])
+        assert len(display_class.builds) == 2
+
+    def test_a_game_changed_in_place(self, manager, display_class):
+        """A sport that updates its game dicts in place hands over the same
+        objects again; the key is what they held when the strip was drawn."""
+        games = [dict(g) for g in NFL]
+        manager.prepare_and_display(games, "recent", ["nfl"])
+        games[1]["home_score"] = 24
+        manager.prepare_and_display(games, "recent", ["nfl"])
+        assert len(display_class.builds) == 2
+
+    def test_a_game_changed_while_its_strip_was_drawn(self, manager, display_class):
+        """A background update can change a game dict while the strip is
+        being drawn from it. Whether the card caught the change is then not
+        known, so the next turn draws again -- and from then on reuses."""
+        games = [dict(g) for g in NFL]
+        build = display_class.prepare_scroll_content
+
+        def updated_after_drawing(display, games_, game_type, leagues,
+                                  rankings_cache=None):
+            result = build(display, games_, game_type, leagues, rankings_cache)
+            if len(display_class.builds) == 1:
+                games[1]["home_score"] = 24
+            return result
+
+        display_class.prepare_scroll_content = updated_after_drawing
+        for _ in range(3):
+            assert manager.prepare_and_display(games, "recent", ["nfl"]) is True
         assert len(display_class.builds) == 2
 
     def test_a_reordered_slate(self, manager, display_class):
@@ -347,6 +402,16 @@ class TestDrawnAgain:
         manager.prepare_and_display(NFL, "recent", ["nfl"])
         assert len(display_class.builds) == 2
 
+    def test_a_strip_whose_image_was_dropped(self, manager, display_class):
+        """Its array is still the one built, but without the image
+        display_frame() draws nothing: reused, the panel would stay blank on
+        every turn until the strip aged out."""
+        manager.prepare_and_display(NFL, "recent", ["nfl"])
+        manager.get_scroll_display("recent").scroll_helper.cached_image = None
+        manager.prepare_and_display(NFL, "recent", ["nfl"])
+        assert len(display_class.builds) == 2
+        assert manager.display_frame("recent") is True
+
     def test_a_strip_replaced_behind_the_managers_back(self, manager, display_class):
         """A plugin's prepare_content builds on get_scroll_display(game_type)
         directly; the strip it leaves is not the one the memo recorded."""
@@ -363,6 +428,13 @@ class TestDrawnAgain:
         assert manager.get_scroll_display("recent") is shown
         manager.prepare_and_display(NFL, "recent", ["nfl"])
         assert [b[2] for b in display_class.builds] == [2, 0, 2]
+
+    def test_an_empty_slate_is_drawn_every_time(self, manager, display_class):
+        """Even when the sport draws something for it and returns True (this
+        fake leaves a blank strip): no games is never keyed."""
+        for _ in range(3):
+            assert manager.prepare_and_display([], "recent", ["nfl"]) is True
+        assert [b[2] for b in display_class.builds] == [0, 0, 0]
 
     def test_an_unkeyed_build_on_the_shown_display_forgets_its_strip(
             self, manager, display_class):
@@ -457,17 +529,21 @@ class TestCallersSeeOneDisplayPerGameType:
         is the one the plugin goes on to draw."""
         manager.prepare_and_display([_game("20", league="cfl")], "recent", ["cfl"])
         original = display_class.prepare_scroll_content
+        # The overtaking prepare's result, checked after the outer one: an
+        # assert in here would be caught by _prepare_on's except and read as
+        # the build failing, which this one does anyway.
         overtaken = []
 
         def slow_then_failing(display, games, game_type, leagues, rankings_cache=None):
             if list(leagues) == ["nfl"] and not overtaken:
-                overtaken.append(True)
-                assert manager.prepare_and_display(NCAA, "recent", ["ncaa_fb"]) is True
+                overtaken.append(
+                    manager.prepare_and_display(NCAA, "recent", ["ncaa_fb"]))
                 return False
             return original(display, games, game_type, leagues, rankings_cache)
 
         display_class.prepare_scroll_content = slow_then_failing
         assert manager.prepare_and_display(NFL, "recent", ["nfl"]) is False
+        assert overtaken == [True], "the overtaking prepare drew its strip"
         assert manager.get_scroll_display("recent")._current_leagues == ["ncaa_fb"]
         assert manager._scroll_displays["recent"]._current_leagues == ["ncaa_fb"]
 
@@ -479,18 +555,19 @@ class TestCallersSeeOneDisplayPerGameType:
         the newer one's, so the older one's games must not reuse it."""
         original = display_class.prepare_scroll_content
         changed = [NFL[0], _game("2", home=24)]
-        overtaken = []
+        overtaken = []                  # checked after, as in the test above
 
         def draws_then_is_overtaken(display, games, game_type, leagues,
                                     rankings_cache=None):
             result = original(display, games, game_type, leagues, rankings_cache)
             if not overtaken:
-                overtaken.append(True)
-                assert manager.prepare_and_display(changed, "recent", ["nfl"]) is True
+                overtaken.append(None)  # set first: the nested build comes back here
+                overtaken[0] = manager.prepare_and_display(changed, "recent", ["nfl"])
             return result
 
         display_class.prepare_scroll_content = draws_then_is_overtaken
         assert manager.prepare_and_display(NFL, "recent", ["nfl"]) is True
+        assert overtaken == [True], "the overtaking prepare drew its strip"
         assert len(display_class.builds) == 2
 
         manager.prepare_and_display(NFL, "recent", ["nfl"])
@@ -507,6 +584,89 @@ class TestCallersSeeOneDisplayPerGameType:
         assert manager._scroll_displays["recent"].get_dynamic_duration() != long_duration
         manager.prepare_and_display(NFL * 3, "recent", ["nfl"])     # reused
         assert manager._scroll_displays["recent"].get_dynamic_duration() == long_duration
+
+
+# ---------------------------------------------------------------------------
+# What real scoreboards do that the plain fake does not
+# ---------------------------------------------------------------------------
+
+class TestSportsHabits:
+    def test_each_slate_keeps_its_own_leagues_pacing(self, manager, display_class):
+        """A sport re-applies a league's scroll settings to its display when
+        the league changes (the plugins' _settings_league), which is why each
+        slate has a display of its own. A reused strip must scroll exactly as
+        a fresh build for its own league does."""
+
+        class _PerLeague(display_class):
+            _settings_league = None
+
+            def _get_scroll_settings(self, league=None):
+                return super()._get_scroll_settings(league or self._settings_league)
+
+            def prepare_scroll_content(self, games, game_type, leagues,
+                                       rankings_cache=None):
+                if leagues and leagues[0] != self._settings_league:
+                    self._settings_league = leagues[0]
+                    self._configure_scroll_helper()
+                return super().prepare_scroll_content(
+                    games, game_type, leagues, rankings_cache)
+
+        type(manager).display_class = _PerLeague
+        manager.config["nfl"]["scroll_settings"].update(
+            scroll_speed=30, min_duration=2, max_duration=400)
+        manager.config["ncaa_fb"] = {"scroll_settings": {
+            "scroll_speed": 120, "min_duration": 1, "max_duration": 90}}
+        slates = ((NFL * 2, ["nfl"]), (NCAA, ["ncaa_fb"]))
+        for _ in range(2):
+            for games, leagues in slates:
+                manager.prepare_and_display(games, "recent", leagues)
+        assert len(display_class.builds) == 2
+
+        paces = []
+        for games, leagues in slates:
+            builds = len(display_class.builds)
+            assert manager.prepare_and_display(games, "recent", leagues) is True
+            assert len(display_class.builds) == builds, "reused"
+            fresh_panel = _Panel()
+            fresh = type(manager)(fresh_panel, manager.config)
+            fresh.prepare_and_display(games, "recent", leagues)
+            reused = _pacing(manager.get_scroll_display("recent"))
+            assert reused == _pacing(fresh.get_scroll_display("recent"))
+            paces.append(reused)
+            _scroll(manager, "recent", frames=30)
+            _scroll(fresh, "recent", frames=30)
+            assert np.array_equal(np.array(manager.display_manager.image),
+                                  np.array(fresh_panel.image))
+        assert paces[0]["scroll_speed"] != paces[1]["scroll_speed"], \
+            "the two leagues must pace differently for this to show anything"
+
+    def test_a_build_that_fills_in_its_game_dicts_settles(self, manager, display_class):
+        """Hockey's renderer fills in fields on the game dicts it is handed.
+        Keyed on what they held before that, the next turn draws once more;
+        then the strip is reused, and is what a fresh build draws."""
+        build = display_class.prepare_scroll_content
+
+        def filling_in(display, games, game_type, leagues, rankings_cache=None):
+            for game in games:
+                game.setdefault("status_text", "Final")
+            return build(display, games, game_type, leagues, rankings_cache)
+
+        display_class.prepare_scroll_content = filling_in
+        slates = (([dict(g) for g in NFL], ["nfl"]),
+                  ([dict(g) for g in NCAA], ["ncaa_fb"]))
+        builds = []
+        for _ in range(3):
+            for games, leagues in slates:
+                assert manager.prepare_and_display(games, "recent", leagues) is True
+            builds.append(len(display_class.builds))
+        assert builds[0] == 2 and builds[2] == builds[1] <= 4, builds
+
+        games, leagues = slates[1]
+        fresh = type(manager)(_Panel(), manager.config)
+        fresh.prepare_and_display(games, "recent", leagues)
+        assert np.array_equal(
+            manager.get_scroll_display("recent").scroll_helper.cached_array,
+            fresh.get_scroll_display("recent").scroll_helper.cached_array)
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +699,72 @@ class TestBounds:
         games, leagues = self._slate(0)
         manager.prepare_and_display(games, "recent", leagues)
         assert len(display_class.builds) == builds + 1
+
+    def test_a_slate_shown_again_by_reuse_is_not_the_next_let_go(
+            self, manager, display_class):
+        """Reuse counts as being shown: the slate whose display draws a new
+        one is the least recently shown, not the least recently drawn."""
+        cap = manager.STRIP_MEMO_SLATES_PER_TYPE
+        slates = [self._slate(n) for n in range(cap + 1)]
+        for games, leagues in slates[:cap]:
+            manager.prepare_and_display(games, "recent", leagues)
+        manager.prepare_and_display(slates[0][0], "recent", slates[0][1])   # reused
+        assert len(display_class.builds) == cap
+
+        manager.prepare_and_display(slates[cap][0], "recent", slates[cap][1])
+        manager.prepare_and_display(slates[0][0], "recent", slates[0][1])
+        assert len(display_class.builds) == cap + 1, "slate 0, just shown, was let go"
+        manager.prepare_and_display(slates[1][0], "recent", slates[1][1])
+        assert len(display_class.builds) == cap + 2, "slate 1 was the one let go"
+
+    def test_the_byte_budget_lets_go_of_the_least_recently_shown(
+            self, manager, display_class, clock):
+        """Reuse counts as being shown here too."""
+        a, b, c, d = (self._slate(n) for n in range(4))
+        shown = []
+        for games, leagues in (a, b, c):
+            clock.ahead += 1
+            manager.prepare_and_display(games, "recent", leagues)
+            shown.append(manager.get_scroll_display("recent"))
+        shown_a, shown_b, shown_c = shown
+        manager.STRIP_MEMO_MAX_PARKED_BYTES = 2 * manager._strip_bytes(shown_a)
+        for games, leagues in (a, b):             # shown again, by reuse
+            clock.ahead += 1
+            manager.prepare_and_display(games, "recent", leagues)
+        assert len(display_class.builds) == 3
+
+        clock.ahead += 1
+        manager.prepare_and_display(d[0], "recent", d[1])   # a, b, c parked: one too many
+        assert not shown_c.scroll_helper.has_strip(), "c was shown longest ago"
+        assert shown_a.scroll_helper.has_strip()
+        assert shown_b.scroll_helper.has_strip()
+        manager.prepare_and_display(a[0], "recent", a[1])
+        assert len(display_class.builds) == 4
+
+    def test_a_reuse_that_parks_a_bigger_strip_stays_inside_the_budget(
+            self, manager, display_class, clock):
+        """Not only a build trims. A reuse can park a bigger strip than the one
+        it brings back, and with only reuses after it the budget would stay
+        exceeded until the strips aged out."""
+        a, b = self._slate(0), self._slate(1)
+        big = ([_game(str(90 + i), league="big") for i in range(4)], ["big"])
+        manager.prepare_and_display(a[0], "recent", a[1])
+        small = manager._strip_bytes(manager.get_scroll_display("recent"))
+        manager.STRIP_MEMO_MAX_PARKED_BYTES = 2 * small       # room for a and b
+        for games, leagues in (b, big):
+            clock.ahead += 1
+            manager.prepare_and_display(games, "recent", leagues)
+        shown_big = manager.get_scroll_display("recent")
+        assert manager._strip_bytes(shown_big) > small
+        assert _parked_bytes(manager) <= manager.STRIP_MEMO_MAX_PARKED_BYTES
+
+        clock.ahead += 1
+        manager.prepare_and_display(a[0], "recent", a[1])     # reused; big is parked
+        assert len(display_class.builds) == 3
+        assert _parked_bytes(manager) <= manager.STRIP_MEMO_MAX_PARKED_BYTES
+        assert shown_big.scroll_helper.has_strip(), "b went first, shown longer ago"
+        manager.prepare_and_display(big[0], "recent", big[1])
+        assert len(display_class.builds) == 3
 
     def test_parked_strips_stay_inside_the_byte_budget(self, manager, display_class):
         manager.prepare_and_display(NFL, "recent", ["nfl"])
@@ -600,3 +826,155 @@ class TestBounds:
         manager.prepare_and_display(NFL, "recent", ["nfl"])
         manager.prepare_and_display(NCAA, "recent", ["ncaa_fb"])
         panel.set_scrolling_state.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Real scoreboards (LEDMATRIX_PLUGINS)
+# ---------------------------------------------------------------------------
+#
+# The fakes above draw only from what the key holds. A real sport's cards are
+# drawn by its own renderer in ledmatrix-plugins, so a renderer that started
+# drawing something outside the key would pass all of them. Point
+# LEDMATRIX_PLUGINS at a checkout to run two real scoreboards through the memo.
+
+REPO = Path(__file__).resolve().parent.parent
+
+#: Two leagues per sport. Every team has a logo under assets/sports.
+REAL_SLATES = {
+    "football": (("nfl", "nfl_logos", ("DAL", "PHI", "KC", "BUF", "SF", "SEA")),
+                 ("ncaa_fb", "ncaa_logos", ("ALA", "UGA", "OSU", "MICH"))),
+    # Its renderer fills in the game dicts it is handed.
+    "hockey": (("nhl", "nhl_logos", ("BOS", "TOR", "MTL", "NYR", "PIT", "CHI")),
+               ("ncaa_mens", "ncaa_logos", ("BU", "BC", "MICH", "MINN"))),
+}
+
+#: Each league's own scroll settings, so a display that kept the other
+#: league's pacing would show.
+REAL_SETTINGS = (
+    {"scroll_speed": 30, "gap_between_games": 20, "min_duration": 15, "max_duration": 400},
+    {"scroll_speed": 120, "gap_between_games": 64, "min_duration": 40, "max_duration": 90},
+)
+
+
+@pytest.mark.parametrize("sport", sorted(REAL_SLATES))
+def test_a_real_scoreboard_reuses_exactly_what_it_would_draw(sport):
+    """Two leagues taking turns through the sport's own ScrollDisplayManager:
+    the builds stay bounded, and each reused strip -- its pixels, Vegas items,
+    dynamic duration, pacing and the frame on the panel -- equals a fresh
+    build for its league. In a child process, since every plugin has its own
+    top-level scroll_display and game_renderer modules."""
+    raw = os.environ.get("LEDMATRIX_PLUGINS")
+    root = Path(raw) if raw else None
+    if root is not None and (root / "plugins").is_dir():
+        root = root / "plugins"
+    plugin = root / f"{sport}-scoreboard" if root is not None else None
+    if plugin is None or not (plugin / "scroll_display.py").is_file():
+        pytest.skip("set LEDMATRIX_PLUGINS to a ledmatrix-plugins checkout to run "
+                    "real scoreboards through the strip memo")
+    result = subprocess.run(
+        [sys.executable, __file__, str(plugin), sport],
+        cwd=str(REPO), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=600,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert result.returncode == 0, (result.stdout + result.stderr)[-6000:]
+    assert result.stdout.strip().endswith("OK"), result.stdout[-6000:]
+
+
+def _real_scoreboard_check(plugin, sport):
+    """The child process's half of the test above."""
+    import json
+    import logging
+    from datetime import datetime, timedelta, timezone
+
+    logging.basicConfig(level=logging.ERROR)
+    sys.path.insert(0, str(plugin))
+    sys.dont_write_bytecode = True
+    from scroll_display import ScrollDisplayManager
+
+    def defaults(schema):
+        if "default" in schema:
+            return json.loads(json.dumps(schema["default"]))
+        if schema.get("type") == "object":
+            return {key: defaults(sub) for key, sub in (schema.get("properties") or {}).items()
+                    if "default" in sub or sub.get("type") == "object"}
+        return None
+
+    config = defaults(json.loads((plugin / "config_schema.json").read_text(encoding="utf-8")))
+
+    def game(i, league, logo_dir, home, away):
+        logos = REPO / "assets" / "sports" / logo_dir
+        for team in (home, away):
+            assert (logos / f"{team}.png").is_file(), f"no logo for {team}"
+        start = datetime(2026, 9, 28, 17, 0, tzinfo=timezone.utc) + timedelta(hours=i)
+        return {
+            "id": f"{league}{i}", "league": league, "game_time": "1:00PM",
+            "game_date": "09/28", "start_time_utc": start, "status_text": "Final",
+            "is_live": False, "is_final": True, "is_upcoming": False,
+            "is_halftime": False, "is_period_break": False, "broadcast": "CBS",
+            "home_abbr": home, "home_id": str(100 + i), "home_score": str(10 + i),
+            "home_logo_path": logos / f"{home}.png", "home_logo_url": None,
+            "home_record": "3-1", "away_abbr": away, "away_id": str(200 + i),
+            "away_score": str(7 + i), "away_logo_path": logos / f"{away}.png",
+            "away_logo_url": None, "away_record": "2-2", "is_within_window": True,
+            "favorite_teams": [], "period": 4, "period_text": "Final",
+            "clock": "0:00", "status": {"state": "post"},
+        }
+
+    slates = []
+    for (league, logo_dir, teams), settings in zip(REAL_SLATES[sport], REAL_SETTINGS):
+        block = config.setdefault(league, {})
+        block["enabled"] = True
+        block.setdefault("scroll_settings", {}).update(settings)
+        slates.append(([game(i, league, logo_dir, teams[2 * i % len(teams)],
+                             teams[(2 * i + 1) % len(teams)]) for i in range(4)],
+                       [league]))
+    rankings = {teams[0]: 5 for _, _, teams in REAL_SLATES[sport]}
+
+    calls = []
+    build = ScrollDisplayManager.display_class.prepare_scroll_content
+
+    def counting(self, games, game_type, leagues, rankings_cache=None):
+        calls.append(tuple(leagues))
+        return build(self, games, game_type, leagues, rankings_cache)
+
+    ScrollDisplayManager.display_class.prepare_scroll_content = counting
+    log = logging.getLogger("strip_reuse")
+
+    def new_manager():
+        return ScrollDisplayManager(_Panel(192, 48), config, log, global_config={})
+
+    manager = new_manager()
+    rounds = []
+    for _ in range(3):
+        for games, leagues in slates:
+            assert manager.prepare_and_display(games, "recent", leagues, rankings) is True
+        rounds.append(len(calls))
+    # A sport that fills in its game dicts draws each slate once more.
+    assert calls[:2] == [tuple(slates[0][1]), tuple(slates[1][1])], calls
+    assert rounds[2] == rounds[1] <= 4, (rounds, calls)
+
+    paces = []
+    for games, leagues in slates:
+        builds = len(calls)
+        assert manager.prepare_and_display(games, "recent", leagues, rankings) is True
+        assert len(calls) == builds, f"{leagues} was drawn again"
+        fresh = new_manager()
+        assert fresh.prepare_and_display(games, "recent", leagues, rankings) is True
+        reused, built = manager.get_scroll_display("recent"), fresh.get_scroll_display("recent")
+        assert np.array_equal(reused.scroll_helper.cached_array, built.scroll_helper.cached_array)
+        assert len(reused._vegas_content_items) == len(built._vegas_content_items)
+        for mine, theirs in zip(reused._vegas_content_items, built._vegas_content_items):
+            assert np.array_equal(np.array(mine), np.array(theirs))
+        assert manager.get_dynamic_duration("recent") == fresh.get_dynamic_duration("recent")
+        assert _pacing(reused) == _pacing(built), (_pacing(reused), _pacing(built))
+        paces.append(_pacing(reused))
+        _scroll(manager, "recent", frames=150)
+        _scroll(fresh, "recent", frames=150)
+        assert np.array_equal(np.array(manager.display_manager.image),
+                              np.array(fresh.display_manager.image))
+    assert paces[0]["scroll_speed"] != paces[1]["scroll_speed"], paces
+    print("OK")
+
+
+if __name__ == "__main__":
+    _real_scoreboard_check(Path(sys.argv[1]).resolve(), sys.argv[2])

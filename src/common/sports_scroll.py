@@ -660,9 +660,10 @@ class SportsScrollDisplayManager:
 
     #: Ceiling, per plugin, on the strips kept for displays not on screen, in
     #: bytes (the strip's array and image, and its Vegas items). Seven
-    #: football games at 192x48 come to ~0.65MB, thirty at 512x64 to ~4MB,
-    #: so a low-memory board holds no more than this beyond what one display
-    #: per game type already held.
+    #: football games at 192x48 come to ~0.65MB, thirty at 512x64 to ~4MB.
+    #: It bounds strip pixels only: each extra display also keeps its own
+    #: logo and separator-icon caches and frame buffer, and each slot a frozen
+    #: copy of the config in its key (~50KB), none of which is counted here.
     STRIP_MEMO_MAX_PARKED_BYTES = 6 * 1024 * 1024
 
     def __init__(
@@ -688,9 +689,10 @@ class SportsScrollDisplayManager:
         # get_dynamic_duration and has_cached_content) sees what it did when
         # there was only one display per game type.
         self._strip_pools: Dict[str, "OrderedDict[Tuple[str, Tuple[Any, ...]], _StripSlot]"] = {}
-        # Only the bookkeeping is under it, never a build: a display() call
-        # that outlived its timeout can still be building when the next one
-        # starts.
+        # Only the bookkeeping is under it (and creating a slate's display,
+        # the first time that slate is drawn), never a build: a display()
+        # call that outlived its timeout can still be building when the next
+        # one starts.
         self._strip_lock = threading.RLock()
 
     def _new_scroll_display(self) -> SportsScrollDisplay:
