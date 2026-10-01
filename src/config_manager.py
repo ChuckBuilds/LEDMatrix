@@ -451,8 +451,10 @@ class ConfigManager:
                 template_config = json.load(f)
             
             # Check if migration is needed
-            if self._config_needs_migration(self.config, template_config):
-                self.logger.info("Config migration needed - adding new configuration items with defaults")
+            needs_merge = self._config_needs_migration(self.config, template_config)
+            if needs_merge or self._live_in_ticker_needs_migration():
+                if needs_merge:
+                    self.logger.info("Config migration needed - adding new configuration items with defaults")
                 
                 # Create backup of current config
                 backup_path = f"{self.config_path}.backup"
@@ -461,7 +463,9 @@ class ConfigManager:
                 self.logger.info(f"Created backup of current config at {os.path.abspath(backup_path)}")
                 
                 # Merge template defaults into current config
-                self._merge_template_defaults(self.config, template_config)
+                if needs_merge:
+                    self._merge_template_defaults(self.config, template_config)
+                self._migrate_live_in_ticker_default()
                 
                 # save_config_atomic strips the merged secrets back out and
                 # keeps the file's owner and mode.
@@ -481,6 +485,44 @@ class ConfigManager:
         except Exception as e:
             self.logger.error(f"Error during config migration: {e}")
             # Don't raise - continue with current config
+
+    #: Set in display.vegas_scroll once _migrate_live_in_ticker_default() has
+    #: run. Never in the template: the template merge would add it first, and
+    #: the flip would then never run.
+    LIVE_IN_TICKER_MARKER = 'live_in_ticker_migrated'
+
+    def _vegas_scroll_section(self) -> Optional[Dict[str, Any]]:
+        display = self.config.get('display')
+        vegas = display.get('vegas_scroll') if isinstance(display, dict) else None
+        return vegas if isinstance(vegas, dict) else None
+
+    def _live_in_ticker_needs_migration(self) -> bool:
+        vegas = self._vegas_scroll_section()
+        return vegas is not None and not vegas.get(self.LIVE_IN_TICKER_MARKER)
+
+    def _migrate_live_in_ticker_default(self) -> None:
+        """Turn on live_in_ticker for a config that only ever had the old default. Once.
+
+        LEDMatrix 3.8.0 makes ``display.vegas_scroll.live_in_ticker`` true:
+        live games stay in the Vegas ticker, their cards updating while they
+        scroll, instead of the ticker giving way to the full-screen
+        scoreboard. Every existing config holds an explicit ``false`` copied
+        from the template -- there was no control for it -- and the template
+        merge only adds missing keys, so the new default would reach nobody.
+        This rewrites that ``false`` once and marks the config, so a
+        ``false`` chosen afterwards (the Vegas checkbox, or by hand) stays.
+        """
+        vegas = self._vegas_scroll_section()
+        if vegas is None or vegas.get(self.LIVE_IN_TICKER_MARKER):
+            return
+        vegas[self.LIVE_IN_TICKER_MARKER] = True
+        if vegas.get('live_in_ticker') is False:
+            vegas['live_in_ticker'] = True
+            self.logger.info(
+                "Vegas mode now keeps live games in the ticker (the new default): "
+                "display.vegas_scroll.live_in_ticker turned on, once. Untick "
+                "\"Keep live games in the ticker\" under Vegas mode for the "
+                "full-screen scoreboard.")
 
     def _config_needs_migration(self, current_config: Dict[str, Any], template_config: Dict[str, Any]) -> bool:
         """Check if config needs migration by comparing with template."""

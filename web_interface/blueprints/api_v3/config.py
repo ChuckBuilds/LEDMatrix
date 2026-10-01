@@ -802,7 +802,8 @@ def save_main_config():
                        'vegas_intra_plugin_gap', 'vegas_render_width_pct',
                        'vegas_min_content_separation', 'vegas_min_cut_gap',
                        'vegas_continuous_scroll', 'vegas_extend_threshold_screens',
-                       'vegas_smooth_scroll', 'vegas_overflow_mode']
+                       'vegas_smooth_scroll', 'vegas_overflow_mode', 'vegas_live_refresh',
+                       'vegas_live_in_ticker']
 
         if any(k in data for k in vegas_fields):
             if 'display' not in current_config:
@@ -822,6 +823,8 @@ def save_main_config():
             _set_checkbox(vegas_config, 'dynamic_duration_enabled', 'vegas_dynamic_duration_enabled')
             _set_checkbox(vegas_config, 'continuous_scroll', 'vegas_continuous_scroll')
             _set_checkbox(vegas_config, 'smooth_scroll', 'vegas_smooth_scroll')
+            _set_checkbox(vegas_config, 'live_refresh', 'vegas_live_refresh')
+            _set_checkbox(vegas_config, 'live_in_ticker', 'vegas_live_in_ticker')
 
             # max_plugin_width_ratio is the one fractional setting, so it is
             # handled outside the integer loop below.

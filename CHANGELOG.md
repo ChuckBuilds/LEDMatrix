@@ -358,6 +358,104 @@ read any of them:
   lock stays busy past the same 5s bound the change is handed to the update
   worker, which applies the latest one as soon as the lock frees, and before
   the plugin's next update() at the latest. The plugin API is unchanged.
+- With a Vegas width budget set (`max_plugin_width_ratio` or a plugin's
+  `vegas_max_width_screens`), a single image over the budget with no gaps
+  between items -- a map, one long headline -- no longer takes a pass of its
+  own showing four blank columns. The cut landed in the middle of the blank
+  margin trimming leaves at the image's edge; margins are no longer cut
+  points, so such an image is cropped to the budget as intended.
+
+### Live Vegas elements (plugin API)
+
+- New plugin hooks for content that can change while it scrolls:
+  `BasePlugin.get_vegas_elements()` returns `VegasElement`s -- named,
+  fixed-width pieces of Vegas content -- instead of pictures;
+  `redraw_vegas_element(key, width, height, at)` redraws one without the
+  plugin lock for content that changes with time; and
+  `notify_vegas_data_changed()` reports data that arrived outside
+  `update()`. New module `src/plugin_system/vegas_elements.py`
+  (`VegasElement`, also re-exported from `base_plugin`). See "Live Vegas
+  elements" in `docs/PLUGIN_API_REFERENCE.md`.
+- The ticker asks a plugin that implements the hook for elements on its
+  background fetch (under the plugin's lock, on a canvas of its own) and
+  records where each one lands in the strip, in absolute columns a trim does
+  not move (`src/vegas_mode/elements.py`). Live elements are never trimmed to
+  their ink: each is padded with `content_padding` black columns either side.
+  Every other path -- the first strip, the render-thread fallback, plugins
+  without the hook -- is unchanged. Swapping redraws into the strip builds
+  on this.
+- `PluginManager.add_update_listener()` / `remove_update_listener()` /
+  `notify_data_changed()`: a listener hears a plugin id the moment its
+  `update()` completes, rather than at the next ~4s Vegas poll.
+- New `display.vegas_scroll` settings: `live_refresh` (default `true`; the
+  kill switch), `live_max_hz`, `live_min_interval`, `live_lead_screens`, and
+  a per-plugin core-owned `vegas_live`. Live elements are off whatever these
+  say under multi-display sync, in swap mode and with `offscreen_prefetch`
+  off.
+- `scripts/check_plugin.py` checks the element contract for any plugin that
+  implements it (`src/plugin_system/testing/vegas.py`), and
+  `test/fixtures/plugins/vegas-live-stub` is a working example.
+- **Live elements update in place.** When a plugin's `update()` completes,
+  one background worker (`src/vegas_mode/live_worker.py`) redraws its live
+  elements that are on or ahead of the screen, nearest first, and hands the
+  ones whose pixels changed to the render thread, which copies them into the
+  strip between two frames (`RenderPipeline.apply_live_patches`,
+  `ScrollHelper.patch_columns`): at most four patches or two screens of bytes
+  a frame, no drawing and no locks on the render thread. Elements with
+  `refresh_hz` are redrawn that often while near the screen, through the
+  plugin's lock-free `redraw_vegas_element()`. The worker also takes over
+  group prefetching once the strip holds a live element, so one thread
+  still does all the drawing; it runs inside the render gate, starts only
+  when a live element is placed, and is restarted if it dies (three times in
+  ten minutes turns live updates off for the run). While live elements exist,
+  the Vegas update tick runs every second instead of every four.
+- Web UI: "Update live content while it scrolls" under Vegas mode's Cycle
+  Pacing (`display.vegas_scroll.live_refresh`).
+- **Live cards for the scoreboards (shared code).** New module
+  `src/common/sports_vegas.py`: `game_key()`, `dedupe_games()`,
+  `VegasCardCache` (draws a card only when its fingerprint changes) and
+  `StickyOdds` (keeps a card's odds through a live poll that left them out),
+  `finished_games()` and `with_finished_games()` (a game that just went final
+  keeps its card, showing FINAL, where its live card was).
+  `SportsScrollDisplay` gains `make_vegas_renderer()` (the override point; a
+  sport that does not implement it keeps its ordinary Vegas content),
+  `render_vegas_card()`, `vegas_separator()` and `build_vegas_elements()`,
+  and `SportsScrollDisplayManager` gains `get_vegas_elements_for()`.
+  `SportsLiveSharedMixin` gains `_record_finished_game()` /
+  `finished_games_snapshot()`, so a game that goes final keeps a card to show
+  FINAL on until the hourly recent list takes it over.
+- `scripts/render_plugin.py --vegas` renders a plugin's block of the Vegas
+  strip as the ticker lays it out (live elements, or with `--no-live` its
+  ordinary content) and writes the live elements' keys and columns beside
+  it. `--timeline ROWS` stacks the block at successive moments as the
+  ticker would update it in place (`--timeline-step`, and
+  `--timeline-update` to run `update()` between rows).
+  `render_vegas_strip()` and `render_vegas_timeline()` in
+  `src/plugin_system/testing/vegas.py`; the join is now
+  `render_pipeline.join_plugin_rows()`.
+- **Behaviour change: live games stay in the Vegas ticker by default.**
+  `display.vegas_scroll.live_in_ticker` now defaults to `true`: the marquee
+  keeps running through a live game, which takes extra turns in it, instead
+  of giving way to the full-screen scoreboard. Existing configs all held the
+  old `false`, copied from the template, so the first start turns it on once
+  (`ConfigManager._migrate_live_in_ticker_default`; the previous config is
+  kept as `config.json.backup` and `live_in_ticker_migrated` records that it
+  ran). To keep the full-screen scoreboard, untick the new **Keep live games
+  in the ticker** under Vegas mode; a `false` set after the migration stays.
+
+### Scrolling
+
+- A Vegas strip extension costs the render thread about a third of what it
+  did. Appending the next group and trimming what has scrolled past each
+  rebuilt the strip's PIL image from its numpy array in full
+  (`Image.fromarray`: 1.7ms for an 8,000px strip, 3.8ms for 20,000px, on a
+  Pi 4 -- twice per extension), though every frame is cut from the array and
+  nothing on the frame path reads the image's pixels. `ScrollHelper` now
+  builds `cached_image` only when something reads it, which in Vegas means
+  only a multi-display sync push, and the strip is no longer held in memory
+  twice. Assigning `cached_image` still stores exactly what was assigned.
+  New `ScrollHelper.has_strip()` says whether there is a strip without
+  building its image; the frame path and Vegas use it.
 
 ### Tooling
 

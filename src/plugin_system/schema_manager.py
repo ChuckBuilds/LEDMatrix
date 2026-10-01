@@ -155,6 +155,18 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
             "Leave unset to use the plugin's own default."
         ),
     },
+    # Read by vegas_mode/plugin_adapter.py (PluginAdapter.is_live_capable).
+    # No default, for the same reason: unset means on.
+    "vegas_live": {
+        "type": "boolean",
+        "title": "Update in the Vegas ticker",
+        "description": (
+            "Vegas mode: for a plugin with live elements (scores, the flight "
+            "map), change what is already scrolling when its data changes. "
+            "Off shows each card as it was when it was drawn, as before. "
+            "Leave unset for on."
+        ),
+    },
 }
 
 #: The keys of CORE_PLUGIN_PROPERTIES that are Vegas tuning rather than plugin
@@ -162,7 +174,7 @@ CORE_PLUGIN_PROPERTIES: Dict[str, Dict[str, Any]] = {
 #: PluginManager.CORE_OWNED_CONFIG_KEYS).
 CORE_VEGAS_TUNING_KEYS = frozenset({
     'vegas_width_pct', 'vegas_overflow', 'vegas_max_width_screens',
-    'vegas_participation',
+    'vegas_participation', 'vegas_live',
 })
 
 

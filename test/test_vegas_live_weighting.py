@@ -5,10 +5,10 @@ live content did not appear in it at all, because the display controller
 refused to run the ticker while anything was live. With a dozen plugins
 enabled that left a live score either absent or minutes stale.
 
-Two things change, both off by default. `live_in_ticker` keeps the marquee
-running instead of yielding to a full-screen takeover, and the rotation is
-expanded by Smooth Weighted Round-Robin so a weighted plugin gets several
-slots per cycle, spaced through it rather than clumped.
+Two things change. `live_in_ticker` keeps the marquee running instead of
+yielding to a full-screen takeover (on by default since 3.8.0), and the
+rotation is expanded by Smooth Weighted Round-Robin so a weighted plugin gets
+several slots per cycle, spaced through it rather than clumped.
 
 Weights are per plugin, not per game: a scoreboard showing four live games
 still occupies one slot at a time and rotates its own games within it.
@@ -288,9 +288,9 @@ class TestTheSchedule:
 
 
 class TestConfigParsing:
-    def test_defaults_preserve_todays_behaviour(self):
+    def test_live_games_stay_in_the_ticker_by_default(self):
         cfg = VegasModeConfig.from_config({})
-        assert cfg.live_in_ticker is False
+        assert cfg.live_in_ticker is True
         assert cfg.live_weight == 3 and cfg.favorite_live_weight == 5
 
     @pytest.mark.parametrize("given,expected", [(0, 1), (-4, 1), (99, 10), (4, 4)])

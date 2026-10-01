@@ -915,8 +915,7 @@ class DisplayManager:
         ``display.dirty_tracking: false`` if a redraw issue is ever suspected.
 
         Serialized via ``_update_lock``: plugins can call this directly from
-        background threads (e.g. sports base classes push an immediate
-        "live" refresh from inside update()), so without a lock two callers
+        background threads of their own, so without a lock two callers
         could both pass the digest check before either writes it back,
         double-pushing a frame, or interleave the offscreen/current canvas
         swap below. The lock is scoped to this method, so callers never

@@ -5,6 +5,7 @@ Composes plugin content into one wide strip and renders the visible window of
 it each frame, using ScrollHelper for the numpy-backed scroll.
 """
 
+import itertools
 import logging
 import os
 import time
@@ -18,6 +19,8 @@ from src.common.scroll_config import solve_crisp
 from src.common.scroll_helper import ScrollHelper
 from src.matrix_support import DEFAULT_REFRESH_LIMIT_HZ
 from src.vegas_mode.config import VegasModeConfig
+from src.vegas_mode.elements import ElementMeta, ElementRecord, LivePatch, LiveView, meta_of
+from src.vegas_mode.live_worker import LEGACY_PREFETCH_JOIN_S, VegasWorker
 from src.vegas_mode.geometry import separation_gap
 from src.vegas_mode.stream_manager import StreamManager
 
@@ -27,6 +30,51 @@ logger = logging.getLogger(__name__)
 #: Vegas scroll position and the controller's per-frame follower images. The
 #: payloads are raw and cheap, and 90/s is above the follower's render rate.
 SYNC_SEND_INTERVAL = 1.0 / 90
+
+
+def join_plugin_rows(
+    images: List[Image.Image], config: VegasModeConfig
+) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
+    """Join one plugin's images into the block the strip will hold.
+
+    Returns ``(block, layout)``, layout being ``(x, meta, width)`` for every
+    image tagged as a live element (src/vegas_mode/elements.py), x measured
+    from the block's left edge. A single image is returned as it is.
+
+    A module function so tooling (scripts/render_plugin.py --vegas) lays a
+    plugin out exactly as the ticker does.
+    """
+    if len(images) == 1:
+        meta = meta_of(images[0])
+        layout = [(0, meta, images[0].width)] if meta is not None else []
+        return images[0], layout
+
+    floor = max(0, config.intra_plugin_gap)
+    target = max(0, config.min_content_separation)
+    threshold = config.trim_threshold
+
+    # Space by measured separation, not a flat gap. Rows drawn flush to their
+    # own edges (sports score cards) would otherwise end up nearly touching,
+    # while rows that already carry wide margins would be pushed needlessly
+    # further apart.
+    gaps = [
+        separation_gap(images[i], images[i + 1], target, floor, threshold)
+        for i in range(len(images) - 1)
+    ]
+
+    width = sum(img.width for img in images) + sum(gaps)
+    height = max(img.height for img in images)
+
+    block = Image.new('RGB', (width, height), (0, 0, 0))
+    layout: List[Tuple[int, ElementMeta, int]] = []
+    x = 0
+    for i, img in enumerate(images):
+        block.paste(img, (x, 0))
+        meta = meta_of(img)
+        if meta is not None:
+            layout.append((x, meta, img.width))
+        x += img.width + (gaps[i] if i < len(gaps) else 0)
+    return block, layout
 
 
 class RenderPipeline:
@@ -66,6 +114,35 @@ class RenderPipeline:
     # never mutated, so the class-level default is safe for pipelines built
     # without __init__ (tests).
     _static_markers: Tuple[Tuple[int, str], ...] = ()
+
+    # Live elements in the strip (see "live element records" below). Replaced,
+    # never mutated, like _static_markers, and class-level for the same reason.
+    _elements: Tuple[ElementRecord, ...] = ()
+    # Columns trimmed off the strip's front since it was composed.
+    _strip_origin: int = 0
+    # Bumped whenever a new strip replaces the old one (compose, reset), so
+    # anything computed against the old strip can tell.
+    _strip_gen: int = 0
+
+    # Live updates (see apply_live_patches and src/vegas_mode/live_worker.py).
+    # Where the viewport is, published every frame for the worker.
+    _view: Optional[LiveView] = None
+    # Set by the coordinator for a run in which live elements are on.
+    _live_enabled: bool = False
+    _live_worker: Optional[VegasWorker] = None
+    # The last worker stopped: it finishes its current job, and hands over
+    # what it has of a group, before the one-shot prefetch fetches another.
+    _retired_worker: Optional[VegasWorker] = None
+    #: Patches applied between two frames at most, and the bytes they may
+    #: copy, in screens of pixels (at least one patch is always applied).
+    LIVE_PATCHES_PER_FRAME = 4
+    LIVE_PATCH_BUDGET_SCREENS = 2
+    #: A worker that dies this often in this many seconds is not restarted
+    #: again this run; live updates stop and the one-shot prefetch returns.
+    LIVE_WORKER_MAX_DEATHS = 3
+    LIVE_WORKER_DEATH_WINDOW = 600.0
+    #: Frames between checks that the worker is still alive.
+    LIVE_SUPERVISE_FRAMES = 256
 
     def __init__(
         self,
@@ -117,6 +194,17 @@ class RenderPipeline:
         # Render state
         self._cycle_complete = False
         self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
+        self._record_by_seq: Dict[int, ElementRecord] = {}
+        # Live updates. _applied: per record, the (epoch, digest) of the
+        # pixels the strip holds. _live_slots / _live_ready: the worker's
+        # hand-over, one slot per record (latest wins) and the order they
+        # arrived in. Written by the worker, consumed by the render thread;
+        # single-key dict operations and deque append/popleft only.
+        self._applied: Dict[int, Tuple[int, Any]] = {}
+        self._live_slots: Dict[int, LivePatch] = {}
+        self._live_ready: Deque[int] = deque()
+        self._worker_deaths: Deque[float] = deque()
+        self._live_frames = 0
 
         # The sub-pixel path's pacing; the crisp path solves its own (frame_interval).
         self._frame_interval = config.get_frame_interval()
@@ -292,6 +380,8 @@ class RenderPipeline:
             # plugin boundaries only.
             grouped = self.stream_manager.get_grouped_content_for_composition()
             self._static_markers = ()
+            # A compose replaces the strip, and every record with it.
+            self._reset_records()
 
             if not grouped:
                 logger.warning("No content available for composition")
@@ -304,10 +394,13 @@ class RenderPipeline:
             # row". Without this, a per-row ticker such as the F1 scoreboard got
             # the full separator between each of its ~116 rows.
             blocks = []
+            layouts = []
             total_rows = 0
-            for plugin_id, images in grouped:
+            for _plugin_id, images in grouped:
                 total_rows += len(images)
-                blocks.append(self._join_plugin_rows(images))
+                block, layout = self._join_plugin_rows_with_layout(images)
+                blocks.append(block)
+                layouts.append(layout)
 
             # Create scrolling image via ScrollHelper.
             #
@@ -323,11 +416,15 @@ class RenderPipeline:
             )
 
             # Verify scroll image was created successfully
-            if not self.scroll_helper.cached_image:
+            if not self.scroll_helper.has_strip():
                 logger.error("ScrollHelper failed to create cached image")
                 return False
 
             self._static_markers = self._markers_for_composition(blocks)
+            self._register_elements(
+                self._block_starts([b.width for b in blocks], 0, False,
+                                   lead=self.config.lead_in_width),
+                layouts)
             self._note_op('compose', self._strip_nbytes())
 
             # Track which plugins are in this scroll (get safely via buffer status)
@@ -341,7 +438,7 @@ class RenderPipeline:
                 "Composed scroll image: %dx%d, %d plugin block(s), %d rows, "
                 "separator=%dpx between plugins, rows spaced to %dpx of ink "
                 "(min added %dpx)",
-                self.scroll_helper.cached_image.width if self.scroll_helper.cached_image else 0,
+                self.scroll_helper.total_scroll_width if self.scroll_helper.has_strip() else 0,
                 self.display_height,
                 len(blocks),
                 total_rows,
@@ -429,7 +526,7 @@ class RenderPipeline:
 
         Cheap enough to call every frame: it is arithmetic over cached state.
         """
-        if not self.config.continuous_scroll or not self.scroll_helper.cached_image:
+        if not self.config.continuous_scroll or not self.scroll_helper.has_strip():
             return False
         threshold = int(self.display_width * self.config.extend_threshold_screens)
         return self.scroll_helper.remaining_unscrolled() <= threshold
@@ -453,23 +550,43 @@ class RenderPipeline:
         if not self.config.continuous_scroll:
             return
 
+        # With live elements in the strip, the live-element worker fetches
+        # groups too, one plugin at a time between its redraws, so that only
+        # one thread ever draws for the strip.
+        worker = self._live_worker
+        if worker is not None and worker.is_alive():
+            with self._prefetch_lock:
+                if self._prepared_group is not None:
+                    return
+            worker.request_group()
+            return
+
         with self._prefetch_lock:
             if self._prefetch_thread is not None and self._prefetch_thread.is_alive():
                 return
             if self._prepared_group is not None:
                 return  # already have one waiting
             generation = self._prefetch_generation
+            retired = self._retired_worker
 
             def _work():
-                # Deprioritise against the render loop. Linux applies nice
-                # per-thread, and the heavy lifting here is PIL and numpy work
-                # that releases the GIL, so the scheduler can actually act on
-                # it — without this the prefetch competes for the same cores and
-                # costs frames.
+                # Deprioritise against the render loop for CPU time (Linux
+                # applies nice per thread). Nice does nothing about the GIL,
+                # which Pillow's drawing holds (docs/OFFSCREEN_RENDERING.md,
+                # risk 5); the render gate below is what keeps this thread off
+                # it while the render thread needs it.
                 try:
                     os.nice(10)
                 except (OSError, AttributeError):
                     pass
+                # A live-element worker just stopped finishes its current job
+                # and hands over what it has of a group. Wait for it, so only
+                # one thread draws and a group it handed over is not replaced.
+                if retired is not None and retired is not threading.current_thread()                         and retired.is_alive():
+                    retired.join(LEGACY_PREFETCH_JOIN_S)
+                with self._prefetch_lock:
+                    if generation != self._prefetch_generation                             or self._prepared_group is not None:
+                        return
                 # With vegas_scroll.prefetch_gate on, run only while the render
                 # thread waits on vsync; see src/common/render_gate.py.
                 gate = getattr(self.display_manager, 'render_gate', None)
@@ -482,7 +599,8 @@ class RenderPipeline:
                 with self._prefetch_lock:
                     if generation != self._prefetch_generation:
                         return  # Vegas was reset while this was fetching
-                    self._prepared_group = group
+                    if self._prepared_group is None:
+                        self._prepared_group = group
 
             self._prefetch_thread = threading.Thread(
                 target=_work, daemon=True, name="vegas-strip-prefetch")
@@ -599,8 +717,10 @@ class RenderPipeline:
                 else:
                     content.append((pid, images))
             grouped = content
-            strip_end = (self.scroll_helper.cached_image.width
-                         if self.scroll_helper.cached_image is not None else 0)
+            # From the helper's own bookkeeping, never cached_image: reading
+            # that would build the full PIL strip the helper now defers.
+            strip_end = (self.scroll_helper.total_scroll_width
+                         if self.scroll_helper.has_strip() else 0)
 
             # Plugins the background thread had to defer need the shared canvas,
             # so they can only be fetched here. Queue them rather than doing all
@@ -631,12 +751,18 @@ class RenderPipeline:
                 return bool(deferred)
 
             blocks = []
+            layouts = []
             total_rows = 0
             for _plugin_id, images in grouped:
                 total_rows += len(images)
-                blocks.append(self._join_plugin_rows(images))
+                block, layout = self._join_plugin_rows_with_layout(images)
+                blocks.append(block)
+                layouts.append(layout)
 
-            had_strip = self.scroll_helper.cached_image is not None
+            had_strip = self.scroll_helper.has_strip()
+            if not had_strip:
+                # append_content is about to build a strip from scratch.
+                self._reset_records()
             appended = self.scroll_helper.append_content(
                 content_items=blocks,
                 item_gap=self.config.separator_width,
@@ -646,16 +772,13 @@ class RenderPipeline:
                 return False
             moved = self._strip_nbytes()
 
+            # Where each block starts, laid out as append_content does: a
+            # separator before every block, or -- when there was no strip to
+            # extend -- as create_scrolling_image does with no lead-in.
+            starts = self._block_starts([b.width for b in blocks], strip_end, had_strip)
+            self._register_elements(starts, layouts)
             if statics:
-                # Where each block ends, laid out as append_content does: a
-                # separator before every block, or -- when there was no strip
-                # to extend -- as create_scrolling_image does with no lead-in.
-                gap = max(0, self.config.separator_width)
-                ends = []
-                x = strip_end if had_strip else -gap
-                for block in blocks:
-                    x += gap + block.width
-                    ends.append(x)
+                ends = [start + block.width for start, block in zip(starts, blocks)]
                 self._add_static_markers([
                     (ends[n - 1] if n > 0 else strip_end, pid) for n, pid in statics
                 ])
@@ -665,6 +788,7 @@ class RenderPipeline:
             if cut and self._static_markers:
                 self._static_markers = tuple(
                     (max(0, x - cut), pid) for x, pid in self._static_markers)
+            self._forget_trimmed_records(cut)
             # The append built the whole strip anew, and a trim copies what is
             # left of it again: both land in the frame after this one.
             self._note_op('extend', moved + (self._strip_nbytes() if cut else 0))
@@ -701,31 +825,248 @@ class RenderPipeline:
             ``intra_plugin_gap``. Returned unchanged when there is only one row,
             which is the common case and avoids a pointless copy.
         """
-        if len(images) == 1:
-            return images[0]
+        return self._join_plugin_rows_with_layout(images)[0]
 
-        floor = max(0, self.config.intra_plugin_gap)
-        target = max(0, self.config.min_content_separation)
-        threshold = self.config.trim_threshold
+    def _join_plugin_rows_with_layout(
+        self, images: List[Image.Image]
+    ) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
+        """_join_plugin_rows, plus where each live element landed in the block.
 
-        # Space by measured separation, not a flat gap. Rows drawn flush to
-        # their own edges (sports score cards) would otherwise end up nearly
-        # touching, while rows that already carry wide margins would be pushed
-        # needlessly further apart.
-        gaps = [
-            separation_gap(images[i], images[i + 1], target, floor, threshold)
-            for i in range(len(images) - 1)
-        ]
+        See join_plugin_rows.
+        """
+        return join_plugin_rows(images, self.config)
 
-        width = sum(img.width for img in images) + sum(gaps)
-        height = max(img.height for img in images)
+    # -- live element records ---------------------------------------------
+    #
+    # Where each live element sits in the strip (ElementRecord), kept so a
+    # redraw can later be swapped into exactly its columns. Coordinates are
+    # absolute: a record's column in the strip is abs_x - _strip_origin, and
+    # a trim moves the origin instead of every record. Only the render thread
+    # changes any of this, at the points where it builds or trims the strip.
 
-        block = Image.new('RGB', (width, height), (0, 0, 0))
-        x = 0
-        for i, img in enumerate(images):
-            block.paste(img, (x, 0))
-            x += img.width + (gaps[i] if i < len(gaps) else 0)
-        return block
+    def _block_starts(self, widths: List[int], strip_end: int, had_strip: bool,
+                      lead: int = 0) -> List[int]:
+        """Strip columns where each of these blocks starts once placed.
+
+        Mirrors ScrollHelper exactly: append_content puts a separator before
+        every block after an existing strip; create_scrolling_image (a compose,
+        or an append with nothing to extend) puts ``lead`` columns first and a
+        separator between blocks.
+        """
+        gap = max(0, self.config.separator_width)
+        starts = []
+        if had_strip:
+            x = strip_end
+            for width in widths:
+                x += gap
+                starts.append(x)
+                x += width
+        else:
+            x = max(0, int(lead))
+            for width in widths:
+                starts.append(x)
+                x += width + gap
+        return starts
+
+    def _next_record_seq(self) -> int:
+        counter = self.__dict__.get('_record_counter')
+        if counter is None:
+            counter = self._record_counter = itertools.count(1)
+        return next(counter)
+
+    def _register_elements(
+        self, starts: List[int], layouts: List[List[Tuple[int, ElementMeta, int]]]
+    ) -> int:
+        """Record every live element in blocks just placed at ``starts``."""
+        new = []
+        for start, layout in zip(starts, layouts):
+            for offset, meta, width in layout:
+                new.append(ElementRecord(
+                    seq=self._next_record_seq(), plugin_id=meta.plugin_id,
+                    key=meta.key, abs_x=self._strip_origin + start + offset,
+                    width=width, epoch=meta.epoch, digest=meta.digest,
+                    refresh_hz=meta.refresh_hz))
+        if new:
+            self._elements = self._elements + tuple(new)
+            by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            applied = self.__dict__.setdefault('_applied', {})
+            for record in new:
+                by_seq[record.seq] = record
+                applied[record.seq] = (record.epoch, record.digest)
+            if self._live_enabled:
+                self._ensure_live_worker()
+        return len(new)
+
+    def _forget_trimmed_records(self, cut: int) -> None:
+        """The strip lost ``cut`` columns off its front: move the origin on."""
+        if cut <= 0:
+            return
+        self._strip_origin += cut
+        origin = self._strip_origin
+        records = self._elements
+        if not records:
+            return
+        kept = tuple(r for r in records if r.abs_x + r.width > origin)
+        if len(kept) != len(records):
+            by_seq = self.__dict__.setdefault('_record_by_seq', {})
+            applied = self.__dict__.setdefault('_applied', {})
+            slots = self.__dict__.setdefault('_live_slots', {})
+            for record in records:
+                if record.abs_x + record.width <= origin:
+                    by_seq.pop(record.seq, None)
+                    applied.pop(record.seq, None)
+                    slots.pop(record.seq, None)
+            self._elements = kept
+
+    def _reset_records(self) -> None:
+        """A new strip: nothing recorded, coordinates from zero, a new generation."""
+        self._strip_gen += 1
+        self._strip_origin = 0
+        self._elements = ()
+        self._record_by_seq = {}
+        self._applied = {}
+        # Patches still queued belong to the old strip; apply would drop them
+        # on their generation anyway, but there is no reason to keep them.
+        self._live_slots = {}
+        self._live_ready = deque()
+        self._view = None
+
+    def has_live_records(self) -> bool:
+        """Whether the strip holds any live element."""
+        return bool(self._elements)
+
+    # -- live updates ---------------------------------------------------------
+
+    def set_live(self, enabled: bool) -> None:
+        """Switch live updates on or off for this run (the coordinator decides)."""
+        self._live_enabled = enabled
+        if enabled:
+            if self._elements:
+                self._ensure_live_worker()
+        elif self._stop_live_worker():
+            # The worker was fetching the strip's groups as well. Hand that
+            # back to the one-shot prefetch now: nothing else asks for a group
+            # until the next extension, which would find none prepared and
+            # fetch inline, stalling the scroll.
+            self.start_prefetch()
+
+    def notify_live_data(self, plugin_id: str) -> None:
+        """A plugin's data may have changed: wake the worker, if one runs."""
+        worker = self._live_worker
+        if worker is not None:
+            worker.notify_data(plugin_id)
+
+    def _ensure_live_worker(self) -> None:
+        """Start the live-element worker, or restart one that died.
+
+        Started lazily, by the first live element placed: an install with no
+        plugin that has live elements keeps the one-shot prefetch thread and
+        never runs this worker at all. A worker that keeps dying is given up
+        on for the run; live updates stop and the one-shot prefetch returns.
+        """
+        if not self._live_enabled:
+            return
+        worker = self._live_worker
+        if worker is not None and worker.is_alive():
+            return
+        if worker is None and not self._elements:
+            # Nothing live in the strip: the one-shot prefetch does the work
+            # until a live element is placed (_register_elements).
+            return
+        deaths = self.__dict__.setdefault('_worker_deaths', deque())
+        now = time.monotonic()
+        if worker is not None:
+            deaths.append(now)
+            while deaths and now - deaths[0] > self.LIVE_WORKER_DEATH_WINDOW:
+                deaths.popleft()
+            if len(deaths) >= self.LIVE_WORKER_MAX_DEATHS:
+                logger.error(
+                    "Vegas live worker stopped %d times in %.0fs; live updates "
+                    "are off until Vegas restarts", len(deaths),
+                    self.LIVE_WORKER_DEATH_WINDOW)
+                self._live_enabled = False
+                self._live_worker = None
+                # Whatever group the dead worker was fetching is lost.
+                self.start_prefetch()
+                return
+            logger.warning("Vegas live worker was not running; restarting it")
+        worker = VegasWorker(self)
+        self._live_worker = worker
+        worker.start()
+        # Whatever the one-shot prefetch was asked for, the worker now does.
+        with self._prefetch_lock:
+            wanted = self._prepared_group is None
+        if wanted and self.config.continuous_scroll:
+            worker.request_group()
+
+    def _stop_live_worker(self) -> bool:
+        """Ask the worker to stop after its current job. Whether one was running."""
+        worker, self._live_worker = self._live_worker, None
+        if worker is None:
+            return False
+        self._retired_worker = worker
+        worker.stop()
+        return True
+
+    def apply_live_patches(self) -> int:
+        """Copy the worker's finished redraws into the strip. Render thread only.
+
+        Called between two frames (coordinator.run_frame). The only work here
+        is popping prepared patches and a numpy slice copy per patch -- no
+        drawing, no locks, no allocation -- bounded to LIVE_PATCHES_PER_FRAME
+        patches or LIVE_PATCH_BUDGET_SCREENS screens of bytes, whichever comes
+        first (always at least one). A patch is dropped when it no longer
+        fits: made for an older strip, for an element trimmed away or already
+        behind the screen, or older than what the strip already shows.
+
+        Returns:
+            Patches applied.
+        """
+        if self._live_enabled:
+            self._live_frames = self.__dict__.get('_live_frames', 0) + 1
+            if self._live_frames % self.LIVE_SUPERVISE_FRAMES == 0:
+                self._ensure_live_worker()
+        ready = self.__dict__.get('_live_ready')
+        if not ready:
+            return 0
+        slots = self._live_slots
+        if getattr(self, 'sync_manager', None) is not None:
+            # Defensive: live elements are never on under sync, and the
+            # follower would not see a patch.
+            ready.clear()
+            slots.clear()
+            return 0
+        budget = (self.LIVE_PATCH_BUDGET_SCREENS * self.display_width
+                  * self.display_height * 3)
+        helper = self.scroll_helper
+        left_edge = int(helper.scroll_position)
+        applied = 0
+        moved = 0
+        while ready and applied < self.LIVE_PATCHES_PER_FRAME \
+                and (applied == 0 or moved < budget):
+            seq = ready.popleft()
+            patch = slots.pop(seq, None)
+            if patch is None:
+                continue        # a newer patch for this record already went
+            record = self._record_by_seq.get(seq)
+            if record is None or patch.strip_gen != self._strip_gen:
+                continue
+            previous = self._applied.get(seq)
+            if previous is not None and patch.epoch < previous[0]:
+                continue
+            x = record.abs_x - self._strip_origin
+            if x + record.width <= left_edge:
+                continue        # scrolled past; nobody will see it
+            moved += helper.patch_columns(x, patch.pixels)
+            self._applied[seq] = (patch.epoch, patch.digest)
+            applied += 1
+        if applied:
+            self._note_op('patch', moved)
+        return applied
+
+    def live_records(self) -> Tuple[ElementRecord, ...]:
+        """The live elements in the strip, in the order they were placed."""
+        return self._elements
 
     def render_frame(self) -> bool:
         """
@@ -740,11 +1081,18 @@ class RenderPipeline:
         frame_start = time.time()
 
         try:
-            if not self.scroll_helper.cached_image:
+            if not self.scroll_helper.has_strip():
                 return False
 
             # Update scroll position
             self.scroll_helper.update_scroll_position()
+            # Where the viewport is now, for the live-element worker: one
+            # tuple store, read by the worker without a lock.
+            left = self._strip_origin + int(self.scroll_helper.scroll_position)
+            self._view = LiveView(
+                abs_left=left, abs_right=left + self.display_width,
+                abs_end=self._strip_origin + self.scroll_helper.total_scroll_width,
+                t_mono=time.monotonic())
 
             # Determine if the cycle is done.
             #
@@ -980,10 +1328,11 @@ class RenderPipeline:
             self.sync_manager.send_new_cycle()
             # Push the actual scroll image over TCP so follower has identical pixels.
             # Done in a background thread to not block the render loop (~15ms transfer).
-            if self.scroll_helper.cached_image is not None:
+            image = self.scroll_helper.cached_image
+            if image is not None:
                 threading.Thread(
                     target=self.sync_manager.send_scroll_image,
-                    args=(self.scroll_helper.cached_image,),
+                    args=(image,),
                     daemon=True, name="sync-image-push"
                 ).start()
 
@@ -1056,6 +1405,8 @@ class RenderPipeline:
             self._prepared_group = None
             self._deferred_queue = []
         self._static_markers = ()
+        self._stop_live_worker()
+        self._reset_records()
 
         self.display_manager.set_scrolling_state(False)
 

@@ -132,6 +132,10 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `offscreen_prefetch` | bool, `true` — render every plugin's ticker content on the background thread, each on its own canvas. `false` restores handing canvas-bound plugins to the render thread, one pause at a time. Temporary; see [OFFSCREEN_RENDERING.md](OFFSCREEN_RENDERING.md) |
 | `prefetch_gate` | bool, `true` — let that background thread run Python only while the render thread is waiting for the panel, so the render thread never waits for the GIL when a refresh comes round. Only takes effect with the rebuilt rgbmatrix binding (`scripts/build_rgbmatrix_nogil.sh`). See [OFFSCREEN_RENDERING.md](OFFSCREEN_RENDERING.md) |
 | `switch_interval_ms` | float, `0` — experimental: shorten Python's GIL switch interval to this many ms while Vegas runs. `0` leaves the default (5 ms) alone |
+| `live_refresh` | bool, `true` — live elements: a plugin that supports them (scores, the flight map) has what is already scrolling updated when its data changes, instead of freezing each card as it was drawn. Always off under multi-display sync, in swap mode and with `offscreen_prefetch` off. `false` restores the frozen behaviour exactly. Per plugin: `vegas_live` in the plugin's section |
+| `live_max_hz` | float, `5` (0–10) — ceiling on how often an animated live element (a moving aircraft) is redrawn; `0` keeps data updates and turns animation off. Capped at 1 Hz without the rebuilt rgbmatrix binding |
+| `live_min_interval` | float, `2` (0.5–60) — shortest time between two data redraws of one plugin; a faster plugin is redrawn at this rate, never skipped |
+| `live_lead_screens` | float, `1` (0–5) — how far ahead of the screen, in screen widths, an animated element starts being redrawn |
 | `smooth_scroll` | bool, `true` — move a whole number of pixels per panel refresh, locked to vsync. `scroll_speed` is snapped to the nearest speed the panel can show that way (at 95Hz: 95, 47.5, 31.7 px/s…), measured against the panel's real refresh rate once scrolling starts |
 | `sub_pixel_blend` | bool, `false` — the older smoothing: advance by elapsed time and blend neighbouring pixel columns. Looks anti-aliased in the web preview but shimmers on the panel and is not locked to the refresh. Overrides `smooth_scroll` when on |
 | `extend_threshold_screens` | float, `2.0` |
@@ -148,7 +152,7 @@ Read by `src/vegas_mode/config.py` (`VegasScrollConfig.from_config`). See
 | `max_cycle_duration` | int, `240` |
 | `frame_based_scrolling` | bool, `true` — does not step or set a frame rate; motion is by elapsed time either way. When `true`, `scroll_speed` passes through a clamp of 0.1–5 px per `scroll_delay` (see next row) |
 | `scroll_delay` | float, `0.02` — not a frame period. Only used with `frame_based_scrolling`: the applied speed is `clamp(scroll_speed × scroll_delay, 0.1, 5) / scroll_delay` px/s, so at `0.02` speeds under 5 px/s run at 5, and at `0.001` nothing runs slower than 100 px/s |
-| `live_in_ticker` | bool, `false` — keep scrolling during live games instead of handing the display to a full-screen scoreboard |
+| `live_in_ticker` | bool, `true` — keep scrolling during live games instead of handing the display to a full-screen scoreboard. `false` was the default before 3.8.0; the first start on 3.8.0 turns a stored `false` on once and sets `live_in_ticker_migrated` |
 | `live_weight` | int, `3` (1–10) — slots per cycle for a plugin with live content |
 | `favorite_live_weight` | int, `5` (1–10) — slots per cycle when a plugin reports a favorite team is live |
 
