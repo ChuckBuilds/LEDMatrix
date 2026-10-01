@@ -47,6 +47,17 @@ is `CORE_PLUGIN_PROPERTIES` in `src/plugin_system/schema_manager.py`):
      `src/plugin_system/base_plugin.py`; see
      [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)
 
+6. **`vegas_live`** (boolean; no default, unset means on)
+   - Description: for a plugin with live Vegas elements (it implements
+     `get_vegas_elements()`), whether the ticker changes what is already
+     scrolling when the plugin's data changes. `false` shows each card as it
+     was when drawn, as before live elements existed
+   - Ignored by plugins without live elements, and whenever live elements
+     are off for the whole ticker (`display.vegas_scroll.live_refresh`)
+   - Read by `PluginAdapter.is_live_capable()` in
+     `src/vegas_mode/plugin_adapter.py`; see
+     [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#live-vegas-elements)
+
 `skin` and `skin_options` were core properties until the skin system was
 removed. A plugin config saved with them still loads and saves; the keys are
 dropped on the next save (see `RETIRED_PLUGIN_KEYS` in `schema_manager.py`).

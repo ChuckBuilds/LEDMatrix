@@ -717,6 +717,20 @@ class StreamManager:
             A STATIC plugin is also returned with an empty list, unfetched: it
             pauses the scroll instead of adding to it (see is_static_plugin).
         """
+        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+        for plugin_id in self.plan_next_group(count):
+            member = self.fetch_group_member(plugin_id, offscreen_only=offscreen_only)
+            if member is not None:
+                group.append(member)
+        return group
+
+    def plan_next_group(self, count: Optional[int] = None) -> List[str]:
+        """Which plugins the next group holds, advancing the rotation past them.
+
+        The first half of take_next_group(). The live-element worker fetches
+        a group one plugin at a time (fetch_group_member) so it can fit more
+        urgent redraws between them.
+        """
         if count is None:
             count = self.config.plugins_per_cycle
 
@@ -730,37 +744,38 @@ class StreamManager:
             for _ in range(min(max(1, count), total)):
                 ids.append(self._ordered_plugins[self._prefetch_index])
                 self._prefetch_index = (self._prefetch_index + 1) % total
+        return ids
 
-        plugins = getattr(self.plugin_manager, 'plugins', {})
-        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+    def fetch_group_member(
+        self, plugin_id: str, offscreen_only: bool = False
+    ) -> Optional[Tuple[str, Optional[List[Image.Image]]]]:
+        """One plugin's entry in a group, as take_next_group() describes it.
+
+        None when the plugin is gone or its fetch raised: it is left out of
+        the group.
+        """
+        plugin = getattr(self.plugin_manager, 'plugins', {}).get(plugin_id)
+        if not plugin:
+            return None
+        if self.is_static_plugin(plugin_id):
+            # A STATIC plugin pauses the scroll rather than scrolling by, so it
+            # contributes no columns. It keeps its place in the group (empty)
+            # so the pipeline can mark where its turn falls.
+            return (plugin_id, [])
+        try:
+            images = self.plugin_adapter.get_content(
+                plugin, plugin_id, offscreen_only=offscreen_only)
+        except Exception:
+            logger.exception("[%s] ERROR fetching content", plugin_id)
+            self.stats['fetch_errors'] += 1
+            return None
+        if images:
+            self.stats['segments_fetched'] += 1
+            return (plugin_id, images)
         # Only the old contract hands anything back to the render thread.
         defer_empty = offscreen_only and not getattr(
             self.config, 'offscreen_prefetch', True)
-
-        for plugin_id in ids:
-            plugin = plugins.get(plugin_id)
-            if not plugin:
-                continue
-            if self.is_static_plugin(plugin_id):
-                # A STATIC plugin pauses the scroll rather than scrolling by,
-                # so it contributes no columns. It keeps its place in the
-                # group (empty) so the pipeline can mark where its turn falls.
-                group.append((plugin_id, []))
-                continue
-            try:
-                images = self.plugin_adapter.get_content(
-                    plugin, plugin_id, offscreen_only=offscreen_only)
-            except Exception:
-                logger.exception("[%s] ERROR fetching content", plugin_id)
-                self.stats['fetch_errors'] += 1
-                continue
-            if images:
-                self.stats['segments_fetched'] += 1
-                group.append((plugin_id, images))
-            else:
-                group.append((plugin_id, None if defer_empty else []))
-
-        return group
+        return (plugin_id, None if defer_empty else [])
 
     def advance_cycle(self) -> None:
         """

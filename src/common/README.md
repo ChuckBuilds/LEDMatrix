@@ -49,6 +49,7 @@ Rules for the package:
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | Unreleased |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
+| [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
 | [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
@@ -319,6 +320,17 @@ that were identical in every scoreboard (game selection and rotation,
 fonts, colours, dates, the switch-mode upcoming card). The docstring lists
 the attributes the host class must have and the three methods deliberately
 left out.
+
+### sports_vegas
+
+[`sports_vegas.py`](sports_vegas.py). What a scoreboard needs for live Vegas
+cards (one element per game, swapped in place while it scrolls):
+`game_key()`, `game_fingerprint()`, `dedupe_games()`, `VegasCardCache` (draws
+a card only when its fingerprint changes), `StickyOdds` (keeps a card's odds
+through a live poll that left them out), and `finished_games()` /
+`with_finished_games()` (a game that just went final keeps its card, showing
+FINAL). `SportsScrollDisplay.build_vegas_elements()` in `sports_scroll` puts
+them together; a scoreboard not built on it (UFC) uses them directly.
 
 ### sports_timezone
 
