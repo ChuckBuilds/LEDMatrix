@@ -35,6 +35,9 @@ blit            copying the frame into the matrix canvas (rgbmatrix SetImage).
 wait            blocked in SwapOnVSync, i.e. slack before the refresh.
 work            everything else between two frames: drawing, scrolling, and
                 waiting for the GIL.
+after work      frames presented straight after tagged render-thread work
+                (Vegas strip extensions, live-element patches), with their own
+                late rate. Shown only when something tagged its work.
 """
 from __future__ import annotations
 
@@ -126,6 +129,33 @@ def _edge(index: int, bucket_ms: float):
     return round((index + 1) * bucket_ms, 2)
 
 
+def op_rows(totals: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Per kind of noted render-thread work: how often its frame was late.
+
+    A kind's frames are the ones presented straight after that work ran (see
+    "Operations" in src/common/frame_timing.py). Stats from a recorder that
+    predates the counters have none, and give an empty table.
+    """
+    frames = totals.get("op_frames") or {}
+    late = totals.get("late_op_frames") or {}
+    freezes = totals.get("op_freezes") or {}
+    moved = totals.get("op_bytes") or {}
+    rows = {}
+    for kind in sorted(set(frames) | set(freezes)):
+        count = frames.get(kind, 0)
+        if not count and not freezes.get(kind, 0):
+            continue
+        rows[kind] = {
+            "frames": count,
+            "late": late.get(kind, 0),
+            "late_pct": (round(100.0 * late.get(kind, 0) / count, 3)
+                         if count else None),
+            "freezes": freezes.get(kind, 0),
+            "bytes": moved.get(kind, 0),
+        }
+    return rows
+
+
 def build_report(before, after, preview: bool) -> Dict[str, Any]:
     delta = diff(before, after)
     totals = delta["totals"]
@@ -159,6 +189,7 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
                               if totals["worst_interval_ms"] else None),
         "timing_ms": {name: percentiles(h, bucket_ms)
                       for name, h in delta["histograms"].items()},
+        "ops": op_rows(totals),
     }
     # The rate the panel held while rendering: the typical frame's interval
     # per refresh held. A few percent under the idle rate is normal (the Pi is
@@ -216,6 +247,17 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
         print(f"{name:<18}" + "".join(f"{str(row.get(k, '-')):>8}"
                                         for k in ("p50", "p95", "p99", "max")))
     print()
+    ops = report.get("ops") or {}
+    if ops:
+        # Frames presented straight after render-thread work of each kind. A
+        # late rate well above the overall one points at that work.
+        print(f"{'after work':<18}{'frames':>8}{'late':>8}{'late %':>8}"
+              f"{'freezes':>9}{'MB moved':>10}")
+        for kind, row in ops.items():
+            pct = "-" if row["late_pct"] is None else f"{row['late_pct']:g}"
+            print(f"{kind:<18}{row['frames']:>8}{row['late']:>8}{pct:>8}"
+                  f"{row['freezes']:>9}{row['bytes'] / 1e6:>10.2f}")
+        print()
     if report["late_pct"] is None:
         print("RESULT  nothing scrolled - no verdict")
     elif not locked(report, limit):

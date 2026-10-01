@@ -328,6 +328,7 @@ class RenderPipeline:
                 return False
 
             self._static_markers = self._markers_for_composition(blocks)
+            self._note_op('compose', self._strip_nbytes())
 
             # Track which plugins are in this scroll (get safely via buffer status)
             self._segments_in_scroll = self.stream_manager.get_active_plugin_ids()
@@ -355,6 +356,22 @@ class RenderPipeline:
             # Expected errors from image operations, scroll helper, or bad data
             logger.exception("Error composing scroll content")
             return False
+
+    def _note_op(self, kind: str, nbytes: int = 0) -> None:
+        """Tag the next presented frame with render-thread work done for it.
+
+        See "Operations" in src/common/frame_timing.py: a soak can then say
+        how often a frame straight after an extension or a patch was late,
+        rather than only how often any frame was.
+        """
+        timing = getattr(self.display_manager, 'frame_timing', None)
+        note = getattr(timing, 'note_op', None)
+        if note is not None:
+            note(kind, nbytes)
+
+    def _strip_nbytes(self) -> int:
+        array = self.scroll_helper.cached_array
+        return int(array.nbytes) if array is not None else 0
 
     def _markers_for_composition(self, blocks: List[Image.Image]) -> Tuple[Tuple[int, str], ...]:
         """Static markers for a strip just built by create_scrolling_image.
@@ -525,6 +542,7 @@ class RenderPipeline:
             element_gap=0,
         )
         if appended:
+            self._note_op('extend', self._strip_nbytes())
             logger.info(
                 "[%s] Appended deferred content: strip now %dpx, %dpx ahead",
                 plugin_id, self.scroll_helper.total_scroll_width,
@@ -626,6 +644,7 @@ class RenderPipeline:
             )
             if not appended:
                 return False
+            moved = self._strip_nbytes()
 
             if statics:
                 # Where each block ends, laid out as append_content does: a
@@ -646,6 +665,9 @@ class RenderPipeline:
             if cut and self._static_markers:
                 self._static_markers = tuple(
                     (max(0, x - cut), pid) for x, pid in self._static_markers)
+            # The append built the whole strip anew, and a trim copies what is
+            # left of it again: both land in the frame after this one.
+            self._note_op('extend', moved + (self._strip_nbytes() if cut else 0))
 
             self._segments_in_scroll = [pid for pid, _ in grouped]
             self.stats['composition_count'] += 1
