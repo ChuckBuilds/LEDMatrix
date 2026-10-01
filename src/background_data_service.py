@@ -27,6 +27,13 @@ from concurrent.futures import ThreadPoolExecutor
 import pytz
 from src.cache_manager import CacheManager
 from src.common.json_body import response_json
+from src.common.fetch_service import (
+    current_plugin_id,
+    fetch_get,
+    get_fetch_service,
+    plugin_scope,
+    share_connection_pool,
+)
 from src.common.espn_dates import (
     RANGE_RETRY_SECONDS,
     _note_range_rejected,
@@ -78,6 +85,9 @@ class FetchRequest:
     commit_claimed: bool = False
     result: Optional[Any] = None
     error: Optional[str] = None
+    # The plugin that submitted the request, so the fetch service counts the
+    # worker's requests against it (fetch_service, caller identity).
+    owner: Optional[str] = None
 
 @dataclass
 class FetchResult:
@@ -118,6 +128,12 @@ class _ConnectionRetryingSession:
 
     def __init__(self, session):
         self._session = session
+
+    @property
+    def fetch_identity_session(self):
+        """The wrapped Session, whose headers and adapter the fetch service
+        reads to key this request (src/common/fetch_service.py)."""
+        return self._session
 
     def get(self, *args, **kwargs):
         for attempt in range(self.ATTEMPTS):
@@ -196,9 +212,12 @@ class BackgroundDataService:
         # connection errors three times, a dead network cost up to 16
         # connection attempts per request and held one of the few worker
         # threads for all of them.
+        #
+        # The adapter is the fetch service's shared no-retry one: the same
+        # max_retries=0, with the connection pool shared with the other core
+        # sessions that do not retry (the odds managers).
         self.session = requests.Session()
-        self.session.mount('http://', requests.adapters.HTTPAdapter(max_retries=0))
-        self.session.mount('https://', requests.adapters.HTTPAdapter(max_retries=0))
+        share_connection_pool(self.session, max_retries=0)
         
         # Default headers: core's shared set (real User-Agent, no hand-set
         # Accept-Encoding) -- see src/common/api_helper.py.
@@ -299,6 +318,10 @@ class BackgroundDataService:
         if url.split('?', 1)[0].rstrip('/').endswith('/scoreboard'):
             params = clamp_espn_limit(params)
 
+        # Who asked, resolved on the submitting thread: the worker thread
+        # runs no plugin code, so it could not tell (fetch_service).
+        owner = current_plugin_id()
+
         # Create fetch request
         request = FetchRequest(
             id=request_id,
@@ -311,7 +334,8 @@ class BackgroundDataService:
             timeout=timeout or self.request_timeout,
             max_retries=max_retries,
             priority=priority,
-            callback=callback
+            callback=callback,
+            owner=owner,
         )
         
         with self._lock:
@@ -330,6 +354,7 @@ class BackgroundDataService:
                 self.stats['deduplicated_requests'] = (
                     self.stats.get('deduplicated_requests', 0) + 1
                 )
+                get_fetch_service().note_merged(url, owner)
                 logger.info(
                     "Joined in-flight fetch %s for %s (cache_key=%s) instead of "
                     "starting a duplicate", existing_id, sport, cache_key
@@ -357,6 +382,11 @@ class BackgroundDataService:
         Returns:
             Fetch result with data or error information
         """
+        with plugin_scope(request.owner):
+            return self._fetch_data_worker_scoped(request)
+
+    def _fetch_data_worker_scoped(self, request: FetchRequest) -> FetchResult:
+        """_fetch_data_worker's body, run with the submitter as the caller."""
         start_time = time.time()
         result = FetchResult(request_id=request.id, success=False, retry_count=request.retry_count)
         
@@ -621,8 +651,14 @@ class BackgroundDataService:
         
         for attempt in range(request.max_retries + 1):
             try:
-                response = self.session.get(
+                # Not shared with an identical request in flight: this
+                # service cancels and replaces fetches, and a replacement
+                # must not join the one it replaced. Its own cache_key
+                # dedup already merges what should be merged.
+                response = fetch_get(
+                    self.session,
                     request.url,
+                    share_in_flight=False,
                     params=request.params,
                     headers=request.headers,
                     timeout=request.timeout

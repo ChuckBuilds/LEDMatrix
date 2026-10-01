@@ -32,6 +32,7 @@ scoreboards ask every 30 seconds. After that the range is tried again, so the
 workaround retires itself if ESPN reverts.
 """
 
+import contextvars
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,21 @@ except ImportError:
     # json_body; the stdlib parse is what those cores always used.
     def response_json(response: Any) -> Any:
         return response.json()
+
+try:
+    # The core fetch service: counts, per-host budget, merging of identical
+    # requests. Same call, same result and errors as ``session.get``.
+    from src.common.fetch_service import fetch_get, pinned_caller
+except ImportError:
+    # Bundled copies on cores without it call the session directly.
+    import contextlib
+
+    def fetch_get(session: Any, url: str, *, share_in_flight: bool = True,
+                  **kwargs: Any) -> Any:
+        return session.get(url, **kwargs)
+
+    def pinned_caller() -> Any:
+        return contextlib.nullcontext()
 
 # Above this, ESPN returns a truncated list instead of an error. See module
 # docstring: 500 is the largest value measured to return complete data.
@@ -195,7 +211,8 @@ def _fetch_one_chunk(
     logged and swallowed here rather than raised to the gather below.
     """
     try:
-        response = session.get(
+        response = fetch_get(
+            session,
             url,
             params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
             headers=headers,
@@ -220,6 +237,10 @@ def _fetch_chunks(
     callers keep ``chunks`` order from the returned list -- but it does mean
     the session is shared across threads, which is why this only ever issues
     GETs and never touches session state.
+
+    Each chunk runs in a copy of the caller's context, with the caller pinned
+    into it, so the fetch service counts the chunks against the plugin that
+    asked for the range rather than against the core.
     """
     if not chunks:
         return []
@@ -229,10 +250,15 @@ def _fetch_chunks(
     if len(chunks) == 1:
         return [fetch(chunks[0])]
     workers = min(ESPN_CHUNK_WORKERS, len(chunks))
+    with pinned_caller():
+        # One copy per chunk: a Context cannot be entered by two threads.
+        contexts = [contextvars.copy_context() for _ in chunks]
     with ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="espn-chunk",
     ) as pool:
-        return list(pool.map(fetch, chunks))
+        futures = [pool.submit(context.run, fetch, chunk)
+                   for context, chunk in zip(contexts, chunks)]
+        return [future.result() for future in futures]
 
 
 def fetch_espn_date_chunks(
@@ -363,7 +389,7 @@ def fetch_espn_scoreboard(
         # real error to log, without spending the chunks a second time.
         chunks_tried = True
 
-    response = session.get(url, params=params, headers=headers, timeout=timeout)
+    response = fetch_get(session, url, params=params, headers=headers, timeout=timeout)
     if is_range and response.status_code == 400 and not chunks_tried:
         _note_range_rejected()
         if logger:

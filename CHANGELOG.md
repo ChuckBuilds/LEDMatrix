@@ -19,6 +19,52 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Shared fetch service (stage 1)
+
+Core's own HTTP fetch paths now go through one service, so the plugins that
+use them get pooling, merging, host budgets and per-plugin request counts
+without a code change. Return values, exceptions, cache keys, TTLs and retry
+policies are unchanged.
+
+- **What goes through it.** `APIHelper.get`/`post`, `fetch_espn_scoreboard`
+  and its date chunks (`src/common/espn_dates.py` -- every scoreboard's live,
+  recent and upcoming fetch, and `SportsFetchMixin._fetch_season_directly`),
+  `BackgroundDataService` and `BaseOddsManager.get_odds`. Plugins' own
+  `requests` calls are not covered yet.
+- **Shared connection pools.** Core sessions with the same retry policy mount
+  one shared adapter, so the odds managers (one per scoreboard league
+  manager), the background service and the APIHelpers reuse one connection
+  pool per host. Headers, cookies and auth stay per session.
+- **Merged requests.** Identical GETs in flight at once (same URL and query,
+  effective headers, timeout and retry policy) go out once; the others get a
+  copy of that response or the same exception. `BackgroundDataService`'s own
+  request opts out (`share_in_flight=False`): it cancels and replaces fetches,
+  and already merges by cache key.
+- **Host budgets.** Per-host token buckets, `fetch_service.rate_limits` in
+  `config.json` (new optional section in the template). ESPN hosts default to
+  20 requests/s with a burst of 200, far above normal traffic; no request waits
+  longer than `max_wait_seconds` (2 s). Other hosts are unthrottled.
+- **Conditional GET.** A response with `ETag` or `Last-Modified` is kept in a
+  small bounded store (64 entries, 4 MB, 1 MB each) and revalidated; a `304`
+  is returned to the caller as the original `200`. ESPN sends neither
+  validator today, so on ESPN this is dormant.
+- **Counters.** Requests, merged, bytes, 304s, errors, HTTP errors, adapter
+  retries, throttled requests and seconds waited, per plugin and per host.
+  Which plugin made a request comes from a context variable the plugin
+  executor and plugin loader set (carried across the background service's and
+  `espn_dates`' worker threads), or else from the plugin directory on the
+  stack, so a plugin's own threads count too. The display publishes them to
+  the shared cache at most once a minute on change; read them at
+  `GET /api/v3/plugins/fetch-stats`.
+- `fetch_service` is a core config section (`src/core_config_keys.py`).
+
+### New modules
+
+- `src/common/fetch_service.py` -- the fetch service above. Core-internal in
+  this release: plugins reach it through `APIHelper` and `espn_dates`, and
+  should not import it directly until a plugin-facing API ships (stage 3), so
+  it sets no `ledmatrix_min_version` floor.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,

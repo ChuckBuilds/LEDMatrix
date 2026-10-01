@@ -459,6 +459,15 @@
     ]
   ],
   [
+    "/api/v3/plugins/fetch-stats",
+    "api_v3.get_fetch_stats",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
     "/api/v3/plugins/health",
     "api_v3.get_plugin_health",
     [

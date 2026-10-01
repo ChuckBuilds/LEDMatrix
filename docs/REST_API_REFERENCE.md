@@ -967,6 +967,63 @@ Metrics for one plugin; `data` has the same fields as one entry above.
 
 Reset metrics for a plugin.
 
+### Get Fetch Statistics
+
+**GET** `/api/v3/plugins/fetch-stats`
+
+Network requests made through the core fetch service
+(`src/common/fetch_service.py`), per plugin and per host, cumulative since
+the display started. Read-only. The display publishes the counters at most
+once a minute when they change (every 10 minutes otherwise), so they can be
+up to a minute old. Requests a plugin makes with its own `requests` calls,
+outside `APIHelper`, `espn_dates`, `BackgroundDataService` and
+`BaseOddsManager`, are not counted yet.
+
+`data.status` is `live`, `stale` (no publish for longer than
+`stale_after`), `stopped` (the display exited; the last counters are kept)
+or `unknown` (nothing published; `data.data` is `null`).
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "status": "live",
+    "age_seconds": 12.4,
+    "data": {
+      "schema": 1,
+      "running": true,
+      "published_at": 1790000000.0,
+      "stale_after": 720.0,
+      "since": 1789990000.0,
+      "totals": {"requests": 412, "merged": 3, "not_modified": 0,
+                 "errors": 1, "http_errors": 2, "retries": 0,
+                 "throttled": 0, "overruns": 0, "bytes": 18234011,
+                 "wait_seconds": 0.0},
+      "plugins": {
+        "football-scoreboard": {"requests": 240, "merged": 2, "bytes": 9120330,
+                                "hosts": {"site.api.espn.com": 180,
+                                          "sports.core.api.espn.com": 62},
+                                "...": "the other counters, as in totals"}
+      },
+      "hosts": {
+        "site.api.espn.com": {"requests": 301, "...": "as in totals"}
+      },
+      "validators": {"entries": 0, "bytes": 0},
+      "config": {"enabled": true, "single_flight": true,
+                 "conditional_get": true, "max_wait_seconds": 2.0,
+                 "rate_limits": {"*.espn.com": {"per_second": 20.0, "burst": 200.0}}}
+    }
+  }
+}
+```
+
+`requests` counts round trips sent (retries inside the HTTP adapter are in
+`retries`), `merged` requests answered by an identical one already in
+flight, `not_modified` 304s served from the stored body, `errors` transport
+failures and `http_errors` responses with status 400 or above. `bytes` is the
+decoded body size. `core` is everything no plugin made.
+
 ### Get/Set Plugin Limits
 
 **GET** `/api/v3/plugins/limits/<plugin_id>`

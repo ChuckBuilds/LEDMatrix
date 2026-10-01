@@ -130,6 +130,13 @@ class DisplayController:
         # The web interface's /api/v3/errors/* read what this publishes.
         from src.error_aggregator import start_error_snapshot_publisher
         start_error_snapshot_publisher(self.cache_manager)
+        # Host budgets and the other fetch_service settings, before any plugin
+        # fetches; the web UI's fetch statistics read what the publisher
+        # writes (src/common/fetch_service.py).
+        from src.common.fetch_service import (
+            configure_fetch_service, start_fetch_stats_publisher)
+        configure_fetch_service(self.config.get('fetch_service'))
+        self._fetch_stats_publisher = start_fetch_stats_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
         # Validate startup configuration. Errors are logged, not fatal. The
@@ -3614,6 +3621,9 @@ class DisplayController:
         read stale values after the user saves settings via the web UI.
         """
         self.config = new_config
+        # A no-op unless the fetch_service section itself changed.
+        from src.common.fetch_service import configure_fetch_service
+        configure_fetch_service(new_config.get('fetch_service'))
         self._normal_brightness = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
@@ -3674,6 +3684,11 @@ class DisplayController:
                 logger.warning("Error shutting down config service: %s", e)
         if getattr(self, '_font_usage_publisher', None) is not None:
             self._font_usage_publisher.stop()
+        if getattr(self, '_fetch_stats_publisher', None) is not None:
+            try:
+                self._fetch_stats_publisher.stop()
+            except Exception as e:
+                logger.warning("Error stopping the fetch statistics publisher: %s", e)
         # Publishes "stopped", so the web UI stops reporting what was loaded.
         if getattr(self, '_plugin_runtime_publisher', None) is not None:
             try:

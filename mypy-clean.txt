@@ -22,6 +22,7 @@ src/common/api_helper.py
 src/common/bdf_font.py
 src/common/espn_dates.py
 src/common/favorite_team_check.py
+src/common/fetch_service.py
 src/common/font_layout.py
 src/common/frame_timing.py
 src/common/json_body.py

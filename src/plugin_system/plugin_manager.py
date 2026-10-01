@@ -33,6 +33,7 @@ from src.plugin_system.plugin_dirs import (
     ManifestStatus, PluginDirectoryIndex, resolve_plugin_dir,
 )
 from src.deprecation import deprecated
+from src.common.fetch_service import plugin_scope, register_plugin_directory
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -419,6 +420,11 @@ class PluginManager:
             # Update mapping if found via search
             if plugin_id not in self.plugin_directories:
                 self.plugin_directories[plugin_id] = plugin_dir
+
+            # Code under this directory is this plugin's: the fetch service
+            # counts a request against it even from a thread the plugin
+            # started itself (src/common/fetch_service.py, caller identity).
+            register_plugin_directory(plugin_id, plugin_dir)
             
             # Get plugin config
             if self.config_manager:
@@ -458,18 +464,20 @@ class PluginManager:
                 config = dict(config)
                 config['enabled'] = True
             
-            # Use PluginLoader to load plugin
-            plugin_instance, _module = self.plugin_loader.load_plugin(
-                plugin_id=plugin_id,
-                manifest=manifest,
-                plugin_dir=plugin_dir,
-                config=config,
-                display_manager=self.display_manager,
-                cache_manager=self.cache_manager,
-                plugin_manager=self,
-                install_deps=True,
-                plugins_dir=self.plugins_dir,
-            )
+            # Use PluginLoader to load plugin. Fetches the constructor makes
+            # count against the plugin.
+            with plugin_scope(plugin_id):
+                plugin_instance, _module = self.plugin_loader.load_plugin(
+                    plugin_id=plugin_id,
+                    manifest=manifest,
+                    plugin_dir=plugin_dir,
+                    config=config,
+                    display_manager=self.display_manager,
+                    cache_manager=self.cache_manager,
+                    plugin_manager=self,
+                    install_deps=True,
+                    plugins_dir=self.plugins_dir,
+                )
             
             # Register plugin-shipped fonts with the FontManager (if any).
             # Plugin manifests can declare a "fonts" block that ships custom
@@ -523,7 +531,8 @@ class PluginManager:
                 # Call on_enable if plugin is enabled
                 if hasattr(plugin_instance, 'on_enable'):
                     try:
-                        plugin_instance.on_enable()
+                        with plugin_scope(plugin_id):
+                            plugin_instance.on_enable()
                     except Exception:
                         # Undo the registration above before the outer
                         # handler marks it ERROR: left in self.plugins, the
