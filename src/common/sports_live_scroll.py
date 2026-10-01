@@ -181,7 +181,7 @@ class SportsLiveScrollMixin:
 
     def _live_scroll_fingerprint(self, league=None) -> tuple:
         """Fingerprint of every live game the strip's managers hold now."""
-        games = []  # type: List[Any]
+        games: List[Any] = []
         for manager in self._live_scroll_managers(league):
             games.extend(getattr(manager, "live_games", None) or [])
         return self._fingerprint_games(games)

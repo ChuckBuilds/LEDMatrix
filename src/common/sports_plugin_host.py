@@ -103,10 +103,10 @@ class SportsPluginHostMixin:
         concurrent background plugin.update() for the same manager returns
         early rather than fetching twice.
         """
-        threads = getattr(self, "_switch_refresh_threads", None)  # type: Optional[Dict[int, threading.Thread]]
+        threads: Optional[Dict[int, threading.Thread]] = getattr(self, "_switch_refresh_threads", None)
         if threads is None:
             threads = self._switch_refresh_threads = {}
-        stamps = getattr(self, "_switch_refresh_at", None)  # type: Optional[Dict[int, float]]
+        stamps: Optional[Dict[int, float]] = getattr(self, "_switch_refresh_at", None)
         if stamps is None:
             stamps = self._switch_refresh_at = {}
 
