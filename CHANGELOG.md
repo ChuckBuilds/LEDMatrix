@@ -416,6 +416,38 @@ read any of them:
   in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
   with the v2 palette they were written against.
 
+### New modules (sports consolidation stage 4)
+
+A plugin may import these via `src.*` once it floors on the release that
+ships them (the first release cut from this section). All four hold code the
+scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
+`56c4f15`), moved without behaviour change under the plugins' own names;
+each docstring lists what the host class must provide. Nothing in core uses
+them yet. The plugins delete their copies when they floor on that release.
+
+- `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
+  of the scoreboard plugin class (`manager.py`) identical in all nine:
+  `_dispatch_switch_refresh` (with `_SWITCH_REFRESH_MIN_GAP_SECONDS`),
+  `get_vegas_priority_weight`, `_favorite_team_is_live`,
+  `_favorite_scan_targets`, `_favorite_scan_games`, `_game_involves`,
+  `get_vegas_content_type`, `_dynamic_feature_enabled`,
+  `_get_total_games_for_manager` and `_build_manager_key`. List it before
+  `BasePlugin`: two of these override its defaults.
+- `src/common/sports_live_scroll.py` — `SportsLiveScrollMixin`, the eight
+  `manager.py` methods that rebuild a live scroll strip mid-cycle without
+  moving the marquee (`_live_scroll_needs_rebuild`,
+  `_preserving_scroll_position`, ...), with `LIVE_SCROLL_REBUILD_MIN_SECONDS`
+  and `LIVE_SCROLL_REBUILD_DUTY_DIVISOR`; identical in the eight scoreboards
+  with a strip (not ufc). `LIVE_VOLATILE_FIELDS` stays in each plugin.
+- `src/common/sports_display_rules.py` — `SportsCardOptionsMixin`
+  (`_card_option`, `_recent_date_text`; the eight team scoreboards; list it
+  before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+  (`_filtered_or_all`, `_effective_live_duration`; all nine).
+- `src/common/sports_font_path.py` — `resolve_font_path`, what every
+  scoreboard's `_resolve_font_path` (nine `sports.py`, eight
+  `game_renderer.py`) returns on a core that ships it: the path as given when
+  it exists, else `font_layout.resolve_asset_path`.
+
 ## 3.7.0
 
 Sports consolidation stage 3 (#672). No behaviour change: nothing in core
