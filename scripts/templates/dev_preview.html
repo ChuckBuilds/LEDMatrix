@@ -247,6 +247,19 @@
                 </div>
             </details>
 
+            <!-- What to render: the plugin's screen, or its block of the Vegas strip -->
+            <div class="flex items-center gap-2">
+                <label for="viewSelect" class="text-xs whitespace-nowrap" style="color: var(--text-secondary);">View</label>
+                <select id="viewSelect" onchange="onConfigChange()"
+                        class="flex-1 px-2 py-1.5 rounded-lg text-xs"
+                        style="background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);"
+                        title="Vegas strip: the plugin's block of the Vegas ticker, laid out as the ticker lays it out">
+                    <option value="">Display</option>
+                    <option value="live">Vegas strip (live elements)</option>
+                    <option value="plain">Vegas strip (plain Vegas content)</option>
+                </select>
+            </div>
+
             <!-- Render buttons -->
             <div class="flex gap-2">
                 <button onclick="renderPlugin()" id="renderBtn"
@@ -489,6 +502,7 @@
                         width: width,
                         height: height,
                         mock_data: mockData,
+                        vegas: document.getElementById('viewSelect').value || null,
                     }),
                 });
 
@@ -510,8 +524,11 @@
                 updateZoom();
 
                 // Show render time
+                const live = data.live_elements;
                 document.getElementById('renderTimeText').textContent =
-                    `${data.render_time_ms}ms`;
+                    `${data.render_time_ms}ms` + (live ? ` · ${data.width}px strip, ` +
+                    `${live.length} live element(s)` +
+                    (live.length ? `: ${live.map(e => e.key).join(', ')}` : '') : '');
 
                 // Show warnings/errors
                 showMessages(data.errors || [], data.warnings || []);
