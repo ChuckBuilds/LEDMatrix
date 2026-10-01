@@ -87,6 +87,10 @@ more. Shared sports code lives in `src/common`:
 | `sports_celebration.py` | 3.7.0 | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
 | `sports_fetch.py` | 3.7.0 | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
 | `sports_card_wrappers.py` | 3.7.0 | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
+| `sports_plugin_host.py` | next release | `SportsPluginHostMixin` — the plugin class's (`manager.py`) identical helpers: Vegas weight, off-thread switch refresh |
+| `sports_live_scroll.py` | next release | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
+| `sports_display_rules.py` | next release | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
+| `sports_font_path.py` | next release | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
@@ -259,6 +263,41 @@ gave pixel-identical output for all 399 frames (192 harness screens across the
 nine plugins at the eight default sizes, 72 scroll/Vegas cards, 135
 celebration frames), with a parent-vs-parent rerun as the determinism control.
 
+### Stage 4: the identical sweep (core done; adoption waits for a release)
+
+Re-measured on ledmatrix-plugins `56c4f15` (2026-09-30) the report still
+lists 58 families identical in every copy. Stage 4 moves the ones that are
+identical across the nine, or across eight with the ninth lacking the
+method, into four new modules: `sports_plugin_host` (ten `manager.py`
+helpers, all nine), `sports_live_scroll` (eight `manager.py` methods, every
+plugin with a live strip, so not ufc), `sports_display_rules` (four
+`sports.py` methods, in two mixins because their carriers differ) and
+`sports_font_path`. The parity test (`test/test_sports_stage4_parity.py`)
+compares each with every plugin copy using this report's own normalisation,
+plus decorators and constant values, which the normalisation drops.
+
+`_resolve_font_path` was meant to be replaced by
+`font_layout.resolve_asset_path`, but that never looks in the cwd, and the
+plugins' copy does first, so the swap would change which font a process
+started from another checkout loads. `resolve_font_path` is the copy's
+behaviour on a core that ships it, checked path for path against all 17
+copies (`test/test_sports_font_path.py`).
+
+Left in the plugins, though identical:
+
+- `_get_timezone`, `_extract_game_details`, `_fetch_data` (nine): a
+  per-plugin import and the abstract contract, as in stage 3.
+- `_schema_font_size`, `_resolve_font_size` (eight renderers): they read the
+  plugin's own `_SCHEMA_PATH`, as in stage 3.
+- The 29 families carried by seven plugins or fewer: the afl/nrl/soccer
+  lineage's own helpers (`_swrr_advance`, `_refresh_switch_mode_managers`,
+  `_initialize_logo_dir`, ...), the multi-league helpers
+  (`_resolve_managers_for_mode`, `_extract_mode_type`, ...), and eleven
+  two-plugin helpers. Each is one lineage's code; most go when
+  family 13 or 14 reconciles the code around them. `_odds_color` (seven
+  renderers) is already core's, in `SportsHelpersMixin`; a renderer that
+  wants it can inherit that.
+
 ### Why the method changes
 
 Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
@@ -342,7 +381,7 @@ release.
 
 | # | Family | Methods (variants) | Why here |
 |---|---|---|---|
-| 4 | Identical sweep | `manager.py`: `_dispatch_switch_refresh`, `_favorite_team_is_live`, `get_vegas_priority_weight`, `_game_involves`, `_favorite_scan_targets`, `_favorite_scan_games`, `_get_total_games_for_manager` (all nine, 1); the live-scroll helpers `_preserving_scroll_position`, `_refresh_live_scroll_managers`, `_live_scroll_managers`, `_note_live_scroll_built`, `_live_scroll_needs_rebuild`, `_live_scroll_fields` (eight, 1). `sports.py`: `_card_option`, `_filtered_or_all`, `_effective_live_duration`, `_recent_date_text` (eight, 1). 58 identical families in all | Nothing to decide; brings `manager.py` into core as a `SportsPluginHostMixin`. `_resolve_font_path` (identical in nine `sports.py` and eight renderers) is replaced by core's `font_layout.resolve_asset_path` rather than promoted |
+| 4 | Identical sweep | `manager.py`: `_dispatch_switch_refresh`, `_favorite_team_is_live`, `get_vegas_priority_weight`, `_game_involves`, `_favorite_scan_targets`, `_favorite_scan_games`, `_get_total_games_for_manager` (all nine, 1); the live-scroll helpers `_preserving_scroll_position`, `_refresh_live_scroll_managers`, `_live_scroll_managers`, `_note_live_scroll_built`, `_live_scroll_needs_rebuild`, `_live_scroll_fields` (eight, 1). `sports.py`: `_card_option`, `_filtered_or_all`, `_effective_live_duration`, `_recent_date_text` (eight, 1). 58 identical families in all | Nothing to decide; brings `manager.py` into core as a `SportsPluginHostMixin`. `_resolve_font_path` (identical in nine `sports.py` and eight renderers) becomes `sports_font_path.resolve_font_path`, not `font_layout.resolve_asset_path`, which skips the cwd. Core side done; see [Stage 4](#stage-4-the-identical-sweep-core-done-adoption-waits-for-a-release) |
 | 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; its seams (`FINAL_PERIOD`, `CLOCK_COUNTS_DOWN`) were designed in B1. The pilot for the procedure |
 | 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc) | One outlier each; football carries two fixes the other eight lack |

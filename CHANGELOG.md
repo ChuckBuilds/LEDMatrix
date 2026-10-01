@@ -43,6 +43,69 @@ guard the import, since the loader's version check is advisory).
   `src/plugin_system/plugin_runtime.py` -- new core modules (described
   below) that plugins do not normally import.
 
+### Web UI: ES modules and one form model (stage 1)
+
+- The web UI gains a native ES-module layer, loaded with
+  `<script type="module">` and served as-is (no bundler, nothing built on
+  the Pi): `static/v3/js/core/` (`boot.js`, `registry.js`, `api.js`,
+  `facade.js`) and `static/v3/js/pages/`. `window.LEDMatrix` is its one
+  global: `api`, `pages`, `notify`, `escape`, `widgets` and `deprecate`, the
+  last keeping old `window.*` names working as aliases that warn once.
+- Tab partials can become page modules: a partial whose root says
+  `data-page="<name>"` carries no inline script, and the page registry calls
+  the page's `init` once when htmx swaps it in and `destroy` when it is
+  swapped out, aborting a signal that removes its listeners and cancels its
+  requests. The Cache tab is converted as the reference
+  (`js/pages/cache.js`); `window.deleteCacheFile` remains as an alias.
+- Static `.js` files are always served as `text/javascript`, which module
+  scripts require, and a `.js` request without the `?v=` content version
+  (how modules import each other) is revalidated instead of cached as
+  immutable for a year.
+- `src/plugin_system/field_model.py`: `build_field_model(schema, config)`
+  describes a plugin's config form as one JSON field model. Nothing renders
+  from it yet; `test/test_field_model_parity.py` checks it names exactly the
+  form controls and starting values the `render_field` macro emits, for every
+  schema available (all 46 official plugins, when a checkout is present).
+- `docs/WEB_FRONTEND_ARCHITECTURE.md`: the target architecture, the
+  page-by-page migration order, and how forms switch to the model and to
+  JSON submit behind a flag.
+
+### Control socket (stage 1: on-demand)
+
+- **The display now serves a control socket**,
+  `/run/ledmatrix/control.sock`. It carries versioned JSON commands, one per
+  line, and every command gets an answer
+  ([docs/IPC_CONTROL_SOCKET.md](docs/IPC_CONTROL_SOCKET.md)).
+  - On-demand start, stop and status are the first commands, plus `hello`
+    (version negotiation) and `ping`.
+  - Start and stop are acknowledged once the render thread has them queued.
+    The render thread applies them through the same handler as the file
+    mailbox, at its next on-demand check. On a scrolling screen that is the
+    next frame (the mailbox waits up to 0.25 s). On a static screen it is up
+    to 1 s, the same as the mailbox.
+  - The server's threads never touch rendering. Garbage, oversize messages
+    and slow or vanishing clients are answered or dropped without blocking the
+    display.
+  - New core modules: `src/ipc/contract.py`, `server.py` and `client.py`.
+    They are internal, not a plugin API.
+- **`POST /api/v3/display/on-demand/start` and `/stop` try the socket
+  first.** On any failure (the display is stopped or predates the socket, a
+  timeout, a refusal), they write the `display_on_demand_request` mailbox
+  exactly as before. The response's new `transport` field says which path
+  was used (`"socket"` or `"mailbox"`), and `socket_error` gives the reason
+  for a fallback. Both paths carry the same `request_id`, so a request that
+  arrives both ways runs once. The mailbox, and the plugins that write it
+  directly, keep working for at least one more release.
+- **Permissions.** The socket is `0660` and owned by the group the two
+  services already share (the cache directory's group, `ledmatrix` on an
+  installed device). On Linux the server also checks each connection's
+  `SO_PEERCRED`: root, the display's own user, or a member of that group.
+  `/run/ledmatrix` comes from the existing `RuntimeDirectory=` (#687), or the
+  display creates it as root under an older unit, so no installer or unit
+  change is needed. `LEDMATRIX_CONTROL_SOCKET` overrides the path for both
+  processes, or turns the socket off with `off`. A non-root dev run uses a
+  private per-user path under the temp directory.
+
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,
@@ -300,6 +363,14 @@ read any of them:
 
 ### Fixes
 
+- Quieter routine logging. Every rotation logged each mode twice
+  ("Switching to mode", then "Processing mode"), and a mode with nothing to
+  show added "display() returned False" and "No content to display". Those
+  three repeats are now DEBUG; "Switching to mode" stays INFO, and `--debug`
+  shows the rest. On ledpi this cut the display's journal lines by about 30%
+  (~105 to ~75 per 5 minutes). Each stored line costs roughly 9 KB of SD-card
+  writes through the persistent journal (display at INFO vs WARNING: about
+  190 KiB/min apart), so the saving is real but small.
 - Reinstalling a plugin by its registry id when it is installed under its
   manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
   the install then fails. The safety copy was taken of `weather/`, which did
@@ -574,6 +645,38 @@ plugin that still calls one gets an `AttributeError`;
 - Plugin `web_ui/` pages no longer load Tailwind from a CDN, which failed
   in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
   with the v2 palette they were written against.
+
+### New modules (sports consolidation stage 4)
+
+A plugin may import these via `src.*` once it floors on the release that
+ships them (the first release cut from this section). All four hold code the
+scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
+`56c4f15`), moved without behaviour change under the plugins' own names;
+each docstring lists what the host class must provide. Nothing in core uses
+them yet. The plugins delete their copies when they floor on that release.
+
+- `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
+  of the scoreboard plugin class (`manager.py`) identical in all nine:
+  `_dispatch_switch_refresh` (with `_SWITCH_REFRESH_MIN_GAP_SECONDS`),
+  `get_vegas_priority_weight`, `_favorite_team_is_live`,
+  `_favorite_scan_targets`, `_favorite_scan_games`, `_game_involves`,
+  `get_vegas_content_type`, `_dynamic_feature_enabled`,
+  `_get_total_games_for_manager` and `_build_manager_key`. List it before
+  `BasePlugin`: two of these override its defaults.
+- `src/common/sports_live_scroll.py` — `SportsLiveScrollMixin`, the eight
+  `manager.py` methods that rebuild a live scroll strip mid-cycle without
+  moving the marquee (`_live_scroll_needs_rebuild`,
+  `_preserving_scroll_position`, ...), with `LIVE_SCROLL_REBUILD_MIN_SECONDS`
+  and `LIVE_SCROLL_REBUILD_DUTY_DIVISOR`; identical in the eight scoreboards
+  with a strip (not ufc). `LIVE_VOLATILE_FIELDS` stays in each plugin.
+- `src/common/sports_display_rules.py` — `SportsCardOptionsMixin`
+  (`_card_option`, `_recent_date_text`; the eight team scoreboards; list it
+  before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+  (`_filtered_or_all`, `_effective_live_duration`; all nine).
+- `src/common/sports_font_path.py` — `resolve_font_path`, what every
+  scoreboard's `_resolve_font_path` (nine `sports.py`, eight
+  `game_renderer.py`) returns on a core that ships it: the path as given when
+  it exists, else `font_layout.resolve_asset_path`.
 
 ## 3.7.0
 
