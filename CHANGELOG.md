@@ -138,8 +138,8 @@ policies are unchanged.
   returns. The scroll state and its frame hold stay until then, so the
   handover is still timed, against the scroller's own pacing: late-frame
   counts are unchanged.
-- The phantom ~1 s freeze at every scroller-to-static handover is no longer
-  recorded: the 1 Hz loop's second frame was timed as a frame of the old
+- The phantom ~1 s freeze when a static plugin screen follows a scroller is
+  no longer recorded: the 1 Hz loop's second frame was timed as a frame of the old
   scroll, in the soak's freezes and as a `Render stall` in the log. On ledpi
   that was 17 of 31 `Render stall over` lines (2026-09-15 to 10-01).
 - A screen's first frame is tagged `handover` in the frame stats, every

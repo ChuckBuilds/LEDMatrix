@@ -563,8 +563,11 @@ replaces it. They are:
 - a screen that runs the high-FPS loop without scrolling (an older
   `static-image`, which is forced into it), until its next frame.
 
-Ending the scroll state before the schedule-off blank and the WiFi message is a
-follow-up, the schedule-off blank first.
+The frame stats still time those two as frames of the old scroll: a WiFi
+notice that preempts a scroller records up to three 0.5-1 s freezes, and the
+schedule-off blank a `Render stall ... mid-scroll`. Ending the scroll state
+before the schedule-off blank and the WiFi message is a follow-up, the
+schedule-off blank first.
 
 Checked on hdpi (4×128×64 on one chain, rotated 180, 2026-09-24) before it was
 written: `scan_mode: 1` (interlaced) made the step vanish but turned moving
