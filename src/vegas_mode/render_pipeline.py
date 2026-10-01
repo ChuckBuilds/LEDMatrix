@@ -13,6 +13,7 @@ import threading
 from collections import deque
 from contextlib import nullcontext
 from typing import Optional, List, Any, Dict, Deque, Tuple
+import numpy as np
 from PIL import Image
 
 from src.common.scroll_config import solve_crisp
@@ -77,6 +78,19 @@ def join_plugin_rows(
     return block, layout
 
 
+class PreparedBlock:
+    """One plugin's block, joined and turned into pixels ahead of the strip."""
+
+    __slots__ = ('images', 'block', 'layout', 'pixels')
+
+    def __init__(self, images: List[Image.Image], config: VegasModeConfig) -> None:
+        # Held so the id() it is filed under cannot be reused while it waits.
+        self.images = images
+        self.block, self.layout = join_plugin_rows(images, config)
+        block = self.block if self.block.mode == 'RGB' else self.block.convert('RGB')
+        self.pixels = np.asarray(block)
+
+
 class RenderPipeline:
     """
     High-performance render pipeline for Vegas scroll mode.
@@ -114,6 +128,17 @@ class RenderPipeline:
     # never mutated, so the class-level default is safe for pipelines built
     # without __init__ (tests).
     _static_markers: Tuple[Tuple[int, str], ...] = ()
+
+    # Blocks joined off the render thread by whichever thread fetched the
+    # group (prepare_group_member): id(images) -> PreparedBlock. Laying a
+    # plugin's rows out and turning the block into pixels cost the frame
+    # after every extension ~35 ms on a Pi 4 when done there. Only producer
+    # threads add entries and only extend_scroll_content takes them; a
+    # reset drops the lot. Made on first use, so pipelines built without
+    # __init__ (tests) work too.
+    _prepared_blocks: Optional[Dict[int, 'PreparedBlock']] = None
+    #: Blocks kept waiting at most; a group is a handful of plugins.
+    PREPARED_BLOCKS_MAX = 64
 
     # Live elements in the strip (see "live element records" below). Replaced,
     # never mutated, like _static_markers, and class-level for the same reason.
@@ -598,6 +623,8 @@ class RenderPipeline:
                 try:
                     with gate.yielding() if gate is not None else nullcontext():
                         group = self.stream_manager.take_next_group(offscreen_only=True)
+                        for member in group or ():
+                            self.prepare_group_member(member)
                 except Exception:
                     logger.exception("Background prefetch failed")
                     group = []
@@ -677,6 +704,35 @@ class RenderPipeline:
         """Whether any canvas-bound plugins are still queued."""
         return bool(self._deferred_queue)
 
+    def prepare_group_member(self, member) -> None:
+        """Join one fetched ``(plugin_id, images)`` ahead of the strip.
+
+        Called by the thread that fetched it (the prefetch thread or the live
+        worker, under the render gate), so the extension that appends it only
+        has to copy its pixels into the strip. Never raises: a member left
+        unprepared is joined at the extension instead, as before.
+        """
+        try:
+            images = member[1]
+            if not images:
+                return
+            blocks = self._prepared_blocks
+            if blocks is None:
+                blocks = self._prepared_blocks = {}
+            if len(blocks) >= self.PREPARED_BLOCKS_MAX:
+                blocks.clear()      # left by groups that were never appended
+            blocks[id(images)] = PreparedBlock(images, self.config)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not prepare a Vegas block ahead", exc_info=True)
+
+    def _take_prepared_block(self, images: List[Image.Image]) -> Optional[PreparedBlock]:
+        """The block prepared for exactly these images, if there is one."""
+        blocks = self._prepared_blocks
+        if not blocks:
+            return None
+        prepared = blocks.pop(id(images), None)
+        return prepared if prepared is not None and prepared.images is images else None
+
     def _claim_prepared_group(self):
         """Take the prefetched group, if one is ready."""
         with self._prefetch_lock:
@@ -719,6 +775,8 @@ class RenderPipeline:
             for pid, images in grouped:
                 if is_static is not None and is_static(pid):
                     statics.append((sum(1 for _p, imgs in content if imgs), pid))
+                    if images:
+                        self._take_prepared_block(images)   # never appended
                 else:
                     content.append((pid, images))
             grouped = content
@@ -757,10 +815,18 @@ class RenderPipeline:
 
             blocks = []
             layouts = []
+            items = []
             total_rows = 0
             for _plugin_id, images in grouped:
                 total_rows += len(images)
-                block, layout = self._join_plugin_rows_with_layout(images)
+                prepared = self._take_prepared_block(images)
+                if prepared is not None:
+                    block, layout = prepared.block, prepared.layout
+                    items.append(prepared.pixels)
+                else:
+                    # Fetched inline, or by a thread that did not prepare it.
+                    block, layout = self._join_plugin_rows_with_layout(images)
+                    items.append(block)
                 blocks.append(block)
                 layouts.append(layout)
 
@@ -769,7 +835,7 @@ class RenderPipeline:
                 # append_content is about to build a strip from scratch.
                 self._reset_records()
             appended = self.scroll_helper.append_content(
-                content_items=blocks,
+                content_items=items,
                 item_gap=self.config.separator_width,
                 element_gap=0,
             )
@@ -1410,6 +1476,7 @@ class RenderPipeline:
             self._prefetch_generation += 1
             self._prepared_group = None
             self._deferred_queue = []
+            self._prepared_blocks = None
         self._static_markers = ()
         self._stop_live_worker()
         self._reset_records()
