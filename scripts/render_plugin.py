@@ -56,8 +56,32 @@ def main() -> int:
                         help='Display mode to render, for plugins that declare '
                              'more than one in their manifest (e.g. nrl_live). '
                              'Omitted, the plugin picks its own default.')
+    parser.add_argument('--vegas', action='store_true',
+                        help="Render the plugin's block of the Vegas ticker strip "
+                             "instead of display(): its live elements if it has "
+                             "them, else its Vegas content, laid out as the "
+                             "ticker lays them out. Also writes the live "
+                             "elements' keys and columns to <output>.json")
+    parser.add_argument('--no-live', action='store_true',
+                        help="With --vegas: ignore live elements and render the "
+                             "plugin's ordinary Vegas content (for before/after)")
+    parser.add_argument('--timeline', type=int, default=0, metavar='ROWS',
+                        help="With --vegas: render ROWS rows, each the block a "
+                             "--timeline-step later as the ticker would update it "
+                             "in place (animated elements redrawn for that moment)")
+    parser.add_argument('--timeline-step', type=float, default=0.25, metavar='SECONDS',
+                        help="Seconds between --timeline rows (default 0.25)")
+    parser.add_argument('--timeline-update', action='store_true',
+                        help="With --timeline: run update() before each row and "
+                             "redraw every live element from the new data")
 
     args = parser.parse_args()
+
+    if args.timeline > 1 and args.no_live:
+        # A timeline shows live elements changing; plain content never does.
+        parser.error("--timeline shows live elements; it cannot be combined with --no-live")
+    if (args.timeline or args.no_live) and not args.vegas:
+        parser.error("--timeline and --no-live need --vegas")
 
     if not (MIN_DIMENSION <= args.width <= MAX_DIMENSION):
         print(f"Error: --width must be between {MIN_DIMENSION} and {MAX_DIMENSION} (got {args.width})")
@@ -144,6 +168,39 @@ def main() -> int:
             logger.debug("update() completed")
         except Exception as e:
             logger.warning("update() raised: %s — continuing to display()", e)
+
+    if args.vegas:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+
+    if args.vegas and args.timeline > 1:
+        from src.plugin_system.testing.vegas import render_vegas_timeline
+        image, rows = render_vegas_timeline(
+            plugin_instance, args.plugin, display_manager, steps=args.timeline,
+            step_seconds=args.timeline_step, run_update=args.timeline_update)
+        if image is None:
+            logger.error("Plugin '%s' has no Vegas content", args.plugin)
+            return 1
+        image.save(args.output)
+        logger.info("Saved a %d-row Vegas timeline (%dx%d) to %s",
+                    rows, image.width, image.height, args.output)
+        return 0
+
+    if args.vegas:
+        from src.plugin_system.testing.vegas import render_vegas_strip
+        block, layout = render_vegas_strip(
+            plugin_instance, args.plugin, display_manager, live=not args.no_live)
+        if block is None:
+            logger.error("Plugin '%s' has no Vegas content", args.plugin)
+            return 1
+        block.save(args.output)
+        sidecar = Path(args.output).with_suffix('.json')
+        sidecar.write_text(json.dumps(
+            {"width": block.width, "height": block.height,
+             "live_elements": [{"key": k, "x": x, "width": w} for x, k, w in layout]},
+            indent=2) + "\n", encoding="utf-8")
+        logger.info("Saved Vegas strip %dx%d (%d live element(s)) to %s and %s",
+                    block.width, block.height, len(layout), args.output, sidecar)
+        return 0
 
     # A plugin that declares several display modes usually renders nothing
     # useful without being told which one to draw: the scoreboards keep their

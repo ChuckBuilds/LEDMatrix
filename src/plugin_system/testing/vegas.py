@@ -266,6 +266,91 @@ def _base_redraw():
     return BasePlugin.redraw_vegas_element
 
 
+def render_vegas_strip(plugin: Any, plugin_id: str, display_manager: Any,
+                       live: bool = True) -> Any:
+    """The plugin's block of the Vegas strip, laid out exactly as the ticker would.
+
+    Fetched through the ticker's own adapter (trimming, pinning, width
+    budget) and joined with its own spacing, so what this draws is what
+    scrolls. ``live=False`` shows the ordinary get_vegas_content() instead.
+
+    Returns ``(block, layout)`` -- layout a list of ``(x, key, width)`` for the
+    live elements in the block -- or ``(None, [])`` when there is nothing.
+    """
+    _adapter, block, layout = _vegas_block(plugin, plugin_id, display_manager, live)
+    return block, [(x, meta.key, width) for x, meta, width in layout]
+
+
+def _vegas_block(plugin: Any, plugin_id: str, display_manager: Any, live: bool) -> Any:
+    """(adapter, block, layout) for a plugin's Vegas block, through the ticker's own code."""
+    from src.vegas_mode.config import VegasModeConfig
+    from src.vegas_mode.elements import LiveEpochs
+    from src.vegas_mode.plugin_adapter import PluginAdapter
+    from src.vegas_mode.render_pipeline import join_plugin_rows
+
+    config = VegasModeConfig()
+    adapter = PluginAdapter(display_manager, config)
+    adapter.live_elements_enabled = live
+    adapter.live_epochs = LiveEpochs()
+    images = adapter.get_content(plugin, plugin_id, offscreen_only=True)
+    if not images:
+        return adapter, None, []
+    block, layout = join_plugin_rows(images, config)
+    return adapter, block, layout
+
+
+def render_vegas_timeline(plugin: Any, plugin_id: str, display_manager: Any,
+                          steps: int = 8, step_seconds: float = 0.25,
+                          run_update: bool = False) -> Any:
+    """The plugin's Vegas block at successive moments, one row per step.
+
+    Row 0 is the block as placed (render_vegas_strip). Each later row is the
+    same block ``step_seconds`` later, changed the way the ticker would change
+    it in place: every live element with ``refresh_hz`` redrawn for that
+    moment through redraw_vegas_element(), and -- with ``run_update`` -- the
+    plugin's update() run first and every live element redrawn from the new
+    data. A redraw of another width is left out, as the ticker refuses it.
+    Rows are separated by a grey line.
+
+    Returns ``(image, rows)``, or ``(None, 0)`` when there is nothing.
+    """
+    import time
+
+    import numpy as np
+
+    adapter, block, layout = _vegas_block(plugin, plugin_id, display_manager, True)
+    if block is None:
+        return None, 0
+    base = np.array(block.convert('RGB'))
+    rows = [base.copy()]
+    height = base.shape[0]
+    start = time.monotonic()
+    for step in range(1, max(1, int(steps))):
+        frame = rows[-1].copy()
+        if run_update:
+            plugin.update()
+            adapter.live_epochs.bump(plugin_id)
+            batch = adapter.render_live_elements(plugin, plugin_id, lock_timeout=5.0)
+            rendered = batch[1] if batch is not None else {}
+            for x, meta, width in layout:
+                element = rendered.get(meta.key)
+                if element is not None and element.width == width:
+                    frame[:, x:x + width] = element.pixels
+        at = start + step * float(step_seconds)
+        for x, meta, width in layout:
+            if meta.refresh_hz > 0:
+                element = adapter.redraw_live_element(plugin, plugin_id, meta.key,
+                                                      width, height, at)
+                if element is not None and element.width == width:
+                    frame[:, x:x + width] = element.pixels
+        rows.append(frame)
+    divider = np.full((1, base.shape[1], 3), 60, dtype=np.uint8)
+    stacked = [rows[0]]
+    for row in rows[1:]:
+        stacked.extend([divider, row])
+    return Image.fromarray(np.concatenate(stacked, axis=0)), len(rows)
+
+
 def check_plugin_vegas_elements(plugin_id: str, plugin_dir: Any, config: dict,
                                 mock_data: dict, width: int, height: int,
                                 run_update: bool = True) -> VegasElementReport:
