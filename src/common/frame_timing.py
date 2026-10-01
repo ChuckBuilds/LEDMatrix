@@ -45,6 +45,13 @@ would drown the jitter the late count exists to measure. ``freeze_by`` splits
 them by length. Intervals of ``GAP_SECONDS`` or more are ignored as not being
 frames of one scroll at all.
 
+One kind of freeze is not a scroll stalling at all: the gap from one screen's
+last frame to the next screen's first, while the next screen draws. The
+display controller tags that frame ``handover`` (see "Operations"), and a
+tagged freeze is counted in ``handover_freezes`` instead of ``freezes`` and
+``freeze_by``. Stats written before that field existed have handovers among
+their freezes, so freeze counts from before and after it are not comparable.
+
 A frame that arrives a whole refresh or more *early* means the swap did not
 wait for the panel: the emulator, the fallback display, or a hold that was not
 the one in effect. Those are counted as **early**, and a run with more than a
@@ -76,6 +83,12 @@ the work landed in. ``op_frames`` counts timed frames per kind,
 ``late_op_frames`` the late ones among them, ``op_freezes`` those that were a
 freeze instead, and ``op_bytes`` what the work moved. A kind whose late rate
 sits well above the overall one is the work to look at.
+
+``handover`` (:data:`HANDOVER_OP`) is noted off the render thread: the display
+controller notes it just before it starts a screen's first ``display()``,
+which presents from a thread of its own, and drops the note again with
+:meth:`FrameTimingRecorder.drop_op` once that call returns, so a first
+``display()`` that drew nothing cannot leave the tag for an unrelated frame.
 
 Stall watchdog
 --------------
@@ -132,6 +145,11 @@ RESUME_SECONDS = 1.0
 #: Buckets for freeze length, as cumulative counters a soak can difference.
 FREEZE_BUCKETS = ((0.5, "<0.5s"), (1.0, "0.5-1s"), (2.0, "1-2s"),
                   (float("inf"), "2s+"))
+
+#: The op the display controller notes before a screen's first frame. A
+#: freeze it ends is a handover, counted apart from the freezes; see
+#: "What is counted".
+HANDOVER_OP = "handover"
 
 #: A window may lower the refresh-period estimate by at most this fraction.
 MAX_REFRESH_DROP = 0.2
@@ -302,6 +320,10 @@ class FrameTimingRecorder:
             "freezes": 0,
             "freeze_seconds": 0.0,
             "freeze_by": {label: 0 for _, label in FREEZE_BUCKETS},
+            # Freezes that ended a screen handover rather than stalled a
+            # scroll: in neither of the two above. Additive; see "What is
+            # counted".
+            "handover_freezes": 0,
             "worst_interval_ms": 0.0,
             # Per kind of noted render-thread work; see "Operations".
             "op_frames": {},
@@ -337,7 +359,8 @@ class FrameTimingRecorder:
 
         Render thread only, like :meth:`record`, which consumes the tag: the
         interval the next frame ends is the one this work landed in. Several
-        notes before one frame accumulate, per kind. See "Operations".
+        notes before one frame accumulate, per kind. See "Operations" (and
+        :data:`HANDOVER_OP`, the one note made from another thread).
 
         :param kind: a short name for the work, e.g. ``"extend"``, ``"patch"``.
         :param nbytes: how much the work moved, summed into ``op_bytes``.
@@ -346,6 +369,21 @@ class FrameTimingRecorder:
         if ops is None:
             ops = self._ops = {}
         ops[kind] = ops.get(kind, 0) + int(nbytes)
+
+    def drop_op(self, kind: str) -> None:
+        """Forget a note of ``kind`` that no frame has carried yet.
+
+        For work that may present nothing: the display controller notes a
+        handover before a screen's first ``display()`` and drops it once that
+        returns. When the call drew a frame, the frame already took the tag
+        and this does nothing; when it drew nothing (no content), the tag
+        would otherwise land on whatever frame came next -- seconds or minutes
+        later, and nothing to do with the handover. Other kinds noted for the
+        same frame are kept.
+        """
+        ops = self._ops
+        if ops is not None:
+            ops.pop(kind, None)
 
     def record(self, blit: float, wait: float, hold: int, scrolling: bool,
                presented_at: float) -> None:
@@ -467,13 +505,19 @@ class FrameTimingRecorder:
                 for kind, nbytes in ops.items():
                     _bump(totals["op_bytes"], kind, nbytes)
             if interval >= FREEZE_SECONDS:
+                for kind in ops or ():
+                    _bump(totals["op_freezes"], kind)
+                if ops and HANDOVER_OP in ops:
+                    # The next screen drawing its first frame, not a scroll
+                    # that stalled: counted apart, so the freezes keep
+                    # meaning the second. See "What is counted".
+                    totals["handover_freezes"] += 1
+                    continue
                 totals["freezes"] += 1
                 totals["freeze_seconds"] += interval
                 label = next(name for limit, name in FREEZE_BUCKETS
                              if interval < limit)
                 totals["freeze_by"][label] += 1
-                for kind in ops or ():
-                    _bump(totals["op_freezes"], kind)
                 continue
             totals["scroll_frames"] += 1
             for name, value in (("blit", blit), ("wait", wait),
@@ -647,11 +691,19 @@ class StallWatchdog:
         return stall_from, dumped
 
     def describe(self, ident: int, age: float, late: float) -> str:
-        """The stack dump: the stalled thread in full, the rest in brief."""
+        """The stack dump: the stalled thread in full, the rest in brief.
+
+        A stall while a ``handover`` note is still waiting for its frame is
+        the next screen's first ``display()`` taking its time, not a scroll
+        that stopped, and is labelled a handover gap.
+        """
         names = {t.ident: t.name for t in threading.enumerate()}
         frames = sys._current_frames()
+        pending = getattr(self.recorder, "_ops", None)
+        where = ("in a handover gap" if pending and HANDOVER_OP in pending
+                 else "mid-scroll")
         lines = [
-            f"Render stall: no frame for {age * 1000.0:.0f}ms mid-scroll "
+            f"Render stall: no frame for {age * 1000.0:.0f}ms {where} "
             f"(watchdog woke {late * 1000.0:.0f}ms late"
             + ("; the interpreter itself was blocked" if late >= age / 2 else "")
             + ")",

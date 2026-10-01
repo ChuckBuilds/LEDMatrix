@@ -337,12 +337,13 @@ service's user.
 | line | what it tells you |
 |---|---|
 | **Late frames** | Frames presented one or more refreshes after they were due: the panel showed the previous frame again, a visible hitch. **The pass/fail number**, 0.1% by default (`--max-late-pct`). Only intervals between two scrolling frames count, and a frame held for `frame_hold` refreshes is due `frame_hold` refreshes after the last. |
-| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers, blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. A gap still counts when the display's scroll state went missing for one frame across it, as long as scrolling resumes within 1 s: both of that frame's intervals count. Two static frames in a row end the scroll. (The state expires after 2 s without scroll activity, and plugins can clear it from their own `display()`.) The late and early rates are over frames judged against a known refresh period, which the recorder adopts once two windows in a row agree on it. |
+| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers the display controller does not tag (see *Handover gaps*), blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. A gap still counts when the display's scroll state went missing for one frame across it, as long as scrolling resumes within 1 s: both of that frame's intervals count. Two static frames in a row end the scroll. (The state expires after 2 s without scroll activity, and plugins can clear it from their own `display()`.) The late and early rates are over frames judged against a known refresh period, which the recorder adopts once two windows in a row agree on it. Handovers to a static screen no longer show up here: the display controller ends the scroll state after a static screen's first frame, where it used to linger for 2 s and turn the 1 Hz loop's second frame into a ~1 s "freeze" (17 of 31 `Render stall over` lines on ledpi, 2026-09-15 to 10-01). **Freeze counts from before and after that change are not comparable.** |
+| **Handover gaps** | Gaps of 250 ms or more from a scroll's last frame to the next screen's first: the next plugin drawing, not a scroll stalling. The display controller tags that first frame `handover`, and these gaps are counted here instead of under Freezes (`handover_freezes` in the stats; the `handover` row under *after work* counts the same ones in its freezes column). Missing from stats written by an older service, whose freezes include them. |
 | **blit** | Copying the frame into the matrix canvas (`SetImage`). It grows with width × height × `pwm_bits`: ~5.5 ms at 512×64 with 8 bits on a Pi 4. It is the biggest fixed cost, and it sets the refresh rates a rig can hold one pixel per refresh at. |
 | **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
 | **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
 | **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
-| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
+| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land), `handover` (a new screen's first frame). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
 
 The refresh rate is estimated from the frames themselves (swaps that block on
 vsync can only land on refresh boundaries). Cross-check it with
@@ -356,10 +357,13 @@ A/B two of them. A live-API workload drifts over time.
 The soak says how often; the service's log says why. A scroll that presents no
 frame for 250 ms logs `Render stall:` with the stack of the render thread and
 the top of every other thread's, and whether the whole interpreter was blocked
-(C code holding the GIL) rather than one thread. To see what is behind the
-shorter hitches, run the service with `LEDMATRIX_STALL_WATCHDOG_MS=30`, which
-dumps at three refreshes late instead: its extra polling costs a little GIL
-time of its own, so do that on a diagnostic run, not a soak you are grading.
+(C code holding the GIL) rather than one thread. A stall while the next
+screen's first `display()` is still drawing says `in a handover gap` instead of
+`mid-scroll`; that call runs on a thread named `display-<plugin id>`. To see
+what is behind the shorter hitches, run the service with
+`LEDMATRIX_STALL_WATCHDOG_MS=30`, which dumps at three refreshes late instead:
+its extra polling costs a little GIL time of its own, so do that on a
+diagnostic run, not a soak you are grading.
 `LEDMATRIX_STALL_WATCHDOG=0` turns it off.
 
 ### Results: hdpi, 2026-09-24

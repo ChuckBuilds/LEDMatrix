@@ -19,6 +19,31 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Scroller-to-static handovers
+
+- A static screen that follows a scroller no longer starts with the
+  scroller's leftovers. Nothing ended the scroll state at a handover; it
+  expired 2 s after the last scroll frame. So the static screen's first
+  frame, which stays up for a second, went out at the scroller's frame hold
+  and, on a panel with scan-order compensation, with the lagging rows (the
+  bottom half on a 96x48 panel) taken from the ticker's last frame. The
+  display controller now calls the new
+  `DisplayManager.end_scroll_for_static_screen()` (drops the scan-order
+  history and the hold) just before such a screen's first `display()`, and
+  `set_scrolling_state(False)` once it returns.
+- The phantom ~1 s freeze at every scroller-to-static handover is no longer
+  recorded: the 1 Hz loop's second frame was timed as a frame of the old
+  scroll, in the soak's freezes and as a `Render stall` in the log. On ledpi
+  that was 17 of 31 `Render stall over` lines (2026-09-15 to 10-01).
+- A screen's first frame is tagged `handover` in the frame stats. A gap of
+  250 ms or more before it is counted in the new `handover_freezes`
+  (additive; the schema version is unchanged), not in `freezes` /
+  `freeze_by`, and `frame_soak.py` prints it as "Handover gaps". **Freeze
+  counts from soaks before and after this change are not comparable.** A
+  stall dump taken while that first `display()` is still drawing says
+  `in a handover gap` instead of `mid-scroll`, and the call runs on a thread
+  named `display-<plugin id>`.
+
 ### Web UI: ES modules and one form model (stage 1)
 
 - The web UI gains a native ES-module layer, loaded with

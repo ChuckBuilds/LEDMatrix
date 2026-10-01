@@ -141,6 +141,22 @@ class TestPluginExecutor:
         assert result is True
         mock_plugin.display.assert_called_once()
         
+    def test_execute_display_runs_on_a_thread_named_for_the_plugin(self):
+        """A screen's first frame is presented from this thread, so stack
+        dumps (the frame-timing stall watchdog's) should name the plugin."""
+        import threading
+        from src.plugin_system.plugin_executor import PluginExecutor
+        executor = PluginExecutor()
+        seen = []
+
+        class Plugin:
+            def display(self, force_clear=False):
+                seen.append(threading.current_thread().name)
+                return True
+
+        assert executor.execute_display(Plugin(), "clock-simple") is True
+        assert seen == ["display-clock-simple"]
+
     def test_execute_display_exception(self):
         """Test display execution with exception."""
         from src.plugin_system.plugin_executor import PluginExecutor

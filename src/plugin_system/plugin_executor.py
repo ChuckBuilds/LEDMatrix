@@ -58,7 +58,8 @@ class PluginExecutor:
         self,
         operation: Callable[[], Any],
         timeout: Optional[float] = None,
-        plugin_id: Optional[str] = None
+        plugin_id: Optional[str] = None,
+        thread_name: Optional[str] = None
     ) -> Any:
         """
         Execute a plugin operation with timeout.
@@ -67,6 +68,8 @@ class PluginExecutor:
             operation: Function to execute
             timeout: Timeout in seconds (None = use default)
             plugin_id: Optional plugin ID for logging
+            thread_name: Name for the thread the operation runs on (None
+                keeps Python's default). Stack dumps list threads by name.
             
         Returns:
             Result of operation
@@ -89,7 +92,7 @@ class PluginExecutor:
                 result_container['exception'] = e
                 result_container['completed'] = True
         
-        thread = Thread(target=target, daemon=True)
+        thread = Thread(target=target, daemon=True, name=thread_name)
         thread.start()
         thread.join(timeout=timeout)
         
@@ -209,18 +212,24 @@ class PluginExecutor:
                     'display_mode' in inspect.signature(plugin.display).parameters)
             has_display_mode = accepts_display_mode
             
+            # Named for the plugin: this thread presents a screen's first
+            # frame, so the frame-timing stall watchdog's stack dumps name it.
+            thread_name = f"display-{plugin_id}"
+
             # Capture the return value from the plugin's display() method
             if has_display_mode and display_mode:
                 result = self.execute_with_timeout(
                     lambda: plugin.display(display_mode=display_mode, force_clear=force_clear),
                     timeout=timeout,
-                    plugin_id=plugin_id
+                    plugin_id=plugin_id,
+                    thread_name=thread_name
                 )
             else:
                 result = self.execute_with_timeout(
                     lambda: plugin.display(force_clear=force_clear),
                     timeout=timeout,
-                    plugin_id=plugin_id
+                    plugin_id=plugin_id,
+                    thread_name=thread_name
                 )
             
             duration = time.monotonic() - start_time

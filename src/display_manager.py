@@ -1710,6 +1710,41 @@ class DisplayManager:
         if changed:
             logger.debug("Scrolling state set to: %s", is_scrolling)
 
+    def end_scroll_for_static_screen(self) -> None:
+        """Ready the panel for a static screen's first frame after a scroll.
+
+        The display controller calls this just before it dispatches the first
+        frame of a screen that runs its 1 Hz loop, and
+        ``set_scrolling_state(False)`` once that dispatch returns. Nothing
+        else ends a scroll at a handover: the state belongs to the screen
+        before, and would only expire 2 s after its last frame.
+
+        Two things of that scroll must not reach the first static frame,
+        which stays on the panel for a whole second:
+
+        * its frame hold, which would hold the frame at the scroll's pacing;
+        * the scan-order history. With the state still "scrolling at hold 1",
+          ``_scan_compensated`` would take the lagging rows from the
+          scroller's last frame -- the bottom half of the old ticker under
+          the new screen, on a 96x48 panel.
+
+        The scroll state itself is left set on purpose, until the controller
+        clears it: the gap from the scroller's last frame to this screen's
+        first is still timed by the frame-timing recorder and watched by the
+        stall watchdog, which is where a slow first ``display()`` shows up.
+
+        Under ``_update_lock``: ``scan_order.compose`` checks the history's
+        length and then indexes it, so clearing it while another thread is
+        inside ``update_display`` could make that raise.
+        """
+        if self._writes_suppressed():
+            return  # a thread drawing off-screen cannot end the live scroll
+        with self._update_lock:
+            history = getattr(self, '_scan_history', None)
+            if history is not None:
+                history.clear()
+            self._frame_hold = 1
+
     def is_currently_scrolling(self) -> bool:
         """Check if the display is currently in a scrolling state."""
         current_time = time.time()

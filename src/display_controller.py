@@ -41,6 +41,7 @@ from src.config_service import ConfigService
 from src.cache_manager import CacheManager
 from src.font_manager import FontManager
 from src.logging_config import get_logger
+from src.common.frame_timing import HANDOVER_OP
 from src.common.sync_manager import DisplaySyncManager, SyncRole
 from src.ipc.server import ControlServer, start_control_server
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
@@ -1073,6 +1074,113 @@ class DisplayController:
                 note = getattr(self.plugin_manager, 'note_display_duration', None)
                 if note is not None and plugin_id:
                     note(plugin_id, time.monotonic() - started)
+
+    def _needs_high_fps(self, plugin, active_mode: str, log: bool = True) -> bool:
+        """Whether a screen runs the high-FPS (8 ms) loop or the 1 s one.
+
+        In precedence order:
+        1. A plugin that declares needs_high_fps knows best
+           (e.g. static-image sets it False for still PNGs,
+           True for animated GIFs).
+        2. Back-compat: older static-image versions without
+           the attribute keep the historical forced high-FPS
+           (GIF support).
+        3. Otherwise scrolling plugins get high FPS.
+
+        ``log=False`` for the look run() takes before a screen's first
+        dispatch (see _start_screen_handover): the FPS check after it logs
+        the decision, and once per screen is enough.
+        """
+        plugin_id = getattr(plugin, 'plugin_id', None)
+        declared = getattr(plugin, 'needs_high_fps', None)
+        if declared is not None:
+            needs_high_fps = bool(declared)
+            if log:
+                logger.debug(
+                    "[DisplayController] FPS check for %s (plugin=%s) - "
+                    "plugin declares needs_high_fps=%s",
+                    active_mode, plugin_id, needs_high_fps)
+        elif plugin_id == 'static-image':
+            needs_high_fps = True
+            if log:
+                logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
+        else:
+            has_enable_scrolling = hasattr(plugin, 'enable_scrolling')
+            enable_scrolling_value = getattr(plugin, 'enable_scrolling', False)
+            needs_high_fps = has_enable_scrolling and enable_scrolling_value
+            if log:
+                logger.info(
+                    "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
+                    active_mode,
+                    has_enable_scrolling,
+                    enable_scrolling_value,
+                    needs_high_fps,
+                )
+        return needs_high_fps
+
+    def _start_screen_handover(self, plugin, active_mode: str) -> bool:
+        """Before a screen's first dispatch: end the last scroll's pacing if
+        the screen is static.
+
+        Nothing else ends a scroll when the rotation moves on: the state
+        expires 2 s after the scroller's last frame. Left to that, a static
+        screen's first frame -- up for a whole second -- went out at the
+        scroller's frame hold and, on a panel with scan-order compensation,
+        with rows taken from the scroller's last frame; and its second frame,
+        1 s later, was still "mid-scroll", so the frame-timing soak counted a
+        1-2 s freeze and the stall watchdog logged a "Render stall" at every
+        scroller-to-static handover. See
+        DisplayManager.end_scroll_for_static_screen.
+
+        Returns whether the screen is static, for _finish_screen_handover.
+        False when that cannot be told, which leaves the scroll state as it
+        was before this existed.
+        """
+        try:
+            static_screen = not self._needs_high_fps(plugin, active_mode, log=False)
+        except Exception:  # pylint: disable=broad-except
+            # A plugin property raising. The FPS check after the dispatch is
+            # where that is reported; here it only means "leave it alone".
+            logger.debug("Could not tell whether %s is static before its first frame",
+                         active_mode, exc_info=True)
+            return False
+        if static_screen:
+            end_scroll = getattr(self.display_manager, 'end_scroll_for_static_screen', None)
+            if end_scroll is not None:
+                end_scroll()
+        return static_screen
+
+    def _note_screen_handover(self) -> None:
+        """Tag the frame the first dispatch is about to present.
+
+        The gap from the last screen's final frame to it is the next screen
+        drawing, not a scroll freezing: frame_timing counts it apart from
+        the freezes, and the stall watchdog labels it a handover gap.
+        """
+        recorder = getattr(self.display_manager, 'frame_timing', None)
+        note = getattr(recorder, 'note_op', None)
+        if note is not None:
+            note(HANDOVER_OP)
+
+    def _finish_screen_handover(self, static_screen: bool) -> None:
+        """After a screen's first dispatch, whatever it returned.
+
+        Drops the handover tag if no frame took it (a screen with nothing to
+        show), so it cannot land on an unrelated frame later. For a static
+        screen, also ends the previous scroll now, whether or not it showed
+        anything: its first frame has gone out, and with the state left set
+        its next one -- a second later in the 1 Hz loop -- would be timed as
+        a frame of the old scroll.
+        """
+        dm = self.display_manager
+        recorder = getattr(dm, 'frame_timing', None)
+        drop = getattr(recorder, 'drop_op', None)
+        if drop is not None:
+            drop(HANDOVER_OP)
+        if static_screen:
+            set_scrolling_state = getattr(dm, 'set_scrolling_state', None)
+            if set_scrolling_state is not None:
+                set_scrolling_state(False)
 
     def _health_tracker(self):
         """The plugin circuit breaker, or None when it is not enabled."""
@@ -2594,6 +2702,10 @@ class DisplayController:
                     display_result = False
                 else:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
+                    # Decided before the first frame rather than at the FPS
+                    # check below, by when that frame has gone out with the
+                    # last scroll's pacing. See _start_screen_handover.
+                    static_screen = self._start_screen_handover(manager_to_display, active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
                         if plugin_id not in self._plugin_accepts_display_mode:
@@ -2606,6 +2718,10 @@ class DisplayController:
                         display_lock = pm.get_plugin_lock(plugin_id) if pm else None
                         can_display = display_lock is None or display_lock.acquire(blocking=False)
                         display_hung = False
+                        if can_display:
+                            # Only when display() will run: a busy plugin
+                            # presents nothing for the tag to land on.
+                            self._note_screen_handover()
 
                         if display_lock is None:
                             # Only when plugin loading failed part-way.
@@ -2709,6 +2825,9 @@ class DisplayController:
                         self.force_change = True
                         display_result = False
                         display_failed_due_to_exception = True
+                    # Whatever the dispatch did -- drew, had nothing to show,
+                    # raised -- and before the 1 Hz loop or the next mode.
+                    self._finish_screen_handover(static_screen)
 
                 # If display() returned False, skip to next mode immediately
                 if not display_result:
@@ -2875,36 +2994,10 @@ class DisplayController:
                                 self._check_on_demand_expiration()
                                 continue
 
-                    # High-FPS decision, in precedence order:
-                    # 1. A plugin that declares needs_high_fps knows best
-                    #    (e.g. static-image sets it False for still PNGs,
-                    #    True for animated GIFs).
-                    # 2. Back-compat: older static-image versions without
-                    #    the attribute keep the historical forced high-FPS
-                    #    (GIF support).
-                    # 3. Otherwise scrolling plugins get high FPS.
-                    plugin_id = getattr(manager_to_display, 'plugin_id', None)
-                    declared = getattr(manager_to_display, 'needs_high_fps', None)
-                    if declared is not None:
-                        needs_high_fps = bool(declared)
-                        logger.debug(
-                            "[DisplayController] FPS check for %s (plugin=%s) - "
-                            "plugin declares needs_high_fps=%s",
-                            active_mode, plugin_id, needs_high_fps)
-                    elif plugin_id == 'static-image':
-                        needs_high_fps = True
-                        logger.debug("FPS check - static-image plugin: forcing high-FPS mode for GIF support")
-                    else:
-                        has_enable_scrolling = hasattr(manager_to_display, 'enable_scrolling')
-                        enable_scrolling_value = getattr(manager_to_display, 'enable_scrolling', False)
-                        needs_high_fps = has_enable_scrolling and enable_scrolling_value
-                        logger.info(
-                            "FPS check for %s - has_enable_scrolling: %s, enable_scrolling_value: %s, needs_high_fps: %s",
-                            active_mode,
-                            has_enable_scrolling,
-                            enable_scrolling_value,
-                            needs_high_fps,
-                        )
+                    # High-FPS decision; see _needs_high_fps for the order.
+                    # Read again here, after the first dispatch, as it always
+                    # was: a plugin may settle it in that display() call.
+                    needs_high_fps = self._needs_high_fps(manager_to_display, active_mode)
 
                     target_duration = max_duration
                     start_time = time.time()
