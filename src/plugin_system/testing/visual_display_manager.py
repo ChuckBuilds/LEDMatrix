@@ -14,13 +14,16 @@ PIL Image canvas and draws text using the actual project fonts.
 MAINTENANCE WARNING: this class is a deliberate fork of
 src/display_manager.py so it can run without hardware. It mirrors
 these DisplayManager methods by name and behavior: _load_fonts,
-get_font_height, get_text_width, draw_text,
-draw_text_with_icons, draw_weather_icon (and the _draw_sun/_draw_cloud/
-_draw_rain/_draw_snow/_draw_storm family), format_date_with_ordinal,
+get_font_height, get_text_width, draw_text, format_date_with_ordinal,
 capture_mode, set_scrolling_state, is_currently_scrolling,
 process_deferred_updates, update_display, render_size, offscreen. A behavior
 change to any of those in DisplayManager must be mirrored here, or
 plugin visual tests will pass against stale behavior.
+
+The weather-icon helpers here (draw_sun, draw_cloud, draw_rain, draw_snow,
+draw_weather_icon, draw_text_with_icons) no longer mirror anything:
+DisplayManager dropped them in 3.8.0, so a plugin must not call them on the
+real display manager.
 
 BDF text is not mirrored: both classes load BDF faces and draw BDF glyphs
 through src/common/bdf_font.py, so those pixels cannot drift.

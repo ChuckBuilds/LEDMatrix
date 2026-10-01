@@ -51,8 +51,7 @@ from src.pi5_matrix_support import is_raspberry_pi_5
 import threading
 import time
 from collections import OrderedDict, deque
-from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-import math
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 import zlib
 import freetype
 
@@ -62,7 +61,6 @@ from src.common.frame_timing import FrameTimingRecorder
 
 if TYPE_CHECKING:
     from src.common.render_gate import RenderGate
-from src.deprecation import deprecated
 from src.logging_config import get_logger
 from src.common.permission_utils import (
     ensure_directory_permissions,
@@ -1323,203 +1321,6 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing text: {e}", exc_info=True)
 
-    @deprecated("3.8.0")
-    def draw_sun(self, x: int, y: int, size: int = 16):
-        """Draw a sun icon using yellow circles and lines."""
-        center = (x + size//2, y + size//2)
-        radius = size//3
-        
-        # Draw the center circle
-        self.draw.ellipse([center[0]-radius, center[1]-radius, 
-                          center[0]+radius, center[1]+radius], 
-                         fill=(255, 255, 0))  # Yellow
-        
-        # Draw the rays
-        ray_length = size//4
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            start_x = center[0] + (radius * math.cos(rad))
-            start_y = center[1] + (radius * math.sin(rad))
-            end_x = center[0] + ((radius + ray_length) * math.cos(rad))
-            end_y = center[1] + ((radius + ray_length) * math.sin(rad))
-            self.draw.line([start_x, start_y, end_x, end_y], fill=(255, 255, 0), width=2)
-
-    @deprecated("3.8.0")
-    def draw_cloud(self, x: int, y: int, size: int = 16, color=(200, 200, 200)):
-        """Draw a cloud icon."""
-        # Draw multiple circles to form a cloud shape
-        self.draw.ellipse([x+size//4, y+size//3, x+size//4+size//2, y+size//3+size//2], fill=color)
-        self.draw.ellipse([x+size//2, y+size//3, x+size//2+size//2, y+size//3+size//2], fill=color)
-        self.draw.ellipse([x+size//3, y+size//6, x+size//3+size//2, y+size//6+size//2], fill=color)
-
-    @deprecated("3.8.0")
-    def draw_rain(self, x: int, y: int, size: int = 16):
-        """Draw rain icon with cloud and droplets."""
-        # Draw cloud
-        self.draw_cloud(x, y, size)
-        
-        # Draw rain drops
-        drop_color = (0, 0, 255)  # Blue
-        drop_size = size//6
-        for i in range(3):
-            drop_x = x + size//4 + (i * size//3)
-            drop_y = y + size//2
-            self.draw.line([drop_x, drop_y, drop_x, drop_y+drop_size], 
-                          fill=drop_color, width=2)
-
-    @deprecated("3.8.0")
-    def draw_snow(self, x: int, y: int, size: int = 16):
-        """Draw snow icon with cloud and snowflakes."""
-        # Draw cloud
-        self.draw_cloud(x, y, size)
-        
-        # Draw snowflakes
-        snow_color = (200, 200, 255)  # Light blue
-        for i in range(3):
-            center_x = x + size//4 + (i * size//3)
-            center_y = y + size//2 + size//4
-            # Draw a small star shape
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle)
-                end_x = center_x + (size//8 * math.cos(rad))
-                end_y = center_y + (size//8 * math.sin(rad))
-                self.draw.line([center_x, center_y, end_x, end_y], 
-                             fill=snow_color, width=1)
-
-    # Weather icon color constants
-    WEATHER_COLORS = {
-        'sun': (255, 200, 0),    # Bright yellow
-        'cloud': (200, 200, 200), # Light gray
-        'rain': (0, 100, 255),    # Light blue
-        'snow': (220, 220, 255),  # Ice blue
-        'storm': (255, 255, 0)    # Lightning yellow
-    }
-
-    def _draw_sun(self, x: int, y: int, size: int) -> None:
-        """Draw a sun icon with rays."""
-        center_x, center_y = x + size//2, y + size//2
-        radius = size//4
-        ray_length = size//3
-        
-        # Draw the main sun circle
-        self.draw.ellipse([center_x - radius, center_y - radius, 
-                          center_x + radius, center_y + radius], 
-                         fill=self.WEATHER_COLORS['sun'])
-        
-        # Draw sun rays
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            start_x = center_x + int((radius + 2) * math.cos(rad))
-            start_y = center_y + int((radius + 2) * math.sin(rad))
-            end_x = center_x + int((radius + ray_length) * math.cos(rad))
-            end_y = center_y + int((radius + ray_length) * math.sin(rad))
-            self.draw.line([start_x, start_y, end_x, end_y], 
-                         fill=self.WEATHER_COLORS['sun'], width=2)
-
-    def _draw_cloud(self, x: int, y: int, size: int) -> None:
-        """Draw a cloud using multiple circles."""
-        cloud_color = self.WEATHER_COLORS['cloud']
-        base_y = y + size//2
-        
-        # Draw main cloud body (3 overlapping circles)
-        circle_radius = size//4
-        positions = [
-            (x + size//3, base_y),           # Left circle
-            (x + size//2, base_y - size//6), # Top circle
-            (x + 2*size//3, base_y)          # Right circle
-        ]
-        
-        for cx, cy in positions:
-            self.draw.ellipse([cx - circle_radius, cy - circle_radius,
-                             cx + circle_radius, cy + circle_radius],
-                            fill=cloud_color)
-
-    def _draw_rain(self, x: int, y: int, size: int) -> None:
-        """Draw rain drops falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        rain_color = self.WEATHER_COLORS['rain']
-        
-        # Draw rain drops at an angle
-        drop_size = size//8
-        drops = [
-            (x + size//4, y + 2*size//3),
-            (x + size//2, y + 3*size//4),
-            (x + 3*size//4, y + 2*size//3)
-        ]
-        
-        for dx, dy in drops:
-            # Draw angled rain drops
-            self.draw.line([dx, dy, dx - drop_size//2, dy + drop_size],
-                         fill=rain_color, width=2)
-
-    def _draw_snow(self, x: int, y: int, size: int) -> None:
-        """Draw snowflakes falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        snow_color = self.WEATHER_COLORS['snow']
-        
-        # Draw snowflakes
-        flake_size = size//6
-        flakes = [
-            (x + size//4, y + 2*size//3),
-            (x + size//2, y + 3*size//4),
-            (x + 3*size//4, y + 2*size//3)
-        ]
-        
-        for fx, fy in flakes:
-            # Draw a snowflake (six-pointed star)
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle)
-                end_x = fx + int(flake_size * math.cos(rad))
-                end_y = fy + int(flake_size * math.sin(rad))
-                self.draw.line([fx, fy, end_x, end_y],
-                             fill=snow_color, width=1)
-
-    def _draw_storm(self, x: int, y: int, size: int) -> None:
-        """Draw a storm cloud with lightning bolt."""
-        self._draw_cloud(x, y, size)
-        
-        # Draw lightning bolt
-        bolt_color = self.WEATHER_COLORS['storm']
-        bolt_points = [
-            (x + size//2, y + size//2),          # Top
-            (x + 3*size//5, y + 2*size//3),      # Middle right
-            (x + 2*size//5, y + 2*size//3),      # Middle left
-            (x + size//2, y + 5*size//6)         # Bottom
-        ]
-        self.draw.polygon(bolt_points, fill=bolt_color)
-
-    @deprecated("3.8.0")
-    def draw_weather_icon(self, condition: str, x: int, y: int, size: int = 16) -> None:
-        """Draw a weather icon based on the condition."""
-        if condition.lower() in ['clear', 'sunny']:
-            self._draw_sun(x, y, size)
-        elif condition.lower() in ['clouds', 'cloudy', 'partly cloudy']:
-            self._draw_cloud(x, y, size)
-        elif condition.lower() in ['rain', 'drizzle', 'shower']:
-            self._draw_rain(x, y, size)
-        elif condition.lower() in ['snow', 'sleet', 'hail']:
-            self._draw_snow(x, y, size)
-        elif condition.lower() in ['thunderstorm', 'storm']:
-            self._draw_storm(x, y, size)
-        else:
-            self._draw_sun(x, y, size)
-        # Note: No update_display() here - let the caller handle the update
-
-    @deprecated("3.8.0")
-    def draw_text_with_icons(self, text: str, icons: List[tuple] = None, x: int = None, y: int = None, 
-                            color: tuple = (255, 255, 255)):
-        """Draw text with weather icons at specified positions."""
-        # Draw the text
-        self.draw_text(text, x, y, color)
-        
-        # Draw any icons
-        if icons:
-            for icon_type, icon_x, icon_y in icons:
-                self.draw_weather_icon(icon_type, icon_x, icon_y)
-        
-        # Update the display once after everything is drawn
-        self.update_display()
-
     def cleanup(self):
         """Clean up resources."""
         if hasattr(self, '_snapshot_cond'):
@@ -1830,18 +1631,6 @@ class DisplayManager:
         removed_count = initial_count - len(self._scrolling_state['deferred_updates'])
         if removed_count > 0:
             logger.debug(f"Cleaned up {removed_count} expired deferred updates")
-
-    @deprecated("3.8.0")
-    def get_scrolling_stats(self) -> dict:
-        """Get current scrolling statistics for debugging."""
-        return {
-            'is_scrolling': self._scrolling_state['is_scrolling'],
-            'last_activity': self._scrolling_state['last_scroll_activity'],
-            'deferred_count': len(self._scrolling_state['deferred_updates']),
-            'inactivity_threshold': self._scrolling_state['scroll_inactivity_threshold'],
-            'max_deferred_updates': self._scrolling_state['max_deferred_updates'],
-            'deferred_update_ttl': self._scrolling_state['deferred_update_ttl']
-        }
 
     def _viewer_is_fresh(self, now: float) -> bool:
         """True when a browser preview is watching (marker file touched by
