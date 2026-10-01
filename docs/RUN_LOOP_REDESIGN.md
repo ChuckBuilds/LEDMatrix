@@ -46,7 +46,10 @@ Each pass, in order:
    the dwell sleep and an interrupted Vegas iteration end within about a
    second when one arrives, and a screen cut short resumes after it.
 7. **Live priority** (unless on-demand, or Vegas keeps live content in the
-   ticker): switch to the next live mode, or resume the rotation.
+   ticker): switch to the next live mode, or resume the rotation. A game
+   that goes live during a screen is caught sooner, by
+   `_check_live_takeover` in the frame loops and the dwell sleep (at most
+   once a second, and not while a live mode is showing).
 8. **Vegas** (unless on-demand, or live content preempts it): run one
    iteration of up to `max_cycle_duration`. A completed iteration ends the
    pass, and so does one that yielded for a WiFi notice or the schedule.
@@ -258,14 +261,9 @@ These are recorded as they are today. Each one should be fixed in its own
 PR, which updates the affected trace and explains why. None of them is
 changed by the restructure.
 
-1. **Vegas yields to live content, then shows a rotation screen first.**
-   The live game appears one screen later (`vegas`, t=70-90).
-2. **Live priority only takes over between screens.** A game that goes
-   live mid-screen waits for that screen to end (`live_priority`: live at
-   t=50, shown at t=60).
-3. **An on-demand session that expires during scheduled-off keeps the panel
+1. **An on-demand session that expires during scheduled-off keeps the panel
    on** until the next minute boundary, because the schedule check runs at
    most once a minute (`schedule`, t=190-210).
-4. **A schedule window's end minute is inclusive**, and whether the panel
+2. **A schedule window's end minute is inclusive**, and whether the panel
    turns off at the start of that minute or the end depends on when in the
    minute the first check runs.

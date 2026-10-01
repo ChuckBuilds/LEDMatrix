@@ -101,6 +101,15 @@ policies are unchanged.
   notice is what shows next, and Vegas resumes after it; before, a rotation
   screen showed instead and the notice expired behind it. An active
   on-demand session still holds the panel until it ends.
+- A game that goes live now takes over the panel within about a second.
+  Live priority was only checked between screens, so a game that went live
+  during a 30 s screen waited for that screen to end. The frame loops and the
+  dwell sleep now check too, at most once a second, and not while an
+  on-demand session is running or a live game is already showing. When Vegas
+  stops for a live game, the game is the next screen. Before, one rotation
+  screen showed first and the game came after it. Each check also asks each
+  plugin `has_live_content()` once, where a plugin registered under several
+  modes used to be asked once per mode.
 
 ## 3.8.0
 
