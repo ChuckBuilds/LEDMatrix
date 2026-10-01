@@ -34,6 +34,21 @@ def _cache_manager():
 #: older than the socket, Windows, or switched off. Not worth a log line.
 _QUIET_SOCKET_REASONS = frozenset({'no_socket', 'disabled', 'unsupported'})
 
+#: Every reason code a response may echo as ``socket_error``: the client's
+#: transport reasons plus the display's ErrorCode values. Anything else is
+#: reported as ``other``, so no text taken from an exception reaches a reply.
+_REPORTABLE_SOCKET_REASONS = (
+    'disabled', 'unsupported', 'no_socket', 'refused', 'timeout', 'closed',
+    'bad_response', 'invalid_request',
+    'bad_json', 'bad_request', 'message_too_large', 'unsupported_version',
+    'unknown_command', 'invalid_args', 'busy', 'forbidden', 'internal',
+)
+
+
+def _socket_reason_code(reason):
+    """``reason`` as one of _REPORTABLE_SOCKET_REASONS, else ``'other'``."""
+    return next((code for code in _REPORTABLE_SOCKET_REASONS if code == reason), 'other')
+
 
 def _deliver_on_demand(payload):
     """Hand an on-demand request to the display: control socket, else mailbox.
@@ -58,7 +73,7 @@ def _deliver_on_demand(payload):
             control_client.on_demand_stop(payload['request_id'])
         return 'socket', None
     except control_client.ControlError as e:
-        reason = e.reason
+        reason = _socket_reason_code(e.reason)
         if reason in _QUIET_SOCKET_REASONS:
             logger.debug("On-demand %s via the mailbox: %s", payload['action'], e)
         else:

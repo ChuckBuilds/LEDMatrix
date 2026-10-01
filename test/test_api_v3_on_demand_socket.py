@@ -127,6 +127,20 @@ class TestMailboxFallback:
         assert resp.get_json()["data"]["socket_error"] == "internal"
         assert len(_mailbox_writes(service["cache"])) == 1
 
+    def test_an_unknown_reason_is_reported_as_other(self, api_v3_client, service):
+        # Only known codes are echoed back; anything else stays server-side.
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=control_client.ControlError("/run/secret/path", "x")):
+            data = api_v3_client.post(START_URL, json={"plugin_id": "weather"}).get_json()["data"]
+        assert data["transport"] == "mailbox"
+        assert data["socket_error"] == "other"
+        assert len(_mailbox_writes(service["cache"])) == 1
+
+    def test_every_display_error_code_is_reportable(self):
+        from web_interface.blueprints.api_v3 import display
+        codes = {v for k, v in vars(c.ErrorCode).items() if not k.startswith("_")}
+        assert codes <= set(display._REPORTABLE_SOCKET_REASONS)
+
     def test_stop_falls_back(self, api_v3_client, service):
         with patch(f"{CLIENT}.on_demand_stop",
                    side_effect=control_client.ControlError("timeout")):
