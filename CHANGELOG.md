@@ -47,6 +47,15 @@ accepts both, but the store flags the old spelling as deprecated
   the plugin leaves rotation until the cooldown ends, the same as a raising
   `update()`. The display still moves straight on to the next mode. A hung
   `display()` is still recorded once, as a hang.
+- A game that goes live now takes over the panel within about a second.
+  Live priority was only checked between screens, so a game that went live
+  during a 30 s screen waited for that screen to end. The frame loops and the
+  dwell sleep now check too, at most once a second, and not while an
+  on-demand session is running or a live game is already showing. When Vegas
+  stops for a live game, the game is the next screen. Before, one rotation
+  screen showed first and the game came after it. Each check also asks each
+  plugin `has_live_content()` once, where a plugin registered under several
+  modes used to be asked once per mode.
 
 ## 3.8.0
 

@@ -43,7 +43,10 @@ Each pass, in order:
 5. **Follower:** render one frame from the leader. `_run_follower_frame`
 6. **WiFi notice** (unless on-demand): draw it, dwell 0.5 s. `_show_wifi_notice`
 7. **Live priority** (unless on-demand, or Vegas keeps live content in the
-   ticker): switch to the next live mode, or resume the rotation.
+   ticker): switch to the next live mode, or resume the rotation. A game
+   that goes live during a screen is caught sooner, by
+   `_check_live_takeover` in the frame loops and the dwell sleep (at most
+   once a second, and not while a live mode is showing).
 8. **Vegas** (unless on-demand, or live content preempts it): run one
    iteration of up to `max_cycle_duration`. A completed iteration ends the
    pass. An interrupted one falls through to step 9 in the same pass.
@@ -260,11 +263,6 @@ changed by the restructure.
 2. **Vegas yields to a WiFi notice, then shows a rotation screen instead of
    the notice.** An interrupted iteration falls through to step 9 in the
    same pass, and the notice has expired by the next pass (`vegas`, t=200).
-3. **Vegas yields to live content, then shows a rotation screen first.**
-   The live game appears one screen later (`vegas`, t=70-90).
-4. **Live priority only takes over between screens.** A game that goes
-   live mid-screen waits for that screen to end (`live_priority`: live at
-   t=50, shown at t=60).
 5. **An on-demand session that expires during scheduled-off keeps the panel
    on** until the next minute boundary, because the schedule check runs at
    most once a minute (`schedule`, t=190-210).
