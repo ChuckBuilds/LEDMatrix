@@ -48,6 +48,7 @@ each other. They share three things:
 | Plugin errors | cache `plugin_error_snapshot` | display: `ErrorSnapshotPublisher` ([`src/error_aggregator.py`](../src/error_aggregator.py)) | web: `read_error_report()` for `/api/v3/errors/*` |
 | Error clear | cache `plugin_error_clear_request` | web | display |
 | Font usage | cache `font_usage_snapshot` | display: `FontUsagePublisher` ([`src/font_usage.py`](../src/font_usage.py)) | web: Fonts tab |
+| Fetch statistics (requests per plugin and host) | cache `fetch_stats_snapshot` | display: `FetchStatsPublisher` ([`src/common/fetch_service.py`](../src/common/fetch_service.py)), at most once a minute on change | web: `read_fetch_stats()` for `/api/v3/plugins/fetch-stats` |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
 | Plugin runtime (loaded, state, last error, version) | cache `plugin_runtime_snapshot` | display: `PluginRuntimePublisher` ([`src/plugin_system/plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)) | web: `read_plugin_runtime()` for `/api/v3/plugins/installed`, `/plugins/state`, reconciliation |
 | Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py) | web: display SSE stream, `/api/v3/health` (file age) |
@@ -210,7 +211,10 @@ plan for restructuring this loop and lists its golden trace tests.
   to it, rotating between several live games.
 - **Schedule and dim schedule.** `_check_schedule()` reads `schedule`;
   `_check_dim_schedule()` reads `dim_schedule` and
-  `display.hardware.brightness`. Both are re-evaluated once a minute.
+  `display.hardware.brightness`. Both are re-evaluated once a minute, and
+  both windows are half-open: on (or dimmed) from the start time, off at
+  the end time. When an on-demand session ends, the on/off schedule is
+  re-checked at once rather than at the next minute.
 - **Long screens.** While a screen is showing (a dwell, a scroll, a Vegas
   iteration), `_service_pending_changes()` repeats the on-demand, schedule
   and brightness checks every 0.25 s, so a change does not wait for the

@@ -31,6 +31,13 @@ tooling against it.
 | `start_time` / `end_time` | `"HH:MM"`, `07:00`–`23:00` | Global-mode on/off times |
 | `days.<weekday>.{enabled,start_time,end_time}` | per-day objects | Per-day-mode overrides |
 
+The display is on from `start_time` up to, but not including, `end_time`:
+with `07:00`–`23:00` it turns on at 07:00 and off at 23:00. An end earlier
+than the start crosses midnight (`22:00`–`07:00` is on overnight). In
+per-day mode, the entry for the current day decides. An on-demand session
+keeps the display on during off hours; once it ends or is stopped, the
+display blanks within about a second.
+
 Read by `DisplayController._check_schedule()` (`src/display_controller.py`).
 Managed in the web UI under Schedule.
 
@@ -44,7 +51,9 @@ Same shape as `schedule` (the template sets its `mode` to `"global"`), plus:
 
 Read by `DisplayController._check_dim_schedule()` (`src/display_controller.py`;
 saved via `POST /api/v3/config/dim-schedule`). The display returns to
-`display.hardware.brightness` outside the window.
+`display.hardware.brightness` outside the window. The window has the same
+boundaries as `schedule`: dimmed from `start_time` up to, but not including,
+`end_time`.
 
 ## `display.hardware` — matrix panel hardware
 

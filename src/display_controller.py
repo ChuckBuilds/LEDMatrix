@@ -133,6 +133,13 @@ class DisplayController:
         # The web interface's /api/v3/errors/* read what this publishes.
         from src.error_aggregator import start_error_snapshot_publisher
         start_error_snapshot_publisher(self.cache_manager)
+        # Host budgets and the other fetch_service settings, before any plugin
+        # fetches; the web UI's fetch statistics read what the publisher
+        # writes (src/common/fetch_service.py).
+        from src.common.fetch_service import (
+            configure_fetch_service, start_fetch_stats_publisher)
+        configure_fetch_service(self.config.get('fetch_service'))
+        self._fetch_stats_publisher = start_fetch_stats_publisher(self.cache_manager)
         logger.info("Config loaded in %.3f seconds (hot-reload: %s)", time.time() - start_time, enable_hot_reload)
         
         # Validate startup configuration. Errors are logged, not fatal. The
@@ -722,10 +729,18 @@ class DisplayController:
 
     @staticmethod
     def _in_window(start, end, now) -> bool:
-        """Whether ``now`` is within [start, end], a window that may span midnight."""
+        """Whether ``now`` is within [start, end), a window that may span midnight.
+
+        Half-open: on from the start minute, off at exactly the end minute.
+        A closed end made the end minute count as inside, and because ``now``
+        carries seconds, only a check at hh:mm:00.000 saw it that way -- so
+        whether the panel went off at the start or the end of that minute
+        depended on when the minute's one check ran. ``start == end`` is an
+        empty window, as it effectively was before.
+        """
         if start <= end:
-            return start <= now <= end
-        return now >= start or now <= end
+            return start <= now < end
+        return now >= start or now < end
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
@@ -1138,9 +1153,11 @@ class DisplayController:
 
         Also services pending changes (see _service_pending_changes), and
         returns early when one of them changes what the panel should show --
-        an on-demand start or stop, or the display schedule turning the panel
-        on or off -- so the caller can act on it instead of finishing a dwell
-        that could be a minute long (sixty seconds while scheduled off).
+        an on-demand start or stop, the display schedule turning the panel
+        on or off, a WiFi notice arriving, or a live game taking over
+        (_check_live_takeover) -- so the caller can act on it instead of
+        finishing a dwell that could be a minute long (sixty seconds while
+        scheduled off).
         """
         if duration <= 0:
             return
@@ -1150,6 +1167,9 @@ class DisplayController:
         mode = self.current_display_mode
         display_active = self.is_display_active
         on_demand = self.on_demand_active
+        # Edge-triggered: the notice's own dwell starts with it pending and
+        # must not cut itself short; any other dwell ends when one arrives.
+        wifi_pending = self._wifi_notice_pending()
 
         while True:
             remaining = end_time - time.time()
@@ -1163,9 +1183,12 @@ class DisplayController:
             display_watchdog.watchdog.beat()
             self._tick_plugin_updates()
             self._service_pending_changes()
+            self._check_live_takeover()
             if (self.current_display_mode != mode
                     or self.is_display_active != display_active
-                    or self.on_demand_active != on_demand):
+                    or self.on_demand_active != on_demand
+                    or (not wifi_pending and self.is_display_active
+                        and self._wifi_notice_pending())):
                 break
 
     def _note_empty_pass(self) -> None:
@@ -1410,6 +1433,11 @@ class DisplayController:
         self.on_demand_expires_at = None
         self.on_demand_pinned = False
         self.on_demand_schedule_override = False
+        # While the session ran, _evaluate_schedule may have forced
+        # is_display_active on over a scheduled-off answer. Drop the minute
+        # gate so the next _check_schedule recomputes it; otherwise the panel
+        # stayed on until the next clock minute.
+        self._schedule_checked_minute = None
 
     def _advance_on_demand(self) -> None:
         """Move an active on-demand session to its next mode and publish it.
@@ -2240,15 +2268,22 @@ class DisplayController:
         preserving order. A plugin registered under several mode keys (the
         sports plugins register one per league) contributes each live mode once.
         """
+        self._last_live_scan = time.monotonic()
         live = []
         seen = set()
+        # Asked once per plugin per scan, not once per mode key: a scoreboard
+        # registered under several modes computes the same answer each time.
+        is_live: Dict[int, bool] = {}
         for mode_name, plugin_instance in self.plugin_modes.items():
             if not (hasattr(plugin_instance, 'has_live_priority')
                     and hasattr(plugin_instance, 'has_live_content')):
                 continue
             try:
-                if not (plugin_instance.has_live_priority()
-                        and plugin_instance.has_live_content()):
+                key = id(plugin_instance)
+                if key not in is_live:
+                    is_live[key] = bool(plugin_instance.has_live_priority()
+                                        and plugin_instance.has_live_content())
+                if not is_live[key]:
                     continue
                 resolved = []
                 if hasattr(plugin_instance, 'get_live_modes'):
@@ -2263,6 +2298,7 @@ class DisplayController:
                         live.append(m)
             except Exception as e:
                 logger.warning("Error checking live priority for %s: %s", mode_name, e)
+        self._last_live_modes = tuple(live)
         return live
 
     def _vegas_keeps_live_in_ticker(self) -> bool:
@@ -2298,6 +2334,58 @@ class DisplayController:
                 return live_modes[(idx + 1) % len(live_modes)]
             return self.current_display_mode
         return live_modes[0]
+
+    #: Shortest gap between live-priority scans made mid-screen. A scan asks
+    #: every live-priority plugin has_live_content(), which the scoreboards
+    #: compute by filtering their game lists. Once a second matches the 1 Hz
+    #: frame loop and is a quarter of the rate Vegas already polls at.
+    LIVE_TAKEOVER_INTERVAL = 1.0
+
+    #: Class-level defaults for controllers built without __init__ (tests).
+    #: When the last live-priority scan of any kind ran (_collect_live_modes).
+    _last_live_scan: Optional[float] = None
+    #: What that scan found.
+    _last_live_modes: Tuple[str, ...] = ()
+    #: A mid-screen takeover chose current_display_mode and it has not been
+    #: shown yet, so the next pass must not advance the live round-robin past it.
+    _live_takeover_unshown: bool = False
+
+    def _check_live_takeover(self) -> None:
+        """Hand the panel to a live game that started while a screen runs.
+
+        Called from the frame loops and the dwell sleep. Live priority used
+        to be checked only between screens, so a game that went live during
+        a 30 s screen waited for it to end. This switches current_display_mode
+        to the live mode, which ends the screen the way any other mode change
+        does. Throttled to LIVE_TAKEOVER_INTERVAL since the last scan of any
+        kind. Nothing happens while an on-demand session is active, while
+        the panel is scheduled off, while Vegas keeps live content in its
+        ticker, or when the screen showing is already a live mode.
+
+        A live screen is not rescanned at all: live priority put it there,
+        and live games take turns between screens, not mid-screen.
+        """
+        if self.current_display_mode in self._last_live_modes:
+            return
+        last = self._last_live_scan
+        if last is not None and time.monotonic() - last < self.LIVE_TAKEOVER_INTERVAL:
+            return
+        if self.on_demand_active or not self.is_display_active:
+            return
+        try:
+            coordinator = getattr(self, 'vegas_coordinator', None)
+            if (coordinator is not None and coordinator.is_enabled
+                    and self._vegas_keeps_live_in_ticker()):
+                return
+            live_modes = self._collect_live_modes()
+            if not live_modes or self.current_display_mode in live_modes:
+                return
+            self._apply_live_priority(live_modes[0])
+            self._live_takeover_unshown = True
+        except Exception:  # pylint: disable=broad-except
+            # Called from inside the frame loops; a failure here must not
+            # take the display loop down with it.
+            logger.exception("Error checking for a live-priority takeover")
 
     # -- Pieces of run() --------------------------------------------------
     # Extracted from run() unchanged, as the first step of restructuring it
@@ -2420,6 +2508,22 @@ class DisplayController:
         self.force_change = True
         self._sleep_with_plugin_updates(0.5)
         return True
+
+    def _wifi_notice_pending(self) -> bool:
+        """True when a WiFi notice is waiting that _show_wifi_notice would draw.
+
+        Polled from the frame loops, the dwell sleep and after a Vegas
+        iteration yields, so a notice preempts whatever is on the panel
+        within about a second instead of waiting for the screen to end --
+        by which time a short notice has usually expired unseen. Cheap at
+        frame rate: _check_wifi_status_message stats the file at most once
+        a second. On-demand outranks the notice, as in _show_wifi_notice.
+        """
+        if self.on_demand_active:
+            return False
+        status = self._check_wifi_status_message()
+        # The 1 s throttle can hand back a result that has expired since.
+        return bool(status) and time.time() < status['expires_at']
 
     def _resolve_active_mode(self):
         """The mode this pass shows: the on-demand session's current mode
@@ -3039,11 +3143,15 @@ class DisplayController:
                 # Skipped when the ticker is keeping live content: switching
                 # the rotation underneath Vegas would move current_mode_index
                 # and stash a resume point for a takeover that never happens.
+                # After a mid-screen takeover (_check_live_takeover) the live
+                # mode is already chosen but not shown yet: don't advance past it.
                 if (not self.on_demand_active
                         and not (self._is_vegas_mode_active()
                                  and self._vegas_keeps_live_in_ticker())):
-                    live_priority_mode = self._check_live_priority(advance=True)
+                    live_priority_mode = self._check_live_priority(
+                        advance=not self._live_takeover_unshown)
                     self._apply_live_priority(live_priority_mode)
+                self._live_takeover_unshown = False
 
                 # Vegas scroll mode - continuous ticker across all plugins
                 # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
@@ -3067,6 +3175,23 @@ class DisplayController:
                                     # Scheduled off mid-iteration: blank the
                                     # panel now rather than render a screen.
                                     continue
+                                if self._wifi_notice_pending():
+                                    # It yielded for a WiFi notice: the next
+                                    # pass shows it, not a rotation screen
+                                    # that would outlast a short notice.
+                                    # Checked before live content: WiFi
+                                    # outranks live, and step 7 of a later
+                                    # pass switches to the game.
+                                    continue
+                                # Live content stopped the ticker: switch to
+                                # the game now. Step 7 ran before the game
+                                # went live, so without this a rotation screen
+                                # showed first and the game a screen later.
+                                if (not self.on_demand_active
+                                        and not self._vegas_keeps_live_in_ticker()):
+                                    live_mode = self._check_live_priority(advance=True)
+                                    if live_mode:
+                                        self._apply_live_priority(live_mode)
                         except Exception:
                             logger.exception("Vegas mode error")
                             # Fall through to normal rotation on error
@@ -3222,6 +3347,7 @@ class DisplayController:
                             self._tick_plugin_updates()
                             # Throttled: one clock compare between passes.
                             self._service_pending_changes()
+                            self._check_live_takeover()
 
                             # Pace to the frame deadline rather than sleeping a flat
                             # interval on top of the work. display() has already
@@ -3240,7 +3366,8 @@ class DisplayController:
                             time.sleep(_remaining if _remaining > 0 else 0.001)
 
                             if (self.current_display_mode != active_mode
-                                    or not self.is_display_active):
+                                    or not self.is_display_active
+                                    or self._wifi_notice_pending()):
                                 logger.debug("Mode changed during high-FPS loop, breaking early")
                                 break
 
@@ -3302,8 +3429,10 @@ class DisplayController:
                             self._send_follower_frame(manager_to_display)
 
                             self._service_pending_changes()
+                            self._check_live_takeover()
                             if (self.current_display_mode != active_mode
-                                    or not self.is_display_active):
+                                    or not self.is_display_active
+                                    or self._wifi_notice_pending()):
                                 logger.info("Mode changed during display loop from %s to %s, breaking early", active_mode, self.current_display_mode)
                                 break
 
@@ -3326,9 +3455,12 @@ class DisplayController:
                     # _activate_on_demand already sets force_change=True and clears the
                     # display, so the next loop iteration renders the new mode immediately.
                     # Likewise if the schedule turned the display off
-                    # mid-screen: the next iteration blanks it.
+                    # mid-screen (the next iteration blanks it), or a WiFi
+                    # notice arrived (the next iteration shows it, then this
+                    # mode resumes rather than rotating past it).
                     if (self.current_display_mode != active_mode
-                            or not self.is_display_active):
+                            or not self.is_display_active
+                            or (not loop_completed and self._wifi_notice_pending())):
                         continue
 
                     # Ensure we honour minimum duration when not dynamic and loop ended early
@@ -3341,6 +3473,11 @@ class DisplayController:
                         remaining_sleep = max(0.0, max_duration - elapsed)
                         if remaining_sleep > 0:
                             self._sleep_with_plugin_updates(remaining_sleep)
+                            # Cut short by a WiFi notice: show it, then
+                            # resume this mode rather than rotating past it.
+                            if (self._wifi_notice_pending()
+                                    and time.time() - start_time < max_duration):
+                                continue
 
                     if dynamic_enabled:
                         elapsed_total = time.time() - start_time
@@ -3906,6 +4043,9 @@ class DisplayController:
         read stale values after the user saves settings via the web UI.
         """
         self.config = new_config
+        # A no-op unless the fetch_service section itself changed.
+        from src.common.fetch_service import configure_fetch_service
+        configure_fetch_service(new_config.get('fetch_service'))
         self._normal_brightness = (
             self.config.get('display', {}).get('hardware', {}).get('brightness', 90)
         )
@@ -3973,6 +4113,11 @@ class DisplayController:
                 logger.warning("Error shutting down config service: %s", e)
         if getattr(self, '_font_usage_publisher', None) is not None:
             self._font_usage_publisher.stop()
+        if getattr(self, '_fetch_stats_publisher', None) is not None:
+            try:
+                self._fetch_stats_publisher.stop()
+            except Exception as e:
+                logger.warning("Error stopping the fetch statistics publisher: %s", e)
         # Publishes "stopped", so the web UI stops reporting what was loaded.
         if getattr(self, '_plugin_runtime_publisher', None) is not None:
             try:
