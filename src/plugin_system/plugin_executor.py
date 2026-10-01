@@ -173,7 +173,8 @@ class PluginExecutor:
         force_clear: bool = False,
         display_mode: Optional[str] = None,
         timeout: Optional[float] = None,
-        accepts_display_mode: Optional[bool] = None
+        accepts_display_mode: Optional[bool] = None,
+        raise_errors: bool = False
     ) -> bool:
         """
         Execute plugin display() method with error handling.
@@ -187,9 +188,18 @@ class PluginExecutor:
             accepts_display_mode: Whether plugin.display() takes a
                 display_mode keyword. Pass it when the caller already knows;
                 None falls back to inspecting the callable.
+            raise_errors: Re-raise the PluginError wrapping an exception
+                display() raised, instead of returning False. False alone
+                cannot tell "no content" from "raised", and a caller that
+                feeds the circuit breaker needs that difference. The error
+                is still logged and recorded first. A timeout still returns
+                False either way.
             
         Returns:
             True if display succeeded, False otherwise
+
+        Raises:
+            PluginError: Only with ``raise_errors``, when display() raised.
         """
         try:
             start_time = time.monotonic()
@@ -245,6 +255,8 @@ class PluginExecutor:
             return False
         except PluginError:
             # Already logged and recorded in execute_with_timeout
+            if raise_errors:
+                raise
             return False
         except Exception as e:
             self.logger.error(

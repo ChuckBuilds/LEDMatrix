@@ -1,0 +1,19 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 20.0, "duration", 20, true],
+    [40.0, "clock", 20.0, "on-demand-start", 20, true],
+    [60.0, "clock", 20.0, "on-demand-expired", 20, true],
+    [80.0, "<wifi>", 15.0, "duration", 30, null],
+    [95.0, "weather", 20.0, "duration", 20, true],
+    [115.0, "clock", 20.0, "duration", 20, true],
+    [135.0, "weather", 15.0, "horizon", 15, true]
+  ],
+  "events": [
+    [25.0, "wifi-file", "Connected to HomeNet"],
+    [60.0, "request", "start:w1"],
+    [60.0, "on-demand-start", "clock"],
+    [65.0, "wifi-file", "AP mode on"],
+    [80.0, "on-demand-expired"]
+  ]
+}
