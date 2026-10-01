@@ -387,6 +387,79 @@ The width Vegas wants this plugin's content to occupy, from the plugin's
 `display_manager` while it asks for content, so a plugin that sizes itself
 from `display_manager.width` does not need to read this.
 
+#### Live Vegas elements
+
+*New in core 3.8.0.* Content from `get_vegas_content()` is baked into the
+ticker's strip when the plugin's turn is prefetched, so a score drawn then
+scrolls past with that score however many goals are scored while it crosses
+the panel. A plugin that returns **live elements** instead gets them updated
+in place: after its `update()` the ticker asks again, compares each element
+with what the strip holds, and swaps the changed ones in between two frames
+-- on screen included -- without anything next to them moving.
+
+```python
+try:
+    from src.plugin_system.vegas_elements import VegasElement
+except ImportError:          # core older than 3.8.0: the hook is never called
+    VegasElement = None
+
+class MyScoreboard(BasePlugin):
+    def get_vegas_elements(self):
+        if VegasElement is None:
+            return None
+        return [VegasElement(key=f"game:{g['id']}",
+                             image=self._card(g),           # cache by fingerprint
+                             version=self._fingerprint(g))  # changes iff pixels would
+                for g in self.games]
+```
+
+`VegasElement(key, image, version=None, live=True, refresh_hz=0.0)`:
+
+| Field | Meaning |
+|---|---|
+| `key` | Names the element across redraws; unique in the list, stable for the same logical item (`"game:nfl:401547417"`, `"map"`). |
+| `image` | The element now, at the display's height. A live element's **width must not depend on its data**: a redraw at another width is never swapped in (it appears the next time the plugin comes round), because nothing on screen may move. |
+| `version` | Anything hashable that changes exactly when the pixels would; lets the ticker skip unchanged elements. `None` means "compare pixels". |
+| `live` | `False` places it as plain content (trimmed, never refreshed): separators, decoration. |
+| `refresh_hz` | For content that changes with **time** rather than data (an aircraft moving between position reports): the ticker calls `redraw_vegas_element()` about this often while the element is on or near the screen, capped by `vegas_scroll.live_max_hz` and at 1 Hz without the rebuilt rgbmatrix binding. |
+
+**`get_vegas_elements() -> Optional[List[VegasElement]]`** — called on the
+ticker's background thread under the plugin's lock (never while `update()`
+runs), on a canvas of its own and told its render width, exactly like
+`get_vegas_content()`. It is called after every `update()` while any of the
+plugin's elements is on or ahead of the screen, so it must be cheap when
+nothing changed (cache images by version), idempotent, and must not fetch.
+Return `None` to use `get_vegas_content()`, which a plugin must keep working
+for older cores and for the paths that do not ask for elements (the ticker's
+first strip, multi-display sync, the `live_refresh` switch).
+
+**`redraw_vegas_element(key, width, height, at) -> Optional[PIL.Image]`** —
+only for elements with `refresh_hz`. Called **without** the plugin's lock,
+possibly while `update()` runs, so read only state `update()` replaces in one
+assignment (an immutable snapshot), never state it mutates in place. `at` is
+the `time.monotonic()` the pixels are expected on the panel: draw the element
+as it should look then. Return exactly `width` x `height`, or `None` to skip
+the tick.
+
+**`notify_vegas_data_changed()`** — data that arrives outside `update()` (a
+background thread, a push callback) calls this so the ticker redraws without
+waiting for the next `update()`. Safe from any thread.
+
+Live elements are never trimmed to their ink: the ticker pads each with
+`content_padding` black columns either side, the margin trimming would have
+left. A single element wider than the plugin's width budget
+(`vegas_max_width_screens`, not counting that padding) is cropped like any
+other content and scrolls by as plain, no longer live. The user can turn them off per plugin with `vegas_live: false` (a
+core-owned property) or for the whole ticker with
+`display.vegas_scroll.live_refresh: false`; they are always off under
+multi-display sync.
+
+`scripts/check_plugin.py` checks the contract for any plugin that implements
+the hook (unique keys, height, width stable with no new data, redraw size,
+slow calls) and prints a `vegas elements` row; the checks are in
+`src/plugin_system/testing/vegas.py`. `test/fixtures/plugins/vegas-live-stub`
+is a small working example.
+
 #### Legacy: `get_vegas_content_type()` and `get_vegas_display_mode()`
 
 Superseded by participation, and still read to derive it when neither the

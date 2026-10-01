@@ -331,6 +331,43 @@ read any of them:
   lock stays busy past the same 5s bound the change is handed to the update
   worker, which applies the latest one as soon as the lock frees, and before
   the plugin's next update() at the latest. The plugin API is unchanged.
+- With a Vegas width budget set (`max_plugin_width_ratio` or a plugin's
+  `vegas_max_width_screens`), a single image over the budget with no gaps
+  between items -- a map, one long headline -- no longer takes a pass of its
+  own showing four blank columns. The cut landed in the middle of the blank
+  margin trimming leaves at the image's edge; margins are no longer cut
+  points, so such an image is cropped to the budget as intended.
+
+### Live Vegas elements (plugin API)
+
+- New plugin hooks for content that can change while it scrolls:
+  `BasePlugin.get_vegas_elements()` returns `VegasElement`s -- named,
+  fixed-width pieces of Vegas content -- instead of pictures;
+  `redraw_vegas_element(key, width, height, at)` redraws one without the
+  plugin lock for content that changes with time; and
+  `notify_vegas_data_changed()` reports data that arrived outside
+  `update()`. New module `src/plugin_system/vegas_elements.py`
+  (`VegasElement`, also re-exported from `base_plugin`). See "Live Vegas
+  elements" in `docs/PLUGIN_API_REFERENCE.md`.
+- The ticker asks a plugin that implements the hook for elements on its
+  background fetch (under the plugin's lock, on a canvas of its own) and
+  records where each one lands in the strip, in absolute columns a trim does
+  not move (`src/vegas_mode/elements.py`). Live elements are never trimmed to
+  their ink: each is padded with `content_padding` black columns either side.
+  Every other path -- the first strip, the render-thread fallback, plugins
+  without the hook -- is unchanged. Swapping redraws into the strip builds
+  on this.
+- `PluginManager.add_update_listener()` / `remove_update_listener()` /
+  `notify_data_changed()`: a listener hears a plugin id the moment its
+  `update()` completes, rather than at the next ~4s Vegas poll.
+- New `display.vegas_scroll` settings: `live_refresh` (default `true`; the
+  kill switch), `live_max_hz`, `live_min_interval`, `live_lead_screens`, and
+  a per-plugin core-owned `vegas_live`. Live elements are off whatever these
+  say under multi-display sync, in swap mode and with `offscreen_prefetch`
+  off.
+- `scripts/check_plugin.py` checks the element contract for any plugin that
+  implements it (`src/plugin_system/testing/vegas.py`), and
+  `test/fixtures/plugins/vegas-live-stub` is a working example.
 
 ### Scrolling
 

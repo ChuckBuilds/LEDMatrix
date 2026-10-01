@@ -13,6 +13,17 @@ from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
 from src.common.scroll_helper import ScrollHelper
+from src.plugin_system.base_plugin import BasePlugin as _BasePlugin
+from src.plugin_system.vegas_elements import VegasElement
+from src.vegas_mode.elements import (
+    ElementMeta,
+    LiveEpochs,
+    meta_of,
+    pin_element,
+    pixel_digest,
+    tag,
+    untag,
+)
 from src.vegas_mode.geometry import (
     blank_runs,
     separation_gap,
@@ -88,6 +99,17 @@ class PluginAdapter:
         # into unrelated headlines once the strip refreshed to 9,505px.
         self._offset_shapes: dict = {}
 
+        # Live elements (src/vegas_mode/elements.py). Switched on by the
+        # coordinator for a run in which live updates are active; while off,
+        # no plugin is ever asked for elements and every path is as before.
+        self.live_elements_enabled = False
+        # Per-plugin data epochs, stamped on each element drawn. Set by the
+        # coordinator; without it every element is drawn "from epoch 0".
+        self.live_epochs: Optional[LiveEpochs] = None
+        # Element problems already reported, so a plugin with a bad hook logs
+        # once rather than on every fetch.
+        self._element_warnings: set = set()
+
         logger.debug(
             "PluginAdapter initialized: display=%dx%d",
             self.display_width, self.display_height
@@ -120,9 +142,24 @@ class PluginAdapter:
             plugin_id, plugin.__class__.__name__
         )
 
-        # Check cache first
+        # The old contract, kept behind the switch: background callers may
+        # not draw, so anything needing a canvas is left for the render thread.
+        restricted = offscreen_only and not getattr(
+            self.config, 'offscreen_prefetch', True)
+
+        # Live elements are asked for only on the background fetch, which
+        # holds the plugin's lock and draws on a canvas of its own. The render
+        # thread's fetches (the first compose, the inline fallback) take no
+        # lock, so they keep to get_vegas_content().
+        keyed = (offscreen_only and not restricted and self.live_elements_enabled
+                 and self.is_live_capable(plugin, plugin_id))
+
+        # Check cache first. A keyed fetch looks past legacy content cached
+        # by a render-thread fetch, or the plugin would not become live until
+        # that entry expired.
         cached = self._get_cached(plugin_id)
-        if cached is not None:
+        if cached is not None and not (
+                keyed and not any(meta_of(img) for img in cached)):
             total_width = sum(img.width for img in cached)
             logger.debug(
                 "[%s] Using cached content: %d images, %dpx total",
@@ -130,10 +167,6 @@ class PluginAdapter:
             )
             return cached
 
-        # The old contract, kept behind the switch: background callers may
-        # not draw, so anything needing a canvas is left for the render thread.
-        restricted = offscreen_only and not getattr(
-            self.config, 'offscreen_prefetch', True)
         if not offscreen_only or restricted:
             return self._fetch_content(plugin, plugin_id, restricted)
 
@@ -144,7 +177,25 @@ class PluginAdapter:
                     "round", plugin_id, self.PLUGIN_LOCK_TIMEOUT
                 )
                 return None
-            return self._fetch_content(plugin, plugin_id, restricted=False)
+            return self._fetch_content(plugin, plugin_id, restricted=False,
+                                       keyed=keyed)
+
+    def is_live_capable(self, plugin: 'BasePlugin', plugin_id: str) -> bool:
+        """Whether to ask this plugin for live elements rather than pictures.
+
+        It must implement get_vegas_elements() in its own class (a test double
+        or a plugin that only inherits BasePlugin's does not count), and its
+        config must not set ``vegas_live`` off.
+        """
+        method = getattr(type(plugin), 'get_vegas_elements', None)
+        if method is None or method is _BasePlugin.get_vegas_elements:
+            return False
+        raw = self._plugin_setting(plugin, 'vegas_live')
+        if raw is None:
+            return True
+        if isinstance(raw, str):
+            return raw.strip().lower() not in ('false', '0', 'off', 'no')
+        return bool(raw)
 
     @contextmanager
     def _plugin_lock(self, plugin_id: str):
@@ -189,13 +240,21 @@ class PluginAdapter:
             self.display_manager.image = original_image
 
     def _fetch_content(
-        self, plugin: 'BasePlugin', plugin_id: str, restricted: bool
+        self, plugin: 'BasePlugin', plugin_id: str, restricted: bool,
+        keyed: bool = False
     ) -> Optional[List[Image.Image]]:
-        """Every content path in order: native, scroll helper, display capture.
+        """Every content path in order: elements, native, scroll helper, capture.
 
         ``restricted`` is the pre-offscreen contract for background callers:
         skip every path that needs a canvas and return None instead.
+        ``keyed`` asks for live elements first (see get_content).
         """
+        if keyed:
+            content = self._get_keyed_content(plugin, plugin_id)
+            if content:
+                return self._finalize(content, plugin_id, 'elements', plugin)
+            logger.debug("[%s] No live elements; using its Vegas content", plugin_id)
+
         # Try native Vegas content method first
         has_native = hasattr(plugin, 'get_vegas_content')
         logger.debug("[%s] Has get_vegas_content: %s", plugin_id, has_native)
@@ -288,6 +347,12 @@ class PluginAdapter:
         dropped_blank = 0
 
         for img in images:
+            if meta_of(img) is not None:
+                # A live element is pinned, not trimmed: it already carries
+                # the margin trimming would leave, and its width must not
+                # follow its ink, or a redraw could never be swapped in place.
+                kept.append(img)
+                continue
             result = trim_to_content(
                 img,
                 threshold=self.config.trim_threshold,
@@ -609,7 +674,17 @@ class PluginAdapter:
             return images
 
         if len(images) == 1:
-            return [self._crop_to_budget(images[0], budget, plugin_id, mode)]
+            only = images[0]
+            pad = self.config.content_padding if self.config.auto_trim else 0
+            if meta_of(only) is not None and only.width - 2 * pad <= budget:
+                # A live element's pinned margins are not content. One whose
+                # drawing fits the budget is kept whole, and live, rather than
+                # cut for the sake of its own blank padding.
+                self._clear_offset(plugin_id)
+                return images
+            # A cropped live element is only part of itself, so it can no
+            # longer be swapped whole: it scrolls by as plain content.
+            return [untag(self._crop_to_budget(only, budget, plugin_id, mode))]
 
         shape = ('rows', len(images))
         if mode == 'truncate':
@@ -693,7 +768,12 @@ class PluginAdapter:
         # cycle — a lone "y" from "Wednesday" floating between two unrelated
         # plugins. Overshooting the budget is the lesser evil.
         min_run = max(2, self.config.min_cut_gap)
-        gaps = blank_runs(img, min_run, self.config.trim_threshold)
+        # A run touching either edge is the image's margin -- the
+        # content_padding trimming leaves, or a live element's pinned padding
+        # -- not a gap between items. Cutting mid-margin gave a window of a few
+        # blank columns, and a solid image with margins no continuous crop.
+        gaps = [(a, b) for a, b in blank_runs(img, min_run, self.config.trim_threshold)
+                if a > 0 and b < img.width]
 
         if not gaps:
             # No internal gaps means continuous content — a map, a chart, a
@@ -759,6 +839,114 @@ class PluginAdapter:
             if mode == 'truncate' else "window advances next cycle"
         )
         return img.crop((start, 0, end, img.height))
+
+    def _warn_element_once(self, plugin_id: str, problem: str, *args: Any) -> None:
+        """Report a plugin's element problem once per process, then quietly."""
+        key = (plugin_id, problem)
+        if key in self._element_warnings:
+            logger.debug("[%s] " + problem, plugin_id, *args)
+            return
+        self._element_warnings.add(key)
+        logger.warning("[%s] " + problem, plugin_id, *args)
+
+    def _get_keyed_content(
+        self, plugin: 'BasePlugin', plugin_id: str
+    ) -> Optional[List[Image.Image]]:
+        """The plugin's live elements, as tagged images, or None.
+
+        Called with the plugin's lock held (get_content), so update() is not
+        running and the plugin's data epoch cannot move while it draws. Drawn
+        on a canvas of the plugin's own at its render width, like
+        get_vegas_content(). Any failure returns None, and the caller falls
+        back to the plugin's ordinary Vegas content.
+        """
+        epochs = self.live_epochs
+        epoch = epochs.get(plugin_id) if epochs is not None else 0
+        render_width = self.resolve_render_width(plugin, plugin_id)
+        plugin._vegas_render_width = render_width
+        try:
+            with self._isolated_canvas(render_width):
+                result = plugin.get_vegas_elements()
+        except Exception as exc:  # pylint: disable=broad-except
+            # A plugin hook can raise anything; the legacy content still works.
+            self._warn_element_once(
+                plugin_id, "get_vegas_elements() raised %r; using its "
+                "get_vegas_content() instead", exc)
+            return None
+        finally:
+            plugin._vegas_render_width = None
+        try:
+            return self._images_from_elements(result, plugin_id, epoch)
+        except Exception as exc:  # pylint: disable=broad-except
+            # Converting is per element and guarded; this is the backstop, so
+            # nothing a plugin hands back can cost it its ordinary content.
+            self._warn_element_once(
+                plugin_id, "get_vegas_elements() returned elements that could not "
+                "be used (%r); using its get_vegas_content() instead", exc)
+            return None
+
+    def _images_from_elements(
+        self, result: Any, plugin_id: str, epoch: int
+    ) -> Optional[List[Image.Image]]:
+        """Turn get_vegas_elements()'s answer into images for the pipeline.
+
+        Live elements come out pinned (RGB, display height, content_padding
+        black each side, never trimmed afterwards) and tagged with their
+        ElementMeta; plain ones (``live=False``) come out as ordinary content.
+        Anything that is not a usable element is dropped with a warning; a
+        duplicate key keeps its first element.
+        """
+        if result is None:
+            return None
+        if not isinstance(result, (list, tuple)):
+            self._warn_element_once(
+                plugin_id, "get_vegas_elements() returned %s, expected a list "
+                "of VegasElement", type(result).__name__)
+            return None
+
+        padding = self.config.content_padding if self.config.auto_trim else 0
+        now = time.monotonic()
+        seen = set()
+        images: List[Image.Image] = []
+        for element in result:
+            if not (isinstance(element, VegasElement)
+                    and isinstance(element.key, str) and element.key
+                    and isinstance(element.image, Image.Image)):
+                self._warn_element_once(
+                    plugin_id, "get_vegas_elements() returned an item that is "
+                    "not a VegasElement with a key and an image (%s); skipping it",
+                    type(element).__name__)
+                continue
+            if element.key in seen:
+                self._warn_element_once(
+                    plugin_id, "get_vegas_elements() returned key %r twice; "
+                    "keeping the first", element.key)
+                continue
+            seen.add(element.key)
+
+            image = element.image
+            if image.height != self.display_height:
+                image = image.resize((image.width, self.display_height),
+                                     Image.Resampling.LANCZOS)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            if not element.live:
+                # Plain content; a tag copied from a reused image must not
+                # make it live by accident.
+                images.append(untag(image.copy()) if meta_of(image) else image)
+                continue
+
+            pinned, pixels = pin_element(image, padding)
+            try:
+                refresh_hz = max(0.0, float(element.refresh_hz or 0.0))
+            except (TypeError, ValueError):
+                refresh_hz = 0.0
+            images.append(tag(pinned, ElementMeta(
+                plugin_id=plugin_id, key=element.key, epoch=epoch,
+                digest=pixel_digest(pixels), rendered_at=now,
+                refresh_hz=refresh_hz, version=element.version)))
+        return images or None
 
     def _get_native_content(
         self, plugin: 'BasePlugin', plugin_id: str, restricted: bool = False

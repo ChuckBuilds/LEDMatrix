@@ -99,6 +99,25 @@ class VegasModeConfig:
     # overall from 0.90% to 0.60%. See src/common/render_gate.py.
     prefetch_gate: bool = True
 
+    # Live elements (src/plugin_system/vegas_elements.py): a plugin that hands
+    # the ticker named, fixed-width elements has them redrawn when its data
+    # changes, and the changed pixels are swapped into the strip in place --
+    # on screen included -- instead of waiting for the plugin's next turn.
+    # False restores the frozen-segment behaviour exactly. Also off, whatever
+    # this says, under multi-display sync, in swap mode (continuous_scroll
+    # false) and with offscreen_prefetch false.
+    live_refresh: bool = True
+    # Ceiling on how often an element that animates (refresh_hz) is redrawn,
+    # in Hz. 0 turns animation off and keeps data-driven updates.
+    live_max_hz: float = 5.0
+    # Shortest time between two data redraws of one plugin, in seconds. A
+    # plugin updating faster is redrawn at this rate, never skipped: the
+    # latest data is always drawn eventually.
+    live_min_interval: float = 2.0
+    # How far ahead of the right edge, in screens, an animated element starts
+    # being redrawn, so it is already moving when it scrolls in.
+    live_lead_screens: float = 1.0
+
     # Keep one continuous strip, extending it with the next group of plugins as
     # the scroll approaches the end, instead of composing a fresh strip and
     # swapping it in. A swap stops the motion, substitutes every pixel at once
@@ -235,6 +254,10 @@ class VegasModeConfig:
             offscreen_prefetch=bool(get('offscreen_prefetch', d.offscreen_prefetch)),
             switch_interval_ms=float(get('switch_interval_ms', d.switch_interval_ms) or 0.0),
             prefetch_gate=bool(get('prefetch_gate', d.prefetch_gate)),
+            live_refresh=bool(get('live_refresh', d.live_refresh)),
+            live_max_hz=float(get('live_max_hz', d.live_max_hz)),
+            live_min_interval=float(get('live_min_interval', d.live_min_interval)),
+            live_lead_screens=float(get('live_lead_screens', d.live_lead_screens)),
             extend_threshold_screens=float(
                 get('extend_threshold_screens', d.extend_threshold_screens)),
             auto_trim=get('auto_trim', d.auto_trim),
@@ -281,6 +304,10 @@ class VegasModeConfig:
             'offscreen_prefetch': self.offscreen_prefetch,
             'switch_interval_ms': self.switch_interval_ms,
             'prefetch_gate': self.prefetch_gate,
+            'live_refresh': self.live_refresh,
+            'live_max_hz': self.live_max_hz,
+            'live_min_interval': self.live_min_interval,
+            'live_lead_screens': self.live_lead_screens,
             'extend_threshold_screens': self.extend_threshold_screens,
             'auto_trim': self.auto_trim,
             'trim_threshold': self.trim_threshold,
@@ -376,6 +403,18 @@ class VegasModeConfig:
             errors.append(
                 "extend_threshold_screens must be between 1.0 and 10.0, "
                 f"got {self.extend_threshold_screens}")
+
+        if not 0.0 <= self.live_max_hz <= 10.0:
+            errors.append(
+                f"live_max_hz must be between 0 and 10, got {self.live_max_hz}")
+        if not 0.5 <= self.live_min_interval <= 60.0:
+            errors.append(
+                "live_min_interval must be between 0.5 and 60, "
+                f"got {self.live_min_interval}")
+        if not 0.0 <= self.live_lead_screens <= 5.0:
+            errors.append(
+                "live_lead_screens must be between 0 and 5, "
+                f"got {self.live_lead_screens}")
 
         if not 1 <= self.min_cut_gap <= 128:
             errors.append(

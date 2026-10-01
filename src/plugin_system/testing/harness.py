@@ -19,7 +19,7 @@ from datetime import timedelta
 import socket
 import ssl
 import urllib.error
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -84,6 +84,8 @@ class RenderResult:
     fill_checked: bool = False
     fill_ok: Optional[bool] = None       # False only in strict mode
     fill_extent: Optional[Tuple[float, float]] = None  # (extent_x, extent_y)
+    # warnings worth printing that do not fail the result
+    notes: List[str] = field(default_factory=list)
 
     @property
     def size_label(self) -> str:
