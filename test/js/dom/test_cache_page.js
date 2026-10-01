@@ -157,6 +157,11 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
   $('refresh-cache-btn').click(); await tick(20);
   ok('empty state shown', visible('cache-empty') && !visible('cache-error') && !doc.querySelector('#cache-files-tbody tr'));
   ok('a missing cache directory says so', $('cache-dir').textContent === 'Not configured');
+  ok('a missing cache directory is greyed', $('cache-dir').classList.contains('text-gray-500'));
+  listBody = { status: 'success', data: { cache_dir: '/var/cache/ledmatrix', cache_files: [] } };
+  $('refresh-cache-btn').click(); await tick(20);
+  ok('a directory that appears later is not greyed', $('cache-dir').textContent === '/var/cache/ledmatrix'
+     && !$('cache-dir').classList.contains('text-gray-500'));
 
   listBody = { status: 'error', message: 'Cache unavailable' };
   $('refresh-cache-btn').click(); await tick(20);

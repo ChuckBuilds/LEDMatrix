@@ -107,12 +107,10 @@ function render(ctx, data) {
     const doc = ctx.root.ownerDocument;
     error.classList.add('hidden');
 
-    if (data.cache_dir) {
-        dir.textContent = data.cache_dir;
-    } else {
-        dir.textContent = 'Not configured';
-        dir.classList.add('text-gray-500');
-    }
+    dir.textContent = data.cache_dir || 'Not configured';
+    // Toggled, not added: a refresh keeps the same element, so a directory
+    // that appears later must lose the grey "Not configured" style.
+    dir.classList.toggle('text-gray-500', !data.cache_dir);
 
     const files = Array.isArray(data.cache_files) ? data.cache_files : [];
     if (!files.length) {
