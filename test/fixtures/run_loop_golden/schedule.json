@@ -1,0 +1,29 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 20.0, "duration", 20, true],
+    [40.0, "clock", 20.0, "duration", 20, true],
+    [60.0, "weather", 20.0, "duration", 20, true],
+    [80.0, "clock", 20.0, "duration", 20, true],
+    [100.0, "weather", 20.0, "duration", 20, true],
+    [120.0, "clock", 20.0, "duration", 20, true],
+    [140.0, "weather", 10.0, "schedule-off", 11, true],
+    [150.0, "<off>", 20.0, "on-demand-start", 2, null],
+    [170.0, "weather", 20.0, "on-demand-expired", 20, true],
+    [190.0, "weather", 20.0, "duration", 20, true],
+    [210.0, "clock", 20.0, "duration", 20, true],
+    [230.0, "weather", 20.0, "duration", 20, true],
+    [250.0, "clock", 20.0, "duration", 20, true],
+    [270.0, "weather", 20.0, "duration", 20, true],
+    [290.0, "clock", 10.0, "horizon", 10, true]
+  ],
+  "events": [
+    [30.0, "brightness", 30],
+    [150.0, "schedule-off"],
+    [170.0, "request", "start:s1"],
+    [170.0, "on-demand-start", "weather"],
+    [170.0, "schedule-on"],
+    [170.0, "brightness", 90],
+    [190.0, "on-demand-expired"]
+  ]
+}

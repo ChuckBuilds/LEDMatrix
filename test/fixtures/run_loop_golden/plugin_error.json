@@ -1,0 +1,27 @@
+{
+  "screens": [
+    [0.0, "clock", 10.0, "duration", 10, false],
+    [10.0, "broken_a", 0.0, "error", 0, null],
+    [10.0, "weather", 10.0, "duration", 10, true],
+    [20.0, "crashy", 0.0, "raised", 1, true],
+    [20.0, "clock", 10.0, "duration", 10, true],
+    [30.0, "broken_a", 0.0, "error", 0, null],
+    [30.0, "weather", 10.0, "duration", 10, true],
+    [40.0, "crashy", 0.0, "raised", 1, true],
+    [40.0, "clock", 10.0, "duration", 10, true],
+    [50.0, "broken_a", 0.0, "breaker", 0, null],
+    [50.0, "broken_b", 0.0, "breaker", 0, null],
+    [50.0, "weather", 10.0, "duration", 10, true],
+    [60.0, "crashy", 0.0, "raised", 1, true],
+    [60.0, "clock", 10.0, "duration", 10, true],
+    [70.0, "broken_a", 0.0, "breaker", 0, null],
+    [70.0, "broken_b", 0.0, "breaker", 0, null],
+    [70.0, "weather", 10.0, "duration", 10, true],
+    [80.0, "crashy", 0.0, "raised", 1, true],
+    [80.0, "clock", 10.0, "horizon", 10, true]
+  ],
+  "events": [
+    [10.0, "health-failure", "broken"],
+    [30.0, "health-failure", "broken"]
+  ]
+}
