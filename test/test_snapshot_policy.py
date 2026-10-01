@@ -122,8 +122,10 @@ class TestMonotoneInFrameChanged:
 class TestPreviewPolling:
     def test_the_reader_polls_faster_than_the_writer_writes(self):
         """Equal periods alias: two unsynchronised clocks of the same period
-        leave the preview up to a period stale, with the odd double gap."""
-        assert VIEWER_POLL_INTERVAL < VIEWER_INTERVAL
+        leave the preview up to a period stale, with the odd double gap.
+        Polling at least twice per interval keeps each frame at most half an
+        interval late."""
+        assert VIEWER_POLL_INTERVAL <= VIEWER_INTERVAL / 2
 
     def test_polling_keeps_the_viewer_marker_fresh(self):
         # The SSE reader touches the marker about once a second however fast

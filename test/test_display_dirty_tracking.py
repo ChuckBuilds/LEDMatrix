@@ -680,6 +680,25 @@ class TestLazyDigest:
             dm.update_display()
         assert spy.count == 1
 
+    def test_a_scrolled_push_forgets_the_last_static_frame(
+            self, dm, hashes):
+        # Scrolled frames carry no digest, so a scrolled push must clear the
+        # last static one. Were it kept, a static screen drawing what it
+        # showed before the scroll would be skipped as already on the panel,
+        # and the scroll's last frame would stay up until the content changed.
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(10, 120, 30))
+        dm.update_display()                    # static frame A
+        dm.set_scrolling_state(True)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(200, 0, 60))
+        dm.update_display()                    # a scrolled frame B
+        assert dm._last_pushed_digest is None
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(10, 120, 30))
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()                # A again, over B
+        assert spy.count == 1, "A must replace the scroll's last frame"
+
 
 class TestOneScrollingAnswerPerFrame:
     """update_display() asks is_currently_scrolling() once per frame and uses

@@ -10,8 +10,8 @@ reports the difference. Nothing is stopped, restarted or drawn.
 
     # the same with the web preview open (the preview's PNG encodes are one of
     # the things that used to make the render loop miss refreshes). An open
-    # preview is encoded at most once a second; up to 3.7.0 it was up to five
-    # times, so a --preview run from before that change is not comparable
+    # preview is encoded at most once a second; through 3.8.0 it was up to
+    # five times, so a --preview run from before that change is not comparable
     # with one from after it
     python3 scripts/frame_soak.py --preview
 

@@ -333,7 +333,7 @@ something to *scroll* during the run: a live game holding a static scoreboard
 on screen gives no verdict. `--preview` keeps the web preview's viewer marker
 fresh, which puts the preview's PNG encoding at the viewer rate, as an open
 preview does -- run it as the web service's user. That rate is at most one
-frame a second. Up to 3.7.0 it was up to five, so a `--preview` soak taken
+frame a second. Through 3.8.0 it was up to five, so a `--preview` soak taken
 before that change is not comparable with one taken after it (the hdpi
 results below are from before it): take both sides of an A/B pair on
 the same side of it.

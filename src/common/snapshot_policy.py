@@ -50,7 +50,8 @@ from enum import Enum
 # between two preview frames.
 VIEWER_INTERVAL = 1.0
 # How often the web SSE reader checks the snapshot's mtime (seconds). Must
-# stay well under VIEWER_INTERVAL, or the two clocks alias (see above).
+# stay well under VIEWER_INTERVAL -- half of it at most -- or the two clocks
+# alias (see above).
 VIEWER_POLL_INTERVAL = 0.25
 # Snapshot cadence with no viewers — cheap freshness for page-open (seconds).
 IDLE_INTERVAL = 30.0

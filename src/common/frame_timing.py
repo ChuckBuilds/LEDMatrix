@@ -19,8 +19,9 @@ Only intervals between two consecutive *scrolling* frames count: a static
 screen that changes once a second has no timing to get wrong, and the first
 frame of a scroll has no predecessor worth measuring against.
 
-"Scrolling" is DisplayManager's scroll state when the frame is presented, and
-that state can go missing in the middle of a scroll. It expires after 2s
+"Scrolling" is the scroll state ``DisplayManager.update_display`` acted on for
+the frame, sampled once before the blit and swap, and that state can go missing
+in the middle of a scroll. It expires after 2s
 without scroll activity, which a long enough stall outlasts, and any thread can
 clear it: plugins call ``set_scrolling_state(False)`` from their own
 ``display()``, and Vegas captures some of those on the render thread between
@@ -354,7 +355,9 @@ class FrameTimingRecorder:
         :param blit: seconds spent copying the frame into the canvas.
         :param wait: seconds SwapOnVSync blocked.
         :param hold: the refreshes this frame was held for.
-        :param scrolling: whether a scroll was running when it was presented.
+        :param scrolling: whether a scroll was running for this frame: the
+            scroll state ``update_display`` acted on, sampled once before the
+            blit and swap.
         :param presented_at: ``time.perf_counter()`` when the swap returned.
         """
         previous = self._previous
