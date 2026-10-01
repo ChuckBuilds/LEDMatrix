@@ -42,16 +42,18 @@ Usage::
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PIL import Image
 
-from src.common import scroll_config
+from src.common import scroll_config, sports_vegas
 from src.common.scroll_helper import ScrollHelper
 
 logger = logging.getLogger(__name__)
+
 
 #: Defaults every copy agreed on. A subclass overrides
 #: :meth:`SportsScrollDisplay.scroll_settings_defaults` to change them —
@@ -413,6 +415,160 @@ class SportsScrollDisplay:
         """Whether content is prepared and ready to scroll."""
         return bool(self.scroll_helper.cached_image)
 
+    # ------------------------------------------------------------------
+    # Live Vegas cards
+    # ------------------------------------------------------------------
+    #
+    # One live element per game (src/plugin_system/vegas_elements.py): the
+    # ticker swaps a card in place when its game changes. A sport opts in by
+    # implementing make_vegas_renderer(); everything else is here.
+
+    def make_vegas_renderer(self, card_width: int,
+                            rankings_cache: Optional[Dict[str, int]] = None) -> Any:
+        """The renderer this sport draws one game card with, at ``card_width``.
+
+        **Override point.** Return the object whose ``render_game_card(game,
+        game_type)`` draws one card exactly ``card_width`` wide at the display's
+        height -- the one prepare_scroll_content already builds -- without the
+        black padding prepare_scroll_content adds around each card (the ticker
+        adds its own). Raising NotImplementedError, the default, keeps the
+        plugin on its ordinary Vegas content.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no live Vegas cards (make_vegas_renderer)")
+
+    def _determine_game_type(self, game: Dict[str, Any]) -> str:
+        """The card a game is drawn as: 'live', 'recent' or 'upcoming'.
+
+        From the game's state; a sport whose scroll display decides it
+        differently (most define their own) overrides this.
+        """
+        return {'in': 'live', 'post': 'recent'}.get(sports_vegas._state(game), 'upcoming')
+
+    def render_vegas_card(self, renderer: Any, game: Dict[str, Any]) -> Image.Image:
+        """Draw one game's card. Override only if the renderer is called differently."""
+        card: Image.Image = renderer.render_game_card(game, self._determine_game_type(game))
+        return card
+
+    def vegas_separator(self, league: str) -> Optional[Image.Image]:
+        """The league separator shown before a league's cards, if there is an icon."""
+        icon = self._separator_icons.get(league)
+        if icon is None:
+            return None
+        gap = self._vegas_settings(league).get("gap_between_games", 48)
+        pad = max(4, int(gap) // 2)
+        image = Image.new('RGB', (icon.width + pad * 2, self.display_height), (0, 0, 0))
+        mask = icon if icon.mode == 'RGBA' else None
+        image.paste(icon, (pad, (self.display_height - icon.height) // 2), mask)
+        return image
+
+    def _vegas_memo(self) -> Dict[Any, Any]:
+        """Per-size, per-config memo for the live path; emptied when either changes."""
+        stamp = (self.display_width, self.display_height, id(self.config))
+        memo: Optional[Tuple[Any, Dict[Any, Any]]] = getattr(self, '_vegas_memo_store', None)
+        if memo is None or memo[0] != stamp:
+            memo = (stamp, {})
+            self._vegas_memo_store = memo
+        store: Dict[Any, Any] = memo[1]
+        return store
+
+    def _vegas_settings(self, league: Optional[str]) -> Dict[str, Any]:
+        """A league's scroll settings, looked up once per size and config.
+
+        The live path asks after every update; a sport's settings lookup can
+        be expensive (sizing the default card width builds probe renderers).
+        """
+        memo = self._vegas_memo()
+        key = ('settings', league)
+        if key not in memo:
+            memo[key] = dict(self._get_scroll_settings(league))
+        settings: Dict[str, Any] = memo[key]
+        return settings
+
+    def _vegas_renderer(self, card_width: int,
+                        rankings_cache: Optional[Dict[str, int]]) -> Any:
+        """The sport's renderer for one card width, built once rather than per slate.
+
+        Building one loads fonts and, for the default card width, probes the
+        layout; the scroll path pays that on every prepare, which the live
+        path would repeat on every update.
+        """
+        memo = self._vegas_memo()
+        key = ('renderer', card_width)
+        if key not in memo:
+            memo[key] = self.make_vegas_renderer(card_width, rankings_cache)
+        renderer = memo[key]
+        if hasattr(renderer, 'set_rankings_cache'):
+            # Every time, empty included: the renderer is reused across
+            # slates, and ranks cleared since must not stay drawn.
+            renderer.set_rankings_cache(rankings_cache or {})
+        return renderer
+
+    def build_vegas_elements(
+        self,
+        games: List[Dict[str, Any]],
+        leagues: List[str],
+        rankings_cache: Optional[Dict[str, int]] = None,
+        fingerprint: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        now: Optional[float] = None,
+    ) -> Optional[List[Any]]:
+        """The slate as live Vegas elements: one card per game, separators between leagues.
+
+        Only cards whose fingerprint changed are drawn; the rest come from the
+        cache. ``fingerprint(game)`` should return what the card draws (the
+        plugin's own signature fields, the clock included for live games); by
+        default the whole game dict is used, which redraws on any change. The
+        teams' ranks from ``rankings_cache`` count too: the renderer draws
+        them from there, not from the game.
+
+        Raises NotImplementedError when the sport has no make_vegas_renderer.
+        """
+        from src.plugin_system.vegas_elements import VegasElement
+
+        games = sports_vegas.dedupe_games(games)
+        if not games:
+            return None
+        # Settings follow each game's own league, not the slate's first one:
+        # a card's width must not change because another league has no games
+        # today (the ticker refuses a redraw of another width).
+        first = self._vegas_settings(leagues[0] if leagues else None)
+
+        cards = getattr(self, '_vegas_cards', None)
+        if cards is None:
+            cards = self._vegas_cards = sports_vegas.VegasCardCache()
+        odds = getattr(self, '_vegas_odds', None)
+        if odds is None:
+            odds = self._vegas_odds = sports_vegas.StickyOdds()
+        fingerprint = fingerprint or sports_vegas.game_fingerprint
+
+        elements: List[Any] = []
+        keys: List[str] = []
+        current_league = None
+        separators = 0
+        for game in games:
+            league = game.get("league")
+            settings = self._vegas_settings(league) if league else first
+            card_width = int(settings.get("game_card_width", self.display_width))
+            if settings.get("show_league_separators", True) and league != current_league:
+                separator = self.vegas_separator(league) if league else None
+                if separator is not None:
+                    elements.append(VegasElement(
+                        key=f"sep:{separators}:{league}", image=separator, live=False))
+                    separators += 1
+            current_league = league
+            key = sports_vegas.game_key(game)
+            drawn = odds.apply(key, game, now)
+            ranks = (rankings_cache.get(str(drawn.get("home_abbr"))),
+                     rankings_cache.get(str(drawn.get("away_abbr")))) if rankings_cache else None
+            renderer = self._vegas_renderer(card_width, rankings_cache)
+            elements.append(cards.element(
+                key, (fingerprint(drawn), ranks, card_width, self.display_height),
+                functools.partial(self.render_vegas_card, renderer, drawn)))
+            keys.append(key)
+        cards.retain(keys)
+        odds.retain(keys)
+        return elements
+
     def get_current_game_count(self) -> int:
         return len(self._current_games)
 
@@ -524,6 +680,32 @@ class SportsScrollDisplayManager:
         for scroll_display in self._scroll_displays.values():
             scroll_display.clear()
         self._current_game_type = ""
+
+    def get_vegas_elements_for(
+        self,
+        game_type: str,
+        games: List[Dict[str, Any]],
+        leagues: List[str],
+        rankings_cache: Optional[Dict[str, int]] = None,
+        fingerprint: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    ) -> Optional[List[Any]]:
+        """Live Vegas cards for a slate, built on the ``game_type`` display.
+
+        None when the sport has no live cards (it does not implement
+        make_vegas_renderer) or building them failed, so the plugin's
+        get_vegas_elements() can return it and the ticker falls back to the
+        plugin's ordinary Vegas content.
+        """
+        scroll_display = self.get_scroll_display(game_type)
+        try:
+            return scroll_display.build_vegas_elements(
+                games, leagues, rankings_cache, fingerprint)
+        except NotImplementedError:
+            return None
+        except Exception:
+            # Built straight from feed data, like prepare_scroll_content.
+            self.logger.exception("Error building live Vegas cards")
+            return None
 
     def get_all_vegas_content_items(self) -> List[Image.Image]:
         """Every display's Vegas items, for splicing into the marquee."""

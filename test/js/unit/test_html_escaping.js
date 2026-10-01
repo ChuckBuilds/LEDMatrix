@@ -115,8 +115,8 @@ const ESCAPERS = [
    'templates/v3/partials/tools.html', 'function phEscape(s) {', 'phEscape', false],
   ['logs.html (escapeHtml)',
    'templates/v3/partials/logs.html', 'function escapeHtml(text) {', 'escapeHtml', false],
-  ['cache.html (escapeHtml)',
-   'templates/v3/partials/cache.html', 'function escapeHtml(text) {', 'escapeHtml', false],
+  // cache.html has no script any more: js/pages/cache.js builds its rows with
+  // textContent, and test/js/dom/test_cache_page.js checks a hostile key.
 ];
 
 // The breakout payload: closes a double-quoted attribute and opens an event

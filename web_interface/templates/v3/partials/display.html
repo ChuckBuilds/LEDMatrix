@@ -579,6 +579,18 @@
                         </label>
                     </div>
 
+                    <div class="form-group mb-4" id="setting-display-vegas_live_in_ticker" data-setting-key="display.vegas_scroll.live_in_ticker">
+                        <label class="flex items-center">
+                            <input type="checkbox"
+                                   id="vegas_live_in_ticker"
+                                   name="vegas_live_in_ticker"
+                                   {% if main_config.display.get('vegas_scroll', {}).get('live_in_ticker', True) %}checked{% endif %}
+                                   class="form-checkbox">
+                            <span class="ml-2 text-sm text-gray-700">Keep live games in the ticker{{ ui.help_tip('While a game is live, keep the ticker running and give the live scoreboard extra turns in it (Live Weight). Default: on.
+With this off a live game takes over the whole display with the full-screen scoreboard until it ends, and the ticker stops.', 'Live Games') }}</span>
+                        </label>
+                    </div>
+
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div class="form-group" id="setting-display-vegas_extend_threshold_screens" data-setting-key="display.vegas_scroll.extend_threshold_screens">
                             <label for="vegas_extend_threshold_screens" class="block text-sm font-medium text-gray-700">Extend When (screens left){{ ui.help_tip('How much unscrolled content triggers loading the next group, measured in screen widths (1.0–10.0).\nDefault: 2. Higher loads earlier and leaves more slack, at the cost of holding more content in memory. Only applies when Continuous Scroll is on.', 'Extend Threshold') }}</label>

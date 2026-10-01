@@ -13,6 +13,7 @@ import threading
 from collections import deque
 from contextlib import nullcontext
 from typing import Optional, List, Any, Dict, Deque, Tuple
+import numpy as np
 from PIL import Image
 
 from src.common.scroll_config import solve_crisp
@@ -30,6 +31,64 @@ logger = logging.getLogger(__name__)
 #: Vegas scroll position and the controller's per-frame follower images. The
 #: payloads are raw and cheap, and 90/s is above the follower's render rate.
 SYNC_SEND_INTERVAL = 1.0 / 90
+
+
+def join_plugin_rows(
+    images: List[Image.Image], config: VegasModeConfig
+) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
+    """Join one plugin's images into the block the strip will hold.
+
+    Returns ``(block, layout)``, layout being ``(x, meta, width)`` for every
+    image tagged as a live element (src/vegas_mode/elements.py), x measured
+    from the block's left edge. A single image is returned as it is.
+
+    A module function so tooling (scripts/render_plugin.py --vegas) lays a
+    plugin out exactly as the ticker does.
+    """
+    if len(images) == 1:
+        meta = meta_of(images[0])
+        layout = [(0, meta, images[0].width)] if meta is not None else []
+        return images[0], layout
+
+    floor = max(0, config.intra_plugin_gap)
+    target = max(0, config.min_content_separation)
+    threshold = config.trim_threshold
+
+    # Space by measured separation, not a flat gap. Rows drawn flush to their
+    # own edges (sports score cards) would otherwise end up nearly touching,
+    # while rows that already carry wide margins would be pushed needlessly
+    # further apart.
+    gaps = [
+        separation_gap(images[i], images[i + 1], target, floor, threshold)
+        for i in range(len(images) - 1)
+    ]
+
+    width = sum(img.width for img in images) + sum(gaps)
+    height = max(img.height for img in images)
+
+    block = Image.new('RGB', (width, height), (0, 0, 0))
+    layout: List[Tuple[int, ElementMeta, int]] = []
+    x = 0
+    for i, img in enumerate(images):
+        block.paste(img, (x, 0))
+        meta = meta_of(img)
+        if meta is not None:
+            layout.append((x, meta, img.width))
+        x += img.width + (gaps[i] if i < len(gaps) else 0)
+    return block, layout
+
+
+class PreparedBlock:
+    """One plugin's block, joined and turned into pixels ahead of the strip."""
+
+    __slots__ = ('images', 'block', 'layout', 'pixels')
+
+    def __init__(self, images: List[Image.Image], config: VegasModeConfig) -> None:
+        # Held so the id() it is filed under cannot be reused while it waits.
+        self.images = images
+        self.block, self.layout = join_plugin_rows(images, config)
+        block = self.block if self.block.mode == 'RGB' else self.block.convert('RGB')
+        self.pixels = np.asarray(block)
 
 
 class RenderPipeline:
@@ -69,6 +128,17 @@ class RenderPipeline:
     # never mutated, so the class-level default is safe for pipelines built
     # without __init__ (tests).
     _static_markers: Tuple[Tuple[int, str], ...] = ()
+
+    # Blocks joined off the render thread by whichever thread fetched the
+    # group (prepare_group_member): id(images) -> PreparedBlock. Laying a
+    # plugin's rows out and turning the block into pixels cost the frame
+    # after every extension ~35 ms on a Pi 4 when done there. Only producer
+    # threads add entries and only extend_scroll_content takes them; a
+    # reset drops the lot. Made on first use, so pipelines built without
+    # __init__ (tests) work too.
+    _prepared_blocks: Optional[Dict[int, 'PreparedBlock']] = None
+    #: Blocks kept waiting at most; a group is a handful of plugins.
+    PREPARED_BLOCKS_MAX = 64
 
     # Live elements in the strip (see "live element records" below). Replaced,
     # never mutated, like _static_markers, and class-level for the same reason.
@@ -421,6 +491,11 @@ class RenderPipeline:
         if note is not None:
             note(kind, nbytes)
 
+    def _copied_bytes(self) -> int:
+        """Bytes the scroll helper's last append or trim copied (the strip, if it cannot say)."""
+        copied = getattr(self.scroll_helper, 'last_copy_bytes', None)
+        return int(copied) if isinstance(copied, int) else self._strip_nbytes()
+
     def _strip_nbytes(self) -> int:
         array = self.scroll_helper.cached_array
         return int(array.nbytes) if array is not None else 0
@@ -548,6 +623,8 @@ class RenderPipeline:
                 try:
                     with gate.yielding() if gate is not None else nullcontext():
                         group = self.stream_manager.take_next_group(offscreen_only=True)
+                        for member in group or ():
+                            self.prepare_group_member(member)
                 except Exception:
                     logger.exception("Background prefetch failed")
                     group = []
@@ -615,7 +692,7 @@ class RenderPipeline:
             element_gap=0,
         )
         if appended:
-            self._note_op('extend', self._strip_nbytes())
+            self._note_op('extend', self._copied_bytes())
             logger.info(
                 "[%s] Appended deferred content: strip now %dpx, %dpx ahead",
                 plugin_id, self.scroll_helper.total_scroll_width,
@@ -626,6 +703,35 @@ class RenderPipeline:
     def has_deferred(self) -> bool:
         """Whether any canvas-bound plugins are still queued."""
         return bool(self._deferred_queue)
+
+    def prepare_group_member(self, member) -> None:
+        """Join one fetched ``(plugin_id, images)`` ahead of the strip.
+
+        Called by the thread that fetched it (the prefetch thread or the live
+        worker, under the render gate), so the extension that appends it only
+        has to copy its pixels into the strip. Never raises: a member left
+        unprepared is joined at the extension instead, as before.
+        """
+        try:
+            images = member[1]
+            if not images:
+                return
+            blocks = self._prepared_blocks
+            if blocks is None:
+                blocks = self._prepared_blocks = {}
+            if len(blocks) >= self.PREPARED_BLOCKS_MAX:
+                blocks.clear()      # left by groups that were never appended
+            blocks[id(images)] = PreparedBlock(images, self.config)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Could not prepare a Vegas block ahead", exc_info=True)
+
+    def _take_prepared_block(self, images: List[Image.Image]) -> Optional[PreparedBlock]:
+        """The block prepared for exactly these images, if there is one."""
+        blocks = self._prepared_blocks
+        if not blocks:
+            return None
+        prepared = blocks.pop(id(images), None)
+        return prepared if prepared is not None and prepared.images is images else None
 
     def _claim_prepared_group(self):
         """Take the prefetched group, if one is ready."""
@@ -669,6 +775,8 @@ class RenderPipeline:
             for pid, images in grouped:
                 if is_static is not None and is_static(pid):
                     statics.append((sum(1 for _p, imgs in content if imgs), pid))
+                    if images:
+                        self._take_prepared_block(images)   # never appended
                 else:
                     content.append((pid, images))
             grouped = content
@@ -707,10 +815,18 @@ class RenderPipeline:
 
             blocks = []
             layouts = []
+            items = []
             total_rows = 0
             for _plugin_id, images in grouped:
                 total_rows += len(images)
-                block, layout = self._join_plugin_rows_with_layout(images)
+                prepared = self._take_prepared_block(images)
+                if prepared is not None:
+                    block, layout = prepared.block, prepared.layout
+                    items.append(prepared.pixels)
+                else:
+                    # Fetched inline, or by a thread that did not prepare it.
+                    block, layout = self._join_plugin_rows_with_layout(images)
+                    items.append(block)
                 blocks.append(block)
                 layouts.append(layout)
 
@@ -719,13 +835,13 @@ class RenderPipeline:
                 # append_content is about to build a strip from scratch.
                 self._reset_records()
             appended = self.scroll_helper.append_content(
-                content_items=blocks,
+                content_items=items,
                 item_gap=self.config.separator_width,
                 element_gap=0,
             )
             if not appended:
                 return False
-            moved = self._strip_nbytes()
+            moved = self._copied_bytes()
 
             # Where each block starts, laid out as append_content does: a
             # separator before every block, or -- when there was no strip to
@@ -744,9 +860,10 @@ class RenderPipeline:
                 self._static_markers = tuple(
                     (max(0, x - cut), pid) for x, pid in self._static_markers)
             self._forget_trimmed_records(cut)
-            # The append built the whole strip anew, and a trim copies what is
-            # left of it again: both land in the frame after this one.
-            self._note_op('extend', moved + (self._strip_nbytes() if cut else 0))
+            # Both land in the frame after this one: the append's new columns
+            # (the whole strip when its buffer had to be reallocated), and a
+            # trim's copy, if it made one.
+            self._note_op('extend', moved + (self._copied_bytes() if cut else 0))
 
             self._segments_in_scroll = [pid for pid, _ in grouped]
             self.stats['composition_count'] += 1
@@ -787,42 +904,9 @@ class RenderPipeline:
     ) -> Tuple[Image.Image, List[Tuple[int, ElementMeta, int]]]:
         """_join_plugin_rows, plus where each live element landed in the block.
 
-        Returns ``(block, layout)``, layout being ``(x, meta, width)`` for
-        every image tagged as a live element (src/vegas_mode/elements.py), x
-        measured from the block's left edge. The offsets were always computed
-        here; they used to be thrown away.
+        See join_plugin_rows.
         """
-        if len(images) == 1:
-            meta = meta_of(images[0])
-            layout = [(0, meta, images[0].width)] if meta is not None else []
-            return images[0], layout
-
-        floor = max(0, self.config.intra_plugin_gap)
-        target = max(0, self.config.min_content_separation)
-        threshold = self.config.trim_threshold
-
-        # Space by measured separation, not a flat gap. Rows drawn flush to
-        # their own edges (sports score cards) would otherwise end up nearly
-        # touching, while rows that already carry wide margins would be pushed
-        # needlessly further apart.
-        gaps = [
-            separation_gap(images[i], images[i + 1], target, floor, threshold)
-            for i in range(len(images) - 1)
-        ]
-
-        width = sum(img.width for img in images) + sum(gaps)
-        height = max(img.height for img in images)
-
-        block = Image.new('RGB', (width, height), (0, 0, 0))
-        layout: List[Tuple[int, ElementMeta, int]] = []
-        x = 0
-        for i, img in enumerate(images):
-            block.paste(img, (x, 0))
-            meta = meta_of(img)
-            if meta is not None:
-                layout.append((x, meta, img.width))
-            x += img.width + (gaps[i] if i < len(gaps) else 0)
-        return block, layout
+        return join_plugin_rows(images, self.config)
 
     # -- live element records ---------------------------------------------
     #
@@ -1392,6 +1476,7 @@ class RenderPipeline:
             self._prefetch_generation += 1
             self._prepared_group = None
             self._deferred_queue = []
+            self._prepared_blocks = None
         self._static_markers = ()
         self._stop_live_worker()
         self._reset_records()

@@ -19,6 +19,33 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: ES modules and one form model (stage 1)
+
+- The web UI gains a native ES-module layer, loaded with
+  `<script type="module">` and served as-is (no bundler, nothing built on
+  the Pi): `static/v3/js/core/` (`boot.js`, `registry.js`, `api.js`,
+  `facade.js`) and `static/v3/js/pages/`. `window.LEDMatrix` is its one
+  global: `api`, `pages`, `notify`, `escape`, `widgets` and `deprecate`, the
+  last keeping old `window.*` names working as aliases that warn once.
+- Tab partials can become page modules: a partial whose root says
+  `data-page="<name>"` carries no inline script, and the page registry calls
+  the page's `init` once when htmx swaps it in and `destroy` when it is
+  swapped out, aborting a signal that removes its listeners and cancels its
+  requests. The Cache tab is converted as the reference
+  (`js/pages/cache.js`); `window.deleteCacheFile` remains as an alias.
+- Static `.js` files are always served as `text/javascript`, which module
+  scripts require, and a `.js` request without the `?v=` content version
+  (how modules import each other) is revalidated instead of cached as
+  immutable for a year.
+- `src/plugin_system/field_model.py`: `build_field_model(schema, config)`
+  describes a plugin's config form as one JSON field model. Nothing renders
+  from it yet; `test/test_field_model_parity.py` checks it names exactly the
+  form controls and starting values the `render_field` macro emits, for every
+  schema available (all 46 official plugins, when a checkout is present).
+- `docs/WEB_FRONTEND_ARCHITECTURE.md`: the target architecture, the
+  page-by-page migration order, and how forms switch to the model and to
+  JSON submit behind a flag.
+
 ### Control socket (stage 1: on-demand)
 
 - **The display now serves a control socket**,
@@ -312,6 +339,14 @@ read any of them:
 
 ### Fixes
 
+- Quieter routine logging. Every rotation logged each mode twice
+  ("Switching to mode", then "Processing mode"), and a mode with nothing to
+  show added "display() returned False" and "No content to display". Those
+  three repeats are now DEBUG; "Switching to mode" stays INFO, and `--debug`
+  shows the rest. On ledpi this cut the display's journal lines by about 30%
+  (~105 to ~75 per 5 minutes). Each stored line costs roughly 9 KB of SD-card
+  writes through the persistent journal (display at INFO vs WARNING: about
+  190 KiB/min apart), so the saving is real but small.
 - Reinstalling a plugin by its registry id when it is installed under its
   manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
   the install then fails. The safety copy was taken of `weather/`, which did
@@ -420,9 +455,49 @@ read any of them:
   the Vegas update tick runs every second instead of every four.
 - Web UI: "Update live content while it scrolls" under Vegas mode's Cycle
   Pacing (`display.vegas_scroll.live_refresh`).
+- **Live cards for the scoreboards (shared code).** New module
+  `src/common/sports_vegas.py`: `game_key()`, `dedupe_games()`,
+  `VegasCardCache` (draws a card only when its fingerprint changes) and
+  `StickyOdds` (keeps a card's odds through a live poll that left them out),
+  `finished_games()` and `with_finished_games()` (a game that just went final
+  keeps its card, showing FINAL, where its live card was).
+  `SportsScrollDisplay` gains `make_vegas_renderer()` (the override point; a
+  sport that does not implement it keeps its ordinary Vegas content),
+  `render_vegas_card()`, `vegas_separator()` and `build_vegas_elements()`,
+  and `SportsScrollDisplayManager` gains `get_vegas_elements_for()`.
+  `SportsLiveSharedMixin` gains `_record_finished_game()` /
+  `finished_games_snapshot()`, so a game that goes final keeps a card to show
+  FINAL on until the hourly recent list takes it over.
+- `scripts/render_plugin.py --vegas` renders a plugin's block of the Vegas
+  strip as the ticker lays it out (live elements, or with `--no-live` its
+  ordinary content) and writes the live elements' keys and columns beside
+  it. `--timeline ROWS` stacks the block at successive moments as the
+  ticker would update it in place (`--timeline-step`, and
+  `--timeline-update` to run `update()` between rows).
+  `render_vegas_strip()` and `render_vegas_timeline()` in
+  `src/plugin_system/testing/vegas.py`; the join is now
+  `render_pipeline.join_plugin_rows()`.
+- **Behaviour change: live games stay in the Vegas ticker by default.**
+  `display.vegas_scroll.live_in_ticker` now defaults to `true`: the marquee
+  keeps running through a live game, which takes extra turns in it, instead
+  of giving way to the full-screen scoreboard. Existing configs all held the
+  old `false`, copied from the template, so the first start turns it on once
+  (`ConfigManager._migrate_live_in_ticker_default`; the previous config is
+  kept as `config.json.backup` and `live_in_ticker_migrated` records that it
+  ran). To keep the full-screen scoreboard, untick the new **Keep live games
+  in the ticker** under Vegas mode; a `false` set after the migration stays.
 
 ### Scrolling
 
+- A Vegas strip extension no longer costs a late frame. Appending the next
+  group rebuilt the whole strip (`np.concatenate`, 2-2.6ms for a 10-14k px
+  strip at 512x64 on a Pi 4) and trimming copied what was left (1.2-1.8ms),
+  so on hdpi every extension frame missed its refresh. The strip now lives in
+  a buffer with spare room (`ScrollHelper.STRIP_SPARE_FACTOR`): an append
+  writes only the new columns (~0.2ms), a trim only moves the start, and the
+  one full copy happens when the buffer is reallocated, about once every two
+  strip-lengths scrolled. A strip set from outside (the multi-display
+  follower's) is never written through.
 - A Vegas strip extension costs the render thread about a third of what it
   did. Appending the next group and trimming what has scrolled past each
   rebuilt the strip's PIL image from its numpy array in full
@@ -504,6 +579,38 @@ read any of them:
 - Plugin `web_ui/` pages no longer load Tailwind from a CDN, which failed
   in AP mode with no internet. They get a local `static/v3/plugin-frame.css`
   with the v2 palette they were written against.
+
+### New modules (sports consolidation stage 4)
+
+A plugin may import these via `src.*` once it floors on the release that
+ships them (the first release cut from this section). All four hold code the
+scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
+`56c4f15`), moved without behaviour change under the plugins' own names;
+each docstring lists what the host class must provide. Nothing in core uses
+them yet. The plugins delete their copies when they floor on that release.
+
+- `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
+  of the scoreboard plugin class (`manager.py`) identical in all nine:
+  `_dispatch_switch_refresh` (with `_SWITCH_REFRESH_MIN_GAP_SECONDS`),
+  `get_vegas_priority_weight`, `_favorite_team_is_live`,
+  `_favorite_scan_targets`, `_favorite_scan_games`, `_game_involves`,
+  `get_vegas_content_type`, `_dynamic_feature_enabled`,
+  `_get_total_games_for_manager` and `_build_manager_key`. List it before
+  `BasePlugin`: two of these override its defaults.
+- `src/common/sports_live_scroll.py` — `SportsLiveScrollMixin`, the eight
+  `manager.py` methods that rebuild a live scroll strip mid-cycle without
+  moving the marquee (`_live_scroll_needs_rebuild`,
+  `_preserving_scroll_position`, ...), with `LIVE_SCROLL_REBUILD_MIN_SECONDS`
+  and `LIVE_SCROLL_REBUILD_DUTY_DIVISOR`; identical in the eight scoreboards
+  with a strip (not ufc). `LIVE_VOLATILE_FIELDS` stays in each plugin.
+- `src/common/sports_display_rules.py` — `SportsCardOptionsMixin`
+  (`_card_option`, `_recent_date_text`; the eight team scoreboards; list it
+  before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+  (`_filtered_or_all`, `_effective_live_duration`; all nine).
+- `src/common/sports_font_path.py` — `resolve_font_path`, what every
+  scoreboard's `_resolve_font_path` (nine `sports.py`, eight
+  `game_renderer.py`) returns on a core that ships it: the path as given when
+  it exists, else `font_layout.resolve_asset_path`.
 
 ## 3.7.0
 

@@ -2267,7 +2267,7 @@ class DisplayController:
         """Whether live content should stay in the ticker instead of preempting it."""
         coordinator = self.vegas_coordinator
         config = getattr(coordinator, 'vegas_config', None)
-        return bool(getattr(config, 'live_in_ticker', False))
+        return bool(getattr(config, 'live_in_ticker', True))
 
     def _check_live_priority(self, advance=False):
         """Return the live-priority mode to display, or None if nothing is live.
@@ -2557,7 +2557,11 @@ class DisplayController:
 
                 manager_to_display = None
                 
-                logger.info("Processing mode: %s (%d available)", active_mode, len(self.available_modes))
+                # DEBUG, not INFO: "Switching to mode" already logged this mode. Every
+                # routine rotation line lands in the persistent journal, and on an SD
+                # card each one costs far more than its bytes: measured on ledpi, about
+                # 9 KB of card writes per stored line.
+                logger.debug("Processing mode: %s (%d available)", active_mode, len(self.available_modes))
                 logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
                 
                 # Handle plugin-based display modes
@@ -2685,7 +2689,7 @@ class DisplayController:
                         if isinstance(result, bool):
                             display_result = result
                             if not display_result:
-                                logger.info("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
+                                logger.debug("Plugin %s display() returned False for mode %s", plugin_id, active_mode)
 
                         # Record success only when display() actually ran this
                         # frame -- a skipped frame (lock busy) held the last
@@ -2726,7 +2730,8 @@ class DisplayController:
                         self._advance_on_demand()
                         continue
                     else:
-                        logger.info("No content to display for %s, skipping to next mode", active_mode)
+                        # Routine (no live game right now): DEBUG, see "Processing mode" above.
+                        logger.debug("No content to display for %s, skipping to next mode", active_mode)
                         # Don't clear display when immediately moving to next mode - this causes black flashes
                         # The next mode will render immediately with force_clear=True, which is sufficient
 

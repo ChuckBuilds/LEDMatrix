@@ -15,6 +15,7 @@ from src.plugin_system.testing.harness import _instantiate  # noqa: E402
 from src.plugin_system.testing.loading import build_full_config, load_harness_spec, load_manifest  # noqa: E402
 from src.plugin_system.testing.vegas import (  # noqa: E402
     check_vegas_elements, implements_vegas_elements, render_vegas_elements,
+    render_vegas_strip, render_vegas_timeline,
 )
 from src.plugin_system.testing.visual_display_manager import VisualTestDisplayManager  # noqa: E402
 from src.plugin_system.vegas_elements import VegasElement  # noqa: E402
@@ -178,3 +179,30 @@ def test_check_plugin_reports_a_failing_element_check_and_carries_on(monkeypatch
         False, None, None)
     vegas = [r for r in results if r.mode == "vegas elements"]
     assert len(vegas) == 1 and "boom" in vegas[0].error
+
+
+def test_a_timeline_moves_what_animates_and_nothing_else():
+    import numpy as np
+    plugin, dm = _stub(dot_speed=200)
+    _block, layout = render_vegas_strip(plugin, "vegas-live-stub", dm)
+    image, rows = render_vegas_timeline(plugin, "vegas-live-stub", dm, steps=3,
+                                        step_seconds=0.5)
+    assert rows == 3 and image.height == 3 * H + 2
+    pixels = np.asarray(image)
+    first, last = pixels[:H], pixels[2 * (H + 1):]
+    columns = {key: (x, width) for x, key, width in layout}
+    x, width = columns["map"]
+    assert (first[:, x:x + width] != last[:, x:x + width]).any()
+    x, width = columns["card:0"]
+    assert (first[:, x:x + width] == last[:, x:x + width]).all()
+
+
+def test_a_timeline_with_updates_redraws_the_cards_in_place():
+    import numpy as np
+    plugin, dm = _stub(map_hz=0)
+    _block, layout = render_vegas_strip(plugin, "vegas-live-stub", dm)
+    image, rows = render_vegas_timeline(plugin, "vegas-live-stub", dm, steps=2,
+                                        run_update=True)
+    pixels = np.asarray(image)
+    x, width = {key: (x, width) for x, key, width in layout}["card:0"]
+    assert (pixels[:H, x:x + width] != pixels[H + 1:, x:x + width]).any()

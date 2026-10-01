@@ -180,10 +180,13 @@ class VegasModeConfig:
 
     # --- Live content in the ticker -------------------------------------
     #
-    # By default a live game preempts Vegas entirely: the display controller
-    # refuses to run the ticker while any plugin reports live priority, and you
-    # get the full-screen scoreboard instead. Set live_in_ticker to keep the
-    # marquee running and let live content take extra turns within it.
+    # By default live content stays in the marquee and takes extra turns
+    # within it, its cards updating while they scroll (live elements, below).
+    # With live_in_ticker false a live game preempts Vegas entirely: the
+    # display controller refuses to run the ticker while any plugin reports
+    # live priority, and you get the full-screen scoreboard instead. (False
+    # was the default until 3.8.0; ConfigManager turns it on once for configs
+    # that still hold the old default.)
     #
     # The rotation is otherwise a strict round robin -- every plugin appears
     # exactly once per cycle -- so with a dozen plugins enabled a live score
@@ -193,7 +196,7 @@ class VegasModeConfig:
     # Weights are per plugin, not per game: a scoreboard showing four live
     # games still occupies one slot at a time, and rotates its own games within
     # that slot using its own favorite_live_boost.
-    live_in_ticker: bool = False
+    live_in_ticker: bool = True
 
     # Slots per cycle for a plugin reporting live content. 1 disables the boost
     # and restores the plain round robin.
