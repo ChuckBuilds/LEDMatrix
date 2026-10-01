@@ -544,11 +544,27 @@ for the rest, so it steps one refresh after the rest rather than one frame.
 That costs a second blit inside the refresh after the first swap, so it is
 skipped when a blit takes more than half a refresh.
 
-A static screen that follows a scroll is never composed: the display
-controller calls `DisplayManager.end_scroll_for_static_screen()` before its
-first `display()`, so the frames that call presents go out as drawn, in one
+A plugin screen that runs the 1 Hz loop after a scroll is not composed: the
+display controller calls `DisplayManager.end_scroll_for_static_screen()` before
+its first `display()`, so the frames that call presents go out as drawn, in one
 swap each, instead of with the lagging half taken from the scroller's last
 frame.
+
+Other screens that follow a scroll still are, while the scroll state lasts (it
+expires 2 s after the scroller's last frame). Their first frame takes its
+lagging half from the scroller's last frame: for one refresh after a held
+scroll, and after a scroll at one frame per refresh until the next frame
+replaces it. They are:
+
+- the blank shown when the schedule turns the panel off. It is redrawn once a
+  minute while the panel is off, so half of the scroller's last frame can stay
+  lit for up to 60 s;
+- the WiFi status message, until the next pass half a second later;
+- a screen that runs the high-FPS loop without scrolling (an older
+  `static-image`, which is forced into it), until its next frame.
+
+Ending the scroll state before the schedule-off blank and the WiFi message is a
+follow-up, the schedule-off blank first.
 
 Checked on hdpi (4×128×64 on one chain, rotated 180, 2026-09-24) before it was
 written: `scan_mode: 1` (interlaced) made the step vanish but turned moving
