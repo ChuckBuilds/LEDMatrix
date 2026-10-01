@@ -52,6 +52,7 @@ src/matrix_support.py
 src/pi5_matrix_support.py
 src/plugin_system/__init__.py
 src/plugin_system/compatibility.py
+src/plugin_system/field_model.py
 src/plugin_system/operation_history.py
 src/plugin_system/operation_queue.py
 src/plugin_system/operation_types.py
