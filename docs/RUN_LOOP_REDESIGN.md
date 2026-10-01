@@ -257,13 +257,21 @@ and its per-screen INFO line drops to DEBUG.
 
 ## Behaviour the traces pin down that may be wrong
 
-These are recorded as they are today. Each one should be fixed in its own
-PR, which updates the affected trace and explains why. None of them is
-changed by the restructure.
+Stage 1 recorded six behaviours as they were, each to be fixed in its own
+PR that updates the affected trace and explains why. All six are fixed:
 
-1. **An on-demand session that expires during scheduled-off keeps the panel
-   on** until the next minute boundary, because the schedule check runs at
-   most once a minute (`schedule`, t=190-210).
-2. **A schedule window's end minute is inclusive**, and whether the panel
-   turns off at the start of that minute or the end depends on when in the
-   minute the first check runs.
+- A WiFi notice was only checked between screens, and Vegas yielded to one
+  and then showed a rotation screen instead. Notices now preempt within
+  about a second, and Vegas yields straight to them (#712; `wifi_notice`,
+  `vegas`).
+- A live game only took over between screens, and Vegas yielded to one and
+  then showed a rotation screen first. Games now take over within about a
+  second, and Vegas yields straight to them (#713; `live_priority`,
+  `vegas`).
+- An on-demand session that ended during scheduled-off kept the panel on
+  until the next minute, and a schedule window's end minute counted as on
+  only sometimes. Windows are now half-open `[start, end)`, and the panel
+  blanks as soon as on-demand ends in off hours (#714; `schedule`).
+
+A new one found later goes the same way: record it here with the trace that
+shows it, then fix it in its own PR, not inside a restructure stage.

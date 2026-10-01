@@ -110,6 +110,17 @@ policies are unchanged.
   screen showed first and the game came after it. Each check also asks each
   plugin `has_live_content()` once, where a plugin registered under several
   modes used to be asked once per mode.
+- The display schedule turns the panel off at exactly the end time. A window
+  now runs from its start time up to, but not including, its end time: with
+  07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end
+  minute counted as on, and because the schedule is checked once a minute,
+  the panel went off at 23:00 or at 23:01 depending on when in the minute
+  that check ran. Windows that cross midnight and per-day schedules follow
+  the same rule, and so does the dim schedule.
+- An on-demand session that ends during scheduled-off hours, by expiring or
+  being stopped, blanks the panel within about a second. It used to stay on
+  until the next minute, because the once-a-minute schedule check had
+  already run that minute and the session had overridden its answer.
 
 ## 3.8.0
 
