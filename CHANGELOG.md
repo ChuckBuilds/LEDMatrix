@@ -22,9 +22,10 @@ accepts both, but the store flags the old spelling as deprecated
 Live Vegas elements: plugin content that keeps changing while it scrolls
 (scores on the scoreboards' cards, the flight map's gliding aircraft, the
 weather radar's loop), with live games kept in the ticker by default. Also
-stable/beta update channels, the systemd display watchdog, optional web
-login, and the removal of the 35 plugin APIs deprecated since 3.5.0 (see
-Removed).
+stable/beta update channels, the display control socket, the systemd
+display watchdog, optional web login, ES-module web UI pages, sports
+consolidation stage 4, and the removal of the 35 plugin APIs deprecated
+since 3.5.0 (see Removed).
 
 ### New modules
 
@@ -39,9 +40,14 @@ guard the import, since the loader's version check is advisory).
 - `src/common/sports_vegas.py` -- what a scoreboard needs for live cards:
   `game_key`, `game_fingerprint`, `dedupe_games`, `VegasCardCache`,
   `StickyOdds`, `finished_games`.
-- `src/display_watchdog.py`, `src/plugin_system/plugin_catalog.py` and
-  `src/plugin_system/plugin_runtime.py` -- new core modules (described
-  below) that plugins do not normally import.
+- `src/common/sports_plugin_host.py`, `sports_live_scroll.py`,
+  `sports_display_rules.py` and `sports_font_path.py` -- sports
+  consolidation stage 4; see "New modules (sports consolidation stage 4)"
+  below.
+- `src/display_watchdog.py`, `src/plugin_system/plugin_catalog.py`,
+  `src/plugin_system/plugin_runtime.py`, `src/plugin_system/field_model.py`
+  and the `src/ipc/` package -- new core modules (described below) that
+  plugins do not normally import.
 
 ### Web UI: ES modules and one form model (stage 1)
 
@@ -648,12 +654,11 @@ plugin that still calls one gets an `AttributeError`;
 
 ### New modules (sports consolidation stage 4)
 
-A plugin may import these via `src.*` once it floors on the release that
-ships them (the first release cut from this section). All four hold code the
+A plugin may import these via `src.*` once it floors on 3.8.0. All four hold code the
 scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
 `56c4f15`), moved without behaviour change under the plugins' own names;
 each docstring lists what the host class must provide. Nothing in core uses
-them yet. The plugins delete their copies when they floor on that release.
+them yet. The plugins delete their copies when they floor on 3.8.0.
 
 - `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
   of the scoreboard plugin class (`manager.py`) identical in all nine:
