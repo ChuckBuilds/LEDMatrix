@@ -1,0 +1,20 @@
+{
+  "screens": [
+    [0.0, "nfl_live", 15.0, "duration", 15, true],
+    [15.0, "nfl_live", 15.0, "live", 15, false],
+    [30.0, "nhl_live", 15.0, "live", 15, true],
+    [45.0, "nfl_live", 15.0, "live", 15, true],
+    [60.0, "nhl_live", 15.0, "duration", 15, true],
+    [75.0, "nhl_live", 15.0, "duration", 15, false],
+    [90.0, "nhl_live", 15.0, "duration", 15, false],
+    [105.0, "clock", 15.0, "duration", 15, true],
+    [120.0, "nfl_live", 15.0, "duration", 15, true],
+    [135.0, "nhl_live", 15.0, "horizon", 15, true]
+  ],
+  "events": [
+    [0.0, "live", "nfl_live"],
+    [30.0, "live", "nhl_live"],
+    [45.0, "live", "nfl_live"],
+    [60.0, "live", "nhl_live"]
+  ]
+}

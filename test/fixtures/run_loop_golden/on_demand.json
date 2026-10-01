@@ -1,0 +1,30 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 5.0, "on-demand-start", 6, true],
+    [25.0, "sports_recent", 15.0, "duration", 15, true],
+    [40.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [55.0, "sports_recent", 15.0, "duration", 15, true],
+    [70.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [85.0, "sports_recent", 10.0, "on-demand-requested-stop", 11, true],
+    [95.0, "weather", 20.0, "duration", 20, true],
+    [115.0, "sports_recent", 15.0, "duration", 15, true],
+    [130.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [145.0, "clock", 5.0, "on-demand-start", 6, true],
+    [150.0, "weather", 20.0, "duration", 20, true],
+    [170.0, "weather", 10.0, "on-demand-expired", 10, true],
+    [180.0, "clock", 20.0, "duration", 20, true],
+    [200.0, "weather", 20.0, "duration", 20, true],
+    [220.0, "sports_recent", 15.0, "duration", 15, true],
+    [235.0, "sports_upcoming", 5.0, "horizon", 5, true]
+  ],
+  "events": [
+    [25.0, "request", "start:r1"],
+    [25.0, "on-demand-start", "sports"],
+    [95.0, "request", "stop:r2"],
+    [95.0, "on-demand-requested-stop"],
+    [150.0, "request", "start:r3"],
+    [150.0, "on-demand-start", "weather"],
+    [180.0, "on-demand-expired"]
+  ]
+}

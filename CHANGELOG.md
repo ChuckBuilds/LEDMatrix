@@ -19,19 +19,51 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Tooling
+
+- Golden trace tests for the display loop. `test/test_run_loop_golden.py`
+  runs the real `DisplayController.run()` against fake plugins on a fake
+  clock (`test/_run_loop_harness.py`), with no hardware and no real sleeps,
+  and compares which mode was shown, for how long and why it ended with
+  `test/fixtures/run_loop_golden/`. It has 15 scenarios: rotation,
+  empty and failing modes, dynamic duration, live priority, on-demand
+  (including pinned and resumed after a restart), the schedule and dim
+  schedule, WiFi notices, sync follower and Vegas. The whole file runs in
+  about a second. This is stage 1 of restructuring `run()`, described in
+  `docs/RUN_LOOP_REDESIGN.md`. The other part of stage 1 is internal and
+  changes no behaviour: twelve blocks of `run()` move into named helpers
+  (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
+  `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
+  identical before and after the move.
+
+### Fixes
+
+- A plugin whose `display()` raises now opens its circuit breaker. The first
+  frame of each screen goes through the plugin executor, which caught the
+  exception and returned False. The display read that as "no content" and
+  recorded a success, which reset the plugin's failure streak, so the breaker
+  never tripped. The plugin stayed in rotation and logged a traceback on
+  every screen. The raise now counts as a failure, so after three in a row
+  the plugin leaves rotation until the cooldown ends, the same as a raising
+  `update()`. The display still moves straight on to the next mode. A hung
+  `display()` is still recorded once, as a hang.
+
 ### Scroller-to-static handovers
 
 - A static plugin screen that follows a scroller no longer starts with the
   scroller's leftovers. Nothing ended the scroll state at a handover; it
   expired 2 s after the last scroll frame. So on a panel with scan-order
-  compensation the static screen's first frame, which stays up for a
-  second, went out with the lagging rows (the bottom half on a 96x48 panel)
-  taken from the ticker's last frame. The display controller now calls the
-  new `DisplayManager.end_scroll_for_static_screen()` just before such a
+  compensation the static screen's first frame went out with the lagging
+  rows (the bottom half on a 96x48 panel) taken from the ticker's last
+  frame: for the whole second it stays up after a scroll at one frame per
+  refresh, and for its first refresh after a slower, held one. The display
+  controller now calls the new
+  `DisplayManager.end_scroll_for_static_screen()` just before such a
   screen's first `display()`, so the frames that call draws go out as
-  drawn, and `set_scrolling_state(False)` once it returns. The scroll
-  state and its frame hold stay until then, so the handover is still timed,
-  against the scroller's own pacing: late-frame counts are unchanged.
+  drawn, in one swap each, and `set_scrolling_state(False)` once it
+  returns. The scroll state and its frame hold stay until then, so the
+  handover is still timed, against the scroller's own pacing: late-frame
+  counts are unchanged.
 - The phantom ~1 s freeze at every scroller-to-static handover is no longer
   recorded: the 1 Hz loop's second frame was timed as a frame of the old
   scroll, in the soak's freezes and as a `Render stall` in the log. On ledpi
@@ -46,6 +78,38 @@ accepts both, but the store flags the old spelling as deprecated
   comparable.** A stall dump taken while that first `display()` is still
   drawing says `in a handover gap` instead of `mid-scroll`, and the call
   runs on a thread named `display-<plugin id>`.
+
+## 3.8.0
+
+Live Vegas elements: plugin content that keeps changing while it scrolls
+(scores on the scoreboards' cards, the flight map's gliding aircraft, the
+weather radar's loop), with live games kept in the ticker by default. Also
+stable/beta update channels, the display control socket, the systemd
+display watchdog, optional web login, ES-module web UI pages, sports
+consolidation stage 4, and the removal of the 35 plugin APIs deprecated
+since 3.5.0 (see Removed).
+
+### New modules
+
+A plugin may import these via `src.*` once it floors on 3.8.0 (and should
+guard the import, since the loader's version check is advisory).
+
+- `src/plugin_system/vegas_elements.py` -- `VegasElement`, the unit a
+  plugin's `get_vegas_elements()` returns (also re-exported from
+  `base_plugin`). See "Live Vegas elements" below.
+- `src/plugin_system/testing/vegas.py` -- the harness for those hooks:
+  `render_vegas_elements`, `check_vegas_elements`, `render_vegas_timeline`.
+- `src/common/sports_vegas.py` -- what a scoreboard needs for live cards:
+  `game_key`, `game_fingerprint`, `dedupe_games`, `VegasCardCache`,
+  `StickyOdds`, `finished_games`.
+- `src/common/sports_plugin_host.py`, `sports_live_scroll.py`,
+  `sports_display_rules.py` and `sports_font_path.py` -- sports
+  consolidation stage 4; see "New modules (sports consolidation stage 4)"
+  below.
+- `src/display_watchdog.py`, `src/plugin_system/plugin_catalog.py`,
+  `src/plugin_system/plugin_runtime.py`, `src/plugin_system/field_model.py`
+  and the `src/ipc/` package -- new core modules (described below) that
+  plugins do not normally import.
 
 ### Web UI: ES modules and one form model (stage 1)
 
@@ -109,6 +173,18 @@ accepts both, but the store flags the old spelling as deprecated
   change is needed. `LEDMATRIX_CONTROL_SOCKET` overrides the path for both
   processes, or turns the socket off with `off`. A non-root dev run uses a
   private per-user path under the temp directory.
+
+### Scroll speed
+
+- The Vegas Scroll Speed slider now says what the panel will do with the speed
+  it is on, and offers the nearest smooth ones to click. Only speeds that advance
+  a whole number of pixels per refresh look smooth, and which those are depends
+  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
+  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
+  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
+- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
+  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
+  which move one pixel at a time. 100 Hz panels are unaffected.
 
 ### Update channels
 
@@ -537,6 +613,14 @@ read any of them:
   twice. Assigning `cached_image` still stores exactly what was assigned.
   New `ScrollHelper.has_strip()` says whether there is a strip without
   building its image; the frame path and Vegas use it.
+- The frame after a Vegas strip extension is no longer late on a Pi 4. The
+  render thread also laid out every plugin block of the new group (joining
+  its rows, measuring the separation between each pair) and pasted the
+  blocks into one image, about 37ms on hdpi against ~3.75ms of slack. The
+  thread that fetches the group now does that as each plugin arrives, and
+  the extension only writes the prepared pixels into the strip
+  (`ScrollHelper.append_content` takes RGB arrays): 3.2ms. In a 4 x 8 minute
+  A/B soak, extension frames went from 10 of 10 late to 3 of 10.
 
 ### Tooling
 
@@ -566,17 +650,51 @@ read any of them:
 - The 35 plugin-facing methods deprecated in 3.5.0 are now removed in 3.8.0,
   not 3.7.0: 3.7.0 shipped with all of them still in place, still warning
   "will be removed in LEDMatrix 3.7.0". The warning, the docs and
-  `test/test_deprecation.py` now say 3.8.0. Nothing is removed yet.
+  `test/test_deprecation.py` now say 3.8.0. They are removed in this
+  release (see Removed, below).
 - New `scripts/plugin_api_usage.py` lists every `@deprecated` core method and
   scans core, the plugin monorepo and the registry's third-party plugins for
   calls and overrides, telling real uses from unrelated methods of the same
   name. Its output is `docs/DEPRECATIONS_3.8.md` (linked from
-  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`): 34 of the 35 are unused;
-  `CacheManager.get_memory_cache_stats` is still called by core's own
-  `log_memory_cache_stats()`, so it stays until that call migrates.
+  `docs/PLUGIN_API_REFERENCE.md#deprecated-apis`); no plugin uses any of
+  the 35.
 - `test/test_deprecation.py` fails while any `@deprecated` marker names a
   release at or below `src.__version__`, so a release can no longer ship
   warning about a removal it has already passed.
+
+### Removed
+
+The 35 plugin-facing methods deprecated in 3.5.0 (each has logged a warning
+on first call since, announced for 3.7.0 and then moved to 3.8.0) are gone.
+The usage scan (`docs/DEPRECATIONS_3.8.md`, re-run 2026-10-01) found no call
+or override of any of them in the 46 monorepo plugins or the 8 third-party
+plugins `plugins.json` lists, and core's own last callers went with them. A
+plugin that still calls one gets an `AttributeError`;
+`docs/PLUGIN_API_REFERENCE.md#deprecated-apis` lists what to use instead.
+
+- `CacheManager`: `has_data_changed`, `update_cache`, `setup_persistent_cache`,
+  `get_sport_live_interval`, `get_sport_key_from_cache_key`,
+  `get_background_cached_data`, `is_background_data_available`,
+  `record_cache_hit`, `record_cache_miss`, `record_fetch_time`,
+  `get_cache_metrics`, `log_cache_metrics`, `get_memory_cache_stats`. The
+  private change-detection helpers behind `has_data_changed`
+  (`_has_weather_changed` and friends, `_is_market_open`) went with it.
+- `DisplayManager`: `draw_weather_icon`, `draw_sun`, `draw_cloud`, `draw_rain`,
+  `draw_snow`, `draw_text_with_icons`, `get_scrolling_stats`, and with them
+  the `WEATHER_COLORS` table and the private `_draw_sun`/`_draw_cloud`/
+  `_draw_rain`/`_draw_snow`/`_draw_storm` helpers.
+  `VisualTestDisplayManager` (the plugin test harness) drops its copies of
+  the icon methods too, so a plugin's visual tests fail the way the real
+  display would instead of passing against methods that no longer exist.
+- `FontManager`: `set_override`, `remove_override`, `get_overrides`,
+  `add_font`, `remove_font`, `validate_font`, `get_font_catalog`,
+  `get_available_fonts`, `get_size_tokens`, `get_performance_stats`,
+  `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`,
+  `unregister_plugin_fonts`, plus the `size_tokens` attribute and the private
+  `_save_overrides` and `_clear_plugin_font_cache`. `resolve_font()` still
+  applies `config/font_overrides.json`.
+- `PluginManager.get_enabled_plugins` (check `enabled` on the entries in
+  `plugin_manager.plugins`).
 
 ### Web UI styling: a real Tailwind build
 
@@ -610,12 +728,11 @@ read any of them:
 
 ### New modules (sports consolidation stage 4)
 
-A plugin may import these via `src.*` once it floors on the release that
-ships them (the first release cut from this section). All four hold code the
+A plugin may import these via `src.*` once it floors on 3.8.0. All four hold code the
 scoreboard plugins carry as identical copies (checked at ledmatrix-plugins
 `56c4f15`), moved without behaviour change under the plugins' own names;
 each docstring lists what the host class must provide. Nothing in core uses
-them yet. The plugins delete their copies when they floor on that release.
+them yet. The plugins delete their copies when they floor on 3.8.0.
 
 - `src/common/sports_plugin_host.py` — `SportsPluginHostMixin`, ten helpers
   of the scoreboard plugin class (`manager.py`) identical in all nine:

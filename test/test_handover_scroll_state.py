@@ -66,6 +66,18 @@ def _push(dm, colour):
     return dm._presented[-1]
 
 
+def _watch_swaps(dm):
+    """The refreshes each SwapOnVSync from here on holds its frame for."""
+    holds = []
+    real = dm.matrix.SwapOnVSync
+
+    def swap(canvas, *args, **kwargs):
+        holds.append(args[0] if args else kwargs.get("framerate_fraction", 1))
+        return real(canvas, *args, **kwargs)
+    dm.matrix.SwapOnVSync = swap
+    return holds
+
+
 # -- the first static frame ---------------------------------------------------
 
 
@@ -87,6 +99,57 @@ class TestTheFirstStaticFrame:
         _push(dm, (255, 0, 0))
         shown = _push(dm, (0, 0, 0))
         assert shown.getpixel((10, 30)) == (255, 0, 0)
+
+    def test_after_a_held_scroll_it_is_one_plain_swap(self, dm):
+        # Scan-order compensation covers held frames too: mid-scroll, a frame
+        # held 2 refreshes goes out as two swaps, the first with the lagging
+        # rows from the frame before. The static screen's first frame is one
+        # swap, as drawn, held for the scroll's own 2 refreshes.
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 2)      # a crisp scroll: 1 px every 2 refreshes
+        _push(dm, (255, 0, 0))               # its last frame
+        holds = _watch_swaps(dm)
+        before = len(dm._presented)
+        dm._last_blit_seconds = 0.0          # fast enough to split, as on ledpi
+        dm.end_scroll_for_static_screen()
+        _push(dm, (0, 0, 0))
+        assert len(dm._presented) - before == 1
+        assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 0)
+        assert holds == [2]
+        assert len(dm._scan_history) == 0    # nothing of the ticker kept
+
+    def test_without_it_a_held_scroll_flashes_the_tickers_rows(self, dm):
+        # What happens without the call: the frame's first refresh shows the
+        # ticker's rows. (Proves the test above can see the leak.)
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 2)
+        _push(dm, (255, 0, 0))
+        holds = _watch_swaps(dm)
+        before = len(dm._presented)
+        dm._last_blit_seconds = 0.0
+        _push(dm, (0, 0, 0))
+        first, second = dm._presented[before:]
+        assert first.getpixel((10, 30)) == (255, 0, 0)
+        assert second.getpixel((10, 30)) == (0, 0, 0)
+        assert holds == [1, 1]
+
+    def test_it_is_timed_like_any_frame_of_the_scroll(self, dm, monkeypatch):
+        # One record, at the scroll's hold and still "scrolling": the gap to
+        # it is judged against the scroller's pacing (see TestTheSoak).
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 3)
+        _push(dm, (255, 0, 0))
+        records = []
+        real = dm.frame_timing.record
+
+        def record(*args, **kwargs):
+            records.append(args)
+            return real(*args, **kwargs)
+        monkeypatch.setattr(dm.frame_timing, "record", record)
+        dm.end_scroll_for_static_screen()
+        _push(dm, (0, 0, 0))
+        [(_blit, _wait, hold, scrolling, _at)] = records
+        assert (hold, scrolling) == (3, True)
 
     def test_nor_its_own_first_frame_under_its_second(self, dm):
         # A first display() that pushes two frames: a clear, then the screen.
@@ -415,6 +478,46 @@ class TestRunLoop:
         first, turn = _turn(c.events, "broken")
         assert c.events[first - 2:first] == ["end_scroll", ("note", "handover")]
         assert turn[1:3] == [("drop", "handover"), ("scrolling", False)]
+
+    def test_a_raise_inside_the_executor_is_a_failure_and_still_ends_the_scroll(
+            self, controller):
+        # The real executor, with raise_errors: a display() that raises comes
+        # back as a PluginError, which the breaker records as a failure (not
+        # a success). The handover is finished after that record, and only
+        # touches the display manager.
+        import threading
+        from src.plugin_system.plugin_executor import PluginExecutor
+
+        class Raising(_Screen):
+            def display(self, force_clear=False):
+                self._events.append(("display", self.plugin_id))
+                raise RuntimeError("plugin bug")
+
+        c = controller
+        pm = c.plugin_manager
+        pm.plugin_executor = PluginExecutor(default_timeout=5.0)
+        locks = {}
+        pm.get_plugin_lock = lambda pid: locks.setdefault(pid, threading.Lock())
+        tracker = MagicMock()
+        tracker.should_skip_plugin.return_value = False
+        tracker.record_failure.side_effect = (
+            lambda pid, exc=None: c.events.append(("failure", pid, str(exc))))
+        tracker.record_success.side_effect = (
+            lambda pid: c.events.append(("success", pid)))
+        pm.health_tracker = tracker
+        ticker = _Screen("ticker", c.events, needs_high_fps=True, scrolls=True)
+        broken = Raising("broken", c.events, needs_high_fps=False)
+        clock = _Screen("clock", c.events, needs_high_fps=False, stop_after=1)
+        _rotation(c, [ticker, broken, clock], {"ticker": 1, "broken": 30, "clock": 30})
+
+        c.run()
+
+        first, turn = _turn(c.events, "broken")
+        assert c.events[first - 2:first] == ["end_scroll", ("note", "handover")]
+        assert turn[1:4] == [("failure", "broken", "plugin bug"),
+                             ("drop", "handover"), ("scrolling", False)]
+        assert ("success", "broken") not in c.events
+        assert tracker.record_failure.call_count == 1
 
     def test_every_turn_starts_with_a_handover_even_of_the_same_mode(self, controller):
         # A one-mode rotation (or a mode kept on by live priority) comes back
