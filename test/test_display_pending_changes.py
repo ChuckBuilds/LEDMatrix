@@ -477,7 +477,7 @@ class TestRunLoopBlanksWhenVegasHandsBack:
         c._cleanup_expired_wifi_status = MagicMock()
         c._refresh_config_cache({
             'display': {'hardware': {'brightness': 90}},
-            'schedule': {'enabled': True, 'start_time': '07:00', 'end_time': '22:59'},
+            'schedule': {'enabled': True, 'start_time': '07:00', 'end_time': '23:00'},
         })
         c.vegas_coordinator = vegas_coordinator(c)
         c.vegas_coordinator._pending_config_update = False
@@ -518,7 +518,7 @@ class TestRunLoopBlanksWhenVegasHandsBack:
         c._refresh_config_cache({
             'display': {'hardware': {'brightness': 90},
                         'display_durations': {'ticker': 120}},
-            'schedule': {'enabled': True, 'start_time': '07:00', 'end_time': '22:59'},
+            'schedule': {'enabled': True, 'start_time': '07:00', 'end_time': '23:00'},
         })
         c.plugin_manager.plugin_executor.execute_display.side_effect = (
             lambda target, plugin_id, force_clear=False, display_mode=None, **kw:

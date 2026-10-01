@@ -1,13 +1,15 @@
 {
   "screens": [
     [0.0, "clock", 20.0, "duration", 20, false],
-    [20.0, "weather", 20.0, "duration", 20, true],
-    [40.0, "clock", 20.0, "on-demand-start", 20, true],
-    [60.0, "clock", 20.0, "on-demand-expired", 20, true],
+    [20.0, "weather", 5.0, "wifi", 6, true],
+    [25.0, "<wifi>", 5.0, "duration", 10, null],
+    [30.0, "weather", 20.0, "duration", 20, true],
+    [50.0, "clock", 20.0, "on-demand-start", 20, true],
+    [70.0, "clock", 10.0, "on-demand-expired", 10, true],
     [80.0, "<wifi>", 15.0, "duration", 30, null],
-    [95.0, "weather", 20.0, "duration", 20, true],
-    [115.0, "clock", 20.0, "duration", 20, true],
-    [135.0, "weather", 15.0, "horizon", 15, true]
+    [95.0, "clock", 20.0, "duration", 20, true],
+    [115.0, "weather", 20.0, "duration", 20, true],
+    [135.0, "clock", 15.0, "horizon", 15, true]
   ],
   "events": [
     [25.0, "wifi-file", "Connected to HomeNet"],
