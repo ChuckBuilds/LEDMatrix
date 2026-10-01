@@ -289,11 +289,11 @@ Left in the plugins, though identical:
   per-plugin import and the abstract contract, as in stage 3.
 - `_schema_font_size`, `_resolve_font_size` (eight renderers): they read the
   plugin's own `_SCHEMA_PATH`, as in stage 3.
-- Families carried by seven plugins or fewer: the afl/nrl/soccer lineage's
-  own helpers (`_swrr_advance`, `_refresh_switch_mode_managers`,
+- The 29 families carried by seven plugins or fewer: the afl/nrl/soccer
+  lineage's own helpers (`_swrr_advance`, `_refresh_switch_mode_managers`,
   `_initialize_logo_dir`, ...), the multi-league helpers
-  (`_resolve_managers_for_mode`, `_extract_mode_type`, ...), and a dozen
-  one- and two-plugin helpers. Each is one lineage's code; most go when
+  (`_resolve_managers_for_mode`, `_extract_mode_type`, ...), and eleven
+  two-plugin helpers. Each is one lineage's code; most go when
   family 13 or 14 reconciles the code around them. `_odds_color` (seven
   renderers) is already core's, in `SportsHelpersMixin`; a renderer that
   wants it can inherit that.
