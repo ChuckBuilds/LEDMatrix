@@ -114,6 +114,18 @@ class ScrollHelper:
         self.cached_image = None   # see the property below
         self.cached_array: Optional[np.ndarray] = None  # Numpy array cache for fast operations
         self.total_scroll_width = 0
+        # An extended strip lives in a buffer with spare room after it, and
+        # cached_array is a view of the buffer's live columns: an append writes
+        # only the new columns, and a trim only moves the view's start. See
+        # append_content. _strip_view is the view this helper last made; a
+        # cached_array that is anything else was set from outside and is not
+        # written through.
+        self._strip_buffer: Optional[np.ndarray] = None
+        self._strip_view: Optional[np.ndarray] = None
+        self._strip_start = 0
+        #: Bytes the last append_content / drop_scrolled_prefix copied, for
+        #: frame-timing attribution (src/common/frame_timing.py note_op).
+        self.last_copy_bytes = 0
         
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
@@ -249,6 +261,7 @@ class ScrollHelper:
             self.total_scroll_width = 0
             self.cached_image = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
             self.cached_array = np.array(self.cached_image)
+            self._forget_strip_buffer()
             self.scroll_position = 0.0
             self.total_distance_scrolled = 0.0
             self.scroll_complete = False
@@ -284,6 +297,7 @@ class ScrollHelper:
         self.cached_image = full_image
         # Convert to numpy array for fast operations
         self.cached_array = np.array(full_image)
+        self._forget_strip_buffer()
         actual_image_width = full_image.width
         self.total_scroll_width = actual_image_width
         
@@ -712,12 +726,12 @@ class ScrollHelper:
             addition.paste(img, (x, 0))
             x += img.width + element_gap
 
-        # numpy concatenate, and no conversion back: the strip can be tens of
-        # thousands of columns wide and this runs on the render path. The PIL
-        # image is built from the array only if something reads it (see the
-        # cached_image property).
-        self.cached_array = np.concatenate(
-            (self.cached_array, np.array(addition)), axis=1)
+        # Written into the spare room after the strip, when there is some:
+        # the strip can be tens of thousands of columns wide and this runs on
+        # the render thread, where copying all of it (2-3 ms at 512x64 on a
+        # Pi 4) cost the frame after every extension. The PIL image is built
+        # from the array only if something reads it (see cached_image).
+        self.cached_array = self._extended_strip(np.asarray(addition))
         self._defer_image()
         self.total_scroll_width = self.cached_array.shape[1]
         self.scroll_complete = False
@@ -728,6 +742,42 @@ class ScrollHelper:
             self.scroll_position
         )
         return True
+
+    #: Room an extended strip's buffer is given, as a multiple of what it
+    #: holds when (re)allocated. Trims free columns at the front and appends
+    #: use them at the back, so with 3x the buffer is reallocated -- the one
+    #: full copy -- about once every two strip-lengths scrolled.
+    STRIP_SPARE_FACTOR = 3.0
+
+    def _extended_strip(self, addition: np.ndarray) -> np.ndarray:
+        """The strip with ``addition`` after it, written in place when it fits."""
+        live = self.cached_array
+        assert live is not None
+        width = live.shape[1]
+        added = addition.shape[1]
+        buffer = self._strip_buffer
+        if (live is self._strip_view and buffer is not None
+                and self._strip_start + width + added <= buffer.shape[1]):
+            end = self._strip_start + width
+            buffer[:, end:end + added] = addition
+            self.last_copy_bytes = addition.nbytes
+        else:
+            total = width + added
+            buffer = np.empty((live.shape[0], max(total + 1, int(total * self.STRIP_SPARE_FACTOR)))
+                              + live.shape[2:], dtype=live.dtype)
+            buffer[:, :width] = live
+            buffer[:, width:total] = addition
+            self._strip_buffer = buffer
+            self._strip_start = 0
+            self.last_copy_bytes = live.nbytes + addition.nbytes
+        self._strip_view = buffer[:, self._strip_start:self._strip_start + width + added]
+        return self._strip_view
+
+    def _forget_strip_buffer(self) -> None:
+        """A new strip replaces the extended one: let its buffer go."""
+        self._strip_buffer = None
+        self._strip_view = None
+        self._strip_start = 0
 
     def drop_scrolled_prefix(self, keep_before: int = 0) -> int:
         """
@@ -766,9 +816,18 @@ class ScrollHelper:
         if cut <= 0:
             return 0
 
-        # .copy() so the original buffer is released rather than kept alive by
-        # a numpy view. The PIL image is deferred, as in append_content.
-        self.cached_array = self.cached_array[:, cut:].copy()
+        if self.cached_array is self._strip_view:
+            # Only the view's start moves; the columns behind it are reused
+            # when the buffer is next reallocated (append_content).
+            self._strip_view = self.cached_array[:, cut:]
+            self._strip_start += cut
+            self.cached_array = self._strip_view
+            self.last_copy_bytes = 0
+        else:
+            # Not a strip this helper extended: .copy() so the original
+            # buffer is released rather than kept alive by a view.
+            self.cached_array = self.cached_array[:, cut:].copy()
+            self.last_copy_bytes = self.cached_array.nbytes
         self._defer_image()
         self.total_scroll_width = self.cached_array.shape[1]
         self.scroll_position -= cut
@@ -881,6 +940,7 @@ class ScrollHelper:
         
         # Convert to numpy array for fast operations (required for get_visible_portion)
         self.cached_array = np.array(image)
+        self._forget_strip_buffer()
         
         # Update scroll width
         self.total_scroll_width = image.width
@@ -1138,6 +1198,7 @@ class ScrollHelper:
         """
         self.cached_image = None
         self.cached_array = None
+        self._forget_strip_buffer()
         self.total_scroll_width = 0
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0

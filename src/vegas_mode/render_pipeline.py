@@ -466,6 +466,11 @@ class RenderPipeline:
         if note is not None:
             note(kind, nbytes)
 
+    def _copied_bytes(self) -> int:
+        """Bytes the scroll helper's last append or trim copied (the strip, if it cannot say)."""
+        copied = getattr(self.scroll_helper, 'last_copy_bytes', None)
+        return int(copied) if isinstance(copied, int) else self._strip_nbytes()
+
     def _strip_nbytes(self) -> int:
         array = self.scroll_helper.cached_array
         return int(array.nbytes) if array is not None else 0
@@ -660,7 +665,7 @@ class RenderPipeline:
             element_gap=0,
         )
         if appended:
-            self._note_op('extend', self._strip_nbytes())
+            self._note_op('extend', self._copied_bytes())
             logger.info(
                 "[%s] Appended deferred content: strip now %dpx, %dpx ahead",
                 plugin_id, self.scroll_helper.total_scroll_width,
@@ -770,7 +775,7 @@ class RenderPipeline:
             )
             if not appended:
                 return False
-            moved = self._strip_nbytes()
+            moved = self._copied_bytes()
 
             # Where each block starts, laid out as append_content does: a
             # separator before every block, or -- when there was no strip to
@@ -789,9 +794,10 @@ class RenderPipeline:
                 self._static_markers = tuple(
                     (max(0, x - cut), pid) for x, pid in self._static_markers)
             self._forget_trimmed_records(cut)
-            # The append built the whole strip anew, and a trim copies what is
-            # left of it again: both land in the frame after this one.
-            self._note_op('extend', moved + (self._strip_nbytes() if cut else 0))
+            # Both land in the frame after this one: the append's new columns
+            # (the whole strip when its buffer had to be reallocated), and a
+            # trim's copy, if it made one.
+            self._note_op('extend', moved + (self._copied_bytes() if cut else 0))
 
             self._segments_in_scroll = [pid for pid, _ in grouped]
             self.stats['composition_count'] += 1
