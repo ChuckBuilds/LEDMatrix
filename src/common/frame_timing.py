@@ -38,19 +38,20 @@ after the one before it. One that arrives a whole refresh or more after that is
 a visible hitch. ``missed_refreshes`` sums how many refreshes late.
 
 An interval of ``FREEZE_SECONDS`` or more is a **freeze** instead -- a
-recompose, a plugin handover, a blocking call on the render thread. Those are
-counted separately, both because they are a different fault and because
-folding a single 400ms handover into the late count as "40 missed refreshes"
-would drown the jitter the late count exists to measure. ``freeze_by`` splits
-them by length. Intervals of ``GAP_SECONDS`` or more are ignored as not being
-frames of one scroll at all.
+recompose, a plugin handover nobody tagged (see below), a blocking call on the
+render thread. Those are counted separately, both because they are a different
+fault and because folding a single 400ms handover into the late count as "40
+missed refreshes" would drown the jitter the late count exists to measure.
+``freeze_by`` splits them by length. Intervals of ``GAP_SECONDS`` or more are
+ignored as not being frames of one scroll at all.
 
 One kind of freeze is not a scroll stalling at all: the gap from one screen's
 last frame to the next screen's first, while the next screen draws. The
-display controller tags that frame ``handover`` (see "Operations"), and a
-tagged freeze is counted in ``handover_freezes`` instead of ``freezes`` and
-``freeze_by``. Stats written before that field existed have handovers among
-their freezes, so freeze counts from before and after it are not comparable.
+display controller tags that frame ``handover`` (see "Operations") at the
+start of every turn, the same mode's again included, and a tagged freeze is
+counted in ``handover_freezes`` instead of ``freezes`` and ``freeze_by``.
+Stats written before that field existed have handovers among their freezes,
+so freeze counts from before and after it are not comparable.
 
 A frame that arrives a whole refresh or more *early* means the swap did not
 wait for the panel: the emulator, the fallback display, or a hold that was not

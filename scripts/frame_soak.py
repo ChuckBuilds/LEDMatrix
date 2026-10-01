@@ -27,14 +27,16 @@ What the numbers mean
 late frames     frames that reached the panel one or more refreshes after they
                 were due -- the panel showed the previous frame again, which on
                 a moving strip is a visible hitch. This is the pass/fail number.
-freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers,
+freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers
+                the display controller does not tag (see handover gaps),
                 blocking calls on the render thread. Reported, not failed on,
                 since some are handovers between plugins rather than faults.
 handover gaps   the same length of gap where the display controller had just
-                started the next screen: its first display() drawing. Counted
-                here instead of under freezes. Stats from a service older
-                than this count have no such line, and their freezes include
-                these, so do not compare freeze counts across that change.
+                started a screen's turn (also the same mode's again): its
+                first display() drawing. Counted here instead of under
+                freezes. Stats from a service older than this count have no
+                such line, and their freezes include these, so do not
+                compare freeze counts across that change.
 blit            copying the frame into the matrix canvas (rgbmatrix SetImage).
                 Grows with width x height x pwm_bits.
 wait            blocked in SwapOnVSync, i.e. slack before the refresh.

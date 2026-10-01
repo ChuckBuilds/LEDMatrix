@@ -150,12 +150,17 @@ class TestPluginExecutor:
         seen = []
 
         class Plugin:
-            def display(self, force_clear=False):
-                seen.append(threading.current_thread().name)
+            def display(self, display_mode=None, force_clear=False):
+                seen.append((threading.current_thread().name, display_mode))
                 return True
 
+        # Both ways display() is called: without a mode, and with one (most
+        # multi-mode plugins, the scoreboards among them).
         assert executor.execute_display(Plugin(), "clock-simple") is True
-        assert seen == ["display-clock-simple"]
+        assert executor.execute_display(Plugin(), "clock-simple",
+                                        display_mode="clock") is True
+        assert seen == [("display-clock-simple", None),
+                        ("display-clock-simple", "clock")]
 
     def test_execute_display_exception(self):
         """Test display execution with exception."""

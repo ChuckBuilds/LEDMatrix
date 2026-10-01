@@ -88,19 +88,54 @@ class TestTheFirstStaticFrame:
         shown = _push(dm, (0, 0, 0))
         assert shown.getpixel((10, 30)) == (255, 0, 0)
 
-    def test_it_drops_the_hold_and_keeps_the_scroll_state(self, dm):
+    def test_nor_its_own_first_frame_under_its_second(self, dm):
+        # A first display() that pushes two frames: a clear, then the screen.
+        # Composed, the second would show the first's rows -- and once the
+        # scroll is over, dirty tracking (which compares frames as drawn, not
+        # as composed) skips every identical 1 Hz redraw, so that half-black
+        # frame would stay up for the whole turn.
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 1)
+        _push(dm, (255, 0, 0))               # the ticker's last frame
+        dm.end_scroll_for_static_screen()
+        _push(dm, (0, 0, 0))                 # the static screen clears...
+        shown = _push(dm, (0, 0, 255))       # ...then draws
+        assert shown.getpixel((10, 30)) == (0, 0, 255)
+        dm.set_scrolling_state(False)        # the controller, after the dispatch
+        pushed = len(dm._presented)
+        _push(dm, (0, 0, 255))               # the 1 Hz redraw: skipped
+        assert len(dm._presented) == pushed
+
+    def test_the_next_scroll_is_compensated_again(self, dm):
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 1)
+        _push(dm, (255, 0, 0))
+        dm.end_scroll_for_static_screen()
+        _push(dm, (0, 0, 0))
+        dm.set_scrolling_state(False)
+        dm.set_scrolling_state(True, 1)      # the next ticker
+        _push(dm, (0, 255, 0))
+        assert _push(dm, (0, 0, 255)).getpixel((10, 30)) == (0, 255, 0)
+
+    def test_it_keeps_the_scroll_state_and_its_hold(self, dm):
         dm.set_scrolling_state(True, 5)      # e.g. 2px every 5 refreshes
         dm.end_scroll_for_static_screen()
-        assert dm._frame_hold == 1
-        # Still scrolling until the controller says otherwise, so the gap to
-        # the first static frame is timed and watched.
+        # Both stay until the controller ends the scroll: the gap to the first
+        # static frame is timed and watched, and due at the scroll's own
+        # pacing (see TestTheSoak).
         assert dm.is_currently_scrolling()
+        assert dm._frame_hold == 5
+        dm.set_scrolling_state(False)
+        assert dm._frame_hold == 1
 
     def test_a_thread_drawing_off_screen_cannot_end_the_live_scroll(self, dm):
-        dm.set_scrolling_state(True, 3)
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 1)
+        _push(dm, (255, 0, 0))
         with dm.offscreen():
             dm.end_scroll_for_static_screen()
-        assert dm._frame_hold == 3
+        # Still the ticker's scroll: its next frame is composed as usual.
+        assert _push(dm, (0, 0, 0)).getpixel((10, 30)) == (255, 0, 0)
 
 
 # -- what the frame-timing soak records -------------------------------------
@@ -118,13 +153,15 @@ class _FakeTime:
     perf_counter = monotonic = time
 
 
-def _handover(dm, monkeypatch, tmp_path, controller_calls, first_frame_after=0.040):
+def _handover(dm, monkeypatch, tmp_path, controller_calls, first_frame_after=0.040,
+              hold=1):
     """A scroll, then a static screen, presented through update_display.
 
-    The static screen's frames land 40 ms, 1.065 s and 2.09 s after the
-    scroller's last frame: a handover, then the 1 Hz loop. With
-    ``controller_calls`` the display manager is driven the way
-    DisplayController.run() drives it at that handover.
+    The scroll presents a frame every ``hold`` refreshes. The static screen's
+    frames land 40 ms, 1.065 s and 2.09 s after the scroller's last frame: a
+    handover, then the 1 Hz loop. With ``controller_calls`` the display
+    manager is driven the way DisplayController.run() drives it at that
+    handover.
     """
     clock = _FakeTime(1000.0)
     monkeypatch.setattr("src.display_manager.time", clock)
@@ -133,11 +170,11 @@ def _handover(dm, monkeypatch, tmp_path, controller_calls, first_frame_after=0.0
     monkeypatch.setattr(dm, "frame_timing", recorder)
 
     for i in range(200):
-        dm.set_scrolling_state(True, 1)
+        dm.set_scrolling_state(True, hold)
         dm.draw.rectangle([0, 0, 4, 4], fill=(i % 256, 0, 0))
         dm.update_display()
-        clock.t += PERIOD
-    last_scroll_frame = clock.t - PERIOD
+        clock.t += hold * PERIOD
+    last_scroll_frame = clock.t - hold * PERIOD
 
     if controller_calls:
         dm.end_scroll_for_static_screen()
@@ -163,6 +200,18 @@ class TestTheSoak:
         # The handover interval itself is still timed, and carries its tag.
         assert totals["op_frames"] == {"handover": 1}
         assert totals["static_frames"] == 2
+
+    def test_a_handover_on_the_scrollers_schedule_is_not_late(self, dm, monkeypatch,
+                                                              tmp_path):
+        # A scroll held 3 refreshes a frame, and a static screen whose first
+        # frame lands 3 refreshes after its last one: on time, as it always
+        # was. Judged at hold 1 it would be 2 refreshes late, and the soak's
+        # pass/fail late count would grow with every such handover.
+        totals = _handover(dm, monkeypatch, tmp_path, controller_calls=True,
+                           first_frame_after=3 * PERIOD, hold=3)
+        assert totals["op_frames"] == {"handover": 1}
+        assert totals["late_op_frames"] == {}
+        assert totals["late_frames"] == totals["missed_refreshes"] == 0
 
     def test_left_to_expire_it_was_one(self, dm, monkeypatch, tmp_path):
         # The old behaviour, for contrast: the 1 Hz loop's second frame was
@@ -313,6 +362,75 @@ class TestRunLoop:
         # handover is a handover gap, not a freeze.
         first = c.events.index(("display", "ticker"))
         assert c.events[first - 1] == ("note", "handover")
+
+    def test_screens_that_declare_nothing_are_told_apart_by_enable_scrolling(
+            self, controller):
+        # Most plugins declare no needs_high_fps (the odds, stocks and news
+        # tickers, the scoreboards): enable_scrolling decides. It now also
+        # decides whether the scroll is ended before the first dispatch, so a
+        # ticker read as static would lose its pacing every turn.
+        c = controller
+        ticker = _Screen("ticker", c.events, needs_high_fps=None, scrolls=True)
+        ticker.enable_scrolling = True
+        board = _Screen("board", c.events, needs_high_fps=None, stop_after=1)
+        board.enable_scrolling = False
+        _rotation(c, [ticker, board], {"ticker": 1, "board": 30})
+
+        c.run()
+
+        events = c.events
+        first, turn = _turn(events, "board")
+        assert "end_scroll" not in events[:first - 2]
+        assert ("scrolling", False) not in events[:first - 2]
+        assert events[first - 2:first] == ["end_scroll", ("note", "handover")]
+        assert turn[1:3] == [("drop", "handover"), ("scrolling", False)]
+
+    def test_an_old_static_image_is_still_a_high_fps_screen(self, controller):
+        # static-image versions from before needs_high_fps declare nothing and
+        # are forced to the high-FPS loop for their GIFs: not a static screen.
+        c = controller
+        image = _Screen("static-image", c.events, needs_high_fps=None, stop_after=5)
+        _rotation(c, [image], {"static-image": 60})
+
+        c.run()
+
+        assert ("display", "static-image") in c.events
+        assert "end_scroll" not in c.events
+        assert ("scrolling", False) not in c.events
+
+    def test_a_static_screen_whose_display_raises_still_ends_the_scroll(self, controller):
+        class Raising(_Screen):
+            def display(self, force_clear=False):
+                self._events.append(("display", self.plugin_id))
+                raise RuntimeError("plugin bug")
+
+        c = controller
+        ticker = _Screen("ticker", c.events, needs_high_fps=True, scrolls=True)
+        broken = Raising("broken", c.events, needs_high_fps=False)
+        clock = _Screen("clock", c.events, needs_high_fps=False, stop_after=1)
+        _rotation(c, [ticker, broken, clock], {"ticker": 1, "broken": 30, "clock": 30})
+
+        c.run()
+
+        first, turn = _turn(c.events, "broken")
+        assert c.events[first - 2:first] == ["end_scroll", ("note", "handover")]
+        assert turn[1:3] == [("drop", "handover"), ("scrolling", False)]
+
+    def test_every_turn_starts_with_a_handover_even_of_the_same_mode(self, controller):
+        # A one-mode rotation (or a mode kept on by live priority) comes back
+        # to itself, and that turn's first frame is a first display() too:
+        # a scroller rebuilding its content there is a handover gap, not a
+        # freeze. See "Handover gaps" in docs/SCROLL_PERFORMANCE.md.
+        c = controller
+        ticker = _Screen("ticker", c.events, needs_high_fps=True, scrolls=True,
+                         stop_after=200)
+        _rotation(c, [ticker], {"ticker": 1})
+
+        c.run()
+
+        notes = [i for i, event in enumerate(c.events) if event == ("note", "handover")]
+        assert len(notes) == 2
+        assert all(c.events[i + 1] == ("display", "ticker") for i in notes)
 
     def test_a_static_screen_with_nothing_to_show_still_ends_the_scroll(self, controller):
         c = controller

@@ -341,6 +341,10 @@ class DisplayManager:
         # advances a whole pixel every Nth refresh instead of every one.
         # See src/common/scroll_config.py and scripts/scroll_speeds.py.
         self._frame_hold = 1
+        # True while a static screen draws its first frame after a scroll,
+        # whose state is left set until then: those frames go out without
+        # scan-order compensation. See end_scroll_for_static_screen().
+        self._static_handover = False
 
         # A src.common.render_gate.RenderGate while Vegas runs with
         # vegas_scroll.prefetch_gate on: opened around each swap so the
@@ -1044,13 +1048,16 @@ class DisplayManager:
         """The frame to present, with lagging rows taken from earlier frames.
 
         Only mid-scroll at one frame per refresh: that is when consecutive
-        frames are consecutive refreshes. At a longer hold, or on a static
-        screen, the history is dropped and the frame goes out as it is.
+        frames are consecutive refreshes. At a longer hold, on a static
+        screen, or while a static screen draws its first frame after a scroll
+        (see end_scroll_for_static_screen), the history is dropped and the
+        frame goes out as it is.
         """
         bands = getattr(self, '_scan_lag_bands', None)
         if not bands:
             return image
-        if self._frame_hold != 1 or not self.is_currently_scrolling():
+        if (self._frame_hold != 1 or not self.is_currently_scrolling()
+                or self._static_handover):
             self._scan_history.clear()
             return image
         presented = scan_order.compose(image, self._scan_history, bands)
@@ -1698,6 +1705,9 @@ class DisplayManager:
             # A plugin captured for Vegas calls this from its own display();
             # it must not change the live scroll's state or frame hold.
             return
+        # A scroll starting or ending also ends a static screen's handover;
+        # see end_scroll_for_static_screen.
+        self._static_handover = False
         current_time = time.time()
         # Scrolling callers set this every frame; log transitions only.
         changed = self._scrolling_state['is_scrolling'] != is_scrolling
@@ -1719,31 +1729,34 @@ class DisplayManager:
         else ends a scroll at a handover: the state belongs to the screen
         before, and would only expire 2 s after its last frame.
 
-        Two things of that scroll must not reach the first static frame,
-        which stays on the panel for a whole second:
+        Until then, the frames that dispatch presents go out as drawn, not
+        scan-order composed. With the state still "scrolling at hold 1",
+        ``_scan_compensated`` would take their lagging rows from the frame
+        before: for the first, the scroller's last frame -- the bottom half of
+        the old ticker under the new screen on a 96x48 panel, up for a whole
+        second; for a second one in the same call, the first. Dirty tracking
+        compares frames as drawn, so once the scroll is over it skips every
+        identical 1 Hz redraw of such a frame, and nothing would replace it.
 
-        * its frame hold, which would hold the frame at the scroll's pacing;
-        * the scan-order history. With the state still "scrolling at hold 1",
-          ``_scan_compensated`` would take the lagging rows from the
-          scroller's last frame -- the bottom half of the old ticker under
-          the new screen, on a 96x48 panel.
+        The rest of that scroll is left on purpose, until the controller ends
+        it:
 
-        The scroll state itself is left set on purpose, until the controller
-        clears it: the gap from the scroller's last frame to this screen's
-        first is still timed by the frame-timing recorder and watched by the
-        stall watchdog, which is where a slow first ``display()`` shows up.
+        * the scroll state, so the gap from the scroller's last frame to this
+          screen's first is still timed by the frame-timing recorder and
+          watched by the stall watchdog, which is where a slow first
+          ``display()`` shows up;
+        * its frame hold. On a frame that stays up for a second it only moves
+          the swap to the scroll's next hold boundary, and it is the pacing
+          that gap is due at: judged at hold 1, a handover that kept the
+          scroller's own schedule would count as frames late.
 
-        Under ``_update_lock``: ``scan_order.compose`` checks the history's
-        length and then indexes it, so clearing it while another thread is
-        inside ``update_display`` could make that raise.
+        The next ``set_scrolling_state()`` call, whoever makes it, ends this.
+        One attribute store, so no lock: ``update_display`` reads it once per
+        frame, under its own, and the history is dropped there.
         """
         if self._writes_suppressed():
             return  # a thread drawing off-screen cannot end the live scroll
-        with self._update_lock:
-            history = getattr(self, '_scan_history', None)
-            if history is not None:
-                history.clear()
-            self._frame_hold = 1
+        self._static_handover = True
 
     def is_currently_scrolling(self) -> bool:
         """Check if the display is currently in a scrolling state."""

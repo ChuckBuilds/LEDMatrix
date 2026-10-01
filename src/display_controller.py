@@ -1119,18 +1119,17 @@ class DisplayController:
         return needs_high_fps
 
     def _start_screen_handover(self, plugin, active_mode: str) -> bool:
-        """Before a screen's first dispatch: end the last scroll's pacing if
-        the screen is static.
+        """Before a screen's first dispatch: if the screen is static, keep
+        the last scroll's leftovers off its first frame.
 
         Nothing else ends a scroll when the rotation moves on: the state
         expires 2 s after the scroller's last frame. Left to that, a static
-        screen's first frame -- up for a whole second -- went out at the
-        scroller's frame hold and, on a panel with scan-order compensation,
-        with rows taken from the scroller's last frame; and its second frame,
-        1 s later, was still "mid-scroll", so the frame-timing soak counted a
-        1-2 s freeze and the stall watchdog logged a "Render stall" at every
-        scroller-to-static handover. See
-        DisplayManager.end_scroll_for_static_screen.
+        screen's first frame -- up for a whole second -- went out, on a panel
+        with scan-order compensation, with rows taken from the scroller's
+        last frame; and its second frame, 1 s later, was still "mid-scroll",
+        so the frame-timing soak counted a 1-2 s freeze and the stall
+        watchdog logged a "Render stall" at every scroller-to-static
+        handover. See DisplayManager.end_scroll_for_static_screen.
 
         Returns whether the screen is static, for _finish_screen_handover.
         False when that cannot be told, which leaves the scroll state as it
@@ -2704,7 +2703,7 @@ class DisplayController:
                     plugin_id = getattr(manager_to_display, 'plugin_id', active_mode)
                     # Decided before the first frame rather than at the FPS
                     # check below, by when that frame has gone out with the
-                    # last scroll's pacing. See _start_screen_handover.
+                    # last scroll's rows. See _start_screen_handover.
                     static_screen = self._start_screen_handover(manager_to_display, active_mode)
                     try:
                         logger.debug(f"Calling display() for {active_mode} with force_clear={self.force_change}")
