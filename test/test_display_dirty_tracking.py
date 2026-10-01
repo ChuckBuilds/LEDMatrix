@@ -794,6 +794,9 @@ class TestOneScrollingAnswerPerFrame:
                 (hold, scrolling)))
         dm.set_scrolling_state(True, frame_hold=2)
         try:
+            # The fixture is shared: a slow blit left by an earlier test
+            # would send this frame out whole and drop the history.
+            dm._last_blit_seconds = 0.0
             dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
                               fill=(10, 0, 0))
             dm.update_display()                # the previous frame
