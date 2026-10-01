@@ -77,6 +77,12 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    if args.timeline > 1 and args.no_live:
+        # A timeline shows live elements changing; plain content never does.
+        parser.error("--timeline shows live elements; it cannot be combined with --no-live")
+    if (args.timeline or args.no_live) and not args.vegas:
+        parser.error("--timeline and --no-live need --vegas")
+
     if not (MIN_DIMENSION <= args.width <= MAX_DIMENSION):
         print(f"Error: --width must be between {MIN_DIMENSION} and {MAX_DIMENSION} (got {args.width})")
         raise SystemExit(1)
@@ -162,6 +168,9 @@ def main() -> int:
             logger.debug("update() completed")
         except Exception as e:
             logger.warning("update() raised: %s — continuing to display()", e)
+
+    if args.vegas:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
     if args.vegas and args.timeline > 1:
         from src.plugin_system.testing.vegas import render_vegas_timeline
