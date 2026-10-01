@@ -1,0 +1,10 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 20.0, "duration", 20, true],
+    [40.0, "<follower>", 10.017, "duration", 601, null],
+    [50.017, "clock", 20.0, "duration", 20, true],
+    [70.017, "weather", 9.983, "horizon", 10, true]
+  ],
+  "events": []
+}

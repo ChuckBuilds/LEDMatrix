@@ -68,6 +68,7 @@ class _SwapSpy:
         self.matrix = matrix
         self.count = 0
         self.last_frame_hold = None
+        self.holds = []
         self._orig = matrix.SwapOnVSync
 
     def __enter__(self):
@@ -77,6 +78,7 @@ class _SwapSpy:
             # the real binding or the spy hides a TypeError as a failed push.
             self.count += 1
             self.last_frame_hold = args[0] if args else 1
+            self.holds.append(self.last_frame_hold)
             return self._orig(canvas, *args)
         self.matrix.SwapOnVSync = counting
         return self
@@ -753,6 +755,114 @@ class TestOneScrollingAnswerPerFrame:
             dm.set_scrolling_state(False)
             dm._viewer_check_ts = 0.0
         assert len(asked) == 1
+
+    @staticmethod
+    def _scan_banded(dm, tmp_path, monkeypatch):
+        """Scan-order compensation on, no preview, no snapshot due, and every
+        frame handed to the canvases kept (update_display alternates them)."""
+        from collections import deque
+        monkeypatch.setattr(dm, "_scan_lag_bands", [(16, 32, 1)])
+        monkeypatch.setattr(dm, "_scan_history", deque(maxlen=1))
+        monkeypatch.setattr(dm, "_viewer_marker_path", str(tmp_path / "no-viewer"))
+        dm._viewer_check_ts = 0.0
+        dm._last_snapshot_ts = dm._last_snapshot_touch_ts = time.time()
+        shown = []
+        for canvas in (dm.offscreen_canvas, dm.current_canvas):
+            def capture(image, *args, _real=canvas.SetImage, **kwargs):
+                shown.append(image.copy())
+                return _real(image, *args, **kwargs)
+            monkeypatch.setattr(canvas, "SetImage", capture)
+        return shown
+
+    def test_a_held_frame_is_split_on_the_frames_answer(
+            self, dm, tmp_path, monkeypatch):
+        # Scan-order compensation presents a held frame as two swaps, the
+        # lagging half stepping one refresh after the rest. The split is
+        # decided on the frame's one answer, exactly as when it asked itself.
+        shown = self._scan_banded(dm, tmp_path, monkeypatch)
+        asked, recorded = [], []
+        real = dm.is_currently_scrolling
+
+        def counting():
+            asked.append(1)
+            return real()
+
+        monkeypatch.setattr(dm, "is_currently_scrolling", counting)
+        monkeypatch.setattr(
+            dm.frame_timing, "record",
+            lambda blit, wait, hold, scrolling, at: recorded.append(
+                (hold, scrolling)))
+        dm.set_scrolling_state(True, frame_hold=2)
+        try:
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(10, 0, 0))
+            dm.update_display()                # the previous frame
+            asked.clear()
+            recorded.clear()
+            before = len(shown)
+            dm._last_blit_seconds = 0.0        # a blit that fits a refresh
+            dm.set_scrolling_state(True, frame_hold=2)
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(20, 0, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+            dm._viewer_check_ts = 0.0
+        assert len(asked) == 1
+        assert spy.holds == [1, 1]
+        first, second = shown[before:]
+        assert first.getpixel((0, 0)) == (20, 0, 0)
+        assert first.getpixel((0, 31)) == (10, 0, 0)    # lagging half: old
+        assert second.getpixel((0, 31)) == (20, 0, 0)   # a refresh later
+        assert recorded == [(2, True)]
+
+    def test_a_held_scroll_that_times_out_goes_out_whole_at_hold_1(
+            self, dm, tmp_path, monkeypatch):
+        # The expiry frame with scan-order compensation on: one swap of the
+        # frame as drawn, at hold 1, the history dropped -- and the pacing
+        # gate, the swap and frame timing all see that one hold. (Asking
+        # partway through instead had the swap use the dead scroll's hold
+        # while the gate and frame timing were told 1.)
+        shown = self._scan_banded(dm, tmp_path, monkeypatch)
+        gate_holds, recorded = [], []
+
+        class _Gate:
+            def before_swap(self, hold):
+                gate_holds.append(('before', hold))
+
+            def after_swap(self, hold):
+                gate_holds.append(('after', hold))
+
+        monkeypatch.setattr(
+            dm.frame_timing, "record",
+            lambda blit, wait, hold, scrolling, at: recorded.append(
+                (hold, scrolling)))
+        dm.set_scrolling_state(True, frame_hold=3)
+        try:
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(30, 0, 0))
+            dm.update_display()                # the scroll's last frame
+            recorded.clear()
+            before = len(shown)
+            # Quiet past the inactivity threshold, and nothing has asked since.
+            dm._scrolling_state['last_scroll_activity'] -= (
+                dm._scrolling_state['scroll_inactivity_threshold'] + 1.0)
+            dm._last_blit_seconds = 0.0        # a split would fit
+            monkeypatch.setattr(dm, "render_gate", _Gate())
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(40, 0, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+            dm._viewer_check_ts = 0.0
+        assert spy.holds == [1]
+        assert gate_holds == [('before', 1), ('after', 1)]
+        assert recorded == [(1, False)]
+        (frame,) = shown[before:]
+        assert frame.getpixel((0, 31)) == (40, 0, 0)    # not composed
+        assert len(dm._scan_history) == 0
 
 
 class TestSnapshotEncoding:

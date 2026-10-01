@@ -20,31 +20,10 @@ from src.deprecation import deprecated
 
 REPO = Path(__file__).resolve().parents[1]
 
-#: Everything deprecated for removal in 3.8.0 (first announced for 3.7.0,
-#: which shipped with all of them still in place). docs/DEPRECATIONS_3.8.md
-#: says which are unused. Removing one of these, or deprecating another,
-#: should be a deliberate edit here too.
-DEPRECATED = {
-    "src.cache_manager.CacheManager": [
-        "has_data_changed", "update_cache", "setup_persistent_cache",
-        "get_sport_live_interval", "get_sport_key_from_cache_key",
-        "get_background_cached_data", "is_background_data_available",
-        "record_cache_hit", "record_cache_miss", "record_fetch_time",
-        "get_cache_metrics", "log_cache_metrics", "get_memory_cache_stats",
-    ],
-    "src.display_manager.DisplayManager": [
-        "draw_sun", "draw_cloud", "draw_rain", "draw_snow", "draw_weather_icon",
-        "draw_text_with_icons", "get_scrolling_stats",
-    ],
-    "src.font_manager.FontManager": [
-        "get_manager_fonts", "get_detected_fonts", "unregister_plugin_fonts",
-        "get_plugin_fonts", "set_override", "remove_override", "get_overrides",
-        "get_available_fonts", "get_size_tokens", "get_performance_stats",
-        "get_font_catalog", "add_font", "remove_font", "validate_font",
-    ],
-    "src.plugin_system.plugin_manager.PluginManager": ["get_enabled_plugins"],
-}
-
+#: Everything still deprecated. (The 35 methods deprecated for 3.8.0 were
+#: removed in it: docs/DEPRECATIONS_3.8.md found them unused.) Removing one
+#: of these, or deprecating another, should be a deliberate edit here too.
+#:
 #: Deprecated with Vegas participation, for removal in 3.9.0: core never read
 #: them (src.plugin_system.base_plugin.VEGAS_LEGACY_REMOVAL).
 DEPRECATED_3_9 = {
@@ -55,7 +34,7 @@ DEPRECATED_3_9 = {
 
 #: Every pinned marker: (class path, method) -> the release that removes it.
 PINNED = {(path, name): removal
-          for removal, table in (("3.8.0", DEPRECATED), ("3.9.0", DEPRECATED_3_9))
+          for removal, table in (("3.9.0", DEPRECATED_3_9),)
           for path, names in table.items() for name in names}
 
 
@@ -132,7 +111,57 @@ def test_usage_script_lists_exactly_the_pinned_markers(usage_script):
     assert found == {(path, name, removal) for (path, name), removal in PINNED.items()}
 
 
-def test_usage_script_tells_uses_from_name_collisions(usage_script, tmp_path):
+#: A stand-in core for the scanner tests below, so they keep working whichever
+#: real markers exist (the 3.8.0 ones they were written against are gone).
+FAKE_CORE = {
+    "src/cache_manager.py": """\
+        class CacheManager:
+            @deprecated("9.9.0", "use set()")
+            def update_cache(self, key, data):
+                pass
+        """,
+    "src/display_manager.py": """\
+        class DisplayManager:
+            @deprecated("9.9.0")
+            def draw_sun(self, x, y):
+                pass
+
+            @deprecated("9.9.0")
+            def draw_cloud(self, x, y):
+                pass
+
+            @deprecated("9.9.0")
+            def draw_rain(self, x, y):
+                self.draw_cloud(x, y)
+
+            @deprecated("9.9.0")
+            def draw_snow(self, x, y):
+                pass
+
+            @deprecated("9.9.0")
+            def get_scrolling_stats(self):
+                return {}
+        """,
+    "src/font_manager.py": """\
+        class FontManager:
+            @deprecated("9.9.0")
+            def add_font(self, path, name):
+                return True
+        """,
+}
+
+
+@pytest.fixture
+def fake_core(tmp_path):
+    root = tmp_path / "core"
+    for rel, source in FAKE_CORE.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(source), encoding="utf-8")
+    return root
+
+
+def test_usage_script_tells_uses_from_name_collisions(usage_script, fake_core, tmp_path):
     """Calls on the owning object and overrides count; same-named methods of
     unrelated classes and hits in test files do not."""
     plugin = tmp_path / "demo"
@@ -163,7 +192,7 @@ def test_usage_script_tells_uses_from_name_collisions(usage_script, tmp_path):
             display_manager.draw_snow.assert_not_called()
         """), encoding="utf-8")
 
-    markers = usage_script.find_markers(REPO)
+    markers = usage_script.find_markers(fake_core)
     source = usage_script.Source("demo", "monorepo", plugin)
     usage_script.scan_tree(source, [plugin], plugin, markers, core=False)
     kinds = {key: sorted(("test " if h.test else "") + h.kind for h in hits)
@@ -186,11 +215,12 @@ def test_usage_script_tells_uses_from_name_collisions(usage_script, tmp_path):
     assert status["DisplayManager.draw_snow"][0] == "unused"     # a test mock only
 
 
-def test_usage_script_follows_calls_between_deprecated_core_methods(usage_script):
+def test_usage_script_follows_calls_between_deprecated_core_methods(usage_script, fake_core):
     """draw_rain calls draw_cloud; with no outside callers both are unused."""
-    markers = usage_script.find_markers(REPO)
-    core = usage_script.Source("core", "core", REPO)
-    usage_script.scan_tree(core, [REPO / "src" / "display_manager.py"], REPO, markers, core=True)
+    markers = usage_script.find_markers(fake_core)
+    core = usage_script.Source("core", "core", fake_core)
+    usage_script.scan_tree(core, [fake_core / "src" / "display_manager.py"], fake_core,
+                           markers, core=True)
     kinds = {h.kind for h in core.hits["DisplayManager.draw_cloud"]}
     assert kinds == {"internal"}
     assert usage_script.verdicts(markers, [core])["DisplayManager.draw_cloud"][0] == "unused"
@@ -219,11 +249,3 @@ def test_first_call_warns_and_logs_then_stays_quiet(fresh, caplog):
     assert caught[0].filename == __file__  # points at the caller
     assert sum("will be removed in LEDMatrix 9.9.9" in r.message for r in caplog.records) == 1
     assert old.__name__ == "old" and old.__doc__ == "Doc."
-
-
-def test_decorated_methods_still_work(fresh):
-    from src.font_manager import FontManager
-    fm = FontManager({})
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        assert fm.get_font_catalog() == fm.font_catalog

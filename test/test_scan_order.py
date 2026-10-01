@@ -73,6 +73,27 @@ def _frame(shade):
     return Image.new("RGB", (8, 64), (shade, shade, shade))
 
 
+class TestRefreshPlan:
+    BANDS = [(32, 64, 1)]
+
+    def test_one_refresh_per_frame_is_a_plain_lag(self):
+        assert scan_order.refresh_plan(self.BANDS, 1) == [((1,), 1)]
+
+    def test_a_held_frame_lags_only_its_first_refresh(self):
+        assert scan_order.refresh_plan(self.BANDS, 2) == [((1,), 1), ((0,), 1)]
+        assert scan_order.refresh_plan(self.BANDS, 5) == [((1,), 1), ((0,), 4)]
+
+    def test_a_lag_longer_than_the_hold_reaches_further_back(self):
+        # Three halves down a stack, held for two refreshes.
+        plan = scan_order.refresh_plan([(0, 8, 3)], 2)
+        assert plan == [((2,), 1), ((1,), 1)]
+
+    def test_every_refresh_of_the_frame_is_accounted_for(self):
+        for hold in range(1, 9):
+            plan = scan_order.refresh_plan([(0, 8, 1), (8, 16, 2)], hold)
+            assert sum(count for _, count in plan) == hold
+
+
 class TestCompose:
     def test_a_band_comes_from_the_frame_that_many_refreshes_back(self):
         now, previous = _frame(30), _frame(20)
@@ -133,10 +154,28 @@ class TestUpdateDisplay:
         assert shown.getpixel((0, 0)) == (20, 0, 0)
         assert shown.getpixel((0, 31)) == (10, 0, 0)
 
-    def test_not_on_a_static_screen_or_a_held_frame(self, dm):
+    def test_not_on_a_static_screen(self, dm):
         dm._scan_lag_bands = [(16, 32, 1)]
         self._push(dm, 10)
         assert self._push(dm, 20).getpixel((0, 31)) == (20, 0, 0)   # not scrolling
+
+    def test_a_held_frame_is_split_so_the_lagging_half_steps_a_refresh_late(self, dm):
+        dm._scan_lag_bands = [(16, 32, 1)]
         dm.set_scrolling_state(True, 2)
-        self._push(dm, 30)
-        assert self._push(dm, 40).getpixel((0, 31)) == (40, 0, 0)   # hold 2
+        self._push(dm, 10)
+        before = len(dm._presented)
+        self._push(dm, 20)
+        first, second = dm._presented[before:]
+        assert first.getpixel((0, 0)) == (20, 0, 0)
+        assert first.getpixel((0, 31)) == (10, 0, 0)     # lagging half: still old
+        assert second.getpixel((0, 31)) == (20, 0, 0)    # caught up a refresh later
+
+    def test_a_slow_blit_is_not_split(self, dm):
+        dm._scan_lag_bands = [(16, 32, 1)]
+        dm.set_scrolling_state(True, 3)
+        self._push(dm, 10)
+        dm._last_blit_seconds = 1.0   # far longer than a refresh
+        before = len(dm._presented)
+        self._push(dm, 20)
+        assert len(dm._presented) - before == 1
+        assert dm._presented[-1].getpixel((0, 31)) == (20, 0, 0)

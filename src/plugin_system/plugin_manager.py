@@ -32,7 +32,6 @@ from src.plugin_system.schema_manager import (
 from src.plugin_system.plugin_dirs import (
     ManifestStatus, PluginDirectoryIndex, resolve_plugin_dir,
 )
-from src.deprecation import deprecated
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
@@ -872,16 +871,6 @@ class PluginManager:
             Dict of plugin_id: plugin_instance
         """
         return self.plugins.copy()
-    
-    @deprecated("3.8.0", "check each plugin's enabled flag in plugins")
-    def get_enabled_plugins(self) -> List[str]:
-        """
-        Get list of enabled plugin IDs.
-        
-        Returns:
-            List of plugin IDs that are currently enabled
-        """
-        return [pid for pid, plugin in self.plugins.items() if plugin.enabled]
     
     def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """

@@ -23,6 +23,10 @@ above it near the end, the section below must show one more refresh of lag to
 stay continuous with it (and one less where the order jumps the other way).
 Stacked parallel chains are lit simultaneously, so each further half adds one.
 
+A frame held for several refreshes (a slower, crisp scroll) is presented as a
+sequence of swaps instead of one long hold, so the lagging half can step one
+refresh after the rest: see :func:`refresh_plan`.
+
 Only layouts whose physical row order is known are compensated: plain chains,
 parallel chains, and a 0 or 180 degree rotation. Other pixel mappers
 (U-mapper, 90/270 rotation, ...), special multiplexing and interlaced scan are
@@ -109,19 +113,47 @@ def scan_lag_bands(hardware: Mapping[str, Any], height: int,
     return [band for band in bands if band[2] > 0] or None
 
 
-def compose(image: Image.Image, history: Sequence[Image.Image],
-            bands: Sequence[Band]) -> Image.Image:
-    """``image`` with each band taken from the frame ``lag`` refreshes back.
+def refresh_plan(bands: Sequence[Band], hold: int) -> List[Tuple[Tuple[int, ...], int]]:
+    """How to present one frame that is held for ``hold`` refreshes.
 
-    ``history[0]`` is the previous frame. A band whose frame is not available
-    yet (the first frames of a scroll) is left current. Returns ``image`` itself
-    when nothing changes, so the caller pays for a copy only when it must.
+    A band lagging ``lag`` refreshes shows, on refresh ``r`` of the frame, what
+    the panel showed ``lag`` refreshes earlier: the current frame once
+    ``r >= lag``, else a frame ``ceil((lag - r) / hold)`` back. At one refresh
+    per frame that is just ``lag`` frames back. Held longer, the lagging band
+    steps one refresh after the rest instead of one frame, which is the only
+    way to cancel the offset: it is a fraction of a frame there.
+
+    Returns ``[(frames_back_per_band, refreshes), ...]`` in order, merging
+    neighbouring refreshes that show the same thing so each costs one swap.
+    """
+    plan: List[Tuple[Tuple[int, ...], int]] = []
+    for r in range(max(1, hold)):
+        backs = tuple(max(0, -((r - lag) // max(1, hold))) for _, _, lag in bands)
+        if plan and plan[-1][0] == backs:
+            plan[-1] = (backs, plan[-1][1] + 1)
+        else:
+            plan.append((backs, 1))
+    return plan
+
+
+def compose(image: Image.Image, history: Sequence[Image.Image],
+            bands: Sequence[Band],
+            backs: Optional[Sequence[int]] = None) -> Image.Image:
+    """``image`` with each band taken from an earlier frame.
+
+    ``history[0]`` is the previous frame. ``backs`` is how many frames back each
+    band is taken from (0 = the current one); by default that is the band's lag,
+    which is right when every frame is held for one refresh. A band whose frame
+    is not available yet (the first frames of a scroll) is left current.
+    Returns ``image`` itself when nothing changes, so the caller pays for a copy
+    only when it must.
     """
     out = image
-    for top, bottom, lag in bands:
-        if lag > len(history):
+    for i, (top, bottom, lag) in enumerate(bands):
+        back = lag if backs is None else backs[i]
+        if back <= 0 or back > len(history):
             continue
-        source = history[lag - 1]
+        source = history[back - 1]
         if source.size != image.size:
             continue
         if out is image:
