@@ -16,8 +16,8 @@ from src.common.font_layout import load_truetype, resolve_asset_path
 _measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
 #: A one-pixel outline on all eight sides, in the order the scoreboards have
-#: always drawn it (dx outer, dy inner). The order matters only for a
-#: translucent outline, where it is kept anyway.
+#: always drawn it (dx outer, dy inner). The order can change pixels only
+#: where anti-aliased (fontmode "L") edges overlap; it is kept anyway.
 OUTLINE_SQUARE: Tuple[Tuple[int, int], ...] = (
     (-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 
@@ -124,7 +124,8 @@ def _whole_pixel(v: Any) -> bool:
     For those, draw.text's ``int(x + dx)`` is ``int(x) + dx`` and its
     sub-pixel start is 0 (or -0.0, which renders the same), so one mask fits
     every offset. Floats are held well inside the range where ``x + dx`` is
-    exact; Pillow cannot draw past 2**31 anyway.
+    exact; nothing that far out is on any canvas, so the loop the rest take
+    costs nothing that matters.
     """
     if isinstance(v, int):
         return True
@@ -176,7 +177,7 @@ def _stamp_outlined(draw: ImageDraw.ImageDraw, x: int, y: int, text: str,
             draw_bitmap((x + ox, y + oy), mask, text_ink)
     except Exception:
         # A rejected call draws nothing, but one that got through has: never
-        # draw the outline twice (a translucent one would darken).
+        # draw the outline twice (anti-aliased edges would be blended twice).
         if stamped:
             raise
         return False

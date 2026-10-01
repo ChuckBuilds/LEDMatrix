@@ -183,7 +183,8 @@ FONT_CASES = [
 ]
 
 #: (fill, outline_color) for RGB/RGBA canvases: the scoreboard default, a
-#: translucent outline, translucent text, and draw.text's own default ink.
+#: part-transparent outline, part-transparent text (only an RGBA canvas keeps
+#: the alpha), and draw.text's own default ink.
 RGB_COLOURS = [
     ((255, 200, 0), (0, 0, 0)),
     ((250, 250, 250), (0, 0, 0, 128)),
@@ -192,8 +193,9 @@ RGB_COLOURS = [
 ]
 
 #: (image mode, Draw mode, background, colours). Backgrounds are not black,
-#: so a black outline shows; the RGBA one is part transparent; Draw(img,
-#: "RGBA") on an RGB image blends.
+#: so a black outline shows; the RGBA one is part transparent. draw.text
+#: never blends ink alpha, even under Draw(img, "RGBA") on an RGB image: on
+#: RGB it is dropped, on RGBA it lands in the alpha band.
 SETUPS = [
     ("RGB", None, (40, 80, 120), RGB_COLOURS),
     ("RGBA", None, (40, 80, 120, 100), RGB_COLOURS),
@@ -424,6 +426,17 @@ class TestDrawTextOutlinedFallsBackToTheLoop:
         assert _same_pixels(got, expected)
         assert expected.tobytes() != _canvas()[0].tobytes()
 
+    def test_a_freetype_font_subclass(self, monkeypatch):
+        # Exact type, not isinstance: a subclass may override getmask2 (or
+        # whatever a later draw.text calls instead), and stamping would call
+        # it once where draw.text calls it once per draw.
+        class Subclassed(ImageFont.FreeTypeFont):
+            pass
+
+        font = Subclassed(str(FONTS_DIR / "PressStart2P-Regular.ttf"), 8,
+                          layout_engine=ImageFont.Layout.BASIC)
+        self._assert_loop(monkeypatch, font, (5, 7), "21-17")
+
     def test_a_transposed_font(self, monkeypatch):
         base = _font("PressStart2P-Regular.ttf", 8)
         font = ImageFont.TransposedFont(base, Image.Transpose.ROTATE_90)
@@ -526,16 +539,25 @@ class TestDrawTextOutlinedErrors:
         with pytest.raises(ValueError):
             draw_text_outlined(_canvas()[1], (1, 2, 3), "21", font, (255, 255, 255))
 
-    @pytest.mark.parametrize("x", [2 ** 31, 2.0 ** 31, 2.0 ** 60])
-    def test_a_position_pillow_cannot_draw_at(self, x):
+    # Whether Pillow raises this far out depends on the platform: on Windows
+    # every one of these does, while on 64-bit Linux (CI) the 2**31 range
+    # draws nothing and only the 2**63 range raises, part way through the
+    # outline. Either way the stamping path must do what the loop does.
+    @pytest.mark.parametrize("x", [2 ** 31 - 1, 2 ** 31, 2.0 ** 31, 2 ** 32 + 5,
+                                   2.0 ** 60, 2 ** 63 - 1, 2 ** 63])
+    def test_a_position_far_off_the_canvas(self, x):
         font = _font("PressStart2P-Regular.ttf", 8)
+
+        def outcome(draw_fn, draw):
+            try:
+                draw_fn(draw, (x, 0), "21", font, (255, 200, 0))
+            except Exception as e:
+                return type(e)
+            return None
+
         expected, ref_draw = _canvas()
-        with pytest.raises(Exception) as loop_error:
-            _reference(ref_draw, (x, 0), "21", font, (255, 200, 0))
         got, draw = _canvas()
-        with pytest.raises(Exception) as error:
-            draw_text_outlined(draw, (x, 0), "21", font, (255, 200, 0))
-        assert type(error.value) is type(loop_error.value)
+        assert outcome(draw_text_outlined, draw) is outcome(_reference, ref_draw)
         assert _same_pixels(got, expected)
 
 
@@ -560,8 +582,8 @@ class _DrawProxy:
 
 class TestDrawTextOutlinedGuards:
     """The stamping path leans on Pillow internals; if one changes, the loop
-    runs instead -- but never after a stamp has landed, or a translucent
-    outline would be drawn twice."""
+    runs instead -- but never after a stamp has landed, or an anti-aliased
+    outline would be blended twice."""
 
     def test_a_failing_rasterization_call_takes_the_loop(self, monkeypatch):
         font = _font("PressStart2P-Regular.ttf", 8)
@@ -616,20 +638,32 @@ class TestTheOutlinedDrawSitesUseIt:
     # A whole-pixel float x is what the scorebug's centring arithmetic
     # (``(width - draw.textlength(...)) // 2``) actually passes.
     @pytest.mark.parametrize("position", [(2, 1), (2.0, 1)])
-    def test_the_scoreboard_mixin(self, monkeypatch, position):
+    # The caller's outline_color reaches the outline: the default black, a
+    # colour, and a part-transparent black on an RGBA canvas (draw.text does
+    # not blend ink alpha; it lands in the alpha band, so on RGB it would
+    # look like the default).
+    @pytest.mark.parametrize("outline,mode,background", [
+        (None, "RGB", (40, 80, 120)),
+        ((200, 0, 0), "RGB", (40, 80, 120)),
+        ((0, 0, 0, 128), "RGBA", (40, 80, 120, 100)),
+    ], ids=["default", "red", "alpha"])
+    def test_the_scoreboard_mixin(self, monkeypatch, position, outline, mode,
+                                  background):
         from src.common.sports_shared import SportsCoreSharedMixin
 
         font = _font("PressStart2P-Regular.ttf", 10)
         calls = _count_rasterizations(monkeypatch, font)
         # The mixin forces fontmode "1" however the draw arrives.
-        expected, ref_draw = _canvas(fontmode="1")
-        _reference(ref_draw, position, "6", font, (255, 200, 0))
-        got, draw = _canvas(fontmode="L")
+        expected, ref_draw = _canvas(mode, None, background, fontmode="1")
+        _reference(ref_draw, position, "6", font, (255, 200, 0),
+                   (0, 0, 0) if outline is None else outline)
+        got, draw = _canvas(mode, None, background, fontmode="L")
         before = len(calls)
         # Unbound with self=None, as the plugins' anti-aliasing tests call it:
         # an explicit fill reads nothing from the host.
         SportsCoreSharedMixin._draw_text_with_outline(
-            None, draw, "6", position, font, fill=(255, 200, 0))
+            None, draw, "6", position, font, fill=(255, 200, 0),
+            **({} if outline is None else {"outline_color": outline}))
         assert draw.fontmode == "1"
         assert len(calls) - before == 1
         assert _same_pixels(got, expected)
@@ -655,10 +689,19 @@ class TestTheOutlinedDrawSitesUseIt:
         assert _same_pixels(got, expected)
 
     @pytest.mark.parametrize("width", [-1, 0, 1, 2])
-    def test_text_helper_draw_text_with_outline(self, monkeypatch, width):
-        font = _font("PressStart2P-Regular.ttf", 8)
+    # Pillow's default fontmode "L", with faces whose edges are anti-aliased
+    # at these sizes: a partly covered pixel lets what is under the text
+    # through, so an outline stamped under it as well would show. (In fontmode
+    # "1" the text covers it, whatever the alphas.)
+    @pytest.mark.parametrize("mode,background,font_case", [
+        ("RGB", (40, 80, 120), ("4x6-font.ttf", 8)),
+        ("RGBA", (40, 80, 120, 100), ("PressStart2P-Regular.ttf", 7)),
+    ], ids=["RGB", "RGBA"])
+    def test_text_helper_draw_text_with_outline(self, monkeypatch, width, mode,
+                                                background, font_case):
+        font = _font(*font_case)
         calls = _count_rasterizations(monkeypatch, font)
-        expected, ref_draw = _canvas()
+        expected, ref_draw = _canvas(mode, None, background, fontmode="L")
         # TextHelper's own loop before it was routed: every offset up to
         # outline_width away on each axis, dx outer, dy inner, centre skipped.
         for dx in range(-width, width + 1):
@@ -667,7 +710,7 @@ class TestTheOutlinedDrawSitesUseIt:
                     ref_draw.text((5 + dx, 7 + dy), "Q4", font=font,
                                   fill=(0, 0, 0, 128))
         ref_draw.text((5, 7), "Q4", font=font, fill=(255, 255, 255))
-        got, draw = _canvas()
+        got, draw = _canvas(mode, None, background, fontmode="L")
         before = len(calls)
         TextHelper().draw_text_with_outline(draw, "Q4", (5, 7), font,
                                             outline_color=(0, 0, 0, 128),

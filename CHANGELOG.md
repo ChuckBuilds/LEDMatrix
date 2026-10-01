@@ -522,9 +522,9 @@ read any of them:
   desktop). `test/test_text_helper.py` compares it with the nine-draw loop
   across the bundled fonts, image and font modes, colours and positions,
   and fails if it stops rasterizing once. Fractional coordinates, multiline
-  text, fonts other than a `FreeTypeFont`, image modes other than RGB, RGBA
-  and L, and a subclassed or replaced `draw.text` take the old loop
-  unchanged. A whole-pixel float such as `52.0`, which the scorebugs'
+  text, fonts other than a plain `FreeTypeFont`, image modes other than
+  RGB, RGBA and L, and a subclassed or replaced `draw.text` take the old
+  loop unchanged. A whole-pixel float such as `52.0`, which the scorebugs'
   centring passes, is not fractional.
 - `SportsCoreSharedMixin._draw_text_with_outline`, which eight of the nine
   scoreboards inherit for their switch-mode scorebug (ufc has its own), and

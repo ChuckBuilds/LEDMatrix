@@ -366,7 +366,7 @@ each offset, then in `fill` on top: the same pixels as one `draw.text` per
 offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
 eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the
 four-sided one. Fractional coordinates (a whole-pixel float such as `52.0`
-is fine), multiline text, fonts other than a `FreeTypeFont`, image modes
+is fine), multiline text, fonts other than a plain `FreeTypeFont`, image modes
 other than RGB, RGBA and L, and a subclassed or replaced `draw.text` take
 the `draw.text` loop unchanged. `TextHelper.draw_text_with_outline()` and
 the scoreboards' `SportsCoreSharedMixin._draw_text_with_outline()` use it.
