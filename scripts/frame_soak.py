@@ -9,7 +9,10 @@ reports the difference. Nothing is stopped, restarted or drawn.
     python3 scripts/frame_soak.py
 
     # the same with the web preview open (the preview's PNG encodes are one of
-    # the things that used to make the render loop miss refreshes)
+    # the things that used to make the render loop miss refreshes). An open
+    # preview is encoded at most once a second; up to 3.7.0 it was up to five
+    # times, so a --preview run from before that change is not comparable
+    # with one from after it
     python3 scripts/frame_soak.py --preview
 
     # quick look at the totals since the service started
@@ -58,7 +61,8 @@ from src.common.frame_timing import (  # noqa: E402
 )
 
 #: Touched by the web UI while someone has the preview open; a fresh marker
-#: puts the display service's snapshot writer at full rate. Same path as
+#: puts the display service's snapshot writer at the viewer rate
+#: (snapshot_policy.VIEWER_INTERVAL). Same path as
 #: DisplayManager._viewer_marker_path.
 VIEWER_MARKER = "/tmp/led_matrix_preview_viewer"  # nosec B108 - fixed path shared with the service
 

@@ -510,6 +510,38 @@ read any of them:
   New `ScrollHelper.has_strip()` says whether there is a strip without
   building its image; the frame path and Vegas use it.
 
+### Web preview: less work per frame
+
+- Mid-scroll, `update_display()` no longer checksums every frame. The
+  checksum (`tobytes()` plus `adler32` over the whole framebuffer: ~0.17 ms a
+  frame at 256x64 on a Pi 4, so roughly twice that at 512x64 and well under
+  0.1 ms at 128x32) fed only the dirty-tracking skip, which never applies
+  while scrolling, and the preview snapshot's changed-frame check. The
+  snapshot now asks its policy first and hashes the frame only when a write
+  or touch could follow. That changes no snapshot decision:
+  `snapshot_policy.decide()` is monotone in `frame_changed`, and a test holds
+  it to that. Two small differences on the panel: the first static frame
+  after a scroll is pushed even when it matches the scroll's last frame (one
+  extra swap), and the frame on which a scroll that never said it stopped
+  times out is presented at a hold of 1 rather than the scroll's hold.
+- With the web preview open, the display writes the snapshot at most once a
+  second (`snapshot_policy.VIEWER_INTERVAL`, was 0.2 s). The preview already
+  showed at most one frame a second: its SSE stream re-read the file once a
+  second, so four PNG encodes in five were overwritten unread. The stream now
+  checks the file's mtime every 0.25 s (new `VIEWER_POLL_INTERVAL`) and sends
+  each frame soon after it is written, so the preview stays about as fresh;
+  it still touches the viewer marker once a second, and with no snapshot
+  file it still sends its placeholder once a second. A screen that animates
+  faster than once a second without marking itself as scrolling (a GIF, say)
+  was encoded on the render thread up to five times a second while the
+  preview was open, 12-14 ms each at 512x64 on a Pi 4; now at most once.
+- The snapshot PNG is written at `compress_level=1`. On a desktop that
+  encoded a text-dense 512x64 frame in about half Pillow's default time, into
+  a larger file (12 KB instead of 7 KB); sparser frames gain less.
+- `scripts/frame_soak.py --preview` soaks are not comparable across this
+  change: an open preview now costs at most one encode a second, not up to
+  five. Take both sides of an A/B pair on the same side of it.
+
 ### Tooling
 
 - The frame-timing recorder says which render-thread work a late frame

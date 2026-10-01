@@ -5,7 +5,9 @@ The invariants that matter:
   frames at 5 fps, 24/7)
 - the file mtime never goes stale enough to trip the health check's 60s
   degraded threshold (api_v3 get_hardware_status)
-- a viewer gets full cadence; no viewer drops to the idle keepalive
+- a viewer gets the viewer cadence; no viewer drops to the idle keepalive
+- decide() is monotone in frame_changed, which DisplayManager's lazy
+  frame hash relies on
 """
 
 import os
@@ -19,6 +21,8 @@ from src.common.snapshot_policy import (  # noqa: E402
     IDLE_INTERVAL,
     TOUCH_INTERVAL,
     VIEWER_INTERVAL,
+    VIEWER_MARKER_FRESH_SEC,
+    VIEWER_POLL_INTERVAL,
     SnapshotAction,
     decide,
 )
@@ -87,6 +91,44 @@ class TestHealthKeepalive:
                                 last_touch_ts=900.0, viewer_fresh=viewer,
                                 frame_changed=changed)
                 assert action in (SnapshotAction.WRITE, SnapshotAction.TOUCH)
+
+
+class TestMonotoneInFrameChanged:
+    """DisplayManager asks decide() as if the frame had changed, and only
+    hashes the frame when that answer is not SKIP. That is exact only while
+    a SKIP for a changed frame is also a SKIP for an unchanged one."""
+
+    def test_skip_for_a_changed_frame_is_skip_for_an_unchanged_one(self):
+        # Ages that straddle every threshold decide() compares against, plus
+        # a timestamp in the future (a wall-clock step back) and "never".
+        eps = 1e-6
+        ages = sorted({0.0, -1.0, 1000.0, 100.0} | {
+            base + delta
+            for base in (VIEWER_INTERVAL, IDLE_INTERVAL, TOUCH_INTERVAL)
+            for delta in (-eps, 0.0, eps)
+        })
+        now = 1000.0
+        checked = 0
+        for write_age in ages:
+            for touch_age in ages:
+                for viewer in (True, False):
+                    args = (now, now - write_age, now - touch_age, viewer)
+                    if decide(*args, frame_changed=True) is SnapshotAction.SKIP:
+                        checked += 1
+                        assert decide(*args, frame_changed=False) is SnapshotAction.SKIP, args
+        assert checked, "the grid never reached a SKIP; it tests nothing"
+
+
+class TestPreviewPolling:
+    def test_the_reader_polls_faster_than_the_writer_writes(self):
+        """Equal periods alias: two unsynchronised clocks of the same period
+        leave the preview up to a period stale, with the odd double gap."""
+        assert VIEWER_POLL_INTERVAL < VIEWER_INTERVAL
+
+    def test_polling_keeps_the_viewer_marker_fresh(self):
+        # The SSE reader touches the marker about once a second however fast
+        # it polls; the display must still count that as a live viewer.
+        assert max(VIEWER_POLL_INTERVAL, 1.0) < VIEWER_MARKER_FRESH_SEC
 
 
 if __name__ == "__main__":
