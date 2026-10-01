@@ -12,6 +12,7 @@ from contextlib import contextmanager, nullcontext
 from typing import Optional, List, Any, Tuple, Union, TYPE_CHECKING
 from PIL import Image
 
+from src.common.scroll_helper import ScrollHelper
 from src.vegas_mode.geometry import (
     blank_runs,
     separation_gap,
@@ -1354,7 +1355,13 @@ class PluginAdapter:
             if helper is None:
                 continue
             try:
-                if getattr(helper, 'cached_image', None) is not None:
+                # has_strip() rather than reading cached_image, which would
+                # build a deferred image only to throw it away.
+                if isinstance(helper, ScrollHelper):
+                    has_image = helper.has_strip()
+                else:
+                    has_image = getattr(helper, 'cached_image', None) is not None
+                if has_image:
                     helper.cached_image = None
                     cleared = True
                 if getattr(helper, 'cached_array', None) is not None:

@@ -332,6 +332,20 @@ read any of them:
   worker, which applies the latest one as soon as the lock frees, and before
   the plugin's next update() at the latest. The plugin API is unchanged.
 
+### Scrolling
+
+- A Vegas strip extension costs the render thread about a third of what it
+  did. Appending the next group and trimming what has scrolled past each
+  rebuilt the strip's PIL image from its numpy array in full
+  (`Image.fromarray`: 1.7ms for an 8,000px strip, 3.8ms for 20,000px, on a
+  Pi 4 -- twice per extension), though every frame is cut from the array and
+  nothing on the frame path reads the image's pixels. `ScrollHelper` now
+  builds `cached_image` only when something reads it, which in Vegas means
+  only a multi-display sync push, and the strip is no longer held in memory
+  twice. Assigning `cached_image` still stores exactly what was assigned.
+  New `ScrollHelper.has_strip()` says whether there is a strip without
+  building its image; the frame path and Vegas use it.
+
 ### Tooling
 
 - The frame-timing recorder says which render-thread work a late frame
