@@ -644,6 +644,23 @@ class RunLoopHarness:
                            {"request_id": request_id, "action": action, **fields})
         self.clock.at(t, post)
 
+    def restore_on_demand(self, plugin_id: str, mode: Optional[str] = None,
+                          duration: Optional[float] = None, pinned: bool = False):
+        """Start with an on-demand session resumed from the cache, as after
+        a restart: the state _select_startup_plugins restores, then
+        _populate_on_demand_modes_from_plugin, as __init__ calls it."""
+        dc = self.controller
+        dc.on_demand_active = True
+        dc.on_demand_plugin_id = plugin_id
+        dc.on_demand_mode = mode
+        dc.on_demand_duration = duration
+        dc.on_demand_pinned = pinned
+        dc.on_demand_requested_at = self.clock.now
+        dc.on_demand_expires_at = self.clock.now + duration if duration else None
+        dc.on_demand_status = 'active'
+        dc.on_demand_schedule_override = True
+        dc._populate_on_demand_modes_from_plugin()
+
     def wifi_message(self, t: float, message: str, duration: float = 5):
         def write():
             self.log("wifi-file", message)

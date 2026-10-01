@@ -122,10 +122,20 @@ def scenario_on_demand_pinned(h: RunLoopHarness):
     h.on_demand_request(120, "p3", action="stop")
 
 
+def scenario_on_demand_restored(h: RunLoopHarness):
+    # A restart during an on-demand session resumes it: the first screen is
+    # the saved mode (with a full clear), not the rotation's first mode, and
+    # the rotation starts from the top once it expires.
+    h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
+    h.add_plugin(FakePlugin("weather", ["weather"], duration=20))
+    h.add_plugin(FakePlugin("sports", ["sports_recent", "sports_upcoming"], duration=15))
+    h.restore_on_demand("sports", mode="sports_upcoming", duration=40)
+
+
 def scenario_schedule(h: RunLoopHarness):
-    # The clock starts at 22:59:30. Off from 23:01 until 23:03 (the window
-    # spans midnight); dimmed from 23:00 until 23:02.
-    h.config["schedule"] = {"enabled": True, "start_time": "23:03", "end_time": "23:01"}
+    # The clock starts at 22:59:30. Off from 23:01 until 23:05 (the window
+    # spans midnight); dimmed from 23:00 until 23:01.
+    h.config["schedule"] = {"enabled": True, "start_time": "23:05", "end_time": "23:01"}
     h.config["dim_schedule"] = {"enabled": True, "start_time": "23:00",
                                 "end_time": "23:01", "dim_brightness": 30}
     h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
@@ -181,7 +191,8 @@ SCENARIOS = {
     "live_round_robin": (scenario_live_round_robin, 150),
     "on_demand": (scenario_on_demand, 240),
     "on_demand_pinned": (scenario_on_demand_pinned, 160),
-    "schedule": (scenario_schedule, 300),
+    "on_demand_restored": (scenario_on_demand_restored, 100),
+    "schedule": (scenario_schedule, 400),
     "wifi_notice": (scenario_wifi_notice, 150),
     "follower": (scenario_follower, 80),
     "vegas": (scenario_vegas, 260),
