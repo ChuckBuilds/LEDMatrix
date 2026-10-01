@@ -14,6 +14,7 @@ Complete API reference for plugin developers. This document describes all method
 - [Display Manager](#display-manager)
 - [Cache Manager](#cache-manager)
 - [Plugin Manager](#plugin-manager)
+- [Fetching data](#fetching-data)
 - [Deprecated APIs](#deprecated-apis)
 
 ---
@@ -1027,6 +1028,63 @@ weather = self.plugin_manager.plugins.get("weather")
 if weather is not None and weather.enabled:
     pass
 ```
+
+---
+
+## Fetching data
+
+Use the core helpers for HTTP rather than a `requests.Session` of your own:
+`APIHelper` (`from src.common import APIHelper`) for JSON APIs, and
+`fetch_espn_scoreboard()` (`src.common.espn_dates`) or
+`BackgroundDataService` for ESPN scoreboards. Since the release after 3.7.0
+these go through the core **fetch service** (`src/common/fetch_service.py`),
+so a plugin that uses them gets the following with no code change. Return
+values, exceptions and retries are what they were.
+
+- **Shared connections.** Core sessions with the same retry policy share one
+  connection pool per host, instead of one pool per helper.
+- **Merged requests.** Identical GETs in flight at the same time (same URL
+  and query, headers, timeout and retry policy) go to the network once, and
+  every caller gets its own copy of the response, or the same exception.
+- **Host budgets.** A host can have a token-bucket budget. A request past it
+  waits for a token, but never longer than `max_wait_seconds` (2 s by
+  default). Only ESPN hosts have one by default (20 requests a second, burst
+  200), which normal use never reaches.
+- **Conditional GET.** When a server sends `ETag` or `Last-Modified`, the
+  next identical request revalidates, and a `304 Not Modified` comes back to
+  your code as the original `200` with its body. ESPN currently sends
+  neither, so this does nothing there.
+- **Counters.** Requests, merged requests, bytes, 304s, errors and time spent
+  waiting are counted per plugin and per host, and published for the web UI
+  at `GET /api/v3/plugins/fetch-stats` (see
+  [REST_API_REFERENCE.md](REST_API_REFERENCE.md#get-fetch-statistics)). A
+  request is counted against your plugin when it runs inside your
+  `update()`/`display()`, your constructor or `on_enable()`, or anywhere in
+  code under your plugin's directory, including threads you start.
+
+What is not covered yet: requests a plugin makes with its own `requests.get()`
+or `Session.get()` calls. They work as before but are invisible to the
+budgets and counters.
+
+The settings live in `config.json` under `fetch_service`, read when the
+display starts and on a config reload:
+
+```json
+"fetch_service": {
+    "enabled": true,
+    "max_wait_seconds": 2,
+    "rate_limits": {
+        "*.espn.com": {"per_second": 20, "burst": 200},
+        "api.example.com": {"per_second": 1, "burst": 5}
+    }
+}
+```
+
+`rate_limits` keys are a host or a `*.domain` pattern (which also matches
+the bare domain); `"per_second": 0` removes a budget. `"enabled": false`
+turns the whole service into a plain `session.get()`. Two further switches,
+`"single_flight": false` and `"conditional_get": false`, turn off merging and
+revalidation.
 
 ---
 

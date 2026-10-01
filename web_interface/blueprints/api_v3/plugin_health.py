@@ -1,4 +1,4 @@
-"""Plugin health, resource metrics and resource limits.
+"""Plugin health, resource metrics, fetch statistics and resource limits.
 
 The display process records health and metrics to the shared on-disk cache;
 these routes read (and reset) that published state through a tracker and a
@@ -190,6 +190,24 @@ def reset_plugin_metrics(plugin_id):
     return jsonify({
         'status': 'success',
         'message': f'Metrics reset for plugin {plugin_id}'
+    })
+
+
+@api_v3.route('/plugins/fetch-stats', methods=['GET'])
+def get_fetch_stats():
+    """Network requests per plugin and per host, as the display counts them.
+
+    Read-only. The display's fetch service (src/common/fetch_service.py)
+    publishes its counters to the shared cache at most once a minute when
+    they change; this returns that snapshot judged for staleness:
+    ``data.status`` is ``live``, ``stale``, ``stopped`` or ``unknown``, and
+    ``data.data`` the snapshot (None when unknown). Counters are cumulative
+    since the display started.
+    """
+    from src.common.fetch_service import read_fetch_stats
+    return jsonify({
+        'status': 'success',
+        'data': read_fetch_stats(getattr(api_v3, 'cache_manager', None)),
     })
 
 

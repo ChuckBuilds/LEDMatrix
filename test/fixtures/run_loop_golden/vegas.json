@@ -10,9 +10,9 @@
     [150.263, "clock", 20.0, "duration", 20, true],
     [170.263, "clock", 5.0, "on-demand-expired", 5, true],
     [175.263, "<vegas>", 24.959, "vegas-interrupt", 3120, null],
-    [200.222, "clock", 20.0, "duration", 20, true],
-    [220.222, "<vegas>", 30.008, "duration", 3751, null],
-    [250.23, "<vegas>", 9.77, "horizon", 1222, null]
+    [200.222, "<wifi>", 3.0, "duration", 6, null],
+    [203.222, "<vegas>", 30.008, "duration", 3751, null],
+    [233.23, "<vegas>", 26.77, "horizon", 3347, null]
   ],
   "events": [
     [70.255, "vegas-live"],

@@ -148,8 +148,8 @@ def scenario_schedule(h: RunLoopHarness):
 def scenario_wifi_notice(h: RunLoopHarness):
     h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
     h.add_plugin(FakePlugin("weather", ["weather"], duration=20))
-    # Posted mid-screen and expired before the screen ends: never shown,
-    # because the notice is only checked between screens.
+    # Posted mid-screen: it preempts the screen at its next frame, stays up
+    # until it expires, and the interrupted mode then comes back in full.
     h.wifi_message(25, "Connected to HomeNet", duration=5)
     # While on-demand is active the notice waits.
     h.on_demand_request(60, "w1", plugin_id="clock", duration=20)
