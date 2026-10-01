@@ -129,6 +129,13 @@ class SportsPluginHostMixin:
         thread.start()
 
     # ---- Vegas weighting: is a favourite playing? -----------------------
+    #
+    # With display.vegas_scroll.live_in_ticker set, the marquee keeps running
+    # through a live game and plugins can claim more than one slot per cycle.
+    # The core already gives any plugin with live content `live_weight`; this
+    # exists for the one thing the core cannot work out for itself, which is
+    # *whose* game is live. See PLUGIN_API_REFERENCE, "Vegas scroll hooks",
+    # and ADVANCED_FEATURES, "Live content in the ticker".
 
     def get_vegas_priority_weight(self):
         """Slots per Vegas cycle: more when a favorite team is playing.
