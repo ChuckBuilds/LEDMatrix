@@ -10,6 +10,7 @@ from web_interface.blueprints.api_v3 import (
 )
 from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
+from src.ipc import client as control_client
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
@@ -27,6 +28,62 @@ def _cache_manager():
         from src.cache_manager import CacheManager
         cache = api_v3.cache_manager = CacheManager()
     return cache
+
+
+#: Socket failures that only mean "this display has no socket": stopped,
+#: older than the socket, Windows, or switched off. Not worth a log line.
+_QUIET_SOCKET_REASONS = frozenset({'no_socket', 'disabled', 'unsupported'})
+
+#: Every reason code a response may echo as ``socket_error``: the client's
+#: transport reasons plus the display's ErrorCode values. Anything else is
+#: reported as ``other``, so no text taken from an exception reaches a reply.
+_REPORTABLE_SOCKET_REASONS = (
+    'disabled', 'unsupported', 'no_socket', 'refused', 'timeout', 'closed',
+    'bad_response', 'invalid_request',
+    'bad_json', 'bad_request', 'message_too_large', 'unsupported_version',
+    'unknown_command', 'invalid_args', 'busy', 'forbidden', 'internal',
+)
+
+
+def _socket_reason_code(reason):
+    """``reason`` as one of _REPORTABLE_SOCKET_REASONS, else ``'other'``."""
+    return next((code for code in _REPORTABLE_SOCKET_REASONS if code == reason), 'other')
+
+
+def _deliver_on_demand(payload):
+    """Hand an on-demand request to the display: control socket, else mailbox.
+
+    The socket (src/ipc) answers with an acknowledgement as soon as the
+    display has the command queued for its render thread. Any failure -- no
+    socket (the display is stopped or predates it), a timeout, a refusal --
+    writes the file mailbox instead, exactly as before the socket existed;
+    the display reads it within ON_DEMAND_POLL_INTERVAL. Both carry the same
+    request_id, so a request that reached the display both ways (a reply
+    that timed out after the command was queued) is still processed once.
+
+    Returns ``(transport, socket_error)``: ``'socket'`` and None, or
+    ``'mailbox'`` and the socket failure's reason code.
+    """
+    try:
+        if payload['action'] == 'start':
+            control_client.on_demand_start(
+                payload['request_id'], payload.get('plugin_id'), payload.get('mode'),
+                payload.get('duration'), bool(payload.get('pinned', False)))
+        else:
+            control_client.on_demand_stop(payload['request_id'])
+        return 'socket', None
+    except control_client.ControlError as e:
+        reason = _socket_reason_code(e.reason)
+        if reason in _QUIET_SOCKET_REASONS:
+            logger.debug("On-demand %s via the mailbox: %s", payload['action'], e)
+        else:
+            logger.warning("Control socket did not take on-demand %s (%s); "
+                           "using the mailbox", payload['action'], e)
+    except Exception:  # never let the socket path break the route
+        logger.exception("Control socket client failed; using the mailbox")
+        reason = 'internal'
+    _cache_manager().set('display_on_demand_request', payload)
+    return 'mailbox', reason
 
 
 @api_v3.route('/display/current', methods=['GET'])
@@ -192,10 +249,11 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
-    # Post the request to the mailbox the display process polls
-    # (DisplayController._poll_on_demand_requests). Written before any
-    # service start, so a freshly started display finds it on its first poll.
-    cache = _cache_manager()
+    # Deliver the request over the control socket, or post it to the
+    # mailbox the display process polls (DisplayController.
+    # _poll_on_demand_requests). Done before any service start: a stopped
+    # display has no socket, so the request lands in the mailbox, where a
+    # freshly started display finds it on its first poll.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
@@ -206,7 +264,7 @@ def start_on_demand_display():
         'pinned': pinned,
         'timestamp': _pkg.time.time()
     }
-    cache.set('display_on_demand_request', request_payload)
+    transport, socket_error = _deliver_on_demand(request_payload)
 
     service_status = _get_display_service_status()
 
@@ -246,8 +304,11 @@ def start_on_demand_display():
         'mode': resolved_mode,
         'duration': duration,
         'pinned': pinned,
-        'service': service_result
+        'service': service_result,
+        'transport': transport,
     }
+    if socket_error:
+        response_data['socket_error'] = socket_error
     return jsonify({'status': 'success', 'data': response_data})
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -256,29 +317,29 @@ def stop_on_demand_display():
     # _coerce_to_bool: bool("false") is True, which stopped the service.
     stop_service = _coerce_to_bool(data.get('stop_service', False))
 
-    # The running display reads the stop from the mailbox within
-    # ON_DEMAND_POLL_INTERVAL and resumes normal rotation in place
-    # (_clear_on_demand); nothing is restarted.
-    cache = _cache_manager()
+    # The running display takes the stop over the control socket, or reads
+    # it from the mailbox within ON_DEMAND_POLL_INTERVAL, and resumes normal
+    # rotation in place (_clear_on_demand); nothing is restarted.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
         'action': 'stop',
         'timestamp': _pkg.time.time()
     }
-    cache.set('display_on_demand_request', request_payload)
+    transport, socket_error = _deliver_on_demand(request_payload)
 
     service_result = None
     if stop_service:
         service_result = _stop_display_service()
 
-    return jsonify({
-        'status': 'success',
-        'data': {
-            'request_id': request_id,
-            'service': service_result
-        }
-    })
+    response_data = {
+        'request_id': request_id,
+        'service': service_result,
+        'transport': transport,
+    }
+    if socket_error:
+        response_data['socket_error'] = socket_error
+    return jsonify({'status': 'success', 'data': response_data})
 @api_v3.route('/display/current-status', methods=['GET'])
 def get_current_display_status():
     """Return the display mode/plugin currently intended to be shown.

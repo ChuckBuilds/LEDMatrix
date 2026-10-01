@@ -41,7 +41,8 @@ each other. They share three things:
 
 | State | Where | Written by | Read by |
 |---|---|---|---|
-| On-demand request | cache `display_on_demand_request` | web: `start_on_demand_display()` / `stop_on_demand_display()` in [`api_v3/display.py`](../web_interface/blueprints/api_v3/display.py) | display: `_poll_on_demand_requests()` |
+| On-demand command | control socket `/run/ledmatrix/control.sock` ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)) | web: `start_on_demand_display()` / `stop_on_demand_display()` in [`api_v3/display.py`](../web_interface/blueprints/api_v3/display.py), via [`src/ipc/client.py`](../src/ipc/client.py) | display: [`src/ipc/server.py`](../src/ipc/server.py) acks; the render thread applies it in `_poll_on_demand_requests()` |
+| On-demand request (fallback) | cache `display_on_demand_request` | web, when the socket fails; four plugins write it directly | display: `_poll_on_demand_requests()` |
 | On-demand state | cache `display_on_demand_state` | display: `_publish_on_demand_state()` | web: `/api/v3/display/on-demand/status` |
 | Current screen | cache `display_current_state` | display | web: `/api/v3/display/current-status` |
 | Plugin errors | cache `plugin_error_snapshot` | display: `ErrorSnapshotPublisher` ([`src/error_aggregator.py`](../src/error_aggregator.py)) | web: `read_error_report()` for `/api/v3/errors/*` |
@@ -56,9 +57,14 @@ each other. They share three things:
 | Render-loop heartbeat | `/run/ledmatrix/display-heartbeat.json` (tmpfs) | display: the render thread, via [`display_watchdog`](../src/display_watchdog.py) | web: `/api/v3/health` (`checks.display_loop`); the update health check |
 
 The on-demand start route starts `ledmatrix.service` when it is not running
-(`start_service`, on by default) but never restarts a running one: the display
-reads the mailbox every `ON_DEMAND_POLL_INTERVAL` (0.25s), from its dwell
-sleep, its render loops and Vegas's interrupt check as well as the main loop.
+(`start_service`, on by default) but never restarts a running one. The routes
+send the command over the display's control socket and get an ack; when that
+fails (a stopped display, one older than the socket) they write the mailbox
+instead, which the display reads every `ON_DEMAND_POLL_INTERVAL` (0.25s), from
+its dwell sleep, its render loops and Vegas's interrupt check as well as the
+main loop. Both ways end in the same handler, `_handle_on_demand_request()`.
+The socket's handlers only queue; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)
+for the protocol, the permission model and the plan to retire the mailboxes.
 
 ### Web and display processes: who runs plugins
 
@@ -182,7 +188,8 @@ the scheduler), and sets up Vegas mode.
 enable/disable, poll on-demand requests, run scheduled plugin updates, check
 the on/off schedule and brightness, then show one screen. Priority is
 on-demand, then WiFi status messages, then live priority, then Vegas mode,
-then normal rotation.
+then normal rotation. [RUN_LOOP_REDESIGN.md](RUN_LOOP_REDESIGN.md) is the
+plan for restructuring this loop and lists its golden trace tests.
 
 - **Rotation.** `available_modes` is the ordered list of display modes;
   `current_mode_index` advances after each screen.

@@ -18,7 +18,7 @@ Features:
 import logging
 import math
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from PIL import Image
 import numpy as np
 
@@ -27,6 +27,15 @@ import numpy as np
 # on a believable frame time: a scroll that renders at all cannot take this
 # long over one frame, so a sample this large is an idle gap between scrolls.
 FPS_LOG_INTERVAL = 5.0
+
+
+def _rgb_pixels(item) -> np.ndarray:
+    """An appended item's pixels as an RGB array, as pasting it would draw them."""
+    if isinstance(item, np.ndarray):
+        return item
+    if item.mode != 'RGB':
+        item = item.convert('RGB')
+    return np.asarray(item)
 
 
 def frame_stats(frame_times: list) -> Dict[str, Any]:
@@ -111,9 +120,21 @@ class ScrollHelper:
         self.total_distance_scrolled = 0.0  # Track total distance including wrap-arounds
         self.scroll_speed = 1.0
         self.scroll_delay = 0.001  # Minimal delay for high FPS (1ms)
-        self.cached_image: Optional[Image.Image] = None
+        self.cached_image = None   # see the property below
         self.cached_array: Optional[np.ndarray] = None  # Numpy array cache for fast operations
         self.total_scroll_width = 0
+        # An extended strip lives in a buffer with spare room after it, and
+        # cached_array is a view of the buffer's live columns: an append writes
+        # only the new columns, and a trim only moves the view's start. See
+        # append_content. _strip_view is the view this helper last made; a
+        # cached_array that is anything else was set from outside and is not
+        # written through.
+        self._strip_buffer: Optional[np.ndarray] = None
+        self._strip_view: Optional[np.ndarray] = None
+        self._strip_start = 0
+        #: Bytes the last append_content / drop_scrolled_prefix copied, for
+        #: frame-timing attribution (src/common/frame_timing.py note_op).
+        self.last_copy_bytes = 0
         
         # Pre-allocated buffer for output frame (reused to avoid allocations)
         self._frame_buffer: Optional[np.ndarray] = None
@@ -172,7 +193,53 @@ class ScrollHelper:
         # Scrolling state management
         self.is_scrolling = False
         self.scroll_complete = False
-        
+
+    # -- the strip as a PIL image ---------------------------------------------
+    #
+    # Every frame is cut from cached_array; nothing on the frame path reads the
+    # PIL image's pixels. Extending and trimming a strip (append_content,
+    # drop_scrolled_prefix) used to rebuild that image in full each time
+    # anyway: Image.fromarray of a Vegas-sized strip is 1.7-3.8ms on a Pi 4,
+    # twice per extension, on the render thread. Those two now leave it to be
+    # built from the array on first read, which in Vegas means only by a
+    # multi-display sync push -- and the strip is not held twice in memory.
+    #
+    # Assigning cached_image still stores exactly what was assigned; a lazy
+    # image is only ever one the helper derived from its own array.
+
+    @property
+    def cached_image(self) -> Optional[Image.Image]:
+        """The strip as a PIL image, built from ``cached_array`` if deferred."""
+        image = self.__dict__.get('_cached_image')
+        if image is not None:
+            return image
+        source = self.__dict__.get('_image_source')
+        if source is None:
+            return None
+        # Built from the array this read started with. Another thread (the
+        # sync push) may read while the render thread extends the strip; it
+        # then gets the strip as it was, as it did when the image was built
+        # eagerly, and the stale build is not kept.
+        image = Image.fromarray(source)
+        if self.__dict__.get('_image_source') is source:
+            self._cached_image = image
+        return image
+
+    @cached_image.setter
+    def cached_image(self, image: Optional[Image.Image]) -> None:
+        self._cached_image = image
+        self._image_source = None
+
+    def _defer_image(self) -> None:
+        """The array just changed under the image: rebuild it only if read."""
+        self._cached_image = None
+        self._image_source = self.cached_array
+
+    def has_strip(self) -> bool:
+        """Whether there is a strip (an image, or one deferred), not reading it."""
+        return (self.__dict__.get('_cached_image') is not None
+                or self.__dict__.get('_image_source') is not None)
+
     def create_scrolling_image(self, content_items: list,
                              item_gap: int = 32,
                              element_gap: int = 16,
@@ -203,6 +270,7 @@ class ScrollHelper:
             self.total_scroll_width = 0
             self.cached_image = Image.new('RGB', (self.display_width, self.display_height), (0, 0, 0))
             self.cached_array = np.array(self.cached_image)
+            self._forget_strip_buffer()
             self.scroll_position = 0.0
             self.total_distance_scrolled = 0.0
             self.scroll_complete = False
@@ -238,6 +306,7 @@ class ScrollHelper:
         self.cached_image = full_image
         # Convert to numpy array for fast operations
         self.cached_array = np.array(full_image)
+        self._forget_strip_buffer()
         actual_image_width = full_image.width
         self.total_scroll_width = actual_image_width
         
@@ -283,7 +352,7 @@ class ScrollHelper:
         Otherwise the position advances by elapsed time at the configured
         speed.
         """
-        if not self.cached_image:
+        if not self.has_strip():
             return
         
         # Calculate frame time for consistent scroll speed regardless of FPS
@@ -427,7 +496,7 @@ class ScrollHelper:
         Returns:
             PIL Image showing the visible portion, or None if no cached image
         """
-        if not self.cached_image or self.cached_array is None:
+        if self.cached_array is None or not self.has_strip():
             return None
 
         start_x_int = int(self.scroll_position)
@@ -501,7 +570,7 @@ class ScrollHelper:
         slices (128×32 = 12 KB) used here.
         """
         _size = (self.display_width, self.display_height)
-        img_w = self.cached_image.width
+        img_w = self.cached_array.shape[1]
 
         if end_x <= img_w:
             # Normal case: single contiguous slice (fastest path)
@@ -634,7 +703,10 @@ class ScrollHelper:
         strip also defers completion, which is the intent.
 
         Args:
-            content_items: Images to append, in order
+            content_items: Images to append, in order. An item may instead be
+                its pixels already as an RGB array (``np.asarray`` of an RGB
+                image), so a caller can do that conversion off the render
+                thread (Vegas prepares its blocks with the group).
             item_gap: Gap between appended items, and between the existing
                 content and the first appended item
             element_gap: Extra gap after each item, mirroring
@@ -646,41 +718,102 @@ class ScrollHelper:
         if not content_items:
             return False
 
-        if self.cached_image is None or self.cached_array is None:
+        if self.cached_array is None or not self.has_strip():
             # Nothing to extend yet — this is just the first build.
             self.create_scrolling_image(
-                content_items, item_gap=item_gap, element_gap=element_gap, lead_gap=0)
+                [Image.fromarray(item) if isinstance(item, np.ndarray) else item
+                 for item in content_items],
+                item_gap=item_gap, element_gap=element_gap, lead_gap=0)
             return True
 
         gap = max(0, item_gap)
-        addition_width = (
-            sum(img.width for img in content_items)
-            + gap * len(content_items)          # one leading gap per item
-            + element_gap * len(content_items)
-        )
-
-        addition = Image.new('RGB', (addition_width, self.display_height), (0, 0, 0))
+        pieces = []
         x = 0
-        for img in content_items:
+        for item in content_items:
             x += gap                            # separate from whatever precedes
-            addition.paste(img, (x, 0))
-            x += img.width + element_gap
+            pixels = _rgb_pixels(item)
+            pieces.append((x, pixels))
+            x += pixels.shape[1] + element_gap
+        addition_width = x
 
-        # numpy concatenate then one conversion back, rather than allocating a
-        # full-width PIL image and pasting twice: the strip can be tens of
-        # thousands of columns wide and this runs on the render path.
-        self.cached_array = np.concatenate(
-            (self.cached_array, np.array(addition)), axis=1)
-        self.cached_image = Image.fromarray(self.cached_array)
-        self.total_scroll_width = self.cached_image.width
+        # Each item is written straight into the spare room after the strip,
+        # when there is some: the strip can be tens of thousands of columns
+        # wide and this runs on the render thread, where copying all of it
+        # (2-3 ms at 512x64 on a Pi 4) -- or even laying the items out in an
+        # image of their own first (another 4-5 ms) -- cost the frame after
+        # every extension. The PIL image is built from the array only if
+        # something reads it (see cached_image).
+        self.cached_array = self._extended_strip(pieces, addition_width)
+        self._defer_image()
+        self.total_scroll_width = self.cached_array.shape[1]
         self.scroll_complete = False
 
-        self.logger.info(
+        # Debug: this runs on the render thread, and the caller (Vegas) logs
+        # each extension itself.
+        self.logger.debug(
             "Appended %d item(s) (%dpx) to scroll strip: now %dpx, position %.0f",
             len(content_items), addition_width, self.total_scroll_width,
             self.scroll_position
         )
         return True
+
+    #: Room an extended strip's buffer is given, as a multiple of what it
+    #: holds when (re)allocated. Trims free columns at the front and appends
+    #: use them at the back, so with 3x the buffer is reallocated -- the one
+    #: full copy -- about once every two strip-lengths scrolled.
+    STRIP_SPARE_FACTOR = 3.0
+
+    def _extended_strip(self, pieces: List[Tuple[int, np.ndarray]], added: int) -> np.ndarray:
+        """The strip with ``added`` black columns after it, ``pieces`` drawn in.
+
+        Each piece is ``(x, pixels)``, x counted from the old strip's end;
+        written in place when the buffer has the room.
+        """
+        live = self.cached_array
+        if live is None:
+            # append_content builds a first strip itself and never comes here.
+            raise RuntimeError("no strip to extend")
+        width = live.shape[1]
+        buffer = self._strip_buffer
+        if (live is self._strip_view and buffer is not None
+                and self._strip_start + width + added <= buffer.shape[1]):
+            end = self._strip_start + width
+            self.last_copy_bytes = 0
+        else:
+            total = width + added
+            buffer = np.empty((live.shape[0], max(total + 1, int(total * self.STRIP_SPARE_FACTOR)))
+                              + live.shape[2:], dtype=live.dtype)
+            buffer[:, :width] = live
+            self._strip_buffer = buffer
+            self._strip_start = 0
+            end = width
+            self.last_copy_bytes = live.nbytes
+        rows = buffer.shape[0]
+        region = buffer[:, end:end + added]
+        # Black only where no piece lands -- the gaps, and below a short
+        # piece: blanking the whole region first cost as much again as
+        # writing the pieces (1.8 ms at 512x64 on a Pi 4).
+        covered = 0
+        for x, pixels in pieces:
+            pixels = pixels[:rows]
+            cols = pixels.shape[1]
+            if x > covered:
+                region[:, covered:x] = 0
+            region[:pixels.shape[0], x:x + cols] = pixels
+            if pixels.shape[0] < rows:
+                region[pixels.shape[0]:, x:x + cols] = 0
+            covered = max(covered, x + cols)
+        if covered < added:
+            region[:, covered:] = 0
+        self.last_copy_bytes += region.nbytes
+        self._strip_view = buffer[:, self._strip_start:self._strip_start + width + added]
+        return self._strip_view
+
+    def _forget_strip_buffer(self) -> None:
+        """A new strip replaces the extended one: let its buffer go."""
+        self._strip_buffer = None
+        self._strip_view = None
+        self._strip_start = 0
 
     def drop_scrolled_prefix(self, keep_before: int = 0) -> int:
         """
@@ -699,14 +832,15 @@ class ScrollHelper:
         Returns:
             Number of columns actually removed
         """
-        if self.cached_image is None or self.cached_array is None:
+        if self.cached_array is None or not self.has_strip():
             return 0
+        strip_width = self.cached_array.shape[1]
 
         # While the viewport wraps, get_visible_portion fills its right-hand side
         # from the *head* of the strip, so trimming the head would change what
         # is on screen. Continuous mode extends before ever reaching that state;
         # refusing here keeps "trimming is invisible" true unconditionally.
-        if self.scroll_position + self.display_width > self.cached_image.width:
+        if self.scroll_position + self.display_width > strip_width:
             return 0
 
         cut = int(self.scroll_position) - max(0, keep_before)
@@ -714,15 +848,24 @@ class ScrollHelper:
             return 0
         # Never trim so far that the remaining strip is narrower than the
         # viewport, or get_visible_portion has nothing to slice.
-        cut = min(cut, max(0, self.cached_image.width - self.display_width))
+        cut = min(cut, max(0, strip_width - self.display_width))
         if cut <= 0:
             return 0
 
-        # .copy() so the original buffer is released rather than kept alive by
-        # a numpy view.
-        self.cached_array = self.cached_array[:, cut:].copy()
-        self.cached_image = Image.fromarray(self.cached_array)
-        self.total_scroll_width = self.cached_image.width
+        if self.cached_array is self._strip_view:
+            # Only the view's start moves; the columns behind it are reused
+            # when the buffer is next reallocated (append_content).
+            self._strip_view = self.cached_array[:, cut:]
+            self._strip_start += cut
+            self.cached_array = self._strip_view
+            self.last_copy_bytes = 0
+        else:
+            # Not a strip this helper extended: .copy() so the original
+            # buffer is released rather than kept alive by a view.
+            self.cached_array = self.cached_array[:, cut:].copy()
+            self.last_copy_bytes = self.cached_array.nbytes
+        self._defer_image()
+        self.total_scroll_width = self.cached_array.shape[1]
         self.scroll_position -= cut
         self.total_distance_scrolled = max(0.0, self.total_distance_scrolled - cut)
 
@@ -732,9 +875,46 @@ class ScrollHelper:
         )
         return cut
 
+    def patch_columns(self, x: int, pixels: np.ndarray) -> int:
+        """Overwrite the strip's columns from ``x`` with ``pixels``, in place.
+
+        What a live Vegas element update is (src/vegas_mode/elements.py): the
+        strip keeps its width, the scroll keeps its position, and only these
+        columns change. Call it between frames on the thread that draws them;
+        every frame copies its slice out of the strip (get_visible_portion),
+        so no frame already handed on can see half a patch.
+
+        Clipped to the strip at both ends. Refused (0) for an array this
+        helper may not write -- the multi-display follower adopts a read-only
+        one -- or for pixels of another height. The PIL image is deferred, so
+        a later read of cached_image shows the patch.
+
+        Args:
+            x: Strip column of the first column of ``pixels``
+            pixels: uint8 array (height, width, 3)
+
+        Returns:
+            Bytes written.
+        """
+        strip = self.cached_array
+        if strip is None or not strip.flags.writeable:
+            return 0
+        if pixels.ndim != 3 or pixels.shape[0] != strip.shape[0] \
+                or pixels.shape[2] != strip.shape[2]:
+            return 0
+        width = pixels.shape[1]
+        lo, hi = max(0, int(x)), min(strip.shape[1], int(x) + width)
+        if hi <= lo:
+            return 0
+        strip[:, lo:hi] = pixels[:, lo - int(x):hi - int(x)]
+        if self.__dict__.get('_cached_image') is not None \
+                or self.__dict__.get('_image_source') is not None:
+            self._defer_image()
+        return (hi - lo) * strip.shape[0] * strip.shape[2]
+
     def remaining_unscrolled(self) -> int:
         """Columns of strip still to the right of the viewport."""
-        if self.cached_image is None:
+        if not self.has_strip():
             return 0
         return max(0, self.total_scroll_width - int(self.scroll_position)
                    - self.display_width)
@@ -796,6 +976,7 @@ class ScrollHelper:
         
         # Convert to numpy array for fast operations (required for get_visible_portion)
         self.cached_array = np.array(image)
+        self._forget_strip_buffer()
         
         # Update scroll width
         self.total_scroll_width = image.width
@@ -1053,6 +1234,7 @@ class ScrollHelper:
         """
         self.cached_image = None
         self.cached_array = None
+        self._forget_strip_buffer()
         self.total_scroll_width = 0
         self.scroll_position = 0.0
         self.total_distance_scrolled = 0.0
@@ -1082,5 +1264,8 @@ class ScrollHelper:
             'elapsed_time': (time.time() - self.scroll_start_time)
             if self.scroll_start_time
             else None,
-            'cached_image_size': (self.cached_image.width, self.cached_image.height) if self.cached_image else None
+            # From the array: reading cached_image would build a deferred one.
+            'cached_image_size': ((self.cached_array.shape[1], self.cached_array.shape[0])
+                                  if self.cached_array is not None and self.has_strip()
+                                  else None)
         }

@@ -1,0 +1,14 @@
+{
+  "screens": [
+    [0.0, "a", 0.0, "empty", 1, false],
+    [0.0, "b", 0.0, "empty", 1, true],
+    [0.0, "c", 1.0, "empty", 1, true],
+    [1.0, "a", 1.0, "empty", 1, true],
+    [2.0, "b", 1.0, "empty", 1, true],
+    [3.0, "c", 1.0, "empty", 1, true],
+    [4.0, "a", 1.0, "empty", 1, true],
+    [5.0, "b", 1.0, "empty", 1, true],
+    [6.0, "c", 6.0, "horizon", 6, true]
+  ],
+  "events": []
+}

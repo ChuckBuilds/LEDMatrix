@@ -1,0 +1,13 @@
+{
+    "id": "vegas-live-stub",
+    "name": "Vegas Live Stub",
+    "version": "1.0.0",
+    "description": "Test fixture for live Vegas elements: keyed cards whose content changes on every update, a separator, and a full-width element that animates with time. Drives the live-element tests and the hardware soaks. Not installable from the store and never shipped to devices.",
+    "author": "LEDMatrix",
+    "entry_point": "manager.py",
+    "class_name": "VegasLiveStub",
+    "display_modes": ["vegas-live-stub"],
+    "update_interval": 2,
+    "min_ledmatrix_version": "2.0.0",
+    "compatible_versions": [">=2.0.0"]
+}

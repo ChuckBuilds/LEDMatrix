@@ -75,17 +75,31 @@ total. See the full list in
 
 ### Live Content in the Ticker
 
-By default, live content **preempts** Vegas mode: while any plugin reports
-live priority, the display controller refuses to run the ticker and shows
-that plugin's full-screen display instead. You get a big readable scoreboard,
-but the marquee stops entirely for the duration of the game.
+By default (since 3.8.0) live content **stays in the ticker** and takes
+**extra turns inside it**, and a scoreboard that supports live cards updates
+the score on a card already crossing the screen (`live_refresh`, "Update live
+content while it scrolls").
 
-Set `live_in_ticker` to keep the ticker running and let live content take
-**extra turns inside it** instead:
+To get the old behaviour back -- live content **preempts** Vegas mode: while
+any plugin reports live priority the ticker stops and that plugin's
+full-screen display is shown instead -- untick **Keep live games in the
+ticker** under Vegas mode, or set `live_in_ticker` to `false`:
 
 ```json
 "vegas_scroll": {
-  "live_in_ticker": true,
+  "live_in_ticker": false
+}
+```
+
+Until 3.8.0 `false` was the default and every config held it, copied from
+the template. The first start on 3.8.0 turns it on once (a backup of the
+config is kept as `config.json.backup`, and `live_in_ticker_migrated` records
+that it ran); a `false` set after that is left alone.
+
+The weights below apply while live content is in the ticker:
+
+```json
+"vegas_scroll": {
   "live_weight": 3,
   "favorite_live_weight": 5
 }

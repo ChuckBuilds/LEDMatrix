@@ -1,0 +1,14 @@
+{
+  "screens": [
+    [0.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [15.0, "sports_recent", 15.0, "duration", 15, true],
+    [30.0, "sports_upcoming", 10.0, "on-demand-expired", 10, true],
+    [40.0, "clock", 20.0, "duration", 20, true],
+    [60.0, "weather", 20.0, "duration", 20, true],
+    [80.0, "sports_recent", 15.0, "duration", 15, true],
+    [95.0, "sports_upcoming", 5.0, "horizon", 5, true]
+  ],
+  "events": [
+    [40.0, "on-demand-expired"]
+  ]
+}

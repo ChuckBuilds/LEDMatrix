@@ -1,0 +1,29 @@
+{
+  "screens": [
+    [0.0, "clock", 12.0, "on-demand-start", 13, false],
+    [12.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [27.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [42.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [57.0, "sports_upcoming", 15.0, "duration", 15, true],
+    [72.0, "sports_upcoming", 8.0, "on-demand-start", 9, true],
+    [80.0, "app_a", 0.0, "empty", 1, true],
+    [80.0, "app_b", 10.0, "duration", 10, true],
+    [90.0, "app_a", 0.0, "empty", 1, true],
+    [90.0, "app_b", 10.0, "duration", 10, true],
+    [100.0, "app_a", 0.0, "empty", 1, true],
+    [100.0, "app_b", 10.0, "duration", 10, true],
+    [110.0, "app_a", 0.0, "empty", 1, true],
+    [110.0, "app_b", 10.0, "on-demand-requested-stop", 10, true],
+    [120.0, "clock", 20.0, "duration", 20, true],
+    [140.0, "sports_recent", 15.0, "duration", 15, true],
+    [155.0, "sports_upcoming", 5.0, "horizon", 5, true]
+  ],
+  "events": [
+    [12.0, "request", "start:p1"],
+    [12.0, "on-demand-start", "sports"],
+    [80.0, "request", "start:p2"],
+    [80.0, "on-demand-start", "starlark"],
+    [120.0, "request", "stop:p3"],
+    [120.0, "on-demand-requested-stop"]
+  ]
+}

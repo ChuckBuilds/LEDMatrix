@@ -193,6 +193,15 @@
     ]
   ],
   [
+    "/api/v3/config/scroll-speed-advice",
+    "api_v3.get_scroll_speed_advice",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
     "/api/v3/config/secrets",
     "api_v3.get_secrets_config",
     [

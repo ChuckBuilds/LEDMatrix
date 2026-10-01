@@ -67,10 +67,13 @@ class TestConfigWhileStopped:
 
 
 class TestLivePriorityThrottle:
+    """The full-screen takeover's live scan: live_in_ticker off, no longer the default."""
+
     def test_scan_runs_at_most_once_per_interval(self, monkeypatch):
         now = [1000.0]
         monkeypatch.setattr(coordinator_module.time, 'monotonic', lambda: now[0])
         c = _coordinator()
+        c.vegas_config.live_in_ticker = False
         c._live_priority_check = MagicMock(return_value=None)
 
         for _ in range(10):
@@ -84,6 +87,7 @@ class TestLivePriorityThrottle:
     def test_live_content_still_pauses_vegas(self, monkeypatch):
         monkeypatch.setattr(coordinator_module.time, 'monotonic', lambda: 1000.0)
         c = _coordinator()
+        c.vegas_config.live_in_ticker = False
         c._live_priority_check = MagicMock(return_value='nfl_live')
         c.pause = MagicMock()
         assert c.run_frame() is False

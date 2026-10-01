@@ -140,6 +140,14 @@ class _Canonical(ast.NodeTransformer):
         node.annotation = None
         return node
 
+    def visit_AnnAssign(self, node):
+        # ``x: T = v`` is ``x = v``; a bare ``x: T`` does nothing at runtime.
+        self.generic_visit(node)
+        if node.value is None:
+            return None
+        return ast.copy_location(
+            ast.Assign(targets=[node.target], value=node.value), node)
+
 
 class _Folded(_Canonical):
     """Canonical, plus sport names folded out of identifiers and strings."""
