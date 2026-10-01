@@ -84,6 +84,49 @@ def get_main_config():
     # any of it; /api/v3/auth/* manages it.
     return jsonify({'status': 'success',
                     'data': _redact_credentials(strip_auth_section(config))})
+def _panel_refresh_hz(config):
+    """(hz, source): the rate the panel really refreshes at, else the cap.
+
+    The display service writes what it measured to the frame-stats file. The
+    configured limit_refresh_rate_hz is only a cap (a 120Hz cap refreshes at
+    ~126Hz on one rig, ~95Hz on a long chain), and the speeds that look smooth
+    are fractions of the real rate, so advice built on the cap can be wrong.
+    """
+    from src.common import frame_timing, scroll_config
+    cap = scroll_config.refresh_hz_from_config(config)
+    try:
+        with open(frame_timing.default_stats_path(), encoding='utf-8') as fh:
+            measured = float(json.load(fh).get('measured_refresh_hz') or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        measured = 0.0
+    # Reject a stale file from a previous hardware config: a measurement far
+    # off the cap says the config changed since it was written.
+    if measured > 0 and 0.5 * cap <= measured <= 1.5 * cap:
+        return measured, 'measured'
+    return cap, 'configured'
+
+
+@api_v3.route('/config/scroll-speed-advice', methods=['GET'])
+def get_scroll_speed_advice():
+    """What this panel does with a requested scroll speed, and smooth options.
+
+    Backs the hint under the Vegas Scroll Speed slider.
+    """
+    from src.common import scroll_config
+    try:
+        speed = float(request.args.get('speed', ''))
+        lo = float(request.args.get('min', 10))
+        hi = float(request.args.get('max', 200))
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'speed must be a number'}), 400
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    hz, source = _panel_refresh_hz(api_v3.config_manager.load_config())
+    advice = scroll_config.speed_advice(speed, hz, lo, hi)
+    advice['refresh_source'] = source
+    return jsonify({'status': 'success', 'data': advice})
+
+
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
     """Get current schedule configuration"""
