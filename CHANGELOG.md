@@ -510,6 +510,30 @@ read any of them:
   New `ScrollHelper.has_strip()` says whether there is a strip without
   building its image; the frame path and Vegas use it.
 
+### Outlined text: one rasterization
+
+- New `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0,
+  0), offsets=OUTLINE_SQUARE)` in `src/common/text_helper.py`, with
+  `OUTLINE_SQUARE` (the eight-sided outline the scoreboards draw) and
+  `OUTLINE_CROSS` (four sides). Outlined text was one `draw.text` per
+  outline offset plus one for the text, so FreeType rasterized the same
+  string nine times. This rasterizes it once and stamps the mask at each
+  offset: the same pixels, about 8x faster per outlined string (Pillow 12.3,
+  desktop). `test/test_text_helper.py` compares it with the nine-draw loop
+  across the bundled fonts, image and font modes, colours and positions,
+  and fails if it stops rasterizing once. Fractional coordinates, multiline
+  text, fonts other than a `FreeTypeFont`, image modes other than RGB, RGBA
+  and L, and a subclassed or replaced `draw.text` take the old loop
+  unchanged. A whole-pixel float such as `52.0`, which the scorebugs'
+  centring passes, is not fractional.
+- `SportsCoreSharedMixin._draw_text_with_outline`, which eight of the nine
+  scoreboards inherit for their switch-mode scorebug (ufc has its own), and
+  `TextHelper.draw_text_with_outline` now draw through it. Scroll and Vegas
+  cards still use each plugin's own `game_renderer.py` loop, so building a
+  scroll strip costs the same until the plugins adopt `draw_text_outlined`,
+  importing it with an `ImportError` fallback to their own loop (a separate
+  ledmatrix-plugins change after a core release ships it).
+
 ### Tooling
 
 - The frame-timing recorder says which render-thread work a late frame

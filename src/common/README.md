@@ -360,6 +360,19 @@ Created by `DisplayController`; works with any plugin.
 `get_text_dimensions()`, `center_text()`, `wrap_text()`,
 `draw_multiline_text()`, `create_text_image()`.
 
+`draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0, 0),
+offsets=OUTLINE_SQUARE)` (Unreleased) draws the text in `outline_color` at
+each offset, then in `fill` on top: the same pixels as one `draw.text` per
+offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
+eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the
+four-sided one. Fractional coordinates (a whole-pixel float such as `52.0`
+is fine), multiline text, fonts other than a `FreeTypeFont`, image modes
+other than RGB, RGBA and L, and a subclassed or replaced `draw.text` take
+the `draw.text` loop unchanged. `TextHelper.draw_text_with_outline()` and
+the scoreboards' `SportsCoreSharedMixin._draw_text_with_outline()` use it.
+A plugin that also runs on older cores should guard the import and keep its
+own loop as the fallback.
+
 ## Logging
 
 Modules here create their logger with `logging.getLogger(__name__)`, which is
