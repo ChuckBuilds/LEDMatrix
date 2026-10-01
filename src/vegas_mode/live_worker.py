@@ -369,6 +369,7 @@ class VegasWorker(threading.Thread):
             member = p.stream_manager.fetch_group_member(
                 job.pending.pop(0), offscreen_only=True)
             if member is not None:
+                p.prepare_group_member(member)
                 job.group.append(member)
         if not job.pending:
             self._group_job = None
