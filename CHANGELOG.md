@@ -276,6 +276,15 @@ read any of them:
 
 ### Fixes
 
+- A plugin whose `display()` raises now opens its circuit breaker. The first
+  frame of each screen goes through the plugin executor, which caught the
+  exception and returned False. The display read that as "no content" and
+  recorded a success, which reset the plugin's failure streak, so the breaker
+  never tripped. The plugin stayed in rotation and logged a traceback on
+  every screen. The raise now counts as a failure, so after three in a row
+  the plugin leaves rotation until the cooldown ends, the same as a raising
+  `update()`. The display still moves straight on to the next mode. A hung
+  `display()` is still recorded once, as a hang.
 - Reinstalling a plugin by its registry id when it is installed under its
   manifest id (`weather` in `ledmatrix-weather/`) no longer deletes it when
   the install then fails. The safety copy was taken of `weather/`, which did

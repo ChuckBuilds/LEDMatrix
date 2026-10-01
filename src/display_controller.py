@@ -41,6 +41,7 @@ from src.config_service import ConfigService
 from src.cache_manager import CacheManager
 from src.font_manager import FontManager
 from src.logging_config import get_logger
+from src.exceptions import PluginError
 from src.common.sync_manager import DisplaySyncManager, SyncRole
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
@@ -2540,6 +2541,8 @@ class DisplayController:
                         display_lock = pm.get_plugin_lock(plugin_id) if pm else None
                         can_display = display_lock is None or display_lock.acquire(blocking=False)
                         display_hung = False
+                        # Set when display() raised inside the executor.
+                        display_error: Optional[Exception] = None
 
                         if display_lock is None:
                             # Only when plugin loading failed part-way.
@@ -2597,8 +2600,23 @@ class DisplayController:
                                     # the SimpleNamespace built above -- a
                                     # fresh callable every call, so nothing
                                     # there can ever cache.
-                                    accepts_display_mode=_accepts_display_mode
+                                    accepts_display_mode=_accepts_display_mode,
+                                    # A raise must reach the breaker as a
+                                    # failure. As a bare False it read as
+                                    # "no content" and was recorded as a
+                                    # success, so the breaker never tripped
+                                    # on a plugin that raises every time.
+                                    raise_errors=True
                                 )
+                            except PluginError as exc:
+                                # display() raised. The executor has logged
+                                # and recorded it, and _display_target's
+                                # finally released the lock. The screen is
+                                # an empty pass, as before; only the health
+                                # record changes. Keep what display() raised
+                                # as last_error, not the executor's wrapper.
+                                display_error = exc.__cause__ or exc
+                                result = False
                             except Exception:  # pragma: no cover - defensive;
                                 # execute_display catches everything
                                 # internally, but guarantee the lock is
@@ -2630,10 +2648,15 @@ class DisplayController:
                         # frame, not a real success, and must not clear
                         # force_change or the pending mode-switch clear will
                         # be lost when display() finally does run.
+                        # A hang was already recorded as a failure by
+                        # record_display_hang, so it records nothing here.
                         if can_display:
                             health_tracker = self._health_tracker()
                             if health_tracker is not None and not display_hung:
-                                health_tracker.record_success(plugin_id)
+                                if display_error is not None:
+                                    health_tracker.record_failure(plugin_id, display_error)
+                                else:
+                                    health_tracker.record_success(plugin_id)
                             self.force_change = False
                     except Exception as exc:  # pylint: disable=broad-except
                         logger.exception("Error displaying %s", self.current_display_mode)
