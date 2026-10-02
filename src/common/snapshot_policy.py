@@ -26,14 +26,33 @@ Policy:
 - Unchanged frames are never re-encoded; the mtime is touched every
   TOUCH_INTERVAL so the health check (60s threshold) never degrades.
 
+The writer and the SSE reader (web_interface/app.py) have two periods, not
+one shared value. The reader sends each write it sees, so the preview shows
+at most one frame per VIEWER_INTERVAL. (That was 0.2 s while the reader
+slept 1 s between reads, so four encodes in five were overwritten unread.)
+The reader checks the file's mtime every VIEWER_POLL_INTERVAL, which is only
+a stat, and so sends each write within that long of it landing. Equal
+periods would alias: two unsynchronised 1 s clocks leave the preview up to a
+second stale, and now and then 2 s between frames.
+
+decide() is monotone in frame_changed: SKIP for a changed frame means SKIP
+for an unchanged one. DisplayManager relies on that to skip hashing the
+frame when even a changed one would be skipped; test_snapshot_policy.py
+checks it.
+
 If any constant here changes, re-check the health threshold in
 api_v3/misc.py (get_hardware_status) — TOUCH_INTERVAL must stay well under it.
 """
 
 from enum import Enum
 
-# Snapshot cadence with a browser preview open (seconds).
-VIEWER_INTERVAL = 0.2
+# Snapshot cadence with a browser preview open (seconds): the shortest gap
+# between two preview frames.
+VIEWER_INTERVAL = 1.0
+# How often the web SSE reader checks the snapshot's mtime (seconds). Must
+# stay well under VIEWER_INTERVAL -- half of it at most -- or the two clocks
+# alias (see above).
+VIEWER_POLL_INTERVAL = 0.25
 # Snapshot cadence with no viewers — cheap freshness for page-open (seconds).
 IDLE_INTERVAL = 30.0
 # Max age of the last write/touch before bumping mtime for the health

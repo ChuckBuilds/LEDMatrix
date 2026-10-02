@@ -51,8 +51,8 @@ each other. They share three things:
 | Fetch statistics (requests per plugin and host) | cache `fetch_stats_snapshot` | display: `FetchStatsPublisher` ([`src/common/fetch_service.py`](../src/common/fetch_service.py)), at most once a minute on change | web: `read_fetch_stats()` for `/api/v3/plugins/fetch-stats` |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
 | Plugin runtime (loaded, state, last error, version) | cache `plugin_runtime_snapshot` | display: `PluginRuntimePublisher` ([`src/plugin_system/plugin_runtime.py`](../src/plugin_system/plugin_runtime.py)) | web: `read_plugin_runtime()` for `/api/v3/plugins/installed`, `/plugins/state`, reconciliation |
-| Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py) | web: display SSE stream, `/api/v3/health` (file age) |
-| Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, while a preview is open | display: writes full-rate snapshots only while it is fresh |
+| Preview frame | `/tmp/led_matrix_preview.png` | display: `DisplayManager`, gated by [`snapshot_policy`](../src/common/snapshot_policy.py): a changed frame at most once a second with a viewer, every 30 s without | web: display SSE stream (checks the mtime every 0.25 s), `/api/v3/health` (file age) |
+| Preview viewer marker | `/tmp/led_matrix_preview_viewer` | web, about once a second while a preview is open | display: writes viewer-rate snapshots only while it is fresh (5 s) |
 | Hardware init status | `/tmp/led_matrix_hw_status.json` | display | web: `/api/v3/hardware/status` |
 | Render-loop heartbeat | `/run/ledmatrix/display-heartbeat.json` (tmpfs) | display: the render thread, via [`display_watchdog`](../src/display_watchdog.py) | web: `/api/v3/health` (`checks.display_loop`); the update health check |
 

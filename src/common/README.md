@@ -231,7 +231,8 @@ rather than the `set_*` methods. Vegas mode reads a plugin's
 [`snapshot_policy.py`](snapshot_policy.py). Core-internal. `decide()`
 tells `DisplayManager` whether to write `/tmp/led_matrix_preview.png`, only
 touch its mtime, or skip, based on whether a browser is watching the preview.
-The web health check reads the file's age.
+The web health check reads the file's age, and the web preview stream checks
+its mtime every `VIEWER_POLL_INTERVAL`.
 
 ### sports_card
 

@@ -68,6 +68,7 @@ class _SwapSpy:
         self.matrix = matrix
         self.count = 0
         self.last_frame_hold = None
+        self.holds = []
         self._orig = matrix.SwapOnVSync
 
     def __enter__(self):
@@ -77,6 +78,7 @@ class _SwapSpy:
             # the real binding or the spy hides a TypeError as a failed push.
             self.count += 1
             self.last_frame_hold = args[0] if args else 1
+            self.holds.append(self.last_frame_hold)
             return self._orig(canvas, *args)
         self.matrix.SwapOnVSync = counting
         return self
@@ -501,3 +503,393 @@ class TestSnapshotOffRenderThread:
         dm.set_scrolling_state(False)
         dm.update_display()
         assert threads == [threading.current_thread().name]
+
+
+class TestLazyDigest:
+    """Mid-scroll the frame is hashed only when the preview snapshot is due.
+
+    The digest feeds two things: the dirty-tracking skip, which is never
+    taken while scrolling, and the snapshot's changed-frame check, which acts
+    at most once a second. Hashing every scrolled frame for them cost a
+    tobytes() plus adler32 over the whole framebuffer on every frame (~0.3ms
+    at 512x64 on a Pi 4). update_display() now leaves the digest out while
+    scrolling, and _write_snapshot_if_due() hashes only when the policy could
+    act on the answer.
+    """
+
+    @pytest.fixture
+    def hashes(self, dm, tmp_path, monkeypatch):
+        """Every adler32 display_manager takes, while no viewer is watching."""
+        import types
+        import zlib
+        import src.display_manager as display_manager_module
+        calls = []
+
+        def counting(data, *args):
+            calls.append(len(data))
+            return zlib.adler32(data, *args)
+
+        monkeypatch.setattr(display_manager_module, "zlib",
+                            types.SimpleNamespace(adler32=counting))
+        # The fixture's marker is the real /tmp one, which a preview open on
+        # this machine would keep fresh. Point it somewhere nobody touches.
+        monkeypatch.setattr(dm, "_viewer_marker_path", str(tmp_path / "no-viewer"))
+        monkeypatch.setattr(dm, "_snapshot_path", str(tmp_path / "snap.png"))
+        dm._viewer_check_ts = 0.0
+        dm._viewer_fresh = False
+        dm._viewer_was_fresh = False
+        # TestSnapshotOffRenderThread's cleanup test stops this shared
+        # manager's snapshot writer for good; queued writes here need one.
+        with dm._snapshot_cond:
+            dm._snapshot_stop = False
+            dm._snapshot_pending = None
+        yield calls
+        dm.set_scrolling_state(False)
+        dm._viewer_check_ts = 0.0
+        dm._viewer_fresh = False
+        dm._viewer_was_fresh = False
+
+    def _scroll(self, dm, frames):
+        """Present ``frames`` scrolled frames, each different from the last."""
+        for shade in range(frames):
+            dm.set_scrolling_state(True)       # as a scroller does every frame
+            dm.draw.rectangle([0, 0, 10, 10], fill=(shade * 10 % 256, 40, 0))
+            dm.update_display()
+
+    def test_scrolled_frames_are_not_hashed_when_no_snapshot_is_due(
+            self, dm, hashes):
+        now = time.time()
+        dm._last_snapshot_ts = now             # written a moment ago
+        dm._last_snapshot_touch_ts = now
+        with _SwapSpy(dm.matrix) as spy:
+            self._scroll(dm, 20)
+        assert spy.count == 20, "every scrolled frame must still be pushed"
+        assert hashes == []
+
+    def test_a_due_snapshot_hashes_the_frame_once(
+            self, dm, hashes, monkeypatch):
+        import threading
+        wrote = threading.Event()
+        monkeypatch.setattr(dm, "_save_snapshot", lambda image: wrote.set())
+        dm._last_snapshot_ts = 0.0             # a write is due (no viewer:
+        dm._last_snapshot_touch_ts = 0.0       # the idle keepalive)
+        dm._last_snapshot_digest = None
+        self._scroll(dm, 20)
+        assert wrote.wait(5), "the due snapshot was never written"
+        assert len(hashes) == 1
+
+    def test_with_a_viewer_a_scroll_is_hashed_once_per_write(
+            self, dm, hashes, tmp_path, monkeypatch):
+        import threading
+        from src.common import snapshot_policy
+        marker = tmp_path / "viewer"
+        marker.touch()
+        monkeypatch.setattr(dm, "_viewer_marker_path", str(marker))
+        writes = []
+        wrote = threading.Event()
+
+        def save(image):
+            writes.append(image)
+            wrote.set()
+
+        monkeypatch.setattr(dm, "_save_snapshot", save)
+        dm._last_snapshot_ts = time.time()     # the viewer opening resets it
+        dm._last_snapshot_touch_ts = time.time()
+        dm._last_snapshot_digest = None        # every frame here is new
+        started = time.time()
+        self._scroll(dm, 30)
+        elapsed = time.time() - started
+        assert wrote.wait(5)
+        # One write as the viewer appears, then at most one per interval.
+        assert 1 <= len(hashes) <= 1 + int(elapsed / snapshot_policy.VIEWER_INTERVAL)
+        assert len(hashes) < 30
+
+    def test_an_unchanged_scrolled_frame_is_not_re_encoded(
+            self, dm, hashes, monkeypatch):
+        # A write would be due for a changed frame, but this one is already
+        # on disk: the lazy hash must re-ask the policy for an unchanged frame
+        # (SKIP here) rather than act on the changed-frame answer (WRITE).
+        import zlib
+        saved, touched = [], []
+        monkeypatch.setattr(dm, "_save_snapshot", lambda image: saved.append(image))
+        monkeypatch.setattr(os, "utime", lambda *a, **k: touched.append(a))
+        dm.set_scrolling_state(True)
+        dm.draw.rectangle([0, 0, 10, 10], fill=(3, 3, 3))
+        digest = zlib.adler32(dm.image.tobytes())
+        dm._last_snapshot_digest = digest
+        dm._saved_snapshot_digest = digest
+        last_write = time.time() - 1000             # a changed frame would write
+        dm._last_snapshot_ts = last_write
+        dm._last_snapshot_touch_ts = time.time()    # no touch due
+        dm.update_display()
+        # A write, even one only queued, would have moved the bookkeeping.
+        assert dm._last_snapshot_ts == last_write
+        assert dm._snapshot_pending is None
+        assert saved == [] and touched == []
+        assert len(hashes) == 1
+
+    def test_an_unchanged_scrolled_frame_is_touched_only_once_on_disk(
+            self, dm, hashes, monkeypatch):
+        # A touch vouches for the file on disk, so through the lazy hash too it
+        # must only happen once the frame has actually been saved.
+        import threading
+        import zlib
+        from src.common import snapshot_policy
+        saved, touched = [], []
+        wrote = threading.Event()
+
+        def save(image):
+            saved.append(image)
+            wrote.set()
+
+        monkeypatch.setattr(dm, "_save_snapshot", save)
+        monkeypatch.setattr(os, "utime", lambda *a, **k: touched.append(a))
+        dm.set_scrolling_state(True)
+        dm.draw.rectangle([0, 0, 10, 10], fill=(5, 5, 5))
+        digest = zlib.adler32(dm.image.tobytes())
+        dm._last_snapshot_digest = digest      # queued earlier...
+        dm._saved_snapshot_digest = 12345      # ...but an older frame is on disk
+        # A touch is due; a write is not (no viewer: the idle interval).
+        stale = time.time() - snapshot_policy.TOUCH_INTERVAL - 1.0
+        dm._last_snapshot_ts = stale
+        dm._last_snapshot_touch_ts = stale
+        dm.update_display()
+        assert wrote.wait(5), "a frame not yet on disk must be written"
+        deadline = time.time() + 5
+        while dm._saved_snapshot_digest != digest and time.time() < deadline:
+            time.sleep(0.01)
+        assert touched == [] and len(saved) == 1
+
+        # Once it is on disk, the same frame is only touched.
+        dm._last_snapshot_ts = stale
+        dm._last_snapshot_touch_ts = stale
+        dm.set_scrolling_state(True)
+        dm.update_display()
+        assert len(touched) == 1 and len(saved) == 1
+
+    def test_the_first_static_frame_after_a_scroll_is_pushed_once(
+            self, dm, hashes):
+        # No digest is kept mid-scroll, so a static frame identical to the
+        # scroll's last one is pushed once (one swap), and then dirty
+        # tracking skips its repeats as before.
+        dm.set_scrolling_state(True)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(90, 90, 0))
+        dm.update_display()                    # the scroll's last frame
+        dm.set_scrolling_state(False)
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()
+            dm.update_display()
+            dm.update_display()
+        assert spy.count == 1
+
+    def test_a_scrolled_push_forgets_the_last_static_frame(
+            self, dm, hashes):
+        # Scrolled frames carry no digest, so a scrolled push must clear the
+        # last static one. Were it kept, a static screen drawing what it
+        # showed before the scroll would be skipped as already on the panel,
+        # and the scroll's last frame would stay up until the content changed.
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(10, 120, 30))
+        dm.update_display()                    # static frame A
+        dm.set_scrolling_state(True)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(200, 0, 60))
+        dm.update_display()                    # a scrolled frame B
+        assert dm._last_pushed_digest is None
+        dm.set_scrolling_state(False)
+        dm.draw.rectangle([0, 0, 18, 18], fill=(10, 120, 30))
+        with _SwapSpy(dm.matrix) as spy:
+            dm.update_display()                # A again, over B
+        assert spy.count == 1, "A must replace the scroll's last frame"
+
+
+class TestOneScrollingAnswerPerFrame:
+    """update_display() asks is_currently_scrolling() once per frame and uses
+    that answer throughout. The call has side effects -- a scroll that has
+    gone quiet past its threshold is expired there and its frame hold
+    dropped -- so asking again partway through let one frame be presented at
+    the scroll's hold and recorded as static."""
+
+    def test_a_scroll_that_times_out_is_presented_without_its_hold(
+            self, dm, monkeypatch):
+        recorded = []
+        monkeypatch.setattr(
+            dm.frame_timing, "record",
+            lambda blit, wait, hold, scrolling, at: recorded.append(
+                (hold, scrolling)))
+        dm.set_scrolling_state(True, frame_hold=3)
+        # Quiet past the inactivity threshold, and nothing has asked since.
+        dm._scrolling_state['last_scroll_activity'] -= (
+            dm._scrolling_state['scroll_inactivity_threshold'] + 1.0)
+        dm.draw.rectangle([0, 0, 8, 8], fill=(31, 62, 93))
+        try:
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+        assert spy.count == 1
+        assert spy.last_frame_hold == 1
+        assert recorded == [(1, False)]
+
+    def test_scan_compensation_uses_the_frames_answer(
+            self, dm, tmp_path, monkeypatch):
+        from collections import deque
+        monkeypatch.setattr(dm, "_scan_lag_bands", [(16, 32, 1)])
+        monkeypatch.setattr(dm, "_scan_history", deque(maxlen=1))
+        # No preview and no snapshot due, so only the frame itself asks.
+        monkeypatch.setattr(dm, "_viewer_marker_path", str(tmp_path / "no-viewer"))
+        dm._viewer_check_ts = 0.0
+        dm._last_snapshot_ts = dm._last_snapshot_touch_ts = time.time()
+        asked = []
+        real = dm.is_currently_scrolling
+
+        def counting():
+            asked.append(1)
+            return real()
+
+        monkeypatch.setattr(dm, "is_currently_scrolling", counting)
+        dm.set_scrolling_state(True)
+        try:
+            dm.draw.rectangle([0, 0, 8, 8], fill=(17, 34, 51))
+            dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+            dm._viewer_check_ts = 0.0
+        assert len(asked) == 1
+
+    @staticmethod
+    def _scan_banded(dm, tmp_path, monkeypatch):
+        """Scan-order compensation on, no preview, no snapshot due, and every
+        frame handed to the canvases kept (update_display alternates them)."""
+        from collections import deque
+        monkeypatch.setattr(dm, "_scan_lag_bands", [(16, 32, 1)])
+        monkeypatch.setattr(dm, "_scan_history", deque(maxlen=1))
+        monkeypatch.setattr(dm, "_viewer_marker_path", str(tmp_path / "no-viewer"))
+        dm._viewer_check_ts = 0.0
+        dm._last_snapshot_ts = dm._last_snapshot_touch_ts = time.time()
+        shown = []
+        for canvas in (dm.offscreen_canvas, dm.current_canvas):
+            def capture(image, *args, _real=canvas.SetImage, **kwargs):
+                shown.append(image.copy())
+                return _real(image, *args, **kwargs)
+            monkeypatch.setattr(canvas, "SetImage", capture)
+        return shown
+
+    def test_a_held_frame_is_split_on_the_frames_answer(
+            self, dm, tmp_path, monkeypatch):
+        # Scan-order compensation presents a held frame as two swaps, the
+        # lagging half stepping one refresh after the rest. The split is
+        # decided on the frame's one answer, exactly as when it asked itself.
+        shown = self._scan_banded(dm, tmp_path, monkeypatch)
+        asked, recorded = [], []
+        real = dm.is_currently_scrolling
+
+        def counting():
+            asked.append(1)
+            return real()
+
+        monkeypatch.setattr(dm, "is_currently_scrolling", counting)
+        monkeypatch.setattr(
+            dm.frame_timing, "record",
+            lambda blit, wait, hold, scrolling, at: recorded.append(
+                (hold, scrolling)))
+        dm.set_scrolling_state(True, frame_hold=2)
+        try:
+            # The fixture is shared: a slow blit left by an earlier test
+            # would send this frame out whole and drop the history.
+            dm._last_blit_seconds = 0.0
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(10, 0, 0))
+            dm.update_display()                # the previous frame
+            asked.clear()
+            recorded.clear()
+            before = len(shown)
+            dm._last_blit_seconds = 0.0        # a blit that fits a refresh
+            dm.set_scrolling_state(True, frame_hold=2)
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(20, 0, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+            dm._viewer_check_ts = 0.0
+        assert len(asked) == 1
+        assert spy.holds == [1, 1]
+        first, second = shown[before:]
+        assert first.getpixel((0, 0)) == (20, 0, 0)
+        assert first.getpixel((0, 31)) == (10, 0, 0)    # lagging half: old
+        assert second.getpixel((0, 31)) == (20, 0, 0)   # a refresh later
+        assert recorded == [(2, True)]
+
+    def test_a_held_scroll_that_times_out_goes_out_whole_at_hold_1(
+            self, dm, tmp_path, monkeypatch):
+        # The expiry frame with scan-order compensation on: one swap of the
+        # frame as drawn, at hold 1, the history dropped -- and the pacing
+        # gate, the swap and frame timing all see that one hold. (Asking
+        # partway through instead had the swap use the dead scroll's hold
+        # while the gate and frame timing were told 1.)
+        shown = self._scan_banded(dm, tmp_path, monkeypatch)
+        gate_holds, recorded = [], []
+
+        class _Gate:
+            def before_swap(self, hold):
+                gate_holds.append(('before', hold))
+
+            def after_swap(self, hold):
+                gate_holds.append(('after', hold))
+
+        monkeypatch.setattr(
+            dm.frame_timing, "record",
+            lambda blit, wait, hold, scrolling, at: recorded.append(
+                (hold, scrolling)))
+        dm.set_scrolling_state(True, frame_hold=3)
+        try:
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(30, 0, 0))
+            dm.update_display()                # the scroll's last frame
+            recorded.clear()
+            before = len(shown)
+            # Quiet past the inactivity threshold, and nothing has asked since.
+            dm._scrolling_state['last_scroll_activity'] -= (
+                dm._scrolling_state['scroll_inactivity_threshold'] + 1.0)
+            dm._last_blit_seconds = 0.0        # a split would fit
+            monkeypatch.setattr(dm, "render_gate", _Gate())
+            dm.draw.rectangle([0, 0, dm.width - 1, dm.height - 1],
+                              fill=(40, 0, 0))
+            with _SwapSpy(dm.matrix) as spy:
+                dm.update_display()
+        finally:
+            dm.set_scrolling_state(False)
+            dm._viewer_check_ts = 0.0
+        assert spy.holds == [1]
+        assert gate_holds == [('before', 1), ('after', 1)]
+        assert recorded == [(1, False)]
+        (frame,) = shown[before:]
+        assert frame.getpixel((0, 31)) == (40, 0, 0)    # not composed
+        assert len(dm._scan_history) == 0
+
+
+class TestSnapshotEncoding:
+    def test_the_snapshot_is_written_at_the_fastest_level_and_lossless(
+            self, dm, tmp_path, monkeypatch):
+        # The encode is paid on the render thread for a static screen, and
+        # the file is read once; level 1 cuts the encode, and PNG is lossless
+        # at any level, so the preview shows exactly the frame.
+        from PIL import Image, ImageChops
+        levels = []
+        real_save = Image.Image.save
+
+        def recording(image, fp, format=None, **params):
+            levels.append(params.get("compress_level"))
+            return real_save(image, fp, format, **params)
+
+        monkeypatch.setattr(Image.Image, "save", recording)
+        monkeypatch.setattr(dm, "_snapshot_path", str(tmp_path / "snap.png"))
+        frame = Image.new("RGB", (dm.width, dm.height))
+        frame.paste((200, 10, 90), (3, 4, 40, 20))
+        frame.putpixel((0, 0), (1, 2, 3))
+        dm._save_snapshot(frame)
+        assert levels == [1]
+        with Image.open(dm._snapshot_path) as saved:
+            assert saved.format == "PNG"
+            assert ImageChops.difference(
+                saved.convert("RGB"), frame).getbbox() is None

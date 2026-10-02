@@ -151,12 +151,58 @@ class TestTheFirstStaticFrame:
         [(_blit, _wait, hold, scrolling, _at)] = records
         assert (hold, scrolling) == (3, True)
 
+    def test_it_is_decided_on_the_frames_one_answer_and_not_hashed(
+            self, dm, monkeypatch, tmp_path):
+        # The handover frame goes through update_display like any frame while
+        # the scroll state is set: it asks is_currently_scrolling() once, takes
+        # no digest, and that answer and its hold reach the swap and the
+        # record -- while the frame itself goes out as drawn.
+        import time
+        import zlib
+        import src.display_manager as display_manager_module
+        dm._scan_lag_bands = [(24, 48, 1)]
+        # No preview and no snapshot due: only the frame itself asks or hashes.
+        dm._viewer_marker_path = str(tmp_path / "no-viewer")
+        dm._viewer_check_ts = 0.0
+        dm.set_scrolling_state(True, 2)
+        _push(dm, (255, 0, 0))               # the ticker's last frame
+        dm._last_snapshot_ts = dm._last_snapshot_touch_ts = time.time()
+        asked, hashed, records = [], [], []
+        real_asked = dm.is_currently_scrolling
+
+        def asking():
+            asked.append(1)
+            return real_asked()
+
+        def hashing(data, *args):
+            hashed.append(len(data))
+            return zlib.adler32(data, *args)
+
+        real_record = dm.frame_timing.record
+
+        def record(*args, **kwargs):
+            records.append(args[2:4])
+            return real_record(*args, **kwargs)
+        monkeypatch.setattr(dm, "is_currently_scrolling", asking)
+        monkeypatch.setattr(display_manager_module, "zlib",
+                            types.SimpleNamespace(adler32=hashing))
+        monkeypatch.setattr(dm.frame_timing, "record", record)
+        holds = _watch_swaps(dm)
+        before = len(dm._presented)
+        dm._last_blit_seconds = 0.0          # fast enough to split
+        dm.end_scroll_for_static_screen()
+        _push(dm, (0, 0, 0))
+        assert len(asked) == 1
+        assert hashed == []
+        assert holds == [2]
+        assert records == [(2, True)]
+        assert len(dm._presented) - before == 1
+        assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 0)
+
     def test_nor_its_own_first_frame_under_its_second(self, dm):
         # A first display() that pushes two frames: a clear, then the screen.
-        # Composed, the second would show the first's rows -- and once the
-        # scroll is over, dirty tracking (which compares frames as drawn, not
-        # as composed) skips every identical 1 Hz redraw, so that half-black
-        # frame would stay up for the whole turn.
+        # Composed, the second would show the first's rows: a half-black frame
+        # up for the whole second until the 1 Hz loop's next redraw.
         dm._scan_lag_bands = [(24, 48, 1)]
         dm.set_scrolling_state(True, 1)
         _push(dm, (255, 0, 0))               # the ticker's last frame
@@ -166,8 +212,13 @@ class TestTheFirstStaticFrame:
         assert shown.getpixel((10, 30)) == (0, 0, 255)
         dm.set_scrolling_state(False)        # the controller, after the dispatch
         pushed = len(dm._presented)
-        _push(dm, (0, 0, 255))               # the 1 Hz redraw: skipped
-        assert len(dm._presented) == pushed
+        # The 1 Hz redraw is pushed once, as drawn: a frame pushed while the
+        # scroll state was set leaves dirty tracking no digest to match. The
+        # next identical one is skipped.
+        assert _push(dm, (0, 0, 255)).getpixel((10, 30)) == (0, 0, 255)
+        assert len(dm._presented) == pushed + 1
+        _push(dm, (0, 0, 255))
+        assert len(dm._presented) == pushed + 1
 
     def test_the_next_scroll_is_compensated_again(self, dm):
         dm._scan_lag_bands = [(24, 48, 1)]

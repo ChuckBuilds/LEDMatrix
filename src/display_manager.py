@@ -80,6 +80,15 @@ _CALENDAR_FONT_PX = 7
 #: frame, so a fault that persists would otherwise log ~100 lines a second.
 _UPDATE_ERROR_LOG_INTERVAL = 60.0
 
+#: zlib level for the preview snapshot PNG. The fastest level: each file is
+#: read by the web UI and soon replaced by the next, so encode time (paid on
+#: the render thread for a static screen) matters more than its size.
+#: Lossless at any level. Against Pillow's default (6), on a desktop with
+#: Pillow 12.3, a text-dense 512x64 frame encoded in about half the time,
+#: into 12 KB instead of 7 KB; sparser frames saved less time (10-20%) and
+#: stayed under 2 KB.
+_SNAPSHOT_PNG_COMPRESS_LEVEL = 1
+
 
 def _bdf_native_size(face) -> int:
     """The pixel height a BDF Face declares, or 0 if it does not say.
@@ -296,8 +305,8 @@ class DisplayManager:
         self._TEXT_WIDTH_CACHE_MAX = 1024
         # Snapshot mirror for web preview + health check (service writes, web
         # reads). Cadence/skip decisions live in src/common/snapshot_policy.py:
-        # full rate only while the web SSE broadcaster keeps the viewer marker
-        # fresh; unchanged frames are never re-encoded, only mtime-touched.
+        # the viewer rate only while the web SSE broadcaster keeps the viewer
+        # marker fresh; unchanged frames are never re-encoded, only mtime-touched.
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
         self._viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - touched by web SSE broadcaster
         self._last_snapshot_ts = 0.0
@@ -946,16 +955,32 @@ class DisplayManager:
                     self._write_snapshot_if_due()
                     return
 
+                # Asked once per frame and the answer reused below: the call
+                # has side effects (it expires a stale scroll and drops its
+                # frame hold), so asking again further down could disagree
+                # with what this frame was already treated as. Asked first,
+                # so the dirty check, the scan-order segments, the pacing gate,
+                # the swaps and frame timing all see one answer and the frame
+                # hold it leaves.
+                scrolling = self.is_currently_scrolling()
                 digest = None
                 frame_checksum = None
-                if self._dirty_tracking_enabled:
+                # No digest mid-scroll. The skip it feeds is never taken while
+                # scrolling (see below), so all it bought there was the
+                # snapshot's changed-frame check -- a tobytes() plus adler32
+                # over the whole framebuffer every frame (~0.17ms at 256x64
+                # on a Pi 4, twice that at 512x64) for a decision acted on at
+                # most once a second. _write_snapshot_if_due hashes for
+                # itself when a write or touch is actually due. The cost: the
+                # first static frame after a scroll is always pushed, once.
+                if self._dirty_tracking_enabled and not scrolling:
                     try:
                         brightness = getattr(self.matrix, 'brightness', None)
                     except AttributeError:
                         brightness = None
                     frame_checksum = zlib.adler32(self.image.tobytes())
                     digest = (frame_checksum, brightness)
-                    if digest == self._last_pushed_digest and not self.is_currently_scrolling():
+                    if digest == self._last_pushed_digest:
                         # Nothing changed since the last push — the panel is
                         # already showing exactly this frame.
                         #
@@ -982,7 +1007,7 @@ class DisplayManager:
                 if self._double_sided is not None:
                     segments = [(self._composite_double_sided(), self._frame_hold)]
                 else:
-                    segments = self._scan_segments(self.image)
+                    segments = self._scan_segments(self.image, scrolling)
                 gate = self.render_gate
                 blit_time = swap_time = 0.0
                 # Usually one segment: the frame, held for _frame_hold
@@ -1008,7 +1033,7 @@ class DisplayManager:
                 self._last_blit_seconds = blit_time / len(segments)
                 self.frame_timing.record(
                     blit_time, swap_time,
-                    self._frame_hold, self.is_currently_scrolling(), presented_at)
+                    self._frame_hold, scrolling, presented_at)
 
                 self._last_pushed_digest = digest
 
@@ -1055,7 +1080,9 @@ class DisplayManager:
             ", ".join(f"rows {top}-{bottom - 1} show {lag} refresh(es) behind"
                       for top, bottom, lag in bands))
 
-    def _scan_segments(self, image: Image.Image) -> List[Tuple[Image.Image, int]]:
+    def _scan_segments(self, image: Image.Image,
+                       scrolling: Optional[bool] = None
+                       ) -> List[Tuple[Image.Image, int]]:
         """What to present for this frame: ``[(image, refreshes), ...]``.
 
         Mid-scroll with compensation on, lagging rows are taken from earlier
@@ -1068,10 +1095,17 @@ class DisplayManager:
         after a scroll, while the scroll state is still set (see
         end_scroll_for_static_screen): one segment, held for the scroll's
         hold, with no rows from the scroller's frames.
+
+        ``scrolling`` is the caller's is_currently_scrolling() answer for this
+        frame. update_display() asks once, before calling this, so the frame
+        hold read here is the one that answer left (an expired scroll's hold
+        is already dropped). None asks here.
         """
         hold = self._frame_hold
         bands = getattr(self, '_scan_lag_bands', None)
-        if (not bands or not self.is_currently_scrolling()
+        if (not bands
+                or not (scrolling if scrolling is not None
+                        else self.is_currently_scrolling())
                 or self._static_handover):
             if bands:
                 self._scan_history.clear()
@@ -1563,9 +1597,10 @@ class DisplayManager:
         frame -- the bottom half of the old ticker under the new screen on a
         96x48 panel. At hold 1 that frame stays up for a whole second; at a
         longer hold its first refresh flashes the old rows. For a second frame
-        in the same call, the rows would come from the first. Dirty tracking
-        compares frames as drawn, so once the scroll is over it skips every
-        identical 1 Hz redraw of such a frame, and nothing would replace it.
+        in the same call, the rows would come from the first, shown for as long
+        as the first's would be. Dirty tracking does not keep such a frame up
+        past the screen's next redraw: a frame pushed while the scroll state
+        is set leaves it no digest to match, so that redraw is pushed.
 
         The rest of that scroll is left on purpose, until the controller ends
         it:
@@ -1729,11 +1764,14 @@ class DisplayManager:
 
         Args:
             frame_checksum: adler32 of the current frame, when the caller has
-                already computed one. Dirty tracking checksums every frame a
-                few lines above the call site, and re-deriving it here meant a
-                second tobytes() plus a second pass over the whole framebuffer
-                on every single frame — ~0.17ms per frame of the two combined
-                at 256x64, paid 100 times a second to reach the same number.
+                already computed one. Dirty tracking checksums every static
+                frame a few lines above the call site, and re-deriving it here
+                meant a second tobytes() plus a second pass over the whole
+                framebuffer on every single frame — ~0.17ms per frame of the
+                two combined at 256x64, paid 100 times a second to reach the
+                same number. None (mid-scroll, dirty tracking off, no
+                hardware): the frame is hashed here, and only when the policy
+                could act on it.
         """
         try:
             now = time.time()
@@ -1744,11 +1782,29 @@ class DisplayManager:
                 self._last_snapshot_ts = 0.0
             self._viewer_was_fresh = viewer_fresh
 
-            digest = (frame_checksum if frame_checksum is not None
-                      else zlib.adler32(self.image.tobytes()))
-            action = snapshot_policy.decide(
-                now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
-                viewer_fresh, digest != self._last_snapshot_digest)
+            if frame_checksum is not None:
+                digest = frame_checksum
+                action = snapshot_policy.decide(
+                    now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                    viewer_fresh, digest != self._last_snapshot_digest)
+            else:
+                # Ask as if the frame had changed before paying to find out.
+                # decide() is monotone in frame_changed -- a SKIP for a
+                # changed frame is a SKIP for an unchanged one too (its touch
+                # branch ignores frame_changed) -- so returning here gives the
+                # same answer the hash would have, and on most frames the hash
+                # is never taken. test_snapshot_policy.py holds decide() to it.
+                action = snapshot_policy.decide(
+                    now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                    viewer_fresh, True)
+                if action is snapshot_policy.SnapshotAction.SKIP:
+                    return
+                digest = zlib.adler32(self.image.tobytes())
+                if digest == self._last_snapshot_digest:
+                    # Unchanged after all: the decision an unchanged frame gets.
+                    action = snapshot_policy.decide(
+                        now, self._last_snapshot_ts,
+                        self._last_snapshot_touch_ts, viewer_fresh, False)
             if action is snapshot_policy.SnapshotAction.SKIP:
                 return
             if (action is snapshot_policy.SnapshotAction.TOUCH
@@ -1826,7 +1882,8 @@ class DisplayManager:
             prefix=f".{snapshot_path_obj.name}.", suffix=".tmp")
         try:
             with os.fdopen(_fd, "wb") as _f:
-                image.save(_f, format='PNG')
+                image.save(_f, format='PNG',
+                           compress_level=_SNAPSHOT_PNG_COMPRESS_LEVEL)
             os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, self._snapshot_path)
         except Exception:
@@ -1837,7 +1894,8 @@ class DisplayManager:
             except OSError:
                 pass
             # Fallback to direct save if replace not supported
-            image.save(self._snapshot_path, format='PNG')
+            image.save(self._snapshot_path, format='PNG',
+                       compress_level=_SNAPSHOT_PNG_COMPRESS_LEVEL)
         # Set proper file permissions after saving
         try:
             ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())
