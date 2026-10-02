@@ -76,3 +76,44 @@ def test_only_the_latest_image_is_adopted():
     dc._adopt_follower_scroll_image(rp)
     assert helper.cached_image is latest
     assert helper.total_scroll_width == 400
+
+
+def test_a_follower_frame_does_not_build_a_deferred_strip_image():
+    """Every follower frame asks whether the strip is there. A strip the
+    follower's own rebuild deferred (append_content) must be answered from
+    the helper's bookkeeping, not by building and keeping its PIL image."""
+    import numpy as np
+
+    from src.common.scroll_helper import ScrollHelper
+
+    width, height = 64, 16
+    helper = ScrollHelper(width, height)
+    helper.append_content([Image.new("RGB", (300, height), (0, 200, 0))])
+    helper.append_content([Image.new("RGB", (300, height), (0, 0, 200))])
+    assert helper.__dict__.get("_cached_image") is None
+    assert helper.has_strip()
+
+    dc = object.__new__(DisplayController)
+    dc.config = {"sync": {}}
+    dc.vegas_coordinator = SimpleNamespace(
+        render_pipeline=SimpleNamespace(scroll_helper=helper))
+    dc.display_manager = MagicMock(width=width)
+    dc.sync_manager = MagicMock()
+    dc.sync_manager.get_latest_scroll_x.return_value = 200
+    dc._follower_incoming_image = deque(maxlen=1)
+    dc._follower_dr_last_t = None
+    dc._follower_local_x = 200.0
+    dc._follower_pending_new_image = False
+    dc._follower_last_frame = None
+    dc._follower_deadline = None
+    dc._scroll_speed = 0
+
+    for _ in range(3):
+        dc._run_follower_frame()
+
+    # The frame was cut from the array...
+    frame = np.asarray(dc._follower_last_frame)
+    assert frame.shape == (height, width, 3)
+    assert frame.any()
+    # ...and the strip is still held once.
+    assert helper.__dict__.get("_cached_image") is None

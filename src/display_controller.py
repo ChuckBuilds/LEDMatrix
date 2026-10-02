@@ -2832,7 +2832,10 @@ class DisplayController:
 
         self._follower_local_x = local_x
 
-        if rp and rp.scroll_helper.cached_image is not None:
+        # has_strip(), not cached_image: every follower frame asks, and
+        # reading a strip the follower's own rebuild deferred would build
+        # and keep a second copy of it as a PIL image.
+        if rp and rp.scroll_helper.has_strip():
             # Hold last frame until TCP image arrives after cycle reset
             if not self._follower_pending_new_image and local_x >= width:
                 rp.scroll_helper.scroll_position = (

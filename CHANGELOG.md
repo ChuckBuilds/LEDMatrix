@@ -37,6 +37,21 @@ accepts both, but the store flags the old spelling as deprecated
   `test/test_plugin_update_tick_throttle.py` covers both, on the real
   `run()` through the golden-trace harness.
 
+### Strip checks no longer build the PIL image
+
+- `SportsScrollDisplay.display_scroll_frame` (every frame) and
+  `has_cached_content`, and the sync follower's per-frame check of the Vegas
+  strip, asked whether there was a strip by reading
+  `ScrollHelper.cached_image`. After the helper deferred the image (an
+  append, trim or patch), that read built it from `cached_array` and kept
+  it: 3.5 ms and about 1 MiB more held for a 4288x64 strip, on top of the
+  array's 0.8 MiB. They now ask `has_strip()`, which gives the same answer
+  from the helper's bookkeeping. A scoreboard whose `scroll_helper` has no
+  `has_strip` (its own helper, a test double) is still asked
+  `cached_image`.
+- A strip built with `create_scrolling_image` or `set_scrolling_image`
+  still keeps both the image and the array, as before.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
