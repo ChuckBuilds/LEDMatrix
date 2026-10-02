@@ -152,9 +152,11 @@ _HEAD_RE = re.compile(
 # set() rewrites the file for real once a skip would need more than that, so
 # an honest lift never reaches the bound. A file copied a day after it was
 # written therefore reads at most an hour fresher than its contents say, and a
-# 30-second live-score record from yesterday stays stale. Files written before
-# this change have mtime == write time == embedded timestamp, give or take
-# the write itself, and read exactly as before.
+# 30-second live-score record from yesterday stays stale. CacheManager.set
+# records written before this change have mtime == write time == embedded
+# timestamp, give or take the write itself, and read exactly as before; a
+# file an older version wrote or touched later than its embedded timestamp
+# says reads at most the same hour fresher, once, until it is next saved.
 
 #: Longest a skipped write may stand in for a real one, and so the furthest a
 #: file's mtime is ever trusted past the record's own timestamp. Unchanged data
