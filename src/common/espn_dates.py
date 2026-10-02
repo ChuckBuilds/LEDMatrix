@@ -46,18 +46,38 @@ entry older than the reader's own ``max_age``, whoever wrote it and whatever
 ttl they stored with it. Old keys are passed as ``legacy_keys`` and read
 after the canonical one, so an upgrade does not refetch everything at once;
 they can go one release after the one that added this.
+
+Chunks whose days are long over are kept in memory between fetches. The
+scoreboards re-fetch their whole Recent/Upcoming window (14 days back, 7
+ahead) every hour, and since ranges went away that is 22 day requests per
+league. Measured on hdpi on 2026-10-02 (NFL, college football, MLB, college
+baseball, NHL): the hourly window refresh was ~270 of 321 ESPN requests and
+~21 of 24.6MB in the hour, and the 12 days that ended three or more days ago
+were 68% of those bytes (6.9 of 10.2MB per copy of the five windows). A
+settled chunk is answered from memory for ``SETTLED_CHUNK_TTL_SECONDS``,
+stored as zlib-compressed JSON (~13x smaller than the body, and far smaller
+than the parsed objects), so the hourly refresh only goes to ESPN for the
+days that can still change.
 """
 
 import contextvars
+import json
 import logging
 import math
 import re
 import threading
 import time
+import zlib
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import partial
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
+
+try:
+    import orjson
+except ImportError:  # optional; the stdlib parser gives the same objects
+    orjson = None
 
 try:
     from src.common.json_body import response_json
@@ -103,11 +123,37 @@ ESPN_CHUNK_WORKERS = 6
 _range_lock = threading.Lock()
 _ranges_rejected_until = 0.0
 
+# A chunk is "settled" once its last day is this many UTC days back. ESPN
+# files games under the US Eastern date, and a late West-coast game ends after
+# midnight UTC; three days leaves a full day of margin past both, so nothing
+# still being played, finalised or rescheduled is ever served from memory.
+SETTLED_AFTER_DAYS = 3
+
+# How long a settled chunk is trusted. A day's finals do not change, but a
+# rare correction (or an empty answer during an ESPN outage) should not live
+# forever: once a day is plenty, and still skips 23 of every 24 hourly asks.
+SETTLED_CHUNK_TTL_SECONDS = 24 * 60 * 60
+
+# Bounds on the settled-chunk memory. A settled day measured 90KB (NHL) to
+# 990KB (a college-football Saturday) of JSON and 9-74KB compressed; the five
+# windows on hdpi need 60 entries and ~0.55MB. The caps only matter for a
+# board fetching whole past seasons.
+SETTLED_CACHE_MAX_ENTRIES = 512
+SETTLED_CACHE_MAX_BYTES = 8 * 1024 * 1024
+
+_settled_lock = threading.Lock()
+# key -> (stored_at monotonic, compressed JSON)
+_settled_chunks: "OrderedDict[Any, Tuple[float, bytes]]" = OrderedDict()
+_settled_bytes = 0
+
 __all__ = [
     "ESPN_MAX_LIMIT",
     "ESPN_CHUNK_WORKERS",
     "RANGE_RETRY_SECONDS",
+    "SETTLED_AFTER_DAYS",
+    "SETTLED_CHUNK_TTL_SECONDS",
     "clamp_espn_limit",
+    "clear_settled_chunk_cache",
     "parse_espn_date_range",
     "espn_date_chunks",
     "merge_scoreboard_payloads",
@@ -199,6 +245,88 @@ def _days_of_month(chunk: str) -> List[str]:
     return days
 
 
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _chunk_last_day(chunk: str) -> Optional[date]:
+    try:
+        if len(chunk) == 8:
+            return date(int(chunk[:4]), int(chunk[4:6]), int(chunk[6:]))
+        if len(chunk) == 6:
+            first = date(int(chunk[:4]), int(chunk[4:6]), 1)
+            return _first_of_next_month(first) - timedelta(days=1)
+    except ValueError:
+        pass
+    return None
+
+
+def _settled_key(url: str, params: Dict[str, Any], chunk: str) -> Optional[Any]:
+    """Memory key for a chunk that can no longer change, else None."""
+    last_day = _chunk_last_day(chunk)
+    if last_day is None:
+        return None
+    if last_day > _utc_today() - timedelta(days=SETTLED_AFTER_DAYS):
+        return None
+    # dates is the chunk itself and limit is always ESPN_MAX_LIMIT here;
+    # anything else (groups=80 for FBS, a team filter) changes the answer.
+    rest = tuple(sorted(
+        (str(k), str(v)) for k, v in params.items() if k not in ("dates", "limit")
+    ))
+    return (url, rest, chunk)
+
+
+def _settled_get(key: Any) -> Optional[Dict[str, Any]]:
+    with _settled_lock:
+        entry = _settled_chunks.get(key)
+        if entry is None:
+            return None
+        if time.monotonic() - entry[0] > SETTLED_CHUNK_TTL_SECONDS:
+            _settled_drop(key)
+            return None
+        _settled_chunks.move_to_end(key)
+        blob = entry[1]
+    # Decompress and parse outside the lock: every hit gets its own objects,
+    # so a caller mutating its payload cannot reach another caller's.
+    body = zlib.decompress(blob)
+    return cast(Dict[str, Any], orjson.loads(body) if orjson else json.loads(body))
+
+
+def _settled_drop(key: Any) -> None:
+    """Remove one entry. Caller holds _settled_lock."""
+    global _settled_bytes
+    entry = _settled_chunks.pop(key, None)
+    if entry is not None:
+        _settled_bytes -= len(entry[1])
+
+
+def _settled_put(key: Any, response: Any, payload: Dict[str, Any]) -> None:
+    global _settled_bytes
+    body = getattr(response, "content", None)
+    if not isinstance(body, (bytes, bytearray)):
+        body = json.dumps(payload).encode("utf-8")
+    blob = zlib.compress(bytes(body), 6)
+    if len(blob) > SETTLED_CACHE_MAX_BYTES:
+        return
+    with _settled_lock:
+        _settled_drop(key)
+        _settled_chunks[key] = (time.monotonic(), blob)
+        _settled_bytes += len(blob)
+        while _settled_chunks and (
+            len(_settled_chunks) > SETTLED_CACHE_MAX_ENTRIES
+            or _settled_bytes > SETTLED_CACHE_MAX_BYTES
+        ):
+            _settled_drop(next(iter(_settled_chunks)))
+
+
+def clear_settled_chunk_cache() -> None:
+    """Forget every remembered settled chunk (tests, or a manual refresh)."""
+    global _settled_bytes
+    with _settled_lock:
+        _settled_chunks.clear()
+        _settled_bytes = 0
+
+
 def espn_date_chunks(start: date, end: date) -> List[str]:
     """Cover ``[start, end]`` inclusive with ``dates=`` values ESPN accepts.
 
@@ -255,8 +383,16 @@ def _fetch_one_chunk(
 
     One bad chunk must not sink the rest of the season, so every error is
     logged and swallowed here rather than raised to the gather below.
+
+    A chunk whose days are settled (see ``SETTLED_AFTER_DAYS``) is answered
+    from memory when it was fetched in the last day.
     """
     try:
+        settled = _settled_key(url, params, chunk)
+        if settled is not None:
+            cached = _settled_get(settled)
+            if cached is not None:
+                return cached
         response = fetch_get(
             session,
             url,
@@ -266,7 +402,14 @@ def _fetch_one_chunk(
             **_memo_kwargs(cache_max_age),
         )
         response.raise_for_status()
-        return cast(Optional[Dict[str, Any]], response_json(response))
+        payload = response_json(response)
+        if settled is not None and isinstance(payload, dict):
+            events = payload.get("events")
+            # A capped month is truncated and gets re-asked day by day;
+            # remembering it would only cost memory.
+            if isinstance(events, list) and len(events) < ESPN_MAX_LIMIT:
+                _settled_put(settled, response, payload)
+        return cast(Optional[Dict[str, Any]], payload)
     except Exception as exc:  # noqa: BLE001 - see docstring
         if logger:
             logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)

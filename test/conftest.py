@@ -344,6 +344,24 @@ def _hermetic_unit_refresh(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _forget_settled_espn_chunks(monkeypatch):
+    """src.common.espn_dates remembers past days process-wide; tests fake
+    different answers for the same dates, so none may inherit another's.
+
+    "Today" is also pinned to 2000-01-01, so no date a test uses counts as
+    settled unless the test says so (by pinning _utc_today itself). Without
+    that, a test asking for last month twice passes while that month is
+    recent and fails once it is three days old: the second ask is answered
+    from memory."""
+    from datetime import date
+    from src.common import espn_dates
+    monkeypatch.setattr(espn_dates, "_utc_today", lambda: date(2000, 1, 1))
+    espn_dates.clear_settled_chunk_cache()
+    yield
+    espn_dates.clear_settled_chunk_cache()
+
+
+@pytest.fixture(autouse=True)
 def reset_logging():
     """Reset logging configuration before each test."""
     import logging
