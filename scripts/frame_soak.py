@@ -27,9 +27,16 @@ What the numbers mean
 late frames     frames that reached the panel one or more refreshes after they
                 were due -- the panel showed the previous frame again, which on
                 a moving strip is a visible hitch. This is the pass/fail number.
-freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers,
+freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers
+                the display controller does not tag (see handover gaps),
                 blocking calls on the render thread. Reported, not failed on,
                 since some are handovers between plugins rather than faults.
+handover gaps   the same length of gap where the display controller had just
+                started a screen's turn (also the same mode's again): its
+                first display() drawing. Counted here instead of under
+                freezes. Stats from a service older than this count have no
+                such line, and their freezes include these, so do not
+                compare freeze counts across that change.
 blit            copying the frame into the matrix canvas (rgbmatrix SetImage).
                 Grows with width x height x pwm_bits.
 wait            blocked in SwapOnVSync, i.e. slack before the refresh.
@@ -185,6 +192,9 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "freezes": totals["freezes"],
         "freezes_per_hour": round(totals["freezes"] / hours, 1) if hours else None,
         "freeze_seconds": round(totals["freeze_seconds"], 2),
+        # None from a service that predates the count: its handovers are
+        # among the freezes above.
+        "handover_freezes": totals.get("handover_freezes"),
         "worst_interval_ms": (round(totals["worst_interval_ms"], 1)
                               if totals["worst_interval_ms"] else None),
         "timing_ms": {name: percentiles(h, bucket_ms)
@@ -240,6 +250,9 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
     if report["freezes"]:
         print("                   by length: " + ", ".join(
             f"{k}: {v}" for k, v in report["freeze_by"].items()))
+    if report.get("handover_freezes") is not None:
+        print(f"Handover gaps      {report['handover_freezes']}"
+              "  >=250ms before a new screen's first frame; not in the freezes")
     print()
     print(f"{'ms':<18}{'p50':>8}{'p95':>8}{'p99':>8}{'max':>8}")
     for name in ("blit", "wait", "work", "interval_per_hold"):
