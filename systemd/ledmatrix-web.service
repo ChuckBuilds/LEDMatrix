@@ -19,6 +19,11 @@ Type=simple
 User=__USER__
 WorkingDirectory=__PROJECT_ROOT_DIR__
 Environment=USE_THREADING=1
+# Cap glibc's malloc arenas, as ledmatrix.service does: each allocating thread
+# can get its own arena, up to 8 x CPU count (24 on a 3-core Pi), and a grown
+# arena is never handed back to the OS. This threaded Flask process would hold
+# that memory the same way. See ledmatrix.service for the measurement.
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/usr/bin/python3 __PROJECT_ROOT_DIR__/scripts/utils/start_web_conditionally.py
 Restart=on-failure
 RestartSec=10
