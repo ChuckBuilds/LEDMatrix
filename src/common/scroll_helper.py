@@ -573,9 +573,12 @@ class ScrollHelper:
         img_w = self.cached_array.shape[1]
 
         if end_x <= img_w:
-            # Normal case: single contiguous slice (fastest path)
-            frame_array = np.ascontiguousarray(self.cached_array[:, start_x:end_x])
-            return Image.frombytes('RGB', _size, frame_array.tobytes())
+            # Normal case: single contiguous slice (fastest path). tobytes()
+            # on the column-slice view already returns C-order bytes, so
+            # ascontiguousarray() first only added a second full-frame copy.
+            return Image.frombytes(
+                'RGB', _size,
+                self.cached_array[:, start_x:end_x].tobytes())
         else:
             # Ensure frame buffer is allocated for all non-simple paths
             if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):

@@ -6,6 +6,7 @@ get_visible_portion, calculate_dynamic_duration, set_* methods,
 reset_scroll, clear_cache, get_scroll_info.
 """
 
+import numpy as np
 import pytest
 import time
 from unittest.mock import patch
@@ -171,6 +172,21 @@ class TestGetVisiblePortion:
         # Images should differ (colour from scrolled content)
         # Just verify both are valid PIL images with correct size
         assert img1.width == img2.width == DISPLAY_W
+
+    @pytest.mark.parametrize("start_x", [0, 1, 37, 200 - DISPLAY_W])
+    def test_integer_slice_is_byte_identical_to_a_contiguous_copy(
+            self, helper, start_x):
+        # The integer path dropped np.ascontiguousarray() before tobytes():
+        # a column slice of the strip is not C-contiguous, and tobytes()
+        # must still give the same C-order bytes the copy did.
+        rng = np.random.default_rng(start_x)
+        strip = rng.integers(0, 256, (DISPLAY_H, 200, 3), dtype=np.uint8)
+        helper.cached_array = strip
+        view = strip[:, start_x:start_x + DISPLAY_W]
+        assert not view.flags["C_CONTIGUOUS"]
+        frame = helper._get_visible_portion_integer(start_x, start_x + DISPLAY_W)
+        assert frame.tobytes() == np.ascontiguousarray(view).tobytes()
+        assert view.tobytes() == np.ascontiguousarray(view).tobytes()
 
 
 # ---------------------------------------------------------------------------
