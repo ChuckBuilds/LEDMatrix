@@ -151,7 +151,9 @@ class PluginManager:
         #
         # Which thread runs each plugin hook, and what it holds:
         #   __init__, on_enable   the loading thread (main thread at startup,
-        #                         the render thread on a live enable).
+        #                         the render thread on a live enable, a
+        #                         plugin-reload thread for a control socket
+        #                         reload).
         #   update()              plugin-update-worker, under the plugin lock,
         #                         via PluginExecutor (whose daemon thread runs
         #                         the call; if it outlives the executor's
@@ -170,8 +172,10 @@ class PluginManager:
         #                         plugin lock via apply_config_change(); if the
         #                         lock stays busy it is deferred to the update
         #                         worker, which applies it under the lock.
-        #   cleanup(), on_disable()  whoever calls unload_plugin(), under the
-        #                         lock with UNLOAD_LOCK_TIMEOUT.
+        #   cleanup(), on_disable()  whoever calls unload_plugin() (or, for a
+        #                         reload, unload_detached_plugin() on its
+        #                         plugin-reload thread), under the lock with
+        #                         UNLOAD_LOCK_TIMEOUT.
         # No wait on a plugin lock is unbounded, so one hung plugin can only
         # cost the worker PLUGIN_LOCK_TIMEOUT per attempt.
         self._update_queue: "queue.Queue[Union[None, Tuple[str, float], _DeferredConfigChange]]" = queue.Queue()
@@ -752,14 +756,55 @@ class PluginManager:
             if lock_acquired:
                 lock.release()
 
-    def _unload_plugin_locked(self, plugin_id: str) -> bool:
-        """Body of unload_plugin(); caller holds (or gave up on) the plugin lock."""
-        if plugin_id not in self.plugins:  # unloaded while we waited
+    def detach_plugin(self, plugin_id: str) -> Optional[Any]:
+        """Take a loaded plugin out of ``plugins`` without tearing it down.
+
+        The first half of a reload that must not block its caller, the render
+        thread (DisplayController._start_plugin_reload). Every new call into a
+        plugin starts by looking it up in ``plugins``: the update scheduler,
+        the update worker (which looks again under the plugin's lock) and
+        Vegas's fetches. So once detached, nothing new reaches the instance.
+        Work already running on it under its lock -- an update(), or a Vegas
+        content render that can take seconds -- carries on;
+        unload_detached_plugin() waits for it, on another thread.
+
+        Returns the instance, or None when the plugin was not loaded.
+        """
+        return self.plugins.pop(plugin_id, None)
+
+    def unload_detached_plugin(self, plugin_id: str, plugin: Any) -> bool:
+        """Tear down an instance taken out by detach_plugin(): unload_plugin()
+        for an instance that is no longer in ``plugins``.
+
+        Waits for the plugin's lock as unload_plugin() does, bounded by
+        UNLOAD_LOCK_TIMEOUT, so it belongs off the render thread. Call it
+        before loading the plugin again: it drops the plugin's modules and
+        lifecycle state along with the instance.
+        """
+        lock = self.get_plugin_lock(plugin_id)
+        lock_acquired = lock.acquire(timeout=self.UNLOAD_LOCK_TIMEOUT)
+        if not lock_acquired:
+            self.logger.warning(
+                "Plugin %s still busy after %.1fs; unloading without its lock",
+                plugin_id, self.UNLOAD_LOCK_TIMEOUT)
+        try:
+            return self._unload_plugin_locked(plugin_id, plugin)
+        finally:
+            if lock_acquired:
+                lock.release()
+
+    def _unload_plugin_locked(self, plugin_id: str, detached: Optional[Any] = None) -> bool:
+        """Body of unload_plugin(); caller holds (or gave up on) the plugin lock.
+
+        ``detached`` is an instance already taken out of ``plugins``
+        (detach_plugin); without it, the loaded instance is unloaded.
+        """
+        if detached is None and plugin_id not in self.plugins:  # unloaded while we waited
             self.logger.warning("Plugin %s not loaded", plugin_id)
             return False
 
         try:
-            plugin = self.plugins[plugin_id]
+            plugin = self.plugins[plugin_id] if detached is None else detached
             
             # Call cleanup if available
             if hasattr(plugin, 'cleanup'):
@@ -775,8 +820,9 @@ class PluginManager:
                 except Exception as e:
                     self.logger.warning("Error during plugin on_disable: %s", e)
             
-            # Remove from active plugins
-            del self.plugins[plugin_id]
+            # Remove from active plugins (a detached one already is)
+            if detached is None:
+                del self.plugins[plugin_id]
             with self._deferred_config_lock:
                 self._deferred_config_changes.pop(plugin_id, None)
             with self._plugin_last_update_lock:

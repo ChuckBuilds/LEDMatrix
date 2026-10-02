@@ -96,7 +96,8 @@ with its modes kept in their place in the rotation. Only a running plugin
 can be reloaded (`not_loaded` otherwise), so the id never makes the display
 import anything new. A plugin loaded only for an on-demand session gets
 `busy`. A new version that fails to load gets `failed` and stays out of the
-rotation, as it would after a restart.
+rotation, as it would after a restart. The load runs off the render thread,
+so the panel keeps scrolling while it happens (see below).
 
 **Acknowledgements.** A queued on-demand command is *accepted*, not *done*.
 `{"accepted": true, "request_id": …}` means the command is waiting in the
@@ -167,13 +168,33 @@ place it reads the mailbox:
   afterwards.
 - `brightness.set` is applied there and then (`_apply_control_brightness`),
   and the current frame is pushed again so the panel shows it.
-- `plugin.reload` waits for the top of the next loop pass, the place where
+- `plugin.reload` starts at the top of the next loop pass, the place where
   plugins are enabled and disabled live, because there no `display()` and no
   Vegas iteration is on the stack (`_apply_pending_plugin_reloads`). Until
   then the current screen ends early, as it does for a WiFi notice: the
   frame loops, the dwell and Vegas's interrupt check all treat a pending
-  reload as a reason to stop (`_screen_preempted`). The rotation then
-  advances, and the next pass reloads before it draws.
+  reload as a reason to stop (`_screen_preempted`).
+- Only the quick half of the reload runs on the render thread
+  (`_start_plugin_reload`): the plugin's modes leave the rotation, its
+  config subscription is dropped, and `PluginManager.detach_plugin` takes
+  the instance out of `plugins`. After that nothing new calls the old
+  instance: no `update()`, and no Vegas fetch. The rotation then advances
+  (Vegas resumes its strip), and frames keep coming.
+- The slow half runs on a `plugin-reload-<id>` thread (`_PluginReloadJob`).
+  It waits for the plugin's lock, then tears the old instance down
+  (`unload_detached_plugin`) and loads the new one (`reload_plugin`). The
+  lock can be held for seconds by a Vegas render of the old instance. On
+  ledpi the render thread used to wait for it here, and a football reload
+  froze the panel for 3.0 s.
+- The new instance joins the rotation between two frames
+  (`_finish_plugin_reloads`, from `_service_pending_changes` or the top of
+  the loop). Its modes go back to their old places, Vegas is told to fetch
+  it again, and the command is answered.
+- While the plugin reloads, it is out of the rotation. Vegas scrolls what
+  its strip already holds of it. An on-demand request for it gets
+  `plugin-reloading`. A config reconcile neither loads it a second time nor
+  unloads it mid-load; a disable saved meanwhile is applied once the
+  reload is done. A second reload of the same plugin runs after the first.
 
 The 0.25 s floor on the mailbox read does not apply to the queue, because
 draining it costs no disk read. A queued command also lets
@@ -204,7 +225,10 @@ Now the queue wakes the render thread:
 So a command lands within a millisecond or so on a static screen and in a
 dwell, and within one frame in Vegas and on a scrolling screen. The mailbox
 keeps its old delays. Commands still run only on the render thread: the
-connection threads only queue them and set the event.
+connection threads only queue them and set the event. The one exception is
+the slow half of `plugin.reload` (tearing down and loading the plugin),
+which runs on its own thread. Every change to the display's state still
+happens on the render thread.
 
 The waits are timed `Event.wait()` calls: no polling, and no more wake-ups
 than the sleeps they replace when nothing arrives. Measured under WSL

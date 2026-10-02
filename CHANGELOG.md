@@ -147,6 +147,22 @@ policies are unchanged.
 
 ### Fixes
 
+- A plugin reload after a store update (`plugin.reload`, #720) no longer
+  freezes the panel during Vegas. On ledpi a football reload froze it for
+  3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
+  render thread, and its unload waited for the plugin's lock. The strip's
+  prefetch thread held that lock while it rebuilt the old instance's Vegas
+  content. The render thread now only takes the plugin out of the rotation
+  and out of the plugin manager (`PluginManager.detach_plugin`). A
+  `plugin-reload-<id>` thread waits for the lock, tears the old instance
+  down and loads the new one, and the new instance joins the rotation
+  between two frames. In a test with a 3.0 s render holding the lock, the
+  longest gap between frames went from 3017 ms to 9 ms. The reply still
+  reports the real outcome, the modes keep their places in the rotation,
+  and Vegas fetches the plugin again. While it reloads, an on-demand request
+  for the plugin is refused (`plugin-reloading`), and a config reconcile
+  neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
+  out a reload for the lock skips the old instance.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
