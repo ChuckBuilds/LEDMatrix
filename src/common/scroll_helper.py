@@ -28,6 +28,30 @@ import numpy as np
 # long over one frame, so a sample this large is an idle gap between scrolls.
 FPS_LOG_INTERVAL = 5.0
 
+# The stats line goes to INFO only when a window is worth an operator's
+# attention, as Vegas's FPS line does (src/vegas_mode/coordinator.py): every
+# 5s from every scroller was most of the journal on a healthy rig. A window is
+# degraded when its frame rate falls below this fraction of the rate it was
+# locked to (1 / its own median frame time; same 0.9 as Vegas) ...
+STATS_HEALTHY_FRACTION = 0.9
+# ... or when more than this share of its frames stalled (past 1.5x the
+# median). A 1% stall rate barely moves the mean, so the fps test alone would
+# miss the judder this line exists to show.
+STATS_DEGRADED_STALL_RATE = 0.01
+# A healthy scroller still logs at INFO this often, so silence in the journal
+# means stopped rather than fine. Every window is still logged at DEBUG.
+STATS_HEARTBEAT_INTERVAL = 300.0
+
+
+def frame_stats_degraded(stats: Dict[str, Any]) -> bool:
+    """Whether one frame_stats() window is worth logging at INFO."""
+    n = stats["frames"]
+    if n == 0 or stats["median"] <= 0:
+        return False
+    locked_fps = 1.0 / stats["median"]
+    return (stats["fps"] < locked_fps * STATS_HEALTHY_FRACTION
+            or stats["stalls"] > n * STATS_DEGRADED_STALL_RATE)
+
 
 def _rgb_pixels(item) -> np.ndarray:
     """An appended item's pixels as an RGB array, as pasting it would draw them."""
@@ -189,6 +213,11 @@ class ScrollHelper:
         # Every frame time since the last stats line, so the 5s summary can
         # report the tail rather than one arbitrary sample. Cleared on log.
         self._window: list = []
+        # INFO-level stats bookkeeping (see STATS_HEARTBEAT_INTERVAL). Kept
+        # across reset_scroll(): a heartbeat per scroll start would bring the
+        # chatter back. 0.0 so the first window after start-up is at INFO.
+        self._stats_last_info_log = 0.0
+        self._stats_was_degraded = False
         
         # Scrolling state management
         self.is_scrolling = False
@@ -1210,10 +1239,23 @@ class ScrollHelper:
             # as an idle gap. There is nothing to report, and reporting the
             # gap itself is the bug above.
             if self._window:
-                self.logger.info(
-                    "Scroll frame stats - %s",
-                    format_frame_stats(self._window),
-                )
+                # INFO when degraded, on the window that recovers from it, and
+                # as a slow heartbeat; DEBUG otherwise.
+                degraded = frame_stats_degraded(frame_stats(self._window))
+                if (degraded or self._stats_was_degraded
+                        or current_time - self._stats_last_info_log
+                        >= STATS_HEARTBEAT_INTERVAL):
+                    self.logger.info(
+                        "Scroll frame stats - %s",
+                        format_frame_stats(self._window),
+                    )
+                    self._stats_last_info_log = current_time
+                elif self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug(
+                        "Scroll frame stats - %s",
+                        format_frame_stats(self._window),
+                    )
+                self._stats_was_degraded = degraded
             self.last_fps_log_time = current_time
             self.frame_count = 0
             self._window = []
