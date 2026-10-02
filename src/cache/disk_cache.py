@@ -14,7 +14,7 @@ import tempfile
 import logging
 import threading
 import zlib
-from typing import Dict, Any, Optional, Protocol
+from typing import Dict, Any, Optional, Protocol, Tuple
 from datetime import datetime
 
 from src.common.path_safety import safe_path_component
@@ -111,18 +111,89 @@ _HEAD_RE = re.compile(
 )
 
 
-def _stale_from_head(head: bytes, max_age: Optional[int], now: float) -> bool:
+# UNCHANGED RE-SAVES: THE FILE'S MTIME CARRIES THE NEWER TIMESTAMP
+# ----------------------------------------------------------------
+# Plugins re-save unchanged API data every update cycle, and every one of
+# those saves was a full rewrite on the SD card. DiskCache.set skips the write
+# when the payload matches the last one it wrote for the key -- but
+# CacheManager.set stamps each record with time.time(), so for set() the
+# payload never matched and the skip never fired.
+#
+# The digest now leaves out a header-first record's timestamp, so an unchanged
+# set() is skipped. What the skip must not do is make the record look older
+# than it is: the timestamp inside the file is from the last real write, and
+# a reader in another process (the web interface, with memory_ttl=0) or after
+# a restart would call fresh data stale. So the newer timestamp goes where it
+# costs no data write -- the file's mtime -- and readers take a record's age
+# from the newer of the two. The invariant that makes that safe:
+#
+#   a file's mtime is the timestamp of the newest record saved for its key
+#
+#   real write  mtime is set to the record's own timestamp, so a record saved
+#               with an old timestamp (data as of some earlier time) cannot
+#               borrow freshness from the moment it hit the disk
+#   skip        mtime is set to the skipped record's timestamp -- exactly what
+#               a rewrite would have stored, without the rewrite
+#
+# Readers of the on-disk timestamp, all of which go through _effective_timestamp:
+# DiskCache.get (the header check and the full parse; it also returns the
+# record with 'timestamp' set to the effective value, so CacheManager.get's
+# max_age path, the memory tier hydrated from disk, and any plugin reading
+# record['timestamp'] all see it). Readers that use mtime alone already see the
+# newer value: the retention sweep below, CacheManager.list_cache_files (the
+# web UI's cache list). Nothing else opens cache files: web_interface and
+# scripts reach them only through CacheManager.
+#
+# Something other than this class can also move an mtime forward -- a copy
+# without -p, an rsync without -t, a `touch`. (backup_manager.py does not
+# back up or restore the cache directory, so the in-tree restore cannot.) That
+# must not make old data fresh, so the lift is bounded: a reader never takes
+# the mtime as more than _MAX_TIMESTAMP_LIFT past the embedded timestamp, and
+# set() rewrites the file for real once a skip would need more than that, so
+# an honest lift never reaches the bound. A file copied a day after it was
+# written therefore reads at most an hour fresher than its contents say, and a
+# 30-second live-score record from yesterday stays stale. Files written before
+# this change have mtime == write time == embedded timestamp, give or take
+# the write itself, and read exactly as before.
+
+#: Longest a skipped write may stand in for a real one, and so the furthest a
+#: file's mtime is ever trusted past the record's own timestamp. Unchanged data
+#: is rewritten at least this often, at most once an hour per key instead of
+#: once per update cycle.
+_MAX_TIMESTAMP_LIFT = 3600.0
+
+
+def _record_timestamp(value: Any) -> Optional[float]:
+    """A record's timestamp as a finite float, or None if it has no usable one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _effective_timestamp(embedded: float, mtime: Optional[float]) -> float:
+    """When a record was last saved: its timestamp, or the file's mtime if a
+    later unchanged save moved that forward -- never by more than
+    _MAX_TIMESTAMP_LIFT. See "UNCHANGED RE-SAVES" above."""
+    if mtime is None:
+        return embedded
+    return max(embedded, min(mtime, embedded + _MAX_TIMESTAMP_LIFT))
+
+
+def _stale_from_head(head: bytes, max_age: Optional[int], now: float,
+                     mtime: Optional[float] = None) -> bool:
     """True when a record's header alone shows it has expired.
 
     Mirrors the expiry rule in DiskCache.get: a per-entry ttl wins over the
     caller's max_age, and no limit at all means never stale. False whenever the
-    header cannot be read, so the full parse decides as it always did.
+    header cannot be read, so the full parse decides as it always did. ``mtime``
+    is the file's, which may carry a newer save than the header does.
     """
     match = _HEAD_RE.match(head)
     if not match:
         return False
     try:
-        timestamp = float(match.group(1))
+        timestamp = _effective_timestamp(float(match.group(1)), mtime)
         limit = max_age
         if match.group(2) is not None:
             ttl = float(match.group(2))
@@ -248,11 +319,14 @@ class DiskCache:
         self.cache_dir = cache_dir
         self.logger = logger or logging.getLogger(__name__)
         self._lock = threading.Lock()
-        # key -> adler32 of the last payload successfully written to the
-        # primary cache path; lets set() skip rewriting identical data
-        # (per-process only — worst case another process rewrites, never
-        # a missed write). Guarded by _lock.
-        self._write_digests: Dict[str, int] = {}
+        # key -> what set() last put at the primary cache path: the adler32 of
+        # the payload (less a header-first timestamp), the timestamp the file
+        # holds (None for records without one), and the file's inode and size.
+        # Lets set() skip rewriting identical data. Per-process only, and the
+        # inode/size check means another process's write is never mistaken
+        # for ours -- worst case a redundant write, never a missed one.
+        # Guarded by _lock.
+        self._write_digests: Dict[str, Tuple[int, Optional[float], int, int]] = {}
     
     def get_cache_path(self, key: str) -> Optional[str]:
         """
@@ -301,32 +375,41 @@ class DiskCache:
         try:
             with self._lock:
                 with open(cache_path, 'rb') as f:
+                    # The open file's mtime, not the path's: the file a skipped
+                    # write touched is the one being read.
+                    mtime = os.fstat(f.fileno()).st_mtime
                     # Decide staleness from the header before paying for the
                     # parse. A stale read is the common case for the biggest
                     # records (a season schedule is re-fetched when its cache
                     # expires), and parsing 53MB to throw it away held the GIL
                     # for ~1.8s -- a visible freeze on the panel.
-                    if _stale_from_head(f.read(_HEAD_BYTES), max_age, time.time()):
+                    if _stale_from_head(f.read(_HEAD_BYTES), max_age, time.time(), mtime):
                         return None
                     f.seek(0)
                     record = _loads(f.read())
-            
-            # Determine record timestamp (prefer embedded, else file mtime)
+
+            # Determine record timestamp: the embedded one, moved forward by a
+            # later unchanged save if there was one (see "UNCHANGED RE-SAVES"),
+            # else the file mtime.
             record_ts = None
             if isinstance(record, dict):
                 record_ts = record.get('timestamp')
             if record_ts is None:
-                try:
-                    record_ts = os.path.getmtime(cache_path)
-                except OSError:
-                    record_ts = None
-            
-            if record_ts is not None:
-                try:
-                    record_ts = float(record_ts)
-                except (TypeError, ValueError):
-                    record_ts = None
-            
+                record_ts = mtime
+            else:
+                embedded_ts = _record_timestamp(record_ts)
+                if embedded_ts is None:
+                    try:
+                        record_ts = float(record_ts)
+                    except (TypeError, ValueError):
+                        record_ts = None
+                else:
+                    record_ts = _effective_timestamp(embedded_ts, mtime)
+                    if record_ts != embedded_ts:
+                        # Hand the record back as a rewrite would have left it,
+                        # so callers that age it themselves agree with us.
+                        record['timestamp'] = record_ts
+
             now = time.time()
 
             # An explicit per-entry ttl wins over the caller's max_age. The
@@ -403,7 +486,12 @@ class DiskCache:
             self.logger.warning("Cache data for key '%s' not serializable: %s", key, e)
             return
 
-        digest = zlib.adler32(payload)
+        timestamp = _record_timestamp(data.get('timestamp')) if isinstance(data, dict) else None
+        # A header-first record (CacheManager.set's layout) is compared without
+        # its timestamp, which differs on every save; see "UNCHANGED RE-SAVES".
+        # Any other layout is compared whole, as before.
+        head = _HEAD_RE.match(payload) if timestamp is not None else None
+        digest = zlib.adler32(memoryview(payload)[head.end(1):] if head else payload)
 
         try:
             # Atomic write to avoid partial/corrupt files
@@ -411,16 +499,10 @@ class DiskCache:
                 # Skip the disk entirely when this exact payload was already
                 # written for this key (plugins re-save unchanged API data
                 # every update cycle — each write is real SD-card wear).
-                # Refresh the file mtime so records that rely on it for TTL
-                # (no embedded 'timestamp') don't expire early; a metadata
-                # touch is journal-cheap compared to rewriting the data.
-                if self._write_digests.get(key) == digest:
-                    try:
-                        os.utime(cache_path, None)
-                        return
-                    except OSError:
-                        # File vanished or perms changed — fall through and write
-                        self._write_digests.pop(key, None)
+                # A metadata touch is journal-cheap compared to rewriting
+                # the data.
+                if self._skip_unchanged(key, cache_path, digest, timestamp):
+                    return
 
                 tmp_dir = os.path.dirname(cache_path)
                 # Try to create temp file in cache directory first
@@ -458,7 +540,7 @@ class DiskCache:
                                 # opened it in between was refused.
                                 _share_open_file(tmp_file.fileno(), _shared_group(tmp_dir))
                             os.replace(tmp_path, cache_path)
-                            self._write_digests[key] = digest
+                            self._remember_write(key, cache_path, digest, timestamp)
                         finally:
                             if os.path.exists(tmp_path):
                                 try:
@@ -471,7 +553,7 @@ class DiskCache:
                             with open(cache_path, 'wb') as cache_file:
                                 cache_file.write(payload)
                                 _share_open_file(cache_file.fileno(), _shared_group(tmp_dir))
-                            self._write_digests[key] = digest
+                            self._remember_write(key, cache_path, digest, timestamp)
                             self.logger.debug("Wrote cache for %s directly (non-atomic)", key)
                         except (IOError, OSError, PermissionError) as write_error:
                             # If direct write also fails, try fallback location
@@ -520,6 +602,66 @@ class DiskCache:
             )
             return  # Exit gracefully without raising exception
     
+    def _skip_unchanged(self, key: str, cache_path: str, digest: int,
+                        timestamp: Optional[float]) -> bool:
+        """Stand in for a write of an unchanged record by touching the file.
+
+        True when the file already holds this record bar its timestamp and the
+        touch landed; False means write it. The touch sets mtime to the
+        record's timestamp -- what a rewrite would have stored -- or to now
+        for a record without one, whose age readers already take from mtime.
+        Caller holds _lock.
+        """
+        last = self._write_digests.get(key)
+        if last is None or last[0] != digest:
+            return False
+        _, written_ts, ino, size = last
+        if (timestamp is None) != (written_ts is None):
+            return False
+        if timestamp is not None and written_ts is not None:
+            # Never backwards (a rewrite would make the record older), and
+            # never further than readers will trust the mtime: past that the
+            # record is rewritten, so its own timestamp catches up.
+            if not written_ts <= timestamp <= written_ts + _MAX_TIMESTAMP_LIFT:
+                return False
+        try:
+            st = os.stat(cache_path)
+            if (st.st_ino, st.st_size) != (ino, size):
+                # Replaced since our write (another process, a restore):
+                # its contents are not the ones the digest describes.
+                self._write_digests.pop(key, None)
+                return False
+            # Setting an explicit time needs the file's owner; a file someone
+            # else wrote fails here and is rewritten (as our own file) instead.
+            os.utime(cache_path, None if timestamp is None else (timestamp, timestamp))
+            return True
+        except OSError:
+            # File vanished or perms changed — fall through and write
+            self._write_digests.pop(key, None)
+            return False
+
+    def _remember_write(self, key: str, cache_path: str, digest: int,
+                        timestamp: Optional[float]) -> None:
+        """After a real write: pin mtime to the record's timestamp and note
+        what was written, so the next unchanged save can be skipped.
+
+        Pinning keeps a record saved with an older timestamp from looking as
+        fresh as the moment it was written (see "UNCHANGED RE-SAVES"); for
+        CacheManager.set's records the two differ only by the write itself.
+        A timestamp in the future is left alone, mtime already being older.
+        Never raises: the data is on disk, and anything failing here only
+        costs the next save its skip. Caller holds _lock.
+        """
+        self._write_digests.pop(key, None)
+        try:
+            if timestamp is not None and timestamp <= time.time():
+                os.utime(cache_path, (timestamp, timestamp))
+            st = os.stat(cache_path)
+        except OSError as e:
+            self.logger.debug("Could not pin mtime of %s: %s", cache_path, e)
+            return
+        self._write_digests[key] = (digest, timestamp, st.st_ino, st.st_size)
+
     def clear(self, key: Optional[str] = None) -> None:
         """
         Clear cache entry or all entries.

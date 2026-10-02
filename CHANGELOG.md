@@ -19,6 +19,26 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fewer SD-card writes from the cache
+
+- **An unchanged `CacheManager.set()` no longer rewrites the file.**
+  `DiskCache` already skipped a payload identical to the last one it wrote,
+  but `set()` stamps every record with the current time, so for `set()` the
+  payload never matched and every unchanged re-save was a full rewrite. The
+  comparison now leaves out a header-first record's timestamp (the `ttl` and
+  the data still count), and the newer timestamp is kept in the file's mtime
+  instead: a skipped save touches the file to the record's timestamp, and a
+  real write pins mtime to the record's own timestamp. Every reader ages a
+  record from the newer of the two -- `DiskCache.get`, its header-only
+  staleness check, and the record it returns, whose `timestamp` is the newer
+  value, so `CacheManager.get`, the memory tier and plugins reading
+  `record['timestamp']` all agree; the retention sweep and the web UI's cache
+  list already used mtime. The mtime is trusted at most an hour past the
+  record's own timestamp, and unchanged data is rewritten once an hour, so a
+  file copied without its mtime reads at most an hour fresher than its
+  contents. 100 identical `set()` calls of a 32 KB record: 100 writes before,
+  1 after.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
