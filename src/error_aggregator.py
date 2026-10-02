@@ -485,7 +485,7 @@ def record_error(
 # and only the display service's ever records anything (plugin_executor runs
 # the plugins there). The web interface therefore reads a snapshot the display
 # service publishes to the shared cache directory -- the same channel, and the
-# same file permissions, as display_current_state and plugin_metrics:*: files
+# same file permissions, as display_current_state and plugin_metrics_snapshot: files
 # are 0660 and carry the cache directory's group, so root writes and the web
 # user reads, and the other way round for the clear request.
 #

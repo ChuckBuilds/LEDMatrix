@@ -38,6 +38,20 @@ accepts both, but the store flags the old spelling as deprecated
   file copied without its mtime reads at most an hour fresher than its
   contents. 100 identical `set()` calls of a 32 KB record: 100 writes before,
   1 after.
+- **Plugin metrics are one record, written at most once a minute.** The
+  resource monitor wrote a `plugin_metrics:<id>` record per plugin, each at
+  most every 30 s: two writes a minute per plugin, 28 on a fourteen-plugin
+  rig. Every plugin's metrics now go in one `plugin_metrics_snapshot` record
+  (`{"schema": 1, "plugins": {id: record}}`, each record shaped as before),
+  written at most once a minute. `GET /api/v3/plugins/metrics` and
+  `/plugins/metrics/<id>` return the same fields; the numbers can be up to a
+  minute old instead of 30 s. A plugin the snapshot does not have yet is
+  still read from its old `plugin_metrics:<id>` record, which nothing writes
+  any more and the cache's retention removes. Each write starts from the
+  snapshot on disk, so plugins the display has not run since a restart keep
+  their numbers, and a reset from the web UI sticks for a plugin the display
+  is not running, as it did. A plugin with no call for 30 days is dropped from
+  the snapshot, as its record used to age out.
 
 ### Garbage-collection pauses in the frame stats
 

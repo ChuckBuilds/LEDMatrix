@@ -250,7 +250,7 @@ else:
 # --------------------------------------------
 # The display service runs as root and the web interface as the installing
 # user, and the web interface reads records only the display writes
-# (display_current_state, display_on_demand_state, plugin_metrics:*). Files are
+# (display_current_state, display_on_demand_state, plugin_metrics_snapshot). Files are
 # written 0660, so the web interface can read one only through its group.
 #
 # The installers rely on the directory's setgid bit to set that group. That is
