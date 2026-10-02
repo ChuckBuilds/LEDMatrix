@@ -1048,7 +1048,8 @@ or `unknown` (nothing published; `data.data` is `null`).
       "totals": {"requests": 412, "merged": 3, "not_modified": 0,
                  "errors": 1, "http_errors": 2, "retries": 0,
                  "throttled": 0, "overruns": 0, "bytes": 18234011,
-                 "wait_seconds": 0.0},
+                 "wait_seconds": 0.0, "memo_hits": 21, "cache_hits": 40,
+                 "legacy_cache_hits": 2},
       "plugins": {
         "football-scoreboard": {"requests": 240, "merged": 2, "bytes": 9120330,
                                 "hosts": {"site.api.espn.com": 180,
@@ -1059,9 +1060,11 @@ or `unknown` (nothing published; `data.data` is `null`).
         "site.api.espn.com": {"requests": 301, "...": "as in totals"}
       },
       "validators": {"entries": 0, "bytes": 0},
+      "response_cache": {"entries": 3, "bytes": 412004},
       "config": {"enabled": true, "single_flight": true,
                  "conditional_get": true, "max_wait_seconds": 2.0,
-                 "rate_limits": {"*.espn.com": {"per_second": 20.0, "burst": 200.0}}}
+                 "rate_limits": {"*.espn.com": {"per_second": 20.0, "burst": 200.0}},
+                 "response_cache": true, "default_max_age": 30.0}
     }
   }
 }
@@ -1072,6 +1075,16 @@ or `unknown` (nothing published; `data.data` is `null`).
 flight, `not_modified` 304s served from the stored body, `errors` transport
 failures and `http_errors` responses with status 400 or above. `bytes` is the
 decoded body size. `core` is everything no plugin made.
+
+Three counters are requests that never reached the network: `memo_hits`
+were answered from the short response cache (a response still inside the
+`Cache-Control: max-age` its server gave it), and `cache_hits` were
+scoreboard fetches answered from a shared ESPN scoreboard cache entry
+(`espn_scoreboard_cache_key`). `legacy_cache_hits` counts reads served from a
+key that predates the shared one; it should fall to zero within a day of an
+upgrade. A plugin's `hosts` counts are requests plus merged requests,
+`memo_hits` and `cache_hits`: everything it asked for.
+`response_cache` is the size of the response cache now.
 
 ### Get/Set Plugin Limits
 

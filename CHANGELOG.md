@@ -119,6 +119,50 @@ policies are unchanged.
   `GET /api/v3/plugins/fetch-stats`.
 - `fetch_service` is a core config section (`src/core_config_keys.py`).
 
+### Shared fetch service (stage 2: one scoreboard cache key, a max-age response cache)
+
+- **One cache key per ESPN scoreboard.** `espn_scoreboard_cache_key(sport,
+  league, dates)` in `src/common/espn_dates.py` names a scoreboard by ESPN's
+  own path (`football`/`nfl`) and its `dates=` value, so every consumer of
+  the same scoreboard shares one cached copy. Before, odds-ticker cached it as
+  `scoreboard_data_{sport}_{league}_{date}`, `APIHelper` as
+  `espn_{sport}_{league}_{date}` and the scoreboards as
+  `{sport_key}_schedule_{window}`.
+- **Cache-through helpers.** `get_espn_scoreboard()` returns a cached copy at
+  most `max_age` seconds old and otherwise fetches with
+  `fetch_espn_scoreboard` and caches the result; `read_espn_scoreboard_cache()`
+  and `store_espn_scoreboard_cache()` are the two halves (the read takes an
+  `accept(data, age)` predicate, e.g. a shorter limit for a payload holding a
+  live game). A read checks the
+  record's own timestamp, so a writer's stored ttl can no longer make a
+  reader take data older than its own TTL; the shared entry stores no ttl.
+  Old keys are passed as `legacy_keys` and read after the canonical one for
+  one release, so an upgrade does not refetch every league at once.
+- **Core callers use the key.** `APIHelper.fetch_espn_scoreboard` caches
+  under it by default (an explicit `cache_key` still works as before; the old
+  default key is read as a fallback). `SportsFetchMixin` gains
+  `_schedule_cache_key()` and `_cached_schedule()` for the scoreboards'
+  schedule windows (the same read as before, with the old key as fallback,
+  and a miss deletes the previous day's copy of a sliding window), and
+  `_fetch_season_directly(cache_key=None)` uses the canonical key. The
+  scoreboards and odds-ticker move to it in a plugins release that requires
+  this core.
+- **Response cache.** A `200` with `Cache-Control: max-age=N` (minus `Age`)
+  answers an identical GET for N seconds without a request; ESPN sends no
+  validators, only max-age (1 to ~500 s, measured 2026-10-02). A caller says
+  how old a response it accepts with `fetch_get(..., cache_max_age=)` /
+  `fetch_espn_scoreboard(..., cache_max_age=)`; one that does not say gets at
+  most 30 s (`fetch_service.response_cache.default_max_age`).
+  `BaseOddsManager.get_odds` passes its update interval, `APIHelper.get` its
+  `cache_ttl`, and `get_espn_scoreboard` its `max_age`. `no-store`,
+  `no-cache`, `private`, `Vary: *` and `Set-Cookie` responses are never kept.
+  Bounded: 64 entries, 6 MB, 2 MB each; never longer than 10 minutes.
+- **Counters.** `memo_hits` (answered by the response cache), `cache_hits`
+  (scoreboard fetches answered by a shared cache entry) and
+  `legacy_cache_hits` (reads from a pre-stage-2 key), per plugin and per
+  host, and the response cache's size, in `GET /api/v3/plugins/fetch-stats`.
+- No new module; every change is additive to existing signatures.
+
 ### Control socket (stage 2: wake-ups, brightness, plugin reload)
 
 - **Socket commands land at once.** Stage 1's socket was no faster than the
