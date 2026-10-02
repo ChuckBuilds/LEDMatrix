@@ -2592,6 +2592,7 @@ class DisplayController:
         """
         # Clear display when schedule makes it inactive to ensure blank screen
         # (not showing initialization screen)
+        self._end_scroll_before_core_screen()
         try:
             self.display_manager.clear()
             self.display_manager.update_display()
@@ -2692,6 +2693,7 @@ class DisplayController:
         wifi_status_data = self._check_wifi_status_message()
         if not wifi_status_data:
             return False
+        self._end_scroll_before_core_screen()
         if not self._display_wifi_status_message(wifi_status_data):
             # Display failed, clear the status and continue normally
             return False
@@ -2797,6 +2799,22 @@ class DisplayController:
             if end_scroll is not None:
                 end_scroll()
         return static_screen
+
+    def _end_scroll_before_core_screen(self) -> None:
+        """End any scroll before the controller draws a screen of its own.
+
+        The schedule-off blank and the WiFi notice are drawn by the
+        controller, not by a plugin, so they never pass through
+        _dispatch_first_frame and its handover. Drawn while the last scroll's state is still set, the blank
+        went out with the scroller's lagging rows (on a scan-compensated
+        panel) for its 60 s dwell, and the notice's redraws were timed as
+        freezes of the old scroll. Ending the state first sends them out as
+        drawn, at hold 1, as static frames. A scroller that resumes sets the
+        state again on its next frame.
+        """
+        set_scrolling_state = getattr(self.display_manager, 'set_scrolling_state', None)
+        if set_scrolling_state is not None:
+            set_scrolling_state(False)
 
     def _note_screen_handover(self) -> None:
         """Tag the frame the first dispatch is about to present.

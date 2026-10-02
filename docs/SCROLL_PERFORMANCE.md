@@ -554,24 +554,17 @@ its first `display()`, so the frames that call presents go out as drawn, in one
 swap each, instead of with the lagging half taken from the scroller's last
 frame.
 
-Other screens that follow a scroll still are, while the scroll state lasts (it
-expires 2 s after the scroller's last frame). Their first frame takes its
-lagging half from the scroller's last frame: for one refresh after a held
-scroll, and after a scroll at one frame per refresh until the next frame
-replaces it. They are:
+The controller's own screens -- the blank shown when the schedule turns the
+panel off, and the WiFi status message -- end the scroll state before they are
+drawn, so they go out as drawn and are timed as static frames, not as freezes
+of the old scroll. A scroller that resumes after a WiFi notice sets the state
+again on its next frame.
 
-- the blank shown when the schedule turns the panel off. It is redrawn once a
-  minute while the panel is off, so half of the scroller's last frame can stay
-  lit for up to 60 s;
-- the WiFi status message, until the next pass half a second later;
-- a screen that runs the high-FPS loop without scrolling (an older
-  `static-image`, which is forced into it), until its next frame.
-
-The frame stats still time those two as frames of the old scroll: a WiFi
-notice that preempts a scroller records up to three 0.5-1 s freezes, and the
-schedule-off blank a `Render stall ... mid-scroll`. Ending the scroll state
-before the schedule-off blank and the WiFi message is a follow-up, the
-schedule-off blank first.
+One screen that follows a scroll is still composed while the scroll state lasts
+(it expires 2 s after the scroller's last frame): a screen that runs the
+high-FPS loop without scrolling (an older `static-image`, which is forced into
+it). Its first frame takes its lagging half from the scroller's last frame, for
+one refresh after a held scroll and otherwise until its next frame.
 
 Checked on hdpi (4×128×64 on one chain, rotated 180, 2026-09-24) before it was
 written: `scan_mode: 1` (interlaced) made the step vanish but turned moving
