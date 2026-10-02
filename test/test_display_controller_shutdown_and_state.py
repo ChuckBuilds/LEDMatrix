@@ -3,6 +3,8 @@
 - systemd stops the service with SIGTERM; it must run the same cleanup as Ctrl-C.
 - The current mode is republished while it stays on screen, so the web UI's
   "Now showing" does not turn into "unknown" after its 120 s max_age.
+- Waking from scheduled-off, blanking, or on-demand starting or ending with
+  the mode name unchanged is republished at once, not up to 30 s later.
 - Switching Vegas on in the web UI works when Vegas was off at startup.
 """
 
@@ -76,6 +78,67 @@ def test_unchanged_mode_is_republished_after_the_refresh_interval():
         now[0] += dc_module.CURRENT_STATE_REFRESH_SECONDS    # same mode, stale
         dc._publish_current_mode_state_if_changed()
     assert dc.cache_manager.set.call_count == 2
+
+
+def _published(dc):
+    return dc.cache_manager.set.call_args[0][1]
+
+
+@pytest.mark.parametrize("attr,before,after", [
+    ("is_display_active", False, True),    # woke from scheduled-off
+    ("is_display_active", True, False),    # blanked for scheduled-off
+    ("on_demand_active", False, True),     # on-demand started on this mode
+    ("on_demand_active", True, False),     # ...and ended on it
+])
+def test_a_flag_change_with_the_same_mode_is_republished_at_once(attr, before, after):
+    """ledpi: current-status showed is_display_active stale for up to 30 s
+    after a wake from scheduled-off, because the mode name had not changed."""
+    dc = _publisher()
+    setattr(dc, attr, before)
+    now = [1000.0]
+    with patch.object(dc_module.time, "monotonic", lambda: now[0]):
+        dc._publish_current_mode_state()            # e.g. the blank's publish
+        assert _published(dc)[attr] is before
+        now[0] += 1                                 # well inside the refresh
+        setattr(dc, attr, after)
+        dc._publish_current_mode_state_if_changed()  # the next publish point
+    assert dc.cache_manager.set.call_count == 2
+    assert _published(dc)[attr] is after
+    assert _published(dc)["mode"] == "mlb_live"
+
+
+def test_wake_inside_the_blank_sleep_is_published_by_the_service_helper():
+    """The blank sleeps through _service_pending_changes; the schedule turning
+    the display back on there reaches the web UI on that same call."""
+    dc = _publisher()
+    dc.is_display_active = False
+    dc._last_pending_service = None
+    dc.PENDING_CHANGES_INTERVAL = 0.25
+    for name in ("_poll_on_demand_requests", "_check_on_demand_expiration",
+                 "_apply_brightness_target"):
+        setattr(dc, name, MagicMock())
+
+    def wake():
+        dc.is_display_active = True
+    dc._evaluate_schedule = MagicMock(side_effect=wake)
+    now = [5000.0]
+    with patch.object(dc_module.time, "monotonic", lambda: now[0]):
+        dc._publish_current_mode_state()            # published while blank
+        now[0] += 2
+        dc._service_pending_changes()
+    assert dc.cache_manager.set.call_count == 2
+    assert _published(dc)["is_display_active"] is True
+
+
+def test_unchanged_flags_do_not_add_writes():
+    dc = _publisher()
+    now = [1000.0]
+    with patch.object(dc_module.time, "monotonic", lambda: now[0]):
+        dc._publish_current_mode_state_if_changed()
+        for _ in range(5):
+            now[0] += 1
+            dc._publish_current_mode_state_if_changed()
+    assert dc.cache_manager.set.call_count == 1
 
 
 def test_refresh_interval_is_well_inside_the_web_max_age():

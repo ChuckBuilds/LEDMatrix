@@ -501,6 +501,9 @@ class DisplayController:
         # Last mode written to the display_current_state cache key, and when.
         self._last_published_mode: Optional[str] = None
         self._last_published_at = 0.0
+        # (is_display_active, on_demand_active) as last published: a change
+        # to either is republished at once, like a mode change.
+        self._last_published_flags: Optional[Tuple[bool, bool]] = None
         self.global_dynamic_config = (
             self.config.get("display", {}).get("dynamic_duration", {}) or {}
         )
@@ -1386,13 +1389,23 @@ class DisplayController:
             }
             self.cache_manager.set('display_current_state', state)
             self._last_published_mode = self.current_display_mode
+            self._last_published_flags = self._current_state_flags()
             self._last_published_at = time.monotonic()
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to publish current display state: %s", err, exc_info=True)
 
+    def _current_state_flags(self) -> Tuple[bool, bool]:
+        """The published flags besides the mode that a reader acts on."""
+        return (bool(self.is_display_active), bool(self.on_demand_active))
+
     def _publish_current_mode_state_if_changed(self) -> None:
         """Publish the current mode state when it changed, or when the last
         publish is older than CURRENT_STATE_REFRESH_SECONDS.
+
+        A change is the mode, or ``is_display_active`` / ``on_demand_active``:
+        waking from scheduled-off, or an on-demand session starting or ending,
+        often leaves the mode name as it was, and the web UI would otherwise
+        show the old flag until the next refresh.
 
         The web UI reads this key with a max_age (api_v3/display.py), so a mode
         that stays on screen longer than that -- a live game under live
@@ -1401,6 +1414,7 @@ class DisplayController:
         every render tick.
         """
         if (self.current_display_mode != self._last_published_mode
+                or self._current_state_flags() != getattr(self, '_last_published_flags', None)
                 or time.monotonic() - self._last_published_at >= CURRENT_STATE_REFRESH_SECONDS):
             self._publish_current_mode_state()
 
