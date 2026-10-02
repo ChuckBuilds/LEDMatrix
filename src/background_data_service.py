@@ -34,6 +34,7 @@ from src.common.fetch_service import (
     plugin_scope,
     share_connection_pool,
 )
+from src.common.espn_payload import is_espn_scoreboard_url, slim_scoreboard_payload
 from src.common.espn_dates import (
     RANGE_RETRY_SECONDS,
     _note_range_rejected,
@@ -83,6 +84,10 @@ class FetchRequest:
     # the cache with the callbacks suppressed -- joiners waiting forever for a
     # fetch that did, in fact, succeed.
     commit_claimed: bool = False
+    # Trim an ESPN scoreboard response before it is cached and delivered
+    # (src/common/espn_payload.py). Set by whoever created the request; a
+    # submitter that joins the fetch gets the same payload.
+    slim_payload: bool = True
     result: Optional[Any] = None
     error: Optional[str] = None
     # The plugin that submitted the request, so the fetch service counts the
@@ -249,7 +254,8 @@ class BackgroundDataService:
                            timeout: Optional[int] = None,
                            max_retries: int = 3,
                            priority: int = 1,
-                           callback: Optional[Callable] = None) -> str:
+                           callback: Optional[Callable] = None,
+                           slim_payload: bool = True) -> str:
         """
         Submit a background fetch request.
         
@@ -265,6 +271,11 @@ class BackgroundDataService:
             priority: Accepted for compatibility and ignored; requests run in
                 submission order.
             callback: Optional callback function when request completes
+            slim_payload: Drop the parts of an ESPN scoreboard response no
+                scoreboard reads (stat leaders, athlete cards, links,
+                headlines, highlights) before caching it; see
+                src/common/espn_payload.py. Only ESPN /scoreboard URLs are
+                touched. Pass False to cache the response whole.
             
         Returns:
             Request ID for tracking the fetch operation
@@ -336,6 +347,7 @@ class BackgroundDataService:
             priority=priority,
             callback=callback,
             owner=owner,
+            slim_payload=slim_payload,
         )
         
         with self._lock:
@@ -496,6 +508,13 @@ class BackgroundDataService:
                     retry_count=request.retry_count
                 )
                 return result
+
+            # Most of an ESPN scoreboard response is never drawn, and the
+            # cached copy stays parsed in the memory tier while it is fresh.
+            # Trimmed before the write so the cache, request.result and the
+            # callbacks all see the same payload. See src/common/espn_payload.py.
+            if request.slim_payload and is_espn_scoreboard_url(request.url):
+                slim_scoreboard_payload(data)
 
             # Cache the data
             self.cache_manager.set(request.cache_key, data)
