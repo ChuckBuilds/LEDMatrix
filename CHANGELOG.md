@@ -108,7 +108,9 @@ policies are unchanged.
 - **Cache-through helpers.** `get_espn_scoreboard()` returns a cached copy at
   most `max_age` seconds old and otherwise fetches with
   `fetch_espn_scoreboard` and caches the result; `read_espn_scoreboard_cache()`
-  and `store_espn_scoreboard_cache()` are the two halves. A read checks the
+  and `store_espn_scoreboard_cache()` are the two halves (the read takes an
+  `accept(data, age)` predicate, e.g. a shorter limit for a payload holding a
+  live game). A read checks the
   record's own timestamp, so a writer's stored ttl can no longer make a
   reader take data older than its own TTL; the shared entry stores no ttl.
   Old keys are passed as `legacy_keys` and read after the canonical one for

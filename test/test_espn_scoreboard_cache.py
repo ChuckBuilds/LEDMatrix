@@ -262,6 +262,22 @@ class TestRead:
         assert read_espn_scoreboard_cache(cache, self.KEY, 30) is None
         assert read_espn_scoreboard_cache(cache, self.KEY, 90) == {"events": []}
 
+    def test_accept_can_turn_down_an_entry_and_sees_its_age(self, service):
+        cache = RecordCache()
+        cache.records[self.KEY] = {"timestamp": 5000.0, "data": {"events": ["live"]}}
+        seen = []
+
+        def live_needs_30s(data, age):
+            seen.append(age)
+            return age <= 30
+
+        assert read_espn_scoreboard_cache(cache, self.KEY, 300, now=5040.0,
+                                          accept=live_needs_30s) is None
+        assert read_espn_scoreboard_cache(cache, self.KEY, 300, now=5020.0,
+                                          accept=live_needs_30s) == {"events": ["live"]}
+        assert seen == [40.0, 20.0]
+        assert _totals(service)["cache_hits"] == 1   # the turned-down read is no hit
+
     @pytest.mark.parametrize("max_age", [0, -5])
     def test_no_max_age_no_read(self, service, max_age):
         cache = RecordCache()

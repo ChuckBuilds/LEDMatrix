@@ -57,7 +57,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from functools import partial
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 
 try:
     from src.common.json_body import response_json
@@ -547,8 +547,9 @@ def _note_cache_hit(legacy: bool, avoided_request: bool = True) -> None:
 
 
 def _fresh_cached(cache_manager: Any, key: str, max_age: Optional[float],
-                  now: float) -> Optional[Any]:
-    """The data cached under ``key`` if it is at most ``max_age`` seconds old.
+                  now: float) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+    """The data cached under ``key`` if it is at most ``max_age`` seconds
+    old, and its age (None when the cache does not say).
 
     The age is the stored record's own timestamp, checked here: CacheManager
     lets a ttl stored by the writer override the reader's max_age, and its
@@ -560,20 +561,20 @@ def _fresh_cached(cache_manager: Any, key: str, max_age: Optional[float],
     if not callable(reader):
         # A cache without records (a test double, a plugin's own store).
         value = cache_manager.get(key, max_age=limit)
-        return value if isinstance(value, dict) else None
+        return (value if isinstance(value, dict) else None), None
     record = reader(key, max_age=limit, memory_ttl=limit)
     if not isinstance(record, dict):
-        return None
+        return None, None
     if "data" not in record:
-        return record  # unwrapped; the cache already judged it by mtime
-    if max_age is not None:
-        stamp = record.get("timestamp")
-        if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
-            return None
-        if now - float(stamp) > max_age:
-            return None
+        return record, None  # unwrapped; the cache already judged it by mtime
+    stamp = record.get("timestamp")
+    age: Optional[float] = None
+    if not isinstance(stamp, bool) and isinstance(stamp, (int, float)):
+        age = max(0.0, now - float(stamp))
+    if max_age is not None and (age is None or age > max_age):
+        return None, None
     data = record["data"]
-    return data if isinstance(data, dict) else None
+    return (data if isinstance(data, dict) else None), age
 
 
 def read_espn_scoreboard_cache(
@@ -582,14 +583,18 @@ def read_espn_scoreboard_cache(
     max_age: Optional[float],
     legacy_keys: Iterable[str] = (),
     now: Optional[float] = None,
-) -> Optional[Any]:
+    accept: Optional[Callable[[Dict[str, Any], Optional[float]], bool]] = None,
+) -> Optional[Dict[str, Any]]:
     """The cached scoreboard under ``key``, or under the first of
     ``legacy_keys`` that has one, if it is at most ``max_age`` seconds old.
 
     None on a miss, a stale entry, ``max_age`` of 0 or less, no cache
     manager, or any cache error -- a read never raises. ``max_age=None``
-    takes an entry of any age. A hit is counted in the fetch statistics
-    (``cache_hits``; ``legacy_cache_hits`` too for an old key).
+    takes an entry of any age. ``accept(data, age_seconds)`` can turn down
+    an entry the age alone would allow (a payload holding a live game wants
+    a shorter limit); ``age_seconds`` is None when the cache cannot say. A
+    hit is counted in the fetch statistics (``cache_hits``;
+    ``legacy_cache_hits`` too for an old key).
     """
     if cache_manager is None:
         return None
@@ -600,7 +605,9 @@ def read_espn_scoreboard_cache(
         if not candidate:
             continue
         try:
-            data = _fresh_cached(cache_manager, candidate, max_age, clock)
+            data, age = _fresh_cached(cache_manager, candidate, max_age, clock)
+            if data is not None and accept is not None and not accept(data, age):
+                data = None
         except Exception:  # noqa: BLE001 - a broken cache is a miss
             _logger.debug("scoreboard cache read failed for %s", candidate, exc_info=True)
             continue
