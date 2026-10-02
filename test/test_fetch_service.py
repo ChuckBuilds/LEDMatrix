@@ -876,3 +876,267 @@ def test_the_web_route_returns_the_published_counters(clock):
     assert body["status"] == "success"
     assert body["data"]["status"] == "live"
     assert body["data"]["data"]["plugins"]["weather"]["requests"] == 1
+
+
+# --- response cache (stage 2: Cache-Control max-age) -------------------------------------------
+
+def fresh_for(seconds, body=b'{"ok": 1}', **headers):
+    """A handler answering 200 with ``Cache-Control: max-age=<seconds>``."""
+    def handler(url, kwargs):
+        return make_response(200, body, url=url, headers={
+            "Cache-Control": f"max-age={seconds}", **headers})
+    return handler
+
+
+class NeverHits:
+    """A cache that always misses, so APIHelper always reaches the network."""
+
+    def get(self, key, max_age=None):
+        return None
+
+    def set(self, key, value, ttl=None):
+        pass
+
+
+class TestResponseCache:
+
+    def test_an_identical_get_inside_max_age_is_not_sent(self, service):
+        session = FakeSession(fresh_for(60))
+        first = service.get(session, "https://api.test/x", params={"d": 1}, timeout=5)
+        second = service.get(session, "https://api.test/x", params={"d": 1}, timeout=5)
+        assert len(session.calls) == 1
+        assert second.json() == first.json() == {"ok": 1}
+        assert second is not first
+        totals = _counters(service)
+        assert (totals["requests"], totals["memo_hits"]) == (1, 1)
+
+    def test_a_hit_is_a_copy_the_caller_may_change(self, service):
+        session = FakeSession(fresh_for(60))
+        service.get(session, "https://api.test/x").headers["X-Mine"] = "1"
+        assert "X-Mine" not in service.get(session, "https://api.test/x").headers
+
+    def test_past_max_age_the_network_is_asked_again(self, service, clock):
+        session = FakeSession(fresh_for(10))
+        service.get(session, "https://api.test/x")
+        clock.advance(9.9)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 1
+        clock.advance(0.2)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+
+    def test_the_age_header_shortens_the_lifetime(self, service, clock):
+        session = FakeSession(fresh_for(10, Age="8"))
+        service.get(session, "https://api.test/x")
+        clock.advance(2.5)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+
+    def test_never_older_than_the_callers_own_ttl(self, service, clock):
+        session = FakeSession(fresh_for(400))
+        service.get(session, "https://api.test/x", cache_max_age=0)
+        clock.advance(20)
+        service.get(session, "https://api.test/x", cache_max_age=10)    # 20 s > 10
+        assert len(session.calls) == 2
+        clock.advance(20)
+        service.get(session, "https://api.test/x", cache_max_age=30)    # 20 s <= 30
+        assert len(session.calls) == 2
+        service.get(session, "https://api.test/x", cache_max_age=19.9)  # 20 s > 19.9
+        assert len(session.calls) == 3
+
+    def test_a_caller_that_does_not_say_gets_the_default_limit(self, service, clock):
+        session = FakeSession(fresh_for(450))
+        service.get(session, "https://api.test/x")
+        clock.advance(service.default_max_age - 0.5)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 1
+        clock.advance(1)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+        # ...while a caller with a longer TTL still takes the server at its word.
+        clock.advance(100)
+        service.get(session, "https://api.test/x", cache_max_age=300)
+        assert len(session.calls) == 2
+
+    def test_zero_always_asks_but_still_fills_the_cache(self, service):
+        session = FakeSession(fresh_for(60))
+        service.get(session, "https://api.test/x", cache_max_age=0)
+        service.get(session, "https://api.test/x", cache_max_age=0)
+        assert len(session.calls) == 2
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+
+    def test_cache_max_age_never_reaches_the_session(self, service):
+        session = FakeSession(fresh_for(60))
+        service.get(session, "https://api.test/x", timeout=5, cache_max_age=30)
+        assert session.calls[0][1] == {"timeout": 5}
+
+    @pytest.mark.parametrize("status,headers", [
+        (200, {"Cache-Control": "no-store, max-age=60"}),
+        (200, {"Cache-Control": "no-cache, max-age=60"}),
+        (200, {"Cache-Control": "private, max-age=60"}),
+        (200, {"Cache-Control": "max-age=60", "Vary": "*"}),
+        (200, {"Cache-Control": "max-age=60", "Set-Cookie": "sid=1"}),
+        (200, {"Cache-Control": "max-age=0"}),
+        (200, {"Cache-Control": "max-age=soon"}),
+        (200, {"Cache-Control": "max-age=60", "Age": "60"}),
+        (200, {}),
+        (404, {"Cache-Control": "max-age=60"}),
+        (500, {"Cache-Control": "max-age=60"}),
+    ])
+    def test_responses_that_must_not_be_reused_are_not(self, service, status, headers):
+        session = FakeSession(lambda url, kw: make_response(status, b"{}", headers=headers, url=url))
+        service.get(session, "https://api.test/x")
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+        assert service.snapshot()["response_cache"]["entries"] == 0
+
+    def test_a_stream_is_never_kept(self, service):
+        session = FakeSession(fresh_for(60))
+        service.get(session, "https://api.test/x", stream=True)
+        service.get(session, "https://api.test/x", stream=True)
+        assert len(session.calls) == 2
+
+    @pytest.mark.parametrize("second", [
+        {"params": {"d": 2}},
+        {"headers": {"Accept": "text/html"}},
+        {"headers": {"If-None-Match": '"x"'}},   # the caller's own revalidation
+    ])
+    def test_requests_that_could_answer_differently_do_not_share(self, service, second):
+        session = FakeSession(fresh_for(60))
+        service.get(session, "https://api.test/x", params={"d": 1})
+        service.get(session, "https://api.test/x", **{"params": {"d": 1}, **second})
+        assert len(session.calls) == 2
+
+    def test_another_timeout_or_retry_policy_still_shares(self, service):
+        # A finished 200 is the same answer however long the caller would have
+        # waited or however often retried; only in-flight merging needs those.
+        plain, retrying = FakeSession(fresh_for(60)), FakeSession(fresh_for(60))
+        retrying.mount("https://", requests.adapters.HTTPAdapter(max_retries=Retry(total=5)))
+        service.get(plain, "https://api.test/x", timeout=5)
+        service.get(retrying, "https://api.test/x", timeout=30)
+        assert len(plain.calls) == 1 and retrying.calls == []
+
+    def test_a_session_with_cookies_only_reuses_its_own(self, service):
+        cookied, plain = FakeSession(fresh_for(60)), FakeSession(fresh_for(60))
+        cookied.cookies.set("sid", "secret")
+        service.get(cookied, "https://api.test/x")
+        service.get(plain, "https://api.test/x")
+        service.get(cookied, "https://api.test/x")
+        assert len(cookied.calls) == len(plain.calls) == 1
+
+    def test_size_bounds(self, clock):
+        svc = FetchService({"rate_limits": {}, "response_cache": {
+            "max_entry_bytes": 10, "max_bytes": 25, "max_entries": 10}},
+            clock=clock.now, sleep=clock.sleep)
+        big = FakeSession(fresh_for(60, body=b"x" * 11))
+        svc.get(big, "https://api.test/big")
+        assert svc.snapshot()["response_cache"]["entries"] == 0
+        small = FakeSession(fresh_for(60, body=b"y" * 10))
+        for name in "abc":
+            svc.get(small, f"https://api.test/{name}")
+        assert svc.snapshot()["response_cache"] == {"entries": 2, "bytes": 20}
+        svc.get(small, "https://api.test/a")       # evicted, least recently used
+        assert len(small.calls) == 4
+
+    def test_expired_entries_are_dropped_on_insert(self, service, clock):
+        session = FakeSession(fresh_for(5))
+        service.get(session, "https://api.test/a")
+        clock.advance(6)
+        service.get(session, "https://api.test/b")
+        assert service.snapshot()["response_cache"]["entries"] == 1
+
+    def test_off_switch(self, clock):
+        svc = FetchService({"rate_limits": {}, "response_cache": {"enabled": False}},
+                           clock=clock.now, sleep=clock.sleep)
+        session = FakeSession(fresh_for(60))
+        svc.get(session, "https://api.test/x")
+        svc.get(session, "https://api.test/x")
+        assert len(session.calls) == 2
+        assert svc.describe_config()["response_cache"] is False
+
+    def test_merged_callers_and_the_cache_together(self, service):
+        gate = threading.Event()
+        session = FakeSession(fresh_for(60), gate=gate)
+        a = threading.Thread(target=lambda: service.get(session, "https://api.test/x"))
+        a.start()
+        assert session.started.wait(5)
+        b = threading.Thread(target=lambda: service.get(session, "https://api.test/x"))
+        b.start()
+        _wait_for_waiters(service, 1)
+        gate.set()
+        a.join(5)
+        b.join(5)
+        service.get(session, "https://api.test/x")
+        assert len(session.calls) == 1
+        totals = _counters(service)
+        assert (totals["requests"], totals["merged"], totals["memo_hits"]) == (1, 1, 1)
+
+    def test_hits_are_counted_per_plugin_and_host(self, service):
+        session = FakeSession(fresh_for(60))
+        with plugin_scope("odds-ticker"):
+            service.get(session, "https://site.api.espn.com/x")
+        with plugin_scope("football-scoreboard"):
+            service.get(session, "https://site.api.espn.com/x")
+        snap = service.snapshot()
+        assert snap["plugins"]["football-scoreboard"]["memo_hits"] == 1
+        assert snap["plugins"]["football-scoreboard"]["requests"] == 0
+        assert snap["plugins"]["football-scoreboard"]["hosts"] == {"site.api.espn.com": 1}
+        assert snap["hosts"]["site.api.espn.com"]["memo_hits"] == 1
+
+    def test_the_odds_manager_never_takes_odds_older_than_its_interval(self, global_service, clock):
+        from unittest.mock import MagicMock
+        from src.base_odds_manager import BaseOddsManager
+
+        cache = MagicMock()
+        cache.get_with_auto_strategy.return_value = None
+        manager = BaseOddsManager(cache)
+        manager.session = FakeSession(fresh_for(450, body=b'{"count": 0, "items": []}'))
+        manager.get_odds("football", "nfl", "401", update_interval_seconds=60)
+        clock.advance(59)
+        manager.get_odds("football", "nfl", "401", update_interval_seconds=60)
+        assert len(manager.session.calls) == 1
+        clock.advance(2)
+        manager.get_odds("football", "nfl", "401", update_interval_seconds=60)
+        assert len(manager.session.calls) == 2
+
+    def test_the_api_helper_bounds_a_cached_get_by_its_ttl(self, global_service, clock):
+        from src.common.api_helper import APIHelper
+
+        helper = APIHelper()
+        helper.set_rate_limit(0)
+        helper.session = FakeSession(fresh_for(450, body=b'{"a": 1}'))
+        helper.get("https://api.test/x")
+        clock.advance(31)
+        helper.get("https://api.test/x")              # no TTL: the 30 s default
+        assert len(helper.session.calls) == 2
+        clock.advance(31)
+        helper.cache_manager = NeverHits()
+        helper.get("https://api.test/x", cache_key="k", cache_ttl=60)   # 31 s <= 60
+        assert len(helper.session.calls) == 2
+
+
+class TestCacheHitCounters:
+
+    def test_a_shared_cache_hit(self, service):
+        with plugin_scope("odds-ticker"):
+            service.note_cache_hit("https://site.api.espn.com/")
+        counters = _counters(service, plugin="odds-ticker")
+        assert (counters["cache_hits"], counters["legacy_cache_hits"]) == (1, 0)
+        assert counters["hosts"] == {"site.api.espn.com": 1}
+
+    def test_a_legacy_hit(self, service):
+        service.note_cache_hit("https://site.api.espn.com/", legacy=True)
+        totals = _counters(service)
+        assert (totals["cache_hits"], totals["legacy_cache_hits"]) == (1, 1)
+
+    def test_a_read_that_avoided_no_request(self, service):
+        service.note_cache_hit("https://site.api.espn.com/", legacy=True, avoided_request=False)
+        totals = _counters(service)
+        assert (totals["cache_hits"], totals["legacy_cache_hits"]) == (0, 1)
+
+    def test_every_counter_is_in_every_snapshot(self, service):
+        snap = service.snapshot()
+        for name in ("memo_hits", "cache_hits", "legacy_cache_hits"):
+            assert snap["totals"][name] == 0
+        assert snap["response_cache"] == {"entries": 0, "bytes": 0}

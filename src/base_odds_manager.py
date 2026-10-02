@@ -175,7 +175,10 @@ class BaseOddsManager:
             url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
             self.logger.debug(f"Requesting odds from URL: {url}")
             
-            response = fetch_get(self.session, url, timeout=self.request_timeout)
+            # The response cache may answer only inside this caller's own
+            # interval, the age at which its cached odds expire anyway.
+            response = fetch_get(self.session, url, timeout=self.request_timeout,
+                                 cache_max_age=interval)
             response.raise_for_status()
             raw_data = response.json()
 

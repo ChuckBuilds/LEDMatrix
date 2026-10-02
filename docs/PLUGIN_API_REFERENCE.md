@@ -1054,8 +1054,16 @@ values, exceptions and retries are what they were.
   next identical request revalidates, and a `304 Not Modified` comes back to
   your code as the original `200` with its body. ESPN currently sends
   neither, so this does nothing there.
+- **Response cache.** A response whose server says `Cache-Control:
+  max-age=N` answers an identical GET for those N seconds without a
+  request (ESPN sends 1 to ~500 s). It never hands you a response older
+  than you accept: pass `cache_max_age=<your TTL>` to `fetch_get()` or
+  `fetch_espn_scoreboard()` (0 always asks the network); without it a
+  response is reused for at most 30 seconds.
 - **Counters.** Requests, merged requests, bytes, 304s, errors and time spent
-  waiting are counted per plugin and per host, and published for the web UI
+  waiting, and requests answered without the network (`memo_hits` from the
+  response cache, `cache_hits` from a shared scoreboard cache entry), are
+  counted per plugin and per host, and published for the web UI
   at `GET /api/v3/plugins/fetch-stats` (see
   [REST_API_REFERENCE.md](REST_API_REFERENCE.md#get-fetch-statistics)). A
   request is counted against your plugin when it runs inside your
@@ -1065,6 +1073,36 @@ values, exceptions and retries are what they were.
 What is not covered yet: requests a plugin makes with its own `requests.get()`
 or `Session.get()` calls. They work as before but are invisible to the
 budgets and counters.
+
+### One cache key per ESPN scoreboard
+
+Cache an ESPN scoreboard under `espn_scoreboard_cache_key(sport, league,
+dates)` (`src.common.espn_dates`), not a key of your own, so every plugin
+showing that league shares one fetch and one cached copy. `sport` and
+`league` are ESPN's path segments (`football`, `college-football`), and
+`dates` is what you send as `dates=` (`"20261004"`, `"202610"`,
+`"20260925-20261016"`, a `date`, or `None` for the undated scoreboard).
+
+```python
+from src.common.espn_dates import get_espn_scoreboard
+
+data = get_espn_scoreboard(
+    self.session, "football", "nfl", "20261004",
+    cache_manager=self.cache_manager,
+    max_age=300,                       # your TTL: nothing older comes back
+    legacy_keys=["my_old_key_20261004"],  # read once while upgrading
+)
+```
+
+`get_espn_scoreboard` returns a cached copy at most `max_age` seconds old,
+whoever wrote it, and otherwise fetches with `fetch_espn_scoreboard`
+(`limit=500`, ranges split the way ESPN requires) and caches the result
+without a ttl, so each reader applies its own age limit. `max_age=0` always
+fetches but still leaves the copy for others. For a two-step read, use
+`read_espn_scoreboard_cache()` and `store_espn_scoreboard_cache()` around
+your own fetch. Scoreboards built on `SportsFetchMixin` get
+`_schedule_cache_key(datestring)` and `_cached_schedule(key, legacy_keys)`
+for their schedule windows. All of this is in the core release after 3.8.0.
 
 The settings live in `config.json` under `fetch_service`, read when the
 display starts and on a config reload:
@@ -1084,7 +1122,9 @@ display starts and on a config reload:
 the bare domain); `"per_second": 0` removes a budget. `"enabled": false`
 turns the whole service into a plain `session.get()`. Two further switches,
 `"single_flight": false` and `"conditional_get": false`, turn off merging and
-revalidation.
+revalidation. `"response_cache": {"enabled": false}` turns off the response
+cache; its `default_max_age` (30) is the limit for callers that pass no
+`cache_max_age`.
 
 ---
 
