@@ -33,6 +33,27 @@ accepts both, but the store flags the old spelling as deprecated
   `scripts/render_bench.py` records the same. Diagnostic only: nothing tunes,
   freezes or disables the collector.
 
+### Web interface: lighter package imports
+
+- `src.common` and `src.plugin_system` now import their re-exported names on
+  first use (PEP 562 module `__getattr__`) instead of in `__init__.py`.
+  `from src.common import ScrollHelper`, `src.plugin_system.PluginManager`,
+  `from src.common import *` and every submodule import work as before and
+  return the same objects. What changes is that importing a submodule --
+  the web interface's `src.common.path_safety`, `src.plugin_system.store_manager`
+  and the like -- no longer loads `ScrollHelper`, `LogoHelper`, `APIHelper`,
+  the adaptive layout helpers and `PluginManager` with it. `sync_manager`
+  imports numpy inside `send_frame`, the one place it uses it, since the API
+  blueprint imports that module only for its constants.
+- The web process no longer loads numpy at all. On a Pi 4 (Python 3.13),
+  importing `web_interface.app` went from ~67 MB to ~54 MB RSS and from
+  ~2.8 s to ~1.3 s (`-X importtime`, median of five). A bare
+  `import src.common` went from ~50 MB / ~0.85 s to ~10 MB / ~30 ms. The
+  display process loads the same modules as before, only later.
+- A misspelt name in `from src.common import ...` still raises `ImportError`.
+  `test/test_lazy_package_imports.py` checks that the packages import nothing
+  heavy and that every name in `__all__` resolves to its home module's object.
+
 ### Outlined text: one rasterization
 
 - New `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0,
