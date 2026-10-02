@@ -2522,8 +2522,10 @@ class DisplayController:
         if self.on_demand_active:
             return False
         status = self._check_wifi_status_message()
+        if not status:
+            return False
         # The 1 s throttle can hand back a result that has expired since.
-        return bool(status) and time.time() < status['expires_at']
+        return time.time() < float(status['expires_at'])
 
     def _resolve_active_mode(self):
         """The mode this pass shows: the on-demand session's current mode
