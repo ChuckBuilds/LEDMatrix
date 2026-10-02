@@ -23,6 +23,7 @@ import requests
 from typing import Any, Dict, List
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
+from src.common.json_body import response_json
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ class DynamicTeamResolver:
             response = requests.get(rankings_url, headers=dict(DEFAULT_HTTP_HEADERS),
                                     timeout=self.request_timeout)
             response.raise_for_status()
-            data = response.json()
+            data = response_json(response)
             
             rankings = {}
             rankings_data = data.get('rankings', [])

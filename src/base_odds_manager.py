@@ -20,6 +20,7 @@ from typing import Dict, Any, Optional, List, cast
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 from src.common.fetch_service import fetch_get, share_connection_pool
+from src.common.json_body import response_json
 
 
 
@@ -177,7 +178,7 @@ class BaseOddsManager:
             
             response = fetch_get(self.session, url, timeout=self.request_timeout)
             response.raise_for_status()
-            raw_data = response.json()
+            raw_data = response_json(response)
 
             self._skip_network_until = 0.0   # reachable again
 
