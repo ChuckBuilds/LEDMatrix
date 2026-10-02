@@ -26,7 +26,14 @@ order. Commands that change what the panel shows are *acknowledged*, not
 completed: ``{"accepted": true, "request_id": ...}`` means the render thread
 has the command queued and will apply it at its next on-demand check. Its
 outcome is published the way it always was (``display_on_demand_state``,
-later the state stream).
+later the state stream). A few commands (:data:`AWAITED_COMMANDS`) are
+answered only once the render thread has applied them, or with ``pending``
+when it has not within :data:`AWAIT_SECONDS`.
+
+New commands are added within a protocol version: a display that does not
+know one answers ``unknown_command``, the client falls back, and ``hello``
+lists the commands a display knows. The version changes only when the
+envelope or the meaning of an existing command changes.
 
 See docs/IPC_CONTROL_SOCKET.md for the full description.
 """
@@ -133,19 +140,42 @@ class Command:
     ON_DEMAND_START = 'on_demand.start'
     ON_DEMAND_STOP = 'on_demand.stop'
     ON_DEMAND_STATUS = 'on_demand.status'
+    BRIGHTNESS_SET = 'brightness.set'
+    PLUGIN_RELOAD = 'plugin.reload'
 
 
 #: Every command version 1 defines, in the order ``hello`` reports them.
+#: ``brightness.set`` and ``plugin.reload`` came in stage 2, within version 1
+#: (see the module docstring on adding commands).
 COMMANDS: Tuple[str, ...] = (
     Command.HELLO,
     Command.PING,
     Command.ON_DEMAND_START,
     Command.ON_DEMAND_STOP,
     Command.ON_DEMAND_STATUS,
+    Command.BRIGHTNESS_SET,
+    Command.PLUGIN_RELOAD,
 )
 
-#: Commands that are queued for the render thread and answered with an ack.
-QUEUED_COMMANDS = frozenset({Command.ON_DEMAND_START, Command.ON_DEMAND_STOP})
+#: Commands that are queued for the render thread.
+QUEUED_COMMANDS = frozenset({Command.ON_DEMAND_START, Command.ON_DEMAND_STOP,
+                             Command.BRIGHTNESS_SET, Command.PLUGIN_RELOAD})
+
+#: Queued commands whose answer waits for the render thread's outcome
+#: instead of being an ack. The value is how long the display waits before
+#: answering ``pending``; the command stays queued and is still applied.
+#: A plugin reload first lets the current screen end (within a frame on a
+#: scrolling screen, at once on a static one) and then imports the plugin,
+#: which can take a few seconds on a slow board.
+AWAIT_SECONDS: Dict[str, float] = {
+    Command.BRIGHTNESS_SET: 2.0,
+    Command.PLUGIN_RELOAD: 10.0,
+}
+AWAITED_COMMANDS = frozenset(AWAIT_SECONDS)
+
+#: Brightness, in percent, as the display's hardware setting takes it.
+MIN_BRIGHTNESS = 0
+MAX_BRIGHTNESS = 100
 
 
 class ErrorCode:
@@ -159,6 +189,10 @@ class ErrorCode:
     BUSY = 'busy'                                # queue full / too many clients
     FORBIDDEN = 'forbidden'                      # peer credentials refused
     INTERNAL = 'internal'                        # a bug on the display side
+    # From the awaited commands (stage 2):
+    PENDING = 'pending'          # accepted, not applied within AWAIT_SECONDS; still queued
+    NOT_LOADED = 'not_loaded'    # plugin.reload: the display is not running that plugin
+    FAILED = 'failed'            # the render thread tried, and it did not work
 
 
 class ProtocolError(Exception):
@@ -398,7 +432,56 @@ class NoArgs:
         return cls()
 
 
-CommandArgs = Union[HelloArgs, OnDemandStartArgs, OnDemandStopArgs, NoArgs]
+@dataclass(frozen=True)
+class BrightnessSetArgs:
+    """``brightness.set``: the panel's normal brightness, in percent, now.
+
+    Transient: nothing is written to config.json, and the next config change
+    the display picks up (or a restart) goes back to the configured value.
+    The web interface sends it after saving the setting, so the two agree.
+    The dim schedule still applies on top, as it does to the saved value.
+    """
+    brightness: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'brightness': self.brightness}
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'BrightnessSetArgs':
+        value = args.get('brightness')
+        if not _is_int(value) or not MIN_BRIGHTNESS <= value <= MAX_BRIGHTNESS:
+            raise ProtocolError(ErrorCode.INVALID_ARGS,
+                                f'brightness must be an integer from {MIN_BRIGHTNESS} '
+                                f'to {MAX_BRIGHTNESS}')
+        return cls(brightness=value)
+
+
+@dataclass(frozen=True)
+class PluginReloadArgs:
+    """``plugin.reload``: load a running plugin again from disk.
+
+    For a plugin the store has just updated. Only a plugin the display is
+    running can be reloaded (``not_loaded`` otherwise), so the id never
+    makes the display import anything it was not already running.
+    """
+    plugin_id: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'plugin_id': self.plugin_id}
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'PluginReloadArgs':
+        plugin_id = _optional_name(args, 'plugin_id')
+        if plugin_id is None:
+            raise ProtocolError(ErrorCode.INVALID_ARGS, 'plugin_id is required')
+        return cls(plugin_id=plugin_id)
+
+
+CommandArgs = Union[HelloArgs, OnDemandStartArgs, OnDemandStopArgs, NoArgs,
+                    BrightnessSetArgs, PluginReloadArgs]
+
+#: The arguments of a command that goes on the render thread's queue.
+QueuedArgs = Union[OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs]
 
 _ARG_TYPES: Dict[str, Any] = {
     Command.HELLO: HelloArgs,
@@ -406,6 +489,8 @@ _ARG_TYPES: Dict[str, Any] = {
     Command.ON_DEMAND_START: OnDemandStartArgs,
     Command.ON_DEMAND_STOP: OnDemandStopArgs,
     Command.ON_DEMAND_STATUS: NoArgs,
+    Command.BRIGHTNESS_SET: BrightnessSetArgs,
+    Command.PLUGIN_RELOAD: PluginReloadArgs,
 }
 
 
@@ -455,6 +540,27 @@ class AckResult(TypedDict):
     accepted: bool
     request_id: str
     queued: int
+
+
+class BrightnessResult(TypedDict):
+    """``brightness.set``, once applied.
+
+    ``panel_brightness`` is what the panel shows now: the dim schedule's
+    level while it dims, and unchanged while the schedule has the display
+    off (the new level applies when it comes back on).
+    """
+    brightness: int
+    panel_brightness: int
+    dimmed: bool
+    display_active: bool
+
+
+class PluginReloadResult(TypedDict):
+    """``plugin.reload``, once the plugin is running again."""
+    plugin_id: str
+    reloaded: bool
+    version: Optional[str]
+    modes: List[str]
 
 
 def negotiate_version(client_versions: Tuple[int, ...]) -> Optional[int]:

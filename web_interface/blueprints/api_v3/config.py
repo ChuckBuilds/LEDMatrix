@@ -1193,7 +1193,15 @@ def save_main_config():
         # Display hardware, rotation/durations and general settings take
         # effect after a display restart; the UI shows its restart banner on
         # this flag.
-        return success_response(message=message, extra={'restart_required': True})
+        extra = {'restart_required': True}
+        # Brightness is the exception: the display applies a saved one
+        # without a restart. Over the control socket it lands at once,
+        # instead of when the config watcher next looks (up to ~2 s).
+        if 'brightness' in data:
+            saved = (current_config.get('display', {}).get('hardware', {}) or {}).get('brightness')
+            if isinstance(saved, int) and not isinstance(saved, bool):
+                extra.update(_pkg._apply_brightness_on_display(saved))
+        return success_response(message=message, extra=extra)
     except Exception as e:
         logger.error("Error saving config", exc_info=True)
         return error_response(

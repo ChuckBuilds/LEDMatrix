@@ -382,6 +382,95 @@ class TestStoreOperationsReachTheDisplay:
             display_restart_required("reinstall", True)
 
 
+RELOAD = "web_interface.blueprints.api_v3.control_client.plugin_reload"
+
+
+class TestAnUpdateIsReloadedByTheDisplay:
+    """Control socket stage 2: instead of asking for a restart, the update
+    route asks the running display to reload the plugin (``plugin.reload``),
+    and only falls back to ``restart_required`` when that does not work. The
+    web process still runs none of the plugin's code."""
+
+    def test_reloaded_over_the_socket(self, web):
+        from unittest.mock import patch
+        _bump_version(web, "2.0.0")
+        with patch(RELOAD, return_value={"plugin_id": PLUGIN_ID, "reloaded": True,
+                                         "version": "2.0.0", "modes": ["tripwire"]}) as reload:
+            body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        reload.assert_called_once_with(PLUGIN_ID)
+        assert body["restart_required"] is False
+        assert body["reloaded"] is True and body["reloaded_version"] == "2.0.0"
+        assert "restart_message" not in body and "reload_error" not in body
+        assert "running the new version" in body["message"]
+        assert web.ran() == []
+
+    @pytest.mark.parametrize("reason", [
+        "no_socket",         # display stopped, or predates the socket
+        "unknown_command",   # a stage-1 display
+        "not_loaded", "failed", "pending", "busy", "timeout", "refused",
+    ])
+    def test_any_failure_falls_back_to_a_restart(self, web, reason):
+        from unittest.mock import patch
+        from src.ipc import client as control_client
+        _bump_version(web, "2.0.0")
+        with patch(RELOAD, side_effect=control_client.ControlError(reason, "x")):
+            body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        assert body["restart_required"] is True
+        assert "restart the display" in body["restart_message"]
+        assert body["reload_error"] == reason
+        assert "reloaded" not in body
+
+    def test_a_client_bug_falls_back_too(self, web):
+        from unittest.mock import patch
+        _bump_version(web, "2.0.0")
+        with patch(RELOAD, side_effect=RuntimeError("bug")):
+            body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        assert body["restart_required"] is True and body["reload_error"] == "internal"
+
+    def test_without_a_socket_it_is_the_restart_banner_as_before(self, web):
+        # The test suite runs with LEDMATRIX_CONTROL_SOCKET=off (conftest).
+        _bump_version(web, "2.0.0")
+        body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        assert body["restart_required"] is True
+        # 'unsupported' on Windows, which has no Unix sockets at all.
+        assert body["reload_error"] in ("disabled", "unsupported")
+
+    def test_an_unchanged_plugin_asks_nothing(self, web):
+        from unittest.mock import patch
+        with patch(RELOAD) as reload:
+            body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        assert body["data"]["update_status"] == "up_to_date"
+        assert body["restart_required"] is False
+        reload.assert_not_called()
+
+    def test_a_disabled_plugin_asks_nothing(self, disabled_web):
+        from unittest.mock import patch
+        _bump_version(disabled_web, "2.0.0")
+        with patch(RELOAD) as reload:
+            body = disabled_web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
+        assert body["restart_required"] is False
+        reload.assert_not_called()
+
+    def test_the_display_is_asked_by_the_manifest_id(self, web):
+        """A store id can differ from the id the display runs the plugin
+        under (a registry alias: weather / ledmatrix-weather). The config
+        section and the reload both use the manifest's."""
+        from unittest.mock import patch
+        manifest_id = "ledmatrix-alias"
+        _write_plugin(web.plugins_dir, web.log, plugin_id=manifest_id)
+        web.config_file.write_text(json.dumps({manifest_id: {"enabled": True}}),
+                                   encoding="utf-8")
+
+        def update(plugin_id):
+            _write_plugin(web.plugins_dir, web.log, version="2.0.0", plugin_id=manifest_id)
+            return True
+        web.api.plugin_store_manager.update_plugin.side_effect = update
+        with patch(RELOAD, return_value={"reloaded": True, "version": "2.0.0"}) as reload:
+            body = web.post("/api/v3/plugins/update", {"plugin_id": "alias"})
+        reload.assert_called_once_with(manifest_id)
+        assert body["restart_required"] is False
+
+
 class TestCatalogReadsWhatIsInstalled:
     """Real plugin directories: the repository's plugin-repos/ and fixtures."""
 

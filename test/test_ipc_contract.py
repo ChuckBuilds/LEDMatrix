@@ -165,7 +165,9 @@ class TestOnDemandArgs:
 
     @pytest.mark.parametrize('cmd', c.COMMANDS)
     def test_every_command_has_an_argument_type(self, cmd):
-        args = {'plugin_id': 'p'} if cmd == Command.ON_DEMAND_START else {}
+        args = {Command.ON_DEMAND_START: {'plugin_id': 'p'},
+                Command.PLUGIN_RELOAD: {'plugin_id': 'p'},
+                Command.BRIGHTNESS_SET: {'brightness': 50}}.get(cmd, {})
         c.parse_args(cmd, args)
 
     def test_hello_versions(self):

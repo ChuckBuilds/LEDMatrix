@@ -165,6 +165,14 @@ the web UI shows its restart banner on the flag. (Plugin sections saved
 through this route reach the running plugin live, like
 `POST /plugins/config`.)
 
+A saved `brightness` is the exception: it reaches the panel without a
+restart. The route also sends it to the running display over the control
+socket (`brightness.set`), which puts it on the panel at once, and the
+response adds `"brightness_transport": "socket"`. Otherwise it is
+`"config"`, with `brightness_socket_error` giving the reason, and the
+display's config watcher applies the saved value within a few seconds, as
+before.
+
 Invalid values (e.g. an out-of-range `target_fps`, a hardware option the
 Raspberry Pi 5 driver cannot use) are rejected with `400` and nothing is
 saved.
@@ -456,8 +464,9 @@ Request a specific plugin to display on-demand.
 `service` is `null` when `start_service` is false.
 
 `transport` says how the request reached the display: `"socket"` means the
-display's control socket acknowledged it (it is queued for the render thread;
-see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
+display's control socket acknowledged it (it is queued for the render thread,
+which wakes for it and applies it within a frame; see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
 written to the cache mailbox the display polls, as before the socket existed.
 With `"mailbox"`, `socket_error` gives the reason the socket was not used
 (`no_socket` when the display is stopped or predates the socket, `timeout`,
@@ -812,8 +821,29 @@ Update a plugin to the latest version. Runs synchronously.
 ```
 
 `update_status` is `updated`, `up_to_date` or `local_only`.
-`restart_required` is true when the plugin changed and is enabled: the
-running display keeps the code it loaded until it restarts.
+
+When the plugin changed and is enabled, the route asks the running display
+to reload it over the control socket (`plugin.reload`, see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)). Once the new code is
+running, the answer is:
+
+```json
+{
+  "status": "success",
+  "message": "Plugin football-scoreboard updated to version 2.1.0; the display is running the new version",
+  "restart_required": false,
+  "reloaded": true,
+  "reloaded_version": "2.1.0"
+}
+```
+
+If the display could not reload it, `restart_required` is true (the running
+display keeps the code it loaded until it restarts) and `reload_error` says
+why: `no_socket` (the display is stopped or predates the socket),
+`unknown_command` (a display older than this command), `not_loaded`,
+`failed` (the new version did not load; it is out of the rotation),
+`pending` (not done within 10 s; it will still be reloaded), or another
+transport reason.
 
 An update this core cannot run answers `409` with `Plugin update refused:`
 and the reason; the installed version is left as it was.

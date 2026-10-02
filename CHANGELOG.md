@@ -82,6 +82,45 @@ policies are unchanged.
   `GET /api/v3/plugins/fetch-stats`.
 - `fetch_service` is a core config section (`src/core_config_keys.py`).
 
+### Control socket (stage 2: wake-ups, brightness, plugin reload)
+
+- **Socket commands land at once.** Stage 1's socket was no faster than the
+  mailbox: a command waited for the static screen's 1 s frame sleep, the
+  dwell's 0.25 s tick, or Vegas's interrupt check every 10 frames (about
+  0.4 s on a Pi 4). The render thread now waits on the socket's queue
+  instead of sleeping, and Vegas checks the queue every frame, so an
+  on-demand start or stop is applied within about a millisecond on a static
+  screen or in a dwell, and at the next frame in Vegas or on a scrolling
+  screen. Commands still run only on the render thread. The file mailbox
+  keeps its old delays. Idle CPU is unchanged in practice: the waits are
+  timed `Event` waits with the same wake-ups as the sleeps they replace
+  (about 25 µs more per wait, measured).
+- **`brightness.set`.** Saving a brightness (`POST /api/v3/config/main`)
+  also puts it on the panel at once over the socket, instead of when the
+  display's config watcher next reads `config.json` (up to about 2 s). The
+  response says `brightness_transport: "socket"`, or `"config"` with
+  `brightness_socket_error` when the watcher applies it as before. The
+  command itself writes nothing; the dim schedule still applies on top.
+- **`plugin.reload`.** Updating an enabled plugin from the store no longer
+  asks for a display restart when the display can reload it: the update
+  route asks the display over the socket, which reloads the plugin on its
+  render thread at the start of the next screen (its modes keep their place
+  in the rotation) and answers once the new code runs. The response then
+  says `restart_required: false`, `reloaded: true` and `reloaded_version`.
+  Without the socket, with a display older than this command, or when the
+  reload fails, the route answers `restart_required: true` as before, with
+  `reload_error` giving the reason. The route now also uses the manifest's
+  plugin id (the one the display runs it under) for this decision, so an
+  update through a registry alias of an enabled plugin no longer reports
+  that no restart is needed.
+- Both commands answer with the render thread's outcome, or `pending` when
+  it did not get to them in time (2 s and 10 s). Socket protocol version is
+  still 1: new commands are additive, and an older display answers
+  `unknown_command`, which the web interface falls back from. The security
+  model is unchanged: the same `0660` group socket and peer-credential
+  check. `config.reload` was not added; see
+  `docs/IPC_CONTROL_SOCKET.md` for why.
+
 ### New modules
 
 - `src/common/fetch_service.py` -- the fetch service above. Core-internal in

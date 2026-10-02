@@ -54,6 +54,7 @@ from src.common.path_safety import resolve_under, safe_path_component
 from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
 from src.backup_manager import BUNDLED_FONTS as _BUNDLED_FONTS
 from src.device_location import DeviceLocationResolver, apply_device_location
+from src.ipc import client as control_client
 _SUDO = shutil.which('sudo')
 _JOURNALCTL = shutil.which('journalctl')
 _GIT = shutil.which('git')
@@ -774,6 +775,83 @@ def _store_restart_fields(action: str, plugin_enabled: bool, **kwargs) -> Dict[s
     if required:
         fields['restart_message'] = _RESTART_MESSAGES[action]
     return fields
+
+
+# -- the control socket (src/ipc) ---------------------------------------------------
+
+#: Socket failures that only mean "this display has no socket": stopped,
+#: older than the socket, Windows, or switched off. Not worth a log line.
+_QUIET_SOCKET_REASONS = frozenset({'no_socket', 'disabled', 'unsupported'})
+
+#: Every reason code a response may echo as a socket error: the client's
+#: transport reasons plus the display's ErrorCode values. Anything else is
+#: reported as ``other``, so no text taken from an exception reaches a reply.
+_REPORTABLE_SOCKET_REASONS = (
+    'disabled', 'unsupported', 'no_socket', 'refused', 'timeout', 'closed',
+    'bad_response', 'invalid_request',
+    'bad_json', 'bad_request', 'message_too_large', 'unsupported_version',
+    'unknown_command', 'invalid_args', 'busy', 'forbidden', 'internal',
+    'pending', 'not_loaded', 'failed',
+)
+
+
+def _socket_reason_code(reason):
+    """``reason`` as one of _REPORTABLE_SOCKET_REASONS, else ``'other'``."""
+    return next((code for code in _REPORTABLE_SOCKET_REASONS if code == reason), 'other')
+
+
+def _log_socket_failure(what: str, error: Exception, reason: str) -> None:
+    if reason in _QUIET_SOCKET_REASONS:
+        logger.debug("%s not sent over the control socket: %s", what, error)
+    else:
+        logger.warning("Control socket did not take %s (%s)", what, error)
+
+
+def _reload_after_store_update(plugin_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Reload an updated, enabled plugin on the running display.
+
+    ``fields`` are ``_store_restart_fields('update', ...)``. When they ask
+    for a restart, the display is asked over the control socket to reload
+    the plugin instead (``plugin.reload``), and the answer becomes
+    ``restart_required: false`` with ``reloaded: true`` once the new code is
+    running. Any failure -- no socket, a display that predates the command,
+    a plugin it is not running, a load that failed, no answer in time --
+    keeps ``fields`` as they were, adding ``reload_error`` with the reason.
+    """
+    if not fields.get('restart_required'):
+        return fields
+    try:
+        result = control_client.plugin_reload(plugin_id)
+    except control_client.ControlError as e:
+        reason = _socket_reason_code(e.reason)
+        _log_socket_failure(f'plugin.reload {plugin_id}', e, reason)
+        return {**fields, 'reload_error': reason}
+    except Exception:  # never let the socket path break the route
+        logger.exception("Control socket client failed reloading %s", plugin_id)
+        return {**fields, 'reload_error': 'internal'}
+    version = result.get('version')
+    return {'restart_required': False, 'reloaded': True,
+            'reloaded_version': version if isinstance(version, str) else None}
+
+
+def _apply_brightness_on_display(brightness: int) -> Dict[str, Any]:
+    """Put a just-saved brightness on the panel now, over the control socket.
+
+    Without the socket the display's config watcher applies the saved value
+    within a few seconds, as it always has; the answer says which happened:
+    ``brightness_transport`` is ``socket`` or ``config``, and in the second
+    case ``brightness_socket_error`` gives the reason.
+    """
+    try:
+        control_client.brightness_set(int(brightness))
+        return {'brightness_transport': 'socket'}
+    except control_client.ControlError as e:
+        reason = _socket_reason_code(e.reason)
+        _log_socket_failure('brightness.set', e, reason)
+    except Exception:  # never let the socket path break the route
+        logger.exception("Control socket client failed setting brightness")
+        reason = 'internal'
+    return {'brightness_transport': 'config', 'brightness_socket_error': reason}
 
 
 def deep_merge(base_dict, update_dict):

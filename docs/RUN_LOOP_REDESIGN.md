@@ -33,7 +33,13 @@ on purpose.
 
 Each pass, in order:
 
-1. `loop_pass()` (watchdog). Apply a pending plugin enable/disable.
+1. `loop_pass()` (watchdog). Apply a pending plugin enable/disable, then
+   any plugin reloads the control socket asked for
+   (`_apply_pending_plugin_reloads`; a pending reload ends the screen
+   before it, like a WiFi notice, through `_screen_preempted`). The static
+   screen's frame sleep and the dwell wait on the socket's queue instead of
+   sleeping (`_wait_frame_interval`, `_sleep_with_plugin_updates`); without
+   a socket, as in the golden traces, they are the plain sleeps.
 2. With no modes: dwell 1 s, next pass.
 3. Poll on-demand requests and expiry, release plugins loaded only for
    on-demand, tick plugin updates, drop an expired WiFi notice, evaluate

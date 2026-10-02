@@ -15,6 +15,7 @@ import uuid
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from src.ipc.contract import (
+    AWAIT_SECONDS,
     MAX_MESSAGE_BYTES,
     PROTOCOL_VERSION,
     SUPPORTED_VERSIONS,
@@ -186,6 +187,40 @@ def on_demand_status(*, timeout: float = DEFAULT_TIMEOUT_SECONDS,
                      paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """The display's live on-demand state. Raises :class:`ControlError`."""
     return request(Command.ON_DEMAND_STATUS, {}, timeout=timeout, paths=paths)
+
+
+#: Headroom over the display's own wait for an awaited command, so its
+#: ``pending`` answer arrives before the client gives up.
+_AWAIT_MARGIN_SECONDS = 1.0
+
+
+def _awaited_timeout(cmd: str) -> float:
+    return AWAIT_SECONDS[cmd] + _AWAIT_MARGIN_SECONDS
+
+
+def brightness_set(brightness: int, *, timeout: Optional[float] = None,
+                   paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Set the panel's normal brightness now (transient: config.json is not
+    written). Returns the applied :class:`~src.ipc.contract.BrightnessResult`;
+    raises :class:`ControlError`.
+    """
+    return request(Command.BRIGHTNESS_SET, {'brightness': brightness},
+                   timeout=_awaited_timeout(Command.BRIGHTNESS_SET) if timeout is None
+                   else timeout, paths=paths)
+
+
+def plugin_reload(plugin_id: str, *, timeout: Optional[float] = None,
+                  paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Have the display reload a running plugin from disk.
+
+    Returns :class:`~src.ipc.contract.PluginReloadResult` once the new code is
+    running. Raises :class:`ControlError`: ``not_loaded`` (not running it),
+    ``failed`` (the new version did not load), ``pending`` (not done in
+    time; it will still happen), or a transport reason.
+    """
+    return request(Command.PLUGIN_RELOAD, {'plugin_id': plugin_id},
+                   timeout=_awaited_timeout(Command.PLUGIN_RELOAD) if timeout is None
+                   else timeout, paths=paths)
 
 
 def ping(*, timeout: float = DEFAULT_TIMEOUT_SECONDS,
