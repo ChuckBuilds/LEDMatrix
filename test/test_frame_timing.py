@@ -619,3 +619,123 @@ def test_render_bench_strip_lights_a_real_share_of_pixels():
     assert strip.width >= 128 * 4
     lit = sum(1 for px in strip.getdata() if px != (0, 0, 0))
     assert lit / (strip.width * strip.height) > 0.05
+
+
+# -- garbage collection --------------------------------------------------------
+
+def _collection(monitor, monkeypatch, start, took, generation=2):
+    """One collection of ``took`` seconds, as gc.callbacks would report it."""
+    clock = iter([start, start + took])
+    monkeypatch.setattr(frame_timing.time, "perf_counter", lambda: next(clock))
+    monitor("start", {"generation": generation})
+    monitor("stop", {"generation": generation, "collected": 0, "uncollectable": 0})
+    monkeypatch.undo()
+
+
+def test_the_gc_monitor_times_a_real_collection():
+    import gc
+    monitor = frame_timing.GcMonitor(threshold=0.0)
+    gc.callbacks.append(monitor)
+    try:
+        gc.collect()
+    finally:
+        gc.callbacks.remove(monitor)
+    assert monitor.collections[2] >= 1
+    assert monitor.seconds[2] > 0.0
+    assert monitor.long_pauses >= 1
+
+
+def test_only_collections_past_the_threshold_are_long(monkeypatch):
+    monitor = frame_timing.GcMonitor(threshold=0.020)
+    _collection(monitor, monkeypatch, 1.0, 0.005, generation=0)
+    _collection(monitor, monkeypatch, 2.0, 0.030)
+    assert monitor.collections == [1, 0, 1]
+    assert monitor.long_pauses == 1
+    assert monitor.long_seconds == pytest.approx(0.030)
+    assert monitor.max_seconds == pytest.approx(0.030)
+    assert monitor.last_long == (pytest.approx(2.030), pytest.approx(0.030))
+
+
+def test_a_long_collection_tags_the_next_frame_only(tmp_path, monkeypatch):
+    monitor = frame_timing.GcMonitor(threshold=0.020)
+    r = _recorder(tmp_path, gc_monitor=monitor)
+    _settle(r)
+    t = _feed(r, [PERIOD] * 10, start=200.0)
+    _collection(monitor, monkeypatch, 0.0, 0.025)
+    r.record(0.002, 0.004, 1, True, t + 0.04)        # late: the GC was in it
+    _feed(r, [PERIOD] * 10, start=t + 0.04)
+    totals = _aggregate(r)
+    assert totals["op_frames"] == {"gc": 1}
+    assert totals["late_op_frames"] == {"gc": 1}
+
+
+def test_a_long_collection_keeps_other_noted_work(tmp_path, monkeypatch):
+    monitor = frame_timing.GcMonitor(threshold=0.020)
+    r = _recorder(tmp_path, gc_monitor=monitor)
+    _settle(r)
+    t = _feed(r, [PERIOD] * 10, start=200.0)
+    r.note_op("extend", 100)
+    _collection(monitor, monkeypatch, 0.0, 0.025)
+    r.record(0.002, 0.004, 1, True, t + PERIOD)
+    totals = _aggregate(r)
+    assert totals["op_frames"] == {"extend": 1, "gc": 1}
+    assert totals["op_bytes"] == {"extend": 100, "gc": 0}
+
+
+def test_the_snapshot_carries_gc_counters_only_with_a_monitor(tmp_path, monkeypatch):
+    assert "gc" not in _recorder(tmp_path).snapshot()
+    monitor = frame_timing.GcMonitor(threshold=0.020)
+    _collection(monitor, monkeypatch, 0.0, 0.025)
+    snap = _recorder(tmp_path, gc_monitor=monitor).snapshot()
+    assert snap["gc"]["collections"] == [0, 0, 1]
+    assert snap["gc"]["long_pauses"] == 1
+    assert snap["gc"]["max_ms"] == pytest.approx(25.0)
+
+
+def test_soak_reports_the_collections_inside_the_run(tmp_path, monkeypatch, capsys):
+    monitor = frame_timing.GcMonitor(threshold=0.020)
+    r = _recorder(tmp_path, gc_monitor=monitor)
+    _collection(monitor, monkeypatch, 0.0, 0.040)      # before the run
+    _feed(r, [PERIOD] * 200)
+    _aggregate(r)
+    before = json.loads(json.dumps(r.snapshot()))
+    _collection(monitor, monkeypatch, 1.0, 0.003, generation=0)
+    _collection(monitor, monkeypatch, 2.0, 0.025)
+    _feed(r, [PERIOD] * 200, start=500.0)
+    _aggregate(r)
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["gc"]["collections"] == [1, 0, 1]
+    assert report["gc"]["long_pauses"] == 1
+    assert report["gc"]["long_ms"] == pytest.approx(25.0)
+    assert report["gc"]["max_ms_since_start"] == pytest.approx(40.0)
+    frame_soak.print_report(report, 0.1)
+    assert "Garbage collection gen0/1/2 1/0/1" in capsys.readouterr().out
+
+
+def test_soak_report_from_a_service_without_the_monitor(tmp_path):
+    r = _recorder(tmp_path)
+    _feed(r, [PERIOD] * 200)
+    _aggregate(r)
+    snap = json.loads(json.dumps(r.snapshot()))
+    later = dict(snap, updated=snap["updated"] + 10.0)
+    assert frame_soak.build_report(snap, later, preview=False)["gc"] is None
+
+
+def test_watchdog_says_when_a_long_collection_ran_inside_the_stall(caplog):
+    rec = _FakeRecorder()
+    rec.gc_monitor = frame_timing.GcMonitor()
+    rec.gc_monitor.last_long = (time.perf_counter() - 0.1, 0.35)
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    rec.last_frame = (10.0, True, 1)
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        dog.check(10.4, 0.0, None, False)
+    assert "a 350ms garbage collection ran inside it" in caplog.records[0].getMessage()
+
+
+def test_installing_the_gc_monitor_twice_installs_it_once():
+    import gc
+    first = frame_timing.install_gc_monitor()
+    assert frame_timing.install_gc_monitor() is first
+    assert sum(1 for cb in gc.callbacks if cb is first) == 1

@@ -57,7 +57,7 @@ import freetype
 
 from src.common import snapshot_policy
 from src import display_watchdog
-from src.common.frame_timing import FrameTimingRecorder
+from src.common.frame_timing import FrameTimingRecorder, install_gc_monitor
 
 if TYPE_CHECKING:
     from src.common.render_gate import RenderGate
@@ -365,7 +365,8 @@ class DisplayManager:
 
         # Timing of every presented frame, whoever drew it, for
         # scripts/frame_soak.py. See src/common/frame_timing.py.
-        self.frame_timing = FrameTimingRecorder(info=self._frame_timing_info())
+        self.frame_timing = FrameTimingRecorder(
+            info=self._frame_timing_info(), gc_monitor=install_gc_monitor())
         self.frame_timing.scrolling_now = self._scrolling_now
 
         self._scrolling_state = {

@@ -438,6 +438,7 @@ def main(argv=None) -> int:
         flush_interval=float("inf"),
         info=display._frame_timing_info(),  # pylint: disable=protected-access
         refresh_hz=idle_hz,
+        gc_monitor=frame_timing.install_gc_monitor(),
     )
     recorder.scrolling_now = display._scrolling_now  # pylint: disable=protected-access
     display.frame_timing = recorder
