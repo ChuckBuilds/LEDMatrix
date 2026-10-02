@@ -639,3 +639,66 @@ class TestRunLoop:
         # Undecidable, so the broken screen's turn left the scroll state alone.
         _, turn = _turn(c.events, "broken")
         assert ("scrolling", False) not in turn
+
+
+def _core_screen_controller(dm):
+    """Just enough of a DisplayController to draw its own screens on ``dm``."""
+    from src.display_controller import DisplayController
+    c = MagicMock()
+    c.display_manager = dm
+    c.on_demand_active = False
+    c._end_scroll_before_core_screen = types.MethodType(
+        DisplayController._end_scroll_before_core_screen, c)
+    return c
+
+
+def _record_scrolling(dm, monkeypatch):
+    """The ``scrolling`` flag each presented frame is timed with."""
+    flags = []
+    real = dm.frame_timing.record
+
+    def record(*args, **kwargs):
+        flags.append(args[3])
+        return real(*args, **kwargs)
+    monkeypatch.setattr(dm.frame_timing, "record", record)
+    return flags
+
+
+class TestTheControllersOwnScreens:
+    """The schedule-off blank and the WiFi notice are drawn by the controller,
+    not dispatched to a plugin, so they end the scroll themselves."""
+
+    def test_the_schedule_off_blank_shows_none_of_the_ticker(self, dm, monkeypatch):
+        from src.display_controller import DisplayController
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 1)
+        _push(dm, (255, 0, 0))               # the ticker's last frame
+        flags = _record_scrolling(dm, monkeypatch)
+        c = _core_screen_controller(dm)
+        DisplayController._blank_while_scheduled_off(c)
+        assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 0)
+        assert flags == [False]              # a static frame, not a freeze
+        assert not dm.is_currently_scrolling()
+        c._sleep_with_plugin_updates.assert_called_once_with(60)
+
+    def test_the_wifi_notice_shows_none_of_the_ticker(self, dm, monkeypatch):
+        from src.display_controller import DisplayController
+        dm._scan_lag_bands = [(24, 48, 1)]
+        dm.set_scrolling_state(True, 1)
+        _push(dm, (255, 0, 0))
+        flags = _record_scrolling(dm, monkeypatch)
+        c = _core_screen_controller(dm)
+        c._check_wifi_status_message.return_value = {"message": "x", "expires_at": 1e12}
+        c._display_wifi_status_message.side_effect = lambda _s: _push(dm, (0, 0, 255)) and True
+        assert DisplayController._show_wifi_notice(c) is True
+        assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 255)
+        assert flags == [False]
+
+    def test_no_notice_leaves_the_scroll_alone(self, dm):
+        from src.display_controller import DisplayController
+        dm.set_scrolling_state(True, 2)
+        c = _core_screen_controller(dm)
+        c._check_wifi_status_message.return_value = None
+        assert DisplayController._show_wifi_notice(c) is False
+        assert dm.is_currently_scrolling()
+        assert dm._frame_hold == 2

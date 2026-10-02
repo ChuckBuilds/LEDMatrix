@@ -108,6 +108,15 @@ policies are unchanged.
 
 ### Fixes
 
+- The schedule-off blank and the WiFi notice no longer start with a
+  scroller's leftovers. Both are drawn by the display controller rather than
+  dispatched to a plugin, so #716's handover never reached them: drawn while
+  the last scroll's state was still set, the blank went out with the
+  ticker's lagging rows on a scan-compensated panel and stayed up for its
+  60 s dwell, and the notice's redraws (which #712 now shows over a running
+  scroller or Vegas) were counted as 0.5-1 s freezes and logged as a
+  `Render stall ... mid-scroll`. The controller now ends the scroll state
+  before drawing either.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
