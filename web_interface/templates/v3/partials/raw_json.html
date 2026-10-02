@@ -1,4 +1,8 @@
-<div class="space-y-6">
+{# No inline script: static/v3/js/pages/raw-json.js runs this page. Its buttons
+   name an action and an editor (data-action, data-editor) for one delegated
+   listener. The page registry (static/v3/js/core/registry.js) starts it when
+   this root appears and stops it when the partial is swapped away. #}
+<div class="space-y-6" data-page="raw-json">
     <!-- Config.json Editor -->
     <div class="bg-white rounded-lg shadow p-6">
         <div class="border-b border-gray-200 pb-4 mb-6">
@@ -8,17 +12,17 @@
                     <p class="mt-1 text-sm text-gray-600">{{ main_config_path }}</p>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="formatJson('main-config-editor', 'main-config-validation')" 
+                    <button type="button" data-action="format" data-editor="main"
                             class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         <i class="fas fa-align-left mr-2"></i>
                         Format JSON
                     </button>
-                    <button onclick="manualValidateJson('main-config-editor', 'main-config-validation')" 
+                    <button type="button" data-action="validate" data-editor="main"
                             class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
                         <i class="fas fa-check-circle mr-2"></i>
                         Validate JSON
                     </button>
-                    <button onclick="saveMainConfig()" 
+                    <button type="button" data-action="save" data-editor="main"
                             class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
                         <i class="fas fa-save mr-2"></i>
                         Save
@@ -59,17 +63,17 @@
                     <p class="mt-1 text-sm text-gray-600">{{ secrets_config_path }}</p>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="formatJson('secrets-config-editor', 'secrets-config-validation')" 
+                    <button type="button" data-action="format" data-editor="secrets"
                             class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         <i class="fas fa-align-left mr-2"></i>
                         Format JSON
                     </button>
-                    <button onclick="manualValidateJson('secrets-config-editor', 'secrets-config-validation')" 
+                    <button type="button" data-action="validate" data-editor="secrets"
                             class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700">
                         <i class="fas fa-check-circle mr-2"></i>
                         Validate JSON
                     </button>
-                    <button onclick="saveSecretsConfig()" 
+                    <button type="button" data-action="save" data-editor="secrets"
                             class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
                         <i class="fas fa-save mr-2"></i>
                         Save
@@ -101,218 +105,3 @@
         </div>
     </div>
 </div>
-
-<script>
-// Format JSON with proper indentation
-function formatJson(editorId, validationDivId) {
-    const textarea = document.getElementById(editorId);
-    const jsonText = textarea.value;
-    
-    try {
-        const parsed = JSON.parse(jsonText);
-        const formatted = JSON.stringify(parsed, null, 4);
-        textarea.value = formatted;
-        
-        // Auto-validate after formatting
-        validateJSON(editorId, validationDivId);
-        showNotification('JSON formatted successfully!', 'success');
-    } catch (error) {
-        showNotification('Cannot format invalid JSON: ' + error.message, 'error');
-        validateJSON(editorId, validationDivId);
-    }
-}
-
-// Manual validation with detailed feedback
-function manualValidateJson(editorId, validationDivId) {
-    const textarea = document.getElementById(editorId);
-    const validation = document.getElementById(validationDivId);
-    const jsonText = textarea.value;
-    
-    if (!textarea || !validation) return;
-    
-    try {
-        const parsed = JSON.parse(jsonText);
-        validation.innerHTML = `
-            <div class="p-3 bg-green-50 border border-green-200 rounded-md">
-                <div class="flex items-start">
-                    <i class="fas fa-check-circle text-green-600 text-xl mr-3 mt-1"></i>
-                    <div>
-                        <div class="font-semibold text-green-800">✓ JSON is valid!</div>
-                        <div class="text-sm text-green-700 mt-1">
-                            ✓ Valid JSON syntax<br>
-                            ✓ Proper structure<br>
-                            ✓ No syntax errors detected
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        showNotification('JSON validation successful!', 'success');
-    } catch (e) {
-        validation.innerHTML = `
-            <div class="p-3 bg-red-50 border border-red-200 rounded-md">
-                <div class="flex items-start">
-                    <i class="fas fa-times-circle text-red-600 text-xl mr-3 mt-1"></i>
-                    <div>
-                        <div class="font-semibold text-red-800">✗ Invalid JSON syntax</div>
-                        <div class="text-sm text-red-700 mt-1">
-                            <strong>Error:</strong> ${window.LEDEscape.html(e.message)}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        showNotification('JSON validation failed: ' + e.message, 'error');
-    }
-}
-
-// Auto-validate JSON as user types (simple version)
-function validateJSON(editor, validationDiv) {
-    const textarea = document.getElementById(editor);
-    const validation = document.getElementById(validationDiv);
-    
-    if (!textarea || !validation) return true;
-    
-    try {
-        JSON.parse(textarea.value);
-        validation.innerHTML = '<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Valid JSON</span>';
-        return true;
-    } catch (e) {
-        validation.innerHTML = '<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Invalid JSON: ' + e.message + '</span>';
-        return false;
-    }
-}
-
-// Auto-validate on input
-document.getElementById('main-config-editor')?.addEventListener('input', function() {
-    validateJSON('main-config-editor', 'main-config-validation');
-});
-
-document.getElementById('secrets-config-editor')?.addEventListener('input', function() {
-    validateJSON('secrets-config-editor', 'secrets-config-validation');
-});
-
-// Initial validation
-setTimeout(() => {
-    validateJSON('main-config-editor', 'main-config-validation');
-    validateJSON('secrets-config-editor', 'secrets-config-validation');
-}, 100);
-
-function saveMainConfig() {
-    const textarea = document.getElementById('main-config-editor');
-    
-    // Validate JSON first
-    if (!validateJSON('main-config-editor', 'main-config-validation')) {
-        showNotification('Invalid JSON! Please fix errors before saving.', 'error');
-        return;
-    }
-    
-    try {
-        const config = JSON.parse(textarea.value);
-        
-        // Save via API
-        fetch('/api/v3/config/raw/main', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(config)
-        })
-        .then(async response => {
-            // Store status and statusText before parsing
-            const status = response.status;
-            const statusText = response.statusText;
-            
-            // Try to parse JSON response
-            let data;
-            try {
-                data = await response.json();
-            } catch (parseError) {
-                // If JSON parsing fails, throw generic HTTP error
-                throw new Error(`HTTP ${status}: ${statusText}`);
-            }
-            
-            // Handle non-OK responses
-            if (!response.ok) {
-                // Extract specific error message from API response if available
-                const errorMessage = data.message || data.status || statusText;
-                throw new Error(errorMessage);
-            }
-            
-            // Handle successful responses
-            if (data.status === 'success') {
-                showNotification('config.json saved successfully!', 'success');
-            } else {
-                showNotification('Error saving config.json: ' + (data.message || 'Unknown error'), 'error');
-            }
-        })
-        .catch(error => {
-            // Preserve the error message that was intentionally thrown
-            showNotification('Error saving config.json: ' + (error.message || 'An error occurred'), 'error');
-        });
-    } catch (e) {
-        showNotification('Invalid JSON: ' + e.message, 'error');
-    }
-}
-
-function saveSecretsConfig() {
-    const textarea = document.getElementById('secrets-config-editor');
-    
-    // Validate JSON first
-    if (!validateJSON('secrets-config-editor', 'secrets-config-validation')) {
-        showNotification('Invalid JSON! Please fix errors before saving.', 'error');
-        return;
-    }
-    
-    try {
-        const config = JSON.parse(textarea.value);
-        
-        // Save via API
-        fetch('/api/v3/config/raw/secrets', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(config)
-        })
-        .then(async response => {
-            // Store status and statusText before parsing
-            const status = response.status;
-            const statusText = response.statusText;
-            
-            // Try to parse JSON response
-            let data;
-            try {
-                data = await response.json();
-            } catch (parseError) {
-                // If JSON parsing fails, throw generic HTTP error
-                throw new Error(`HTTP ${status}: ${statusText}`);
-            }
-            
-            // Handle non-OK responses
-            if (!response.ok) {
-                // Extract specific error message from API response if available
-                const errorMessage = data.message || data.status || statusText;
-                throw new Error(errorMessage);
-            }
-            
-            // Handle successful responses
-            if (data.status === 'success') {
-                showNotification('config_secrets.json saved successfully!', 'success');
-            } else {
-                showNotification('Error saving config_secrets.json: ' + (data.message || 'Unknown error'), 'error');
-            }
-        })
-        .catch(error => {
-            // Preserve the error message that was intentionally thrown
-            showNotification('Error saving config_secrets.json: ' + (error.message || 'An error occurred'), 'error');
-        });
-    } catch (e) {
-        showNotification('Invalid JSON: ' + e.message, 'error');
-    }
-}
-
-// showNotification is provided by the notification widget (notification.js)
-// No local definition needed - uses window.showNotification from the widget
-</script>
-

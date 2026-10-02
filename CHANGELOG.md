@@ -19,6 +19,29 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: four more tabs are ES-module pages (stage 2)
+
+- Rotation, Operation History, Config Editor and Backup & Restore follow the
+  Cache tab (#703): each partial's inline `<script>` is now
+  `static/v3/js/pages/<name>.js` (`durations`, `operation-history`,
+  `raw-json`, `backup-restore`), started once per swap-in by the page
+  registry and stopped on swap-out. None of the four partials has an inline
+  script or `onclick` any more. Buttons carry `data-action` and use one
+  delegated listener. Server data is drawn with `textContent`.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `formatJson`, `manualValidateJson`,
+  `validateJSON`, `saveMainConfig`, `saveSecretsConfig`, `exportBackup`,
+  `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`.
+- Reads are cancelled when a tab is swapped away. Writes (save, delete,
+  export, restore) are not, and their result is still reported.
+- `core/api.js` accepts a raw `body` (a `FormData` upload).
+  `PluginOrderList.init()` accepts a `signal` for its plugin-list request.
+- Small fixes on the way: the Config Editor's "Invalid JSON" line no longer
+  puts the parser's message into `innerHTML`, and Operation History's
+  "Showing x to y of z" now resets when nothing matches.
+- New DOM suites `test/js/dom/test_{durations,operation_history,raw_json,backup_restore}_page.js`.
+  `test/web_interface/test_es_modules.py` pins the converted pages and the aliases.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
@@ -267,6 +290,22 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- `/api/v3/plugins/installed` no longer reports the display's plugins as
+  `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
+  snapshot is written from its own thread, which kept going while the render
+  loop was hung. The web interface now also reads the render loop's
+  heartbeat: a fresh snapshot whose process's heartbeat is 60 s or older is
+  `data.runtime.status: "stalled"`, with the per-plugin fields null, and
+  `data.runtime` gains `heartbeat_age_seconds`. A snapshot from a process
+  that no longer exists, as after a watchdog kill (systemd removes the
+  heartbeat when the service stops), is `stale` at once instead of `live`
+  for up to 180 s. No new files or writes: both checks are on the reading
+  side.
+- `/api/v3/display/current-status` reflects a wake from scheduled-off, a
+  schedule-off blank, or an on-demand session starting or ending at once,
+  even when the mode name stays the same. The display republished its
+  current state only on a mode change or every 30 s, so `is_display_active`
+  and `on_demand_active` could be up to 30 s out of date.
 
 ### Scrolling
 

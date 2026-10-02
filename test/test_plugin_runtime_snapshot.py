@@ -11,7 +11,9 @@ The cross-process tests use two CacheManagers over one temporary directory,
 the arrangement of the real services (which share /var/cache/ledmatrix).
 """
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -19,6 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src import display_watchdog  # noqa: E402
 from src.cache_manager import CacheManager  # noqa: E402
 from src.plugin_system import plugin_runtime as rt  # noqa: E402
 from src.plugin_system.plugin_manager import PluginManager  # noqa: E402
@@ -305,6 +308,74 @@ class TestReader:
         eager = _snapshot(self.NOW - 20, stale_after=0)
         assert view_from_snapshot(eager, now=self.NOW).status == "live"
 
+    # -- render-loop liveness (the heartbeat /api/v3/health reads) --
+
+    MONO = 50_000.0
+
+    def _beat(self, age, pid=4242):
+        return {"pid": pid, "mono": self.MONO - age, "wall": self.NOW - age}
+
+    def test_a_stale_heartbeat_with_a_live_snapshot_is_stalled(self):
+        """The publisher thread keeps writing while the render loop is
+        hung; the heartbeat says so, and the runtime status must agree with
+        /api/v3/health's display_loop: stalled."""
+        snapshot = _snapshot(self.NOW - 5, plugins={"clock": self.CLOCK}, pid=4242)
+        view = view_from_snapshot(
+            snapshot, now=self.NOW, now_mono=self.MONO,
+            heartbeat=self._beat(display_watchdog.HEARTBEAT_STALE_SECONDS + 1))
+        assert view.status == "stalled"
+        assert view.plugin("clock")["loaded"] is None  # no frozen truth passed on
+        described = view.describe()
+        assert described["status"] == "stalled"
+        assert described["heartbeat_age_seconds"] == display_watchdog.HEARTBEAT_STALE_SECONDS + 1
+
+    def test_the_threshold_is_the_health_checks(self):
+        snapshot = _snapshot(self.NOW - 5, pid=4242)
+        limit = display_watchdog.HEARTBEAT_STALE_SECONDS
+        fresh = view_from_snapshot(snapshot, now=self.NOW, now_mono=self.MONO,
+                                   heartbeat=self._beat(limit - 0.5))
+        assert fresh.status == "live"
+        assert fresh.describe()["heartbeat_age_seconds"] == limit - 0.5
+        assert view_from_snapshot(snapshot, now=self.NOW, now_mono=self.MONO,
+                                  heartbeat=self._beat(limit)).status == "stalled"
+
+    @pytest.mark.parametrize("heartbeat", [
+        None,                                   # dev server, Windows, starting up
+        {"pid": 9999, "mono": 0.0},             # another process: a restarted display
+        {"pid": "4242", "mono": 0.0},           # unparseable pid
+        {"pid": 4242},                          # no time in it
+    ])
+    def test_a_heartbeat_that_says_nothing_leaves_it_live(self, heartbeat):
+        snapshot = _snapshot(self.NOW - 5, plugins={"clock": self.CLOCK}, pid=4242)
+        view = view_from_snapshot(snapshot, now=self.NOW, now_mono=self.MONO,
+                                  heartbeat=heartbeat)
+        assert view.status == "live"
+        assert view.plugin("clock")["loaded"] is True
+
+    def test_a_stale_snapshot_stays_stale_whatever_the_heartbeat(self):
+        snapshot = _snapshot(self.NOW - 181, pid=4242)
+        assert view_from_snapshot(snapshot, now=self.NOW, now_mono=self.MONO,
+                                  heartbeat=self._beat(500)).status == "stale"
+
+    def test_a_snapshot_from_a_dead_process_is_stale_at_once(self):
+        """After a watchdog kill systemd removes the heartbeat's directory, so
+        nothing goes stale; the publisher's pid being gone is the signal."""
+        snapshot = _snapshot(self.NOW - 5, plugins={"clock": self.CLOCK}, pid=4242)
+        dead = view_from_snapshot(snapshot, now=self.NOW,
+                                  process_alive=lambda pid: False)
+        assert dead.status == "stale"
+        assert dead.plugin("clock")["loaded"] is None
+        for answer in (True, None):  # alive, or this platform cannot tell
+            assert view_from_snapshot(snapshot, now=self.NOW,
+                                      process_alive=lambda pid, a=answer: a).status == "live"
+
+    def test_process_exists(self):
+        if os.name != "posix":
+            assert rt.process_exists(os.getpid()) is None
+        else:
+            assert rt.process_exists(os.getpid()) is True
+        assert rt.process_exists(0) is None
+
     def test_no_cache_manager_or_a_failing_one_is_unknown(self):
         assert read_plugin_runtime(None).status == "unknown"
         cache = MagicMock()
@@ -423,6 +494,36 @@ class TestInstalledPluginsRoute:
         assert runtime["status"] == "stale"
         assert runtime["age_seconds"] > rt.STALE_AFTER
         assert plugins["clock"]["loaded"] is None
+
+    def _write_heartbeat(self, tmp_path, monkeypatch, age):
+        path = tmp_path / "display-heartbeat.json"
+        path.write_text(json.dumps({"pid": os.getpid(), "mono": time.monotonic() - age,
+                                    "wall": time.time() - age}), encoding="utf-8")
+        monkeypatch.setattr(display_watchdog, "HEARTBEAT_PATH", str(path))
+
+    def test_hung_render_loop_is_stalled_not_live(self, web_listing, tmp_path, monkeypatch):
+        """The publisher's own thread still ticks while the render loop is
+        stuck; the heartbeat it shares a process with has gone stale."""
+        display_cache, get = web_listing
+        self._display(display_cache).tick()   # a fresh snapshot, this pid
+        self._write_heartbeat(tmp_path, monkeypatch,
+                              display_watchdog.HEARTBEAT_STALE_SECONDS + 30)
+
+        plugins, runtime = get()
+
+        assert runtime["status"] == "stalled"
+        assert runtime["heartbeat_age_seconds"] >= display_watchdog.HEARTBEAT_STALE_SECONDS
+        assert plugins["clock"]["loaded"] is None and plugins["clock"]["state"] is None
+
+    def test_fresh_heartbeat_keeps_it_live(self, web_listing, tmp_path, monkeypatch):
+        display_cache, get = web_listing
+        self._display(display_cache).tick()
+        self._write_heartbeat(tmp_path, monkeypatch, 1)
+
+        plugins, runtime = get()
+
+        assert runtime["status"] == "live"
+        assert plugins["clock"]["loaded"] is True
 
 
 class TestDisplayControllerStopsThePublisher:

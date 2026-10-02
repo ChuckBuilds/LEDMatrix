@@ -551,7 +551,8 @@ List all installed plugins with their status and metadata.
       "status": "live",
       "published_at": 1790000030.0,
       "age_seconds": 12.4,
-      "stale_after": 180.0
+      "stale_after": 180.0,
+      "heartbeat_age_seconds": 2.1
     }
   }
 }
@@ -572,10 +573,15 @@ until the display restarts. A plugin a live snapshot does not list is
 `loaded: false`, `state: "unloaded"`.
 
 `runtime.status` says whether to believe them: `live` (fresh snapshot from
-a running display), `stale` (not refreshed within `stale_after` seconds: the
-display is hung or died), `stopped` (the display shut down) or `unknown`
+a running display), `stalled` (fresh snapshot, but the same process's
+render-loop heartbeat is 60 s or older -- the render loop is hung, as
+[`/health`](#health-check)'s `display_loop: stalled` says), `stale` (not refreshed
+within `stale_after` seconds, or the process that wrote it no longer exists:
+the display is hung or died), `stopped` (the display shut down) or `unknown`
 (nothing published yet). Unless it is `live`, every one of those fields is
-`null`. Health and metrics are at [`/plugins/health`](#get-plugin-health)
+`null`. `heartbeat_age_seconds` is the heartbeat's age when it was taken into
+account, `null` otherwise (no heartbeat, as on the dev server, or one from
+another process). Health and metrics are at [`/plugins/health`](#get-plugin-health)
 and `/plugins/metrics`.
 
 `vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
@@ -1151,7 +1157,7 @@ it is neither installed nor configured).
       "last_updated": "2025-01-15T10:30:00"
     }
   },
-  "runtime": {"status": "live", "published_at": 1790000030.0, "age_seconds": 12.4, "stale_after": 180.0}
+  "runtime": {"status": "live", "published_at": 1790000030.0, "age_seconds": 12.4, "stale_after": 180.0, "heartbeat_age_seconds": 2.1}
 }
 ```
 
