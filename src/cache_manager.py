@@ -43,6 +43,9 @@ from src.logging_config import get_logger
 # it from either path.
 from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-export
 
+# CacheManager.config_manager not built yet (None means "not available").
+_UNSET: Any = object()
+
 class CacheManager:
     """Manages caching of API responses to reduce API calls."""
 
@@ -73,21 +76,19 @@ class CacheManager:
             self.logger.error("Could not find or create a writable cache directory. Caching will be disabled.")
             self.cache_dir = None
 
-        # Initialize config manager for sport-specific intervals
-        try:
-            from src.config_manager import ConfigManager
-            self.config_manager: Optional[Any] = ConfigManager()
-            self.config_manager.load_config()
-        except ImportError:
-            self.config_manager: Optional[Any] = None
-            self.logger.warning("ConfigManager not available, using default cache intervals")
-        
+        # The config manager is built on first use of self.config_manager; see
+        # the property. Nothing in the cache reads it any more.
+        self._config_manager: Any = _UNSET
+        self._config_manager_lock = threading.Lock()
+
         # Initialize cache components using composition
         self._memory_cache_component = MemoryCache(
             max_size=default_max_size(), cleanup_interval=300.0
         )
         self._disk_cache_component = DiskCache(cache_dir=self.cache_dir, logger=self.logger)
-        self._strategy_component = CacheStrategy(config_manager=self.config_manager, logger=self.logger)
+        # No config manager: CacheStrategy keeps the parameter for callers but
+        # reads nothing from it, and passing ours would build it eagerly.
+        self._strategy_component = CacheStrategy(logger=self.logger)
         self._metrics_component = CacheMetrics(logger=self.logger)
         
         # Disk cleanup configuration
@@ -114,6 +115,44 @@ class CacheManager:
         # Start background cleanup thread only if disk caching is enabled
         if self.cache_dir:
             self.start_cleanup_thread()
+
+    @property
+    def config_manager(self) -> Optional[Any]:
+        """A loaded ConfigManager, built the first time it is asked for.
+
+        Every CacheManager used to build one and load the whole config in
+        __init__, for a cache strategy that stopped reading it -- startup paid
+        a config load (and the web interface another) per manager for nothing.
+        It is still public: the sports plugins resolve the global timezone and
+        display settings through ``cache_manager.config_manager``, and they get
+        the same object they always did, on first access instead of at
+        construction. None when ConfigManager cannot be imported, as before.
+        Assigning replaces it, as assigning the attribute always did.
+        """
+        # getattr: a manager made with __new__ (some tests) has no slot yet.
+        value = getattr(self, '_config_manager', _UNSET)
+        if value is not _UNSET:
+            return value
+        lock = getattr(self, '_config_manager_lock', None) or threading.Lock()
+        with lock:
+            value = getattr(self, '_config_manager', _UNSET)
+            if value is _UNSET:
+                try:
+                    from src.config_manager import ConfigManager
+                except ImportError:
+                    self.logger.warning("ConfigManager not available, using default cache intervals")
+                    value = None
+                else:
+                    value = ConfigManager()
+                    # Raises as it did from __init__; nothing is kept, so the
+                    # next access tries again.
+                    value.load_config()
+                self._config_manager = value
+        return value
+
+    @config_manager.setter
+    def config_manager(self, value: Optional[Any]) -> None:
+        self._config_manager = value
 
     def _get_writable_cache_dir(self) -> Optional[str]:
         """Tries to find or create a writable cache directory, preferring a system path when available."""

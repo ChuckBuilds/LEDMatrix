@@ -52,6 +52,12 @@ accepts both, but the store flags the old spelling as deprecated
   their numbers, and a reset from the web UI sticks for a plugin the display
   is not running, as it did. A plugin with no call for 30 days is dropped from
   the snapshot, as its record used to age out.
+- **`CacheManager` no longer loads the config when it is built.** Every
+  manager built a `ConfigManager` and loaded the whole config for a cache
+  strategy that stopped reading it. `cache_manager.config_manager` is still
+  there -- the sports plugins resolve the global timezone through it -- and
+  is now built and loaded on first access; assigning it still replaces it.
+  `CacheStrategy` is given no config manager (it reads none).
 
 ### Garbage-collection pauses in the frame stats
 
