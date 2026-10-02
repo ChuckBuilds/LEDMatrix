@@ -102,6 +102,7 @@ import requests
 from PIL import Image, ImageDraw
 from src.common import sports_card as _card
 from src.common.font_layout import load_truetype, resolve_asset_path
+from src.common.text_helper import OUTLINE_SQUARE, draw_text_outlined
 
 logger = logging.getLogger(__name__)
 
@@ -851,19 +852,12 @@ class SportsCoreSharedMixin:
         elif fill is None:
             fill = self._font_color(font)
         draw.fontmode = "1"
-        x, y = position
-        for dx, dy in [
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
-            (0, -1),
-            (0, 1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-        ]:
-            draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-        draw.text((x, y), text, font=font, fill=fill)
+        # The eight-neighbour outline, then the text on top. Rasterized once
+        # and stamped nine times rather than drawn nine times; the pixels are
+        # the same (draw_text_outlined falls back to the nine draws wherever
+        # that is not proven).
+        draw_text_outlined(draw, position, text, font, fill, outline_color,
+                           OUTLINE_SQUARE)
 
     def _should_log(self, warning_type: str, cooldown: int = 60) -> bool:
         """True at most once per ``cooldown`` seconds, for rate-limiting a

@@ -7,13 +7,181 @@ Extracted from LEDMatrix core to provide reusable functionality for plugins.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFont
 from src.common.font_layout import load_truetype, resolve_asset_path
 
 # Shared throwaway draw surface for measuring text without a target canvas.
 _measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+#: A one-pixel outline on all eight sides, in the order the scoreboards have
+#: always drawn it (dx outer, dy inner). The order can change pixels only
+#: where anti-aliased (fontmode "L") edges overlap; it is kept anyway.
+OUTLINE_SQUARE: Tuple[Tuple[int, int], ...] = (
+    (-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+
+#: A one-pixel outline on the four edge sides only, leaving the diagonal
+#: corners open: the thinner outline ufc's fight card draws.
+OUTLINE_CROSS: Tuple[Tuple[int, int], ...] = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+# What the stamping path in draw_text_outlined is proven pixel-identical for
+# (test/test_text_helper.py compares it with the draw.text loop across every
+# combination). Anything else takes the loop. Compared with ``in`` on tuples
+# rather than sets so an unhashable fontmode falls back instead of raising.
+_STAMP_DRAW_MODES = ("RGB", "RGBA", "L")
+_STAMP_FONT_MODES = ("1", "L")
+
+# ImageDraw.text as Pillow defines it, which the stamping path stands in for.
+# A draw whose text has been replaced since -- on the class or the instance,
+# as a test recording the strings drawn does -- takes the loop, so the
+# replacement still sees every call.
+_PILLOW_DRAW_TEXT = ImageDraw.ImageDraw.text
+
+
+def draw_text_outlined(draw: ImageDraw.ImageDraw, xy: Sequence[Any], text: Any,
+                       font: Any, fill: Any,
+                       outline_color: Any = (0, 0, 0),
+                       offsets: Iterable[Sequence[Any]] = OUTLINE_SQUARE) -> None:
+    """Draw ``text`` in ``outline_color`` at each of ``offsets``, then in ``fill`` on top.
+
+    The result is pixel-identical to the loop every outlined draw used to be::
+
+        x, y = xy
+        for dx, dy in offsets:
+            draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+        draw.text((x, y), text, font=font, fill=fill)
+
+    but each ``draw.text`` rasterizes the whole string through FreeType again,
+    so the default nine draws did the same glyph work nine times, and on a
+    scoreboard card that text work is much of the render. Here the string is
+    rasterized once and the one mask is stamped at every offset, which is
+    what ``draw.text`` itself does with the mask, so the pixels are the same.
+
+    That holds only where it has been checked: a plain ``ImageDraw`` whose
+    ``text`` is Pillow's, a ``FreeTypeFont``, one line of ``str``, whole-pixel
+    ``xy`` (an int, or a float with nothing after the point, which is what
+    centring on a measured ``textlength`` with ``// 2`` gives) and int
+    offsets, and the image and font modes in ``_STAMP_DRAW_MODES`` /
+    ``_STAMP_FONT_MODES``. Fractional coordinates change the raster itself
+    (Pillow rasterizes at the sub-pixel start), and multiline text is laid
+    out line by line. Every other case, and anything
+    the stamping path cannot prepare, runs the loop above unchanged, so it
+    behaves exactly as before, errors included.
+
+    Args:
+        draw: The ``ImageDraw`` to draw on.
+        xy: Top-left (x, y) of the text, as for ``draw.text``.
+        text: The text.
+        font: The font, as for ``draw.text``.
+        fill: Colour of the text itself, drawn last.
+        outline_color: Colour of the outline.
+        offsets: (dx, dy) of each outline draw, in drawing order.
+            :data:`OUTLINE_SQUARE` (the default) or :data:`OUTLINE_CROSS`.
+    """
+    x, y = xy
+    # Read once: the loop below may have to start over after the stamping
+    # path looked at them.
+    offsets = tuple(offsets)
+    if _can_stamp(draw, x, y, text, font, offsets):
+        if _stamp_outlined(draw, int(x), int(y), text, font, fill,
+                           outline_color, offsets):
+            return
+    for dx, dy in offsets:
+        draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _can_stamp(draw: Any, x: Any, y: Any, text: Any, font: Any,
+               offsets: Tuple[Any, ...]) -> bool:
+    """Whether draw_text_outlined may stamp one mask instead of drawing N times.
+
+    Exact types for the draw and the font, and Pillow's own ``draw.text``: a
+    subclass may override ``text`` or ``getmask2``, or a test may replace
+    ``draw.text`` to record what is drawn, and stamping would skip either.
+    """
+    return (
+        type(draw) is ImageDraw.ImageDraw
+        and ImageDraw.ImageDraw.text is _PILLOW_DRAW_TEXT
+        and "text" not in vars(draw)
+        and type(font) is ImageFont.FreeTypeFont
+        and isinstance(text, str)
+        and "\n" not in text
+        and "\r" not in text
+        and _whole_pixel(x)
+        and _whole_pixel(y)
+        and all(isinstance(o, (tuple, list)) and len(o) == 2
+                and isinstance(o[0], int) and isinstance(o[1], int)
+                for o in offsets)
+        and draw.mode in _STAMP_DRAW_MODES
+        and draw.fontmode in _STAMP_FONT_MODES
+    )
+
+
+def _whole_pixel(v: Any) -> bool:
+    """An int, or a float on a whole pixel, as a draw.text coordinate.
+
+    For those, draw.text's ``int(x + dx)`` is ``int(x) + dx`` and its
+    sub-pixel start is 0 (or -0.0, which renders the same), so one mask fits
+    every offset. Floats are held well inside the range where ``x + dx`` is
+    exact; nothing that far out is on any canvas, so the loop the rest take
+    costs nothing that matters.
+    """
+    if isinstance(v, int):
+        return True
+    return isinstance(v, float) and v.is_integer() and -2**31 < v < 2**31
+
+
+def _text_ink(draw: ImageDraw.ImageDraw, color: Any) -> Any:
+    """The ink ``ImageDraw.text`` resolves ``color`` to (its inner getink)."""
+    ink, fill_ink = draw._getink(color)
+    return fill_ink if ink is None else ink
+
+
+def _stamp_outlined(draw: ImageDraw.ImageDraw, x: int, y: int, text: str,
+                    font: ImageFont.FreeTypeFont, fill: Any, outline_color: Any,
+                    offsets: Tuple[Sequence[Any], ...]) -> bool:
+    """Rasterize once and stamp; False, with nothing drawn, to take the loop.
+
+    Replays what ``ImageDraw.text`` does for one line at an integer position
+    (Pillow 11 and 12): ``font.getmask2`` with these arguments, then
+    ``draw.draw.draw_bitmap`` at the position plus the mask's offset.
+    ``draw.draw`` and ``draw._getink`` are Pillow internals, so everything up
+    to the first pixel is guarded: if anything fails before then, nothing has
+    been drawn and the loop runs instead, which then fails (or not) exactly
+    as it always did -- a bad fill colour still raises after the outline is
+    drawn, as it did from the last ``draw.text``.
+    """
+    try:
+        outline_ink = _text_ink(draw, outline_color)
+        text_ink = _text_ink(draw, fill)
+        # What draw.text passes for a single line with no anchor at a whole
+        # pixel position, by keyword so a getmask2 with another parameter
+        # order cannot shift them. ink only matters to an RGBA (colour-glyph)
+        # mask, which the font modes allowed here never produce.
+        mask, (ox, oy) = font.getmask2(
+            text, draw.fontmode, direction=None, features=None,
+            language=None, stroke_width=0, anchor="la", ink=text_ink,
+            start=(0.0, 0.0), stroke_filled=True)
+        draw_bitmap = draw.draw.draw_bitmap
+    except Exception:
+        return False
+    stamped = False
+    try:
+        # draw.text returns without drawing when its ink resolves to None.
+        if outline_ink is not None:
+            for dx, dy in offsets:
+                draw_bitmap((x + dx + ox, y + dy + oy), mask, outline_ink)
+                stamped = True
+        if text_ink is not None:
+            draw_bitmap((x + ox, y + oy), mask, text_ink)
+    except Exception:
+        # A rejected call draws nothing, but one that got through has: never
+        # draw the outline twice (anti-aliased edges would be blended twice).
+        if stamped:
+            raise
+        return False
+    return True
 
 
 class TextHelper:
@@ -103,15 +271,15 @@ class TextHelper:
             outline_width: Width of outline in pixels
         """
         x, y = position
-        
-        # Draw outline by drawing text in outline color at offset positions
-        for dx in range(-outline_width, outline_width + 1):
-            for dy in range(-outline_width, outline_width + 1):
-                if dx != 0 or dy != 0:  # Skip center position
-                    draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-        
-        # Draw main text
-        draw.text((x, y), text, font=font, fill=fill)
+
+        # Outline: every offset up to outline_width away on each axis, centre
+        # skipped, in the order this has always drawn them (OUTLINE_SQUARE at
+        # width 1). The main text is drawn last, on top.
+        offsets = [(dx, dy)
+                   for dx in range(-outline_width, outline_width + 1)
+                   for dy in range(-outline_width, outline_width + 1)
+                   if dx != 0 or dy != 0]
+        draw_text_outlined(draw, (x, y), text, font, fill, outline_color, offsets)
     
     def get_text_width(self, text: str, font: ImageFont.ImageFont) -> int:
         """
