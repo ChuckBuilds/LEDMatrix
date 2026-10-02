@@ -101,6 +101,9 @@ class _PluginReloadJob:
         self.old_instance = old_instance
         self.done = threading.Event()
         self.loaded = False
+        #: The old instance's teardown failed, so its modules may still be in
+        #: sys.modules and a load now could quietly reuse the old code.
+        self.unload_failed = False
         self.error: Optional[Exception] = None
         #: Reloads of the same plugin asked for while this one ran. They
         #: start once it is done, so they load the files as they are then.
@@ -110,7 +113,14 @@ class _PluginReloadJob:
         """Tear down the old instance, then load the plugin again. Never raises."""
         try:
             if self.old_instance is not None:
-                plugin_manager.unload_detached_plugin(self.plugin_id, self.old_instance)
+                if not plugin_manager.unload_detached_plugin(self.plugin_id, self.old_instance):
+                    # Loading now could reuse the old plugin_<id> module and
+                    # report a reload that never happened (the synchronous
+                    # path refused this too: reload_plugin stops when
+                    # unload_plugin fails).
+                    self.old_instance = None
+                    self.unload_failed = True
+                    return
             self.old_instance = None
             self.loaded = bool(plugin_manager.reload_plugin(self.plugin_id))
         except Exception as exc:  # pylint: disable=broad-except
@@ -1967,6 +1977,14 @@ class DisplayController:
             logger.error("Plugin reload over the control socket failed",
                          exc_info=(type(job.error), job.error, job.error.__traceback__))
             command.fail(ControlErrorCode.INTERNAL, 'the display failed to reload it')
+            return
+        if job.unload_failed:
+            logger.error("Plugin %s: the old instance could not be unloaded, so the "
+                         "update was not loaded; it is out of the rotation until the "
+                         "display restarts", plugin_id)
+            command.fail(ControlErrorCode.FAILED,
+                         f'{plugin_id}: the old version could not be unloaded; '
+                         f'restart the display to load the update')
             return
         if not job.loaded:
             logger.error("Plugin %s did not load after its update; it is out of the "

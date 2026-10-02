@@ -428,6 +428,24 @@ def test_a_plugin_that_fails_to_load_after_a_slow_teardown(tmp_path):
     assert "clock" not in h.pm.plugins
 
 
+def test_a_failed_teardown_stops_the_reload(tmp_path):
+    """Loading over a half-unloaded plugin could reuse its old module and
+    report a reload that never happened; report the failure instead."""
+    h = RunLoopHarness(tmp_path, horizon=40)
+    _vegas(h)
+    reloads = []
+    h.pm.unload_detached_plugin = lambda plugin_id, instance: False
+    h.pm.reload_plugin = lambda plugin_id: reloads.append(plugin_id) or True
+    command = h.control_socket().post(POSTED, Command.PLUGIN_RELOAD, {"plugin_id": "clock"})
+    h.run()
+
+    assert reloads == []
+    assert command.outcome.error_code == ErrorCode.FAILED
+    assert "restart the display" in command.outcome.error_message
+    assert "clock" not in h.controller.available_modes
+    assert _vegas_frame_gaps(h) <= 0.1
+
+
 def test_a_second_reload_while_loading_runs_after_the_first(tmp_path):
     h = RunLoopHarness(tmp_path, horizon=40)
     _vegas(h)
