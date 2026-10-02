@@ -70,6 +70,14 @@ class PluginManager:
     # before tearing the instance down anyway.
     UNLOAD_LOCK_TIMEOUT = 5.0
 
+    # How long unload_detached_plugin() (a live reload, off the render thread)
+    # waits for the old instance's lock. Longer than UNLOAD_LOCK_TIMEOUT
+    # because nothing is blocked by the wait, and a Vegas content build of the
+    # old instance can hold the lock for several seconds (5.9 s seen on
+    # ledpi). Past it the reload is refused rather than tearing down an
+    # instance a Vegas call may still be running in.
+    DETACHED_UNLOAD_LOCK_TIMEOUT = 30.0
+
     # How long the update worker and apply_config_change() wait for a
     # plugin's lock -- the same bound unload already uses for the same lock.
     # A display() frame holds it for milliseconds, so this only runs out when
@@ -776,22 +784,24 @@ class PluginManager:
         """Tear down an instance taken out by detach_plugin(): unload_plugin()
         for an instance that is no longer in ``plugins``.
 
-        Waits for the plugin's lock as unload_plugin() does, bounded by
-        UNLOAD_LOCK_TIMEOUT, so it belongs off the render thread. Call it
-        before loading the plugin again: it drops the plugin's modules and
-        lifecycle state along with the instance.
+        Waits for the plugin's lock, bounded by DETACHED_UNLOAD_LOCK_TIMEOUT,
+        so it belongs off the render thread. Call it before loading the plugin
+        again: it drops the plugin's modules and lifecycle state along with the
+        instance. Unlike unload_plugin() it never tears down without the lock:
+        a call that took the lock before the detach (a Vegas content build)
+        may still be running in this instance. Returns False then, and the
+        caller must not load the plugin again over it.
         """
         lock = self.get_plugin_lock(plugin_id)
-        lock_acquired = lock.acquire(timeout=self.UNLOAD_LOCK_TIMEOUT)
-        if not lock_acquired:
+        if not lock.acquire(timeout=self.DETACHED_UNLOAD_LOCK_TIMEOUT):
             self.logger.warning(
-                "Plugin %s still busy after %.1fs; unloading without its lock",
-                plugin_id, self.UNLOAD_LOCK_TIMEOUT)
+                "Plugin %s still busy after %.1fs; not unloading it while in use",
+                plugin_id, self.DETACHED_UNLOAD_LOCK_TIMEOUT)
+            return False
         try:
             return self._unload_plugin_locked(plugin_id, plugin)
         finally:
-            if lock_acquired:
-                lock.release()
+            lock.release()
 
     def _unload_plugin_locked(self, plugin_id: str, detached: Optional[Any] = None) -> bool:
         """Body of unload_plugin(); caller holds (or gave up on) the plugin lock.

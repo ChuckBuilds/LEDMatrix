@@ -300,6 +300,26 @@ class TestPluginManagerDetach:
         assert pm.reload_plugin("slow")
         assert pm.plugins["slow"].generation == 2
 
+    def test_teardown_is_refused_while_the_lock_stays_held(self, tmp_path):
+        """A Vegas call that took the lock before the detach may still be
+        running in the old instance: never tear it down from under it."""
+        rig = _Rig(tmp_path, 0)
+        pm = rig.pm
+        pm.DETACHED_UNLOAD_LOCK_TIMEOUT = 0.2
+        old = pm.detach_plugin("slow")
+        lock = pm.get_plugin_lock("slow")
+        lock.acquire()
+        try:
+            assert pm.unload_detached_plugin("slow", old) is False
+            assert ("cleanup", 1) not in rig.events
+        finally:
+            lock.release()
+
+    def test_detached_teardown_outwaits_the_ordinary_unload_bound(self):
+        # A Vegas build of the old instance held the lock 5.9 s on ledpi.
+        from src.plugin_system.plugin_manager import PluginManager
+        assert PluginManager.DETACHED_UNLOAD_LOCK_TIMEOUT > 2 * PluginManager.UNLOAD_LOCK_TIMEOUT
+
     def test_detaching_a_plugin_that_is_not_loaded(self, tmp_path):
         pm = _Rig(tmp_path, 0).pm
         assert pm.detach_plugin("nope") is None
