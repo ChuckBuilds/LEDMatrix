@@ -402,7 +402,6 @@ def main(argv, refresher=None):
     if args not in ([], ['--restore'], ['--check']):
         print('usage: ledmatrix-refresh-units [--restore | --check]', file=sys.stderr)
         return EXIT_USAGE
-    os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
     refresher = refresher or Refresher()
     try:
         if args == ['--check']:
@@ -419,4 +418,8 @@ def main(argv, refresher=None):
 
 
 if __name__ == '__main__':
+    # Only as the installed program: sudo already sets a secure PATH, and
+    # this pins the one systemctl comes from. (Not in main(), which the
+    # tests call in-process.)
+    os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
     sys.exit(main(sys.argv))

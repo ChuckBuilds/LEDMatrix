@@ -231,6 +231,13 @@ def test_an_oversized_template_is_refused(host):
         host.refresher().plan()
 
 
+def test_main_leaves_the_callers_environment_alone(host):
+    """main() runs in-process in these tests; pinning PATH belongs to the installed program."""
+    before = os.environ.get('PATH')
+    ru.main(['ledmatrix-refresh-units', '--check'], refresher=host.refresher())
+    assert os.environ.get('PATH') == before
+
+
 @pytest.mark.parametrize('argv', [
     ['--restore', 'x'], ['--refresh'], ['/etc/passwd'], ['--check', '--restore'], ['']])
 def test_any_other_command_line_is_refused(argv):
