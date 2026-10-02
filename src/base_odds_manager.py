@@ -146,7 +146,7 @@ class BaseOddsManager:
             if _is_no_odds_marker(cached_data):
                 self.logger.debug("Cached no-odds marker for %s", cache_key)
                 return None
-            self.logger.debug(f"Using cached odds from ESPN for {cache_key}")
+            self.logger.debug("Using cached odds from ESPN for %s", cache_key)
             return cached_data
 
         if time.monotonic() < self._skip_network_until:
@@ -159,7 +159,7 @@ class BaseOddsManager:
                 self._skip_network_until - time.monotonic())
             return None
 
-        self.logger.debug(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
+        self.logger.debug("Cache miss - fetching fresh odds from ESPN for %s", cache_key)
 
         try:
             # Map league names to ESPN API format
@@ -173,7 +173,7 @@ class BaseOddsManager:
             
             espn_league = league_mapping.get(league, league)
             url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
-            self.logger.debug(f"Requesting odds from URL: {url}")
+            self.logger.debug("Requesting odds from URL: %s", url)
             
             response = fetch_get(self.session, url, timeout=self.request_timeout)
             response.raise_for_status()
@@ -181,15 +181,19 @@ class BaseOddsManager:
 
             self._skip_network_until = 0.0   # reachable again
 
-            self.logger.debug(f"Received raw odds data from ESPN: {json.dumps(raw_data, indent=2)}")
+            # Guarded, not just %-style: the json.dumps argument would still be
+            # built for every response with DEBUG off.
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("Received raw odds data from ESPN: %s",
+                                  json.dumps(raw_data, indent=2))
             
             odds_data = self._extract_espn_data(raw_data)
             if odds_data:
-                self.logger.debug(f"Successfully extracted odds data: {odds_data}")
+                self.logger.debug("Successfully extracted odds data: %s", odds_data)
                 self.cache_manager.set(cache_key, odds_data, ttl=interval)
-                self.logger.debug(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
+                self.logger.debug("Saved odds data to cache for %s with TTL %ss", cache_key, interval)
             else:
-                self.logger.debug(f"No odds data available for {cache_key}")
+                self.logger.debug("No odds data available for %s", cache_key)
                 # Cache the absence too, so the game is not re-requested
                 # on every update until the interval passes.
                 self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
@@ -223,12 +227,12 @@ class BaseOddsManager:
         Returns:
             Formatted odds data dictionary or None
         """
-        self.logger.debug(f"Extracting ESPN odds data. Data keys: {list(data.keys())}")
+        self.logger.debug("Extracting ESPN odds data. Data keys: %s", list(data.keys()))
         
         if "items" in data and data["items"]:
-            self.logger.debug(f"Found {len(data['items'])} items in odds data")
+            self.logger.debug("Found %d items in odds data", len(data['items']))
             item = data["items"][0]
-            self.logger.debug(f"First item keys: {list(item.keys())}")
+            self.logger.debug("First item keys: %s", list(item.keys()))
             
             # The ESPN API returns odds data directly in the item, not in a
             # providers array. ESPN sends explicit JSON nulls for absent
@@ -251,13 +255,17 @@ class BaseOddsManager:
                                     .get("pointSpread") or {}).get("value")
                 }
             }
-            self.logger.debug(f"Returning extracted odds data: {json.dumps(extracted_data, indent=2)}")
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("Returning extracted odds data: %s",
+                                  json.dumps(extracted_data, indent=2))
             return extracted_data
         
         # Check if this is a valid empty response or an unexpected structure
         if "count" in data and data["count"] == 0 and "items" in data and data["items"] == []:
             # This is a valid empty response - no odds available for this game
-            self.logger.debug(f"No odds available for this game. Response: {json.dumps(data, indent=2)}")
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("No odds available for this game. Response: %s",
+                                  json.dumps(data, indent=2))
             return None
         else:
             # This is an unexpected response structure
