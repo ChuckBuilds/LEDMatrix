@@ -238,7 +238,11 @@ its prefetch inline. Verify with a Vegas soak on ledpi, A/B.
 Plugins declare `frame_policy` (STATIC, PERIODIC(hz), ANIMATED(fps),
 SCROLL). `_needs_high_fps` becomes the mapping for legacy plugins
 (`needs_high_fps`, the `static-image` special case, `enable_scrolling`),
-and its per-screen INFO line drops to DEBUG.
+and its per-screen INFO line drops to DEBUG. It is already read twice per
+screen: once quietly before the first frame, so `_dispatch_first_frame` can
+end the previous scroll for a screen that runs the 1 Hz loop
+(`_start_screen_handover`), and once after it to pick the loop. A declared
+policy answers both.
 
 ## How each stage is verified
 
