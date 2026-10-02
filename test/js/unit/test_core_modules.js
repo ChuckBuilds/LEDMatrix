@@ -51,6 +51,10 @@ async function rejection(promise) {
     const controller = new AbortController();
     await api.get('/api/v3/x', { signal: controller.signal });
     ok('the signal is passed to fetch', calls[2][1].signal === controller.signal);
+    const upload = { kind: 'form-data' };
+    await api.request('POST', '/api/v3/backup/validate', { body: upload });
+    ok('a raw body (an upload) is sent as it is, with no JSON Content-Type',
+       calls[3][1].body === upload && calls[3][1].headers['Content-Type'] === undefined, calls[3][1].headers);
 
     // Default: window.fetch looked up per call, so base.html's login wrapper
     // (installed before any module runs, or replaced later) is the one used.
