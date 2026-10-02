@@ -78,6 +78,57 @@ _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
 
+
+class _PluginReloadJob:
+    """A ``plugin.reload`` whose slow half runs off the render thread.
+
+    The render thread takes the plugin out of the rotation and out of the
+    plugin manager (DisplayController._start_plugin_reload); then this job,
+    on its own thread, tears the old instance down and loads the new one
+    (run()). Tearing down waits for the plugin's lock, which a Vegas content
+    render of the old instance can hold for seconds. Done on the render
+    thread, that wait froze the panel (3.0 s on ledpi). The render thread
+    puts the new instance in the rotation once ``done`` is set
+    (DisplayController._finish_plugin_reloads).
+    """
+
+    def __init__(self, command: QueuedCommand, plugin_id: str,
+                 previous_order: Dict[str, int], old_instance: Any) -> None:
+        self.command = command
+        self.plugin_id = plugin_id
+        #: Each mode's place in available_modes before the reload.
+        self.previous_order = previous_order
+        self.old_instance = old_instance
+        self.done = threading.Event()
+        self.loaded = False
+        #: The old instance's teardown failed, so its modules may still be in
+        #: sys.modules and a load now could quietly reuse the old code.
+        self.unload_failed = False
+        self.error: Optional[Exception] = None
+        #: Reloads of the same plugin asked for while this one ran. They
+        #: start once it is done, so they load the files as they are then.
+        self.followers: List[QueuedCommand] = []
+
+    def run(self, plugin_manager: Any) -> None:
+        """Tear down the old instance, then load the plugin again. Never raises."""
+        try:
+            if self.old_instance is not None:
+                if not plugin_manager.unload_detached_plugin(self.plugin_id, self.old_instance):
+                    # Loading now could reuse the old plugin_<id> module and
+                    # report a reload that never happened (the synchronous
+                    # path refused this too: reload_plugin stops when
+                    # unload_plugin fails).
+                    self.old_instance = None
+                    self.unload_failed = True
+                    return
+            self.old_instance = None
+            self.loaded = bool(plugin_manager.reload_plugin(self.plugin_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            self.error = exc
+        finally:
+            self.done.set()
+
+
 # Follower dead reckoning (the follower branch of DisplayController.run()).
 # A leader position further off than this fraction of the strip is a cycle
 # reset, and is snapped to rather than corrected toward.
@@ -726,7 +777,8 @@ class DisplayController:
         if self._check_wifi_status_message():
             return True
 
-        # A plugin reload waits for the top of the loop, outside the iteration.
+        # A plugin reload starts at the top of the loop, outside the
+        # iteration; the iteration then resumes while it loads.
         if self._plugin_reload_pending:
             return True
 
@@ -1520,6 +1572,10 @@ class DisplayController:
         self._last_pending_service = now
 
         try:
+            # A reloaded plugin rejoins the rotation as soon as it has
+            # loaded, between two frames of the screen or Vegas strip that
+            # carried on while it loaded.
+            self._finish_plugin_reloads()
             self._poll_on_demand_requests()
             self._check_on_demand_expiration()
             self._evaluate_schedule()
@@ -1790,35 +1846,71 @@ class DisplayController:
     #: Plugin reloads from the control socket, waiting for the top of the
     #: next loop pass. A tuple, replaced rather than mutated.
     _pending_plugin_reloads: Tuple[QueuedCommand, ...] = ()
+    #: Reloads started and not finished yet. Their plugin is out of the
+    #: rotation while a plugin-reload thread loads it again. A tuple,
+    #: replaced rather than mutated, so the config watcher can read it.
+    _plugin_reload_jobs: Tuple[_PluginReloadJob, ...] = ()
+    #: A reconcile skipped a plugin that was reloading: run one again once
+    #: the reloads are done.
+    _reconcile_after_reload = False
 
     @property
     def _plugin_reload_pending(self) -> bool:
+        """A reload is waiting for the top of the loop, so the screen ends early.
+
+        Only the start of a reload waits there. The load runs on another
+        thread while the screens carry on, and the new instance joins the
+        rotation between two frames (_finish_plugin_reloads).
+        """
         return bool(self._pending_plugin_reloads)
 
-    def _apply_pending_plugin_reloads(self) -> None:
-        """Reload the plugins the control socket asked for. Render thread,
-        top of the loop pass: no display() and no Vegas iteration on the stack.
+    def _plugin_reloading(self, plugin_id: Optional[str]) -> bool:
+        """``plugin_id`` is out of the rotation while it is loaded again."""
+        return any(job.plugin_id == plugin_id for job in self._plugin_reload_jobs)
 
-        The same steps as disabling and re-enabling the plugin live
-        (_unregister_plugin, then load and _register_loaded_plugin), with the
+    def _apply_pending_plugin_reloads(self) -> None:
+        """Start the plugin reloads the control socket asked for. Render
+        thread, top of the loop pass: no display() and no Vegas iteration on
+        the stack.
+
+        The same steps as disabling and re-enabling the plugin live, with the
         manifest re-read from disk, so the running set ends up as a restart
-        would build it. A plugin that fails to load stays out of the
-        rotation, as it would after a restart.
+        would build it. Only taking the plugin out happens here. The old
+        instance is torn down and the new one loaded on a plugin-reload
+        thread, so the screens carry on meanwhile (_start_plugin_reload).
+        Reloads that have finished are put back in the rotation first.
         """
+        self._finish_plugin_reloads()
         commands, self._pending_plugin_reloads = self._pending_plugin_reloads, ()
         for command in commands:
             try:
-                self._reload_plugin_for_command(command)
+                self._start_plugin_reload(command)
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Plugin reload over the control socket failed")
                 command.fail(ControlErrorCode.INTERNAL, 'the display failed to reload it')
 
-    def _reload_plugin_for_command(self, command: QueuedCommand) -> None:
+    def _start_plugin_reload(self, command: QueuedCommand) -> None:
+        """Take the plugin out of the rotation and start loading it again.
+
+        Render thread. Everything here is quick: the controller's maps, the
+        config subscription, and PluginManager.detach_plugin, after which
+        nothing new calls the old instance (no update(), no Vegas fetch).
+        The slow part runs on a plugin-reload thread: waiting for a Vegas
+        render or an update() of the old instance to let go of its lock, the
+        teardown, and the import and constructor of the new one. Meanwhile
+        Vegas scrolls what its strip already holds of the plugin.
+        """
         args = command.args
         if not isinstance(args, PluginReloadArgs):
             command.fail(ControlErrorCode.INTERNAL, 'not a reload command')
             return
         plugin_id = args.plugin_id
+        for job in self._plugin_reload_jobs:
+            if job.plugin_id == plugin_id:
+                # Updated again while loading: reload once more when this
+                # one is done, so the newest files are the ones that run.
+                job.followers.append(command)
+                return
         if self.plugin_manager is None or plugin_id not in self.plugin_display_modes:
             command.fail(ControlErrorCode.NOT_LOADED, f'{plugin_id} is not running')
             return
@@ -1832,23 +1924,80 @@ class DisplayController:
         previous_mode = self.current_display_mode
         previous_order = {mode: i for i, mode in enumerate(self.available_modes)}
         logger.info("Reloading plugin %s over the control socket", plugin_id)
-        self._unregister_plugin(plugin_id, action='Unloaded')
-        loaded = bool(self.plugin_manager.reload_plugin(plugin_id))
-        modes: List[str] = []
-        if loaded:
-            modes = list(self._register_loaded_plugin(plugin_id))
-            # Registering appends; put its modes back where they were in the
-            # rotation (a mode the new version added goes last).
-            self.available_modes.sort(
-                key=lambda mode: previous_order.get(mode, len(previous_order)))
+        self._unregister_plugin(plugin_id, action='Reloading', unload=False)
+        old_instance = self.plugin_manager.detach_plugin(plugin_id)
+        job = _PluginReloadJob(command, plugin_id, previous_order, old_instance)
+        self._plugin_reload_jobs = self._plugin_reload_jobs + (job,)
+        self._resync_mode_index_after_change(previous_mode)
+        self._spawn_plugin_reload(job)
+
+    def _spawn_plugin_reload(self, job: _PluginReloadJob) -> None:
+        """Run ``job`` on its own thread. The run-loop harness replaces this
+        to run it on its fake clock."""
+        threading.Thread(target=job.run, args=(self.plugin_manager,), daemon=True,
+                         name=f'plugin-reload-{job.plugin_id}').start()
+
+    def _finish_plugin_reloads(self) -> None:
+        """Put the plugins whose reload has finished back in the rotation.
+
+        Render thread: the top of the loop and _service_pending_changes, so
+        a new instance joins between two frames of whatever is showing. That
+        is never the plugin itself, which left the rotation when its reload
+        started. Its modes go back to their old places in the rotation, the
+        current screen stays current, Vegas fetches its content again, and
+        the command is answered with the outcome.
+        """
+        jobs = self._plugin_reload_jobs
+        if not jobs:
+            return
+        finished = tuple(job for job in jobs if job.done.is_set())
+        if not finished:
+            return
+        self._plugin_reload_jobs = tuple(job for job in jobs if job not in finished)
+        previous_mode = self.current_display_mode
+        for job in finished:
+            try:
+                self._finish_plugin_reload(job)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Plugin reload over the control socket failed")
+                job.command.fail(ControlErrorCode.INTERNAL, 'the display failed to reload it')
+            if job.followers:
+                self._pending_plugin_reloads = self._pending_plugin_reloads + tuple(job.followers)
         self._apply_plugin_rotation_order()
         self._resync_mode_index_after_change(previous_mode)
-        if not loaded:
+        if self._reconcile_after_reload and not self._plugin_reload_jobs:
+            self._reconcile_after_reload = False
+            with self._reconcile_flag_lock:
+                self._pending_plugin_reconcile = True
+
+    def _finish_plugin_reload(self, job: _PluginReloadJob) -> None:
+        plugin_id = job.plugin_id
+        command = job.command
+        if job.error is not None:
+            logger.error("Plugin reload over the control socket failed",
+                         exc_info=(type(job.error), job.error, job.error.__traceback__))
+            command.fail(ControlErrorCode.INTERNAL, 'the display failed to reload it')
+            return
+        if job.unload_failed:
+            logger.error("Plugin %s: the old instance could not be unloaded, so the "
+                         "update was not loaded; it is out of the rotation until the "
+                         "display restarts", plugin_id)
+            command.fail(ControlErrorCode.FAILED,
+                         f'{plugin_id}: the old version could not be unloaded; '
+                         f'restart the display to load the update')
+            return
+        if not job.loaded:
             logger.error("Plugin %s did not load after its update; it is out of the "
                          "rotation until it loads", plugin_id)
             command.fail(ControlErrorCode.FAILED,
                          f'{plugin_id} did not load; see the display log')
             return
+        modes = list(self._register_loaded_plugin(plugin_id))
+        # Registering appends; put its modes back where they were in the
+        # rotation (a mode the new version added goes last).
+        previous_order = job.previous_order
+        self.available_modes.sort(
+            key=lambda mode: previous_order.get(mode, len(previous_order)))
         vegas = getattr(self, 'vegas_coordinator', None)
         if vegas is not None:
             try:
@@ -2215,6 +2364,13 @@ class DisplayController:
         """Activate on-demand mode for a specific plugin display."""
         plugin_id = request.get('plugin_id')
         mode = request.get('mode')
+        if plugin_id and self._plugin_reloading(plugin_id):
+            # Out of the rotation for a moment while a store update loads it
+            # again; loading it for on-demand now would load it twice.
+            logger.warning("On-demand: plugin '%s' is reloading; try again in a moment",
+                           plugin_id)
+            self._set_on_demand_error("plugin-reloading")
+            return
         if (plugin_id and plugin_id not in self.plugin_display_modes
                 and not self._load_plugin_for_on_demand(plugin_id)):
             return
@@ -3287,9 +3443,11 @@ class DisplayController:
                     self._service_pending_reconcile()
 
                 # Plugin reloads from the control socket (a store update),
-                # here for the same reason: nothing of the plugin's is on the
-                # stack. The screen that was showing ended early for them.
-                if self._pending_plugin_reloads:
+                # started here for the same reason: nothing of the plugin's
+                # is on the stack. The screen that was showing ended early
+                # for them. Reloads that have finished loading join the
+                # rotation here too, if no frame got to them first.
+                if self._pending_plugin_reloads or self._plugin_reload_jobs:
                     self._apply_pending_plugin_reloads()
 
                 if not self.available_modes:
@@ -4017,10 +4175,13 @@ class DisplayController:
         self._plugin_accepts_display_mode.pop(plugin_id, None)
         return display_modes
 
-    def _unregister_plugin(self, plugin_id: str, action: str = 'Disabled') -> None:
+    def _unregister_plugin(self, plugin_id: str, action: str = 'Disabled',
+                           unload: bool = True) -> None:
         """Remove a plugin's modes, config subscription and instance, then
         unload it. Used by live disable hot-reload, and by a reload
-        (``action`` names which in the log line)."""
+        (``action`` names which in the log line), which passes
+        ``unload=False``: it hands the instance to its plugin-reload thread
+        to unload instead (_start_plugin_reload)."""
         with self._plugin_modes_lock:
             modes = self.plugin_display_modes.pop(plugin_id, [])
         for mode in modes:
@@ -4047,10 +4208,11 @@ class DisplayController:
         self._plugin_accepts_display_mode.pop(plugin_id, None)
 
         # Tear down the instance (cleanup + on_disable + module unload).
-        try:
-            self.plugin_manager.unload_plugin(plugin_id)
-        except Exception as e:
-            logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
+        if unload:
+            try:
+                self.plugin_manager.unload_plugin(plugin_id)
+            except Exception as e:
+                logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
 
         logger.info("%s plugin %s live (removed modes: %s)", action, plugin_id, modes)
 
@@ -4122,6 +4284,8 @@ class DisplayController:
             known = set(getattr(self.plugin_manager, 'plugin_manifests', ()) or ())
         with self._plugin_modes_lock:
             running = set(self.plugin_display_modes)
+        # Out of plugin_display_modes only while a reload loads it again.
+        running.update(job.plugin_id for job in self._plugin_reload_jobs)
         for key, value in new_config.items():
             if (key in known and isinstance(value, dict)
                     and value.get('enabled', False) and key not in running):
@@ -4160,9 +4324,18 @@ class DisplayController:
             p for p in discovered
             if isinstance(config.get(p), dict) and config.get(p, {}).get('enabled', False)
         }
-        current = set(self.plugin_display_modes.keys())
+        # A plugin being reloaded counts as running, so it is not loaded a
+        # second time beside its plugin-reload thread. One disabled during
+        # its reload is unloaded by a reconcile run after the reload is done.
+        reloading = {job.plugin_id for job in self._plugin_reload_jobs}
+        current = set(self.plugin_display_modes.keys()) | reloading
         to_add = desired - current
         to_remove = current - desired
+        if to_remove & reloading:
+            logger.info("Plugin reconcile: %s will be unloaded after its reload",
+                        sorted(to_remove & reloading))
+            self._reconcile_after_reload = True
+            to_remove -= reloading
         if not to_add and not to_remove:
             return True
 
