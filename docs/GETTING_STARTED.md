@@ -39,6 +39,17 @@ Raspberry Pi OS Lite yourself:
    [README Installation Steps / Quick Install](../README.md#installation-steps)
    for full details
 
+   The one-shot installer installs the newest release (the **stable** update
+   channel). To run the newest, unreleased code from `main` instead (the
+   **beta** channel), put `LEDMATRIX_CHANNEL=beta` in front of `bash`:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | LEDMATRIX_CHANNEL=beta bash
+   ```
+   A manual clone starts on `main`; add `--beta` to `first_time_install.sh`
+   to stay on it, or leave it off and the first update after the next
+   release moves the device onto releases. You can switch channels later on
+   the General tab.
+
 **Expected Behavior after install:**
 - LED matrix will light up
 - A fresh install ships only the bundled `starlark-apps` and

@@ -19,6 +19,49 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Updates refresh the systemd units; new installs run the newest release
+
+- **Updates now install changed systemd units.** An update (Update Code, or
+  the weekly automatic update) moved the checkout's `systemd/*.service`
+  templates but never the units systemd runs, so settings added after a
+  device was installed -- #687's render-loop watchdog, for one -- only ever
+  arrived with a reinstall. After an update that moves HEAD, the web
+  interface compares the installed `ledmatrix.service`,
+  `ledmatrix-web.service` and `ledmatrix-update-verify.{service,path}` with
+  the new templates (rendered exactly as `install_service.sh` does, comments
+  ignored as the startup drift warning does) and, when they differ, runs the
+  new root-owned helper `/usr/local/sbin/ledmatrix-refresh-units`
+  (`scripts/install/ledmatrix_refresh_units.py`) through sudo: it installs
+  the changed units and runs `systemctl daemon-reload`, so the restart that
+  follows the update runs under them. Update Code's message says so.
+- **Rollback restores them.** The helper keeps the units it replaced
+  (`/var/lib/ledmatrix/unit-backup`, root only); when the automatic update's
+  health check rolls an update back, it runs `ledmatrix-refresh-units
+  --restore` before restarting the services onto the old code.
+- **The sudo rule needs a reinstall.** `install_service.sh` installs the
+  helper and `lib_sudoers.sh` grants it with exactly two command lines (no
+  arguments, and `--restore`). A device installed before this has neither;
+  its updates keep working, log that the new unit settings need a reinstall
+  and say so in Update Code's message, the same remedy as the startup
+  "unit drift" warning. Re-run `sudo ./first_time_install.sh` once (or
+  `sudo ./scripts/install/install_service.sh` then
+  `./scripts/install/configure_web_sudo.sh`).
+- `install_service.sh` now leaves the units it installs mode `0644`, as
+  `first_time_install.sh` already did; run on its own it left them `0600`.
+- **New installs run the newest release.** The one-shot installer cloned
+  `main`'s tip, so a new device ran unreleased code until the next release.
+  It now checks out the newest `vX.Y.Z` tag after cloning (the same semver
+  rules as `web_interface/update_channel.py`), and that release's own
+  `first_time_install.sh` runs. `LEDMATRIX_CHANNEL=beta` installs `main`
+  instead and records the beta channel; `first_time_install.sh --beta` (or
+  `LEDMATRIX_CHANNEL=beta|stable`) records a channel for a manual install.
+- **Re-running the one-shot never moves backwards.** On an existing stable
+  checkout it moves to the newest release only when that release contains
+  the current commit; a checkout newer than every release keeps its
+  fast-forward pull (on a branch) or stays put (detached), and beta keeps the
+  pull it always had. It used to fast-forward a detached release checkout to
+  `main`'s tip.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
