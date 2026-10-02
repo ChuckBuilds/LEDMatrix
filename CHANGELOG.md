@@ -185,6 +185,24 @@ policies are unchanged.
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
 
+### Scrolling
+
+- A scoreboard in scroll mode no longer freezes the panel at the start of a
+  recent or upcoming turn whose games have not changed.
+  `SportsScrollDisplayManager.prepare_and_display()` redrew every card on
+  every turn while the render thread waited (~1.4s for seven football cards
+  at 192x48 on a Pi 4); it now rewinds the strip it built last time when
+  nothing it is drawn from has changed (the games, rankings, config, panel
+  size and date), and redraws it at least every 10 minutes. Each slate (game
+  type and leagues) keeps its own display, so leagues that take turns
+  (`nfl_recent`, `ncaa_fb_recent`) each find their strip again: up to 4 per
+  game type, with at most 6MB per plugin of strips kept for slates not on
+  screen. The first turn of each slate after a start, a slate whose games
+  changed, live strips and a turn with no games are drawn as before.
+  `get_scroll_display()` and `_scroll_displays` still answer with the strip
+  on screen; a sport's `prepare_scroll_content()` is no longer called on
+  every turn.
+
 ### Web preview: less work per frame
 
 - Mid-scroll, `update_display()` no longer checksums every frame. The

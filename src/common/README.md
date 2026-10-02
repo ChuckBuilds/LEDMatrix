@@ -332,6 +332,10 @@ dynamic-duration helpers. List it before `BasePlugin`.
 scoreboards share (Vegas items, dynamic duration, frame loop), paced through
 `scroll_config`. Subclasses supply `prepare_scroll_content()` and set
 `SCROLL_LEAGUE_KEYS`; see the module docstring for an example.
+`prepare_and_display()` rewinds a recent or upcoming strip whose games,
+rankings, config, panel size and date are unchanged instead of calling
+`prepare_scroll_content()` again, with one display per slate (game type and
+leagues).
 
 ### sports_shared
 

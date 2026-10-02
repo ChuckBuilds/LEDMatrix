@@ -44,7 +44,10 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 import time
+import weakref
+from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PIL import Image
@@ -589,15 +592,79 @@ class SportsScrollDisplay:
         return info
 
 
+class _StripSlot:
+    """One slate's display in a game type's pool, and what its strip shows.
+
+    ``key`` is None when the strip must not be reused: never built, built
+    from something that could not be fingerprinted, a build that failed, or
+    released to stay inside the memory budget.
+    """
+
+    __slots__ = ("display", "key", "built_at", "strip", "last_used", "epoch")
+
+    def __init__(self, display: SportsScrollDisplay) -> None:
+        self.display = display
+        self.key: Optional[Tuple[Any, ...]] = None
+        self.built_at = 0.0
+        #: The helper's strip array when it was built, held weakly: a strip
+        #: replaced or cleared by anything since (a Vegas build on the same
+        #: display, a plugin calling clear()) no longer matches it.
+        self.strip: Optional[Callable[[], Any]] = None
+        self.last_used = 0.0
+        #: Bumped by every forget(). A build records its key only if this is
+        #: what it was when the build started: anything that forgot the slot
+        #: meanwhile (another build on this display, which may finish first
+        #: and leave its strip in the helper) means the strip in the helper
+        #: is not known to be this build's.
+        self.epoch = 0
+
+    def forget(self) -> None:
+        self.key = None
+        self.strip = None
+        self.epoch += 1
+
+
 class SportsScrollDisplayManager:
     """One :class:`SportsScrollDisplay` per game type ('live'/'recent'/'upcoming').
 
     Subclasses set :attr:`display_class`; everything else was near-identical
     across the eight plugin copies.
+
+    A recent or upcoming strip that has not changed is reused rather than
+    redrawn when its turn comes round again -- see :meth:`prepare_and_display`.
     """
 
     #: The SportsScrollDisplay subclass to instantiate per game type.
     display_class = SportsScrollDisplay
+
+    #: Game types whose strip is reused while nothing it is drawn from has
+    #: changed. Live is left out: its games change every poll, so the check
+    #: would never pay, and sports_live_scroll rebuilds a live strip in place
+    #: mid-cycle around get_scroll_display('live'), which has to stay the one
+    #: display it always was. Vegas's 'mixed' never comes through
+    #: prepare_and_display.
+    STRIP_MEMO_GAME_TYPES = frozenset({"recent", "upcoming"})
+
+    #: Oldest a reused strip may be. Not everything a card draws is in the
+    #: game dicts -- a team logo that was missing at the first build appears
+    #: only when the card is drawn again -- so an unchanged slate is still
+    #: redrawn this often.
+    STRIP_MEMO_MAX_AGE_S = 600.0
+
+    #: Displays kept per game type, one per slate (its leagues): the one on
+    #: screen plus the most recently shown others. When all are taken, the
+    #: least recently shown one draws the new slate, as the one shared display
+    #: always did, so a rotation with more slates than this costs no more
+    #: than before.
+    STRIP_MEMO_SLATES_PER_TYPE = 4
+
+    #: Ceiling, per plugin, on the strips kept for displays not on screen, in
+    #: bytes (the strip's array and image, and its Vegas items). Seven
+    #: football games at 192x48 come to ~0.65MB, thirty at 512x64 to ~4MB.
+    #: It bounds strip pixels only: each extra display also keeps its own
+    #: logo and separator-icon caches and frame buffer, and each slot a frozen
+    #: copy of the config in its key (~50KB), none of which is counted here.
+    STRIP_MEMO_MAX_PARKED_BYTES = 6 * 1024 * 1024
 
     def __init__(
         self,
@@ -616,16 +683,34 @@ class SportsScrollDisplayManager:
         # either way, but two spellings of "nothing active" across two classes
         # is a trap for anyone comparing state between them.
         self._current_game_type: str = ""
+        # Per game type, its displays by slate, least recently shown first.
+        # _scroll_displays[game_type] is always the one on screen, so every
+        # reader of it (display_frame, is_complete, the plugins' own
+        # get_dynamic_duration and has_cached_content) sees what it did when
+        # there was only one display per game type.
+        self._strip_pools: Dict[str, "OrderedDict[Tuple[str, Tuple[Any, ...]], _StripSlot]"] = {}
+        # Only the bookkeeping is under it (and creating a slate's display,
+        # the first time that slate is drawn), never a build: a display()
+        # call that outlived its timeout can still be building when the next
+        # one starts.
+        self._strip_lock = threading.RLock()
+
+    def _new_scroll_display(self) -> SportsScrollDisplay:
+        return self.display_class(
+            self.display_manager,
+            self.config,
+            self.logger,
+            global_config=self.global_config,
+        )
 
     def get_scroll_display(self, game_type: str) -> SportsScrollDisplay:
-        """The display for ``game_type``, created on first use."""
+        """The display for ``game_type``, created on first use.
+
+        For a recent or upcoming game type, the display of the slate prepared
+        last -- the strip display_frame() draws.
+        """
         if game_type not in self._scroll_displays:
-            self._scroll_displays[game_type] = self.display_class(
-                self.display_manager,
-                self.config,
-                self.logger,
-                global_config=self.global_config,
-            )
+            self._scroll_displays[game_type] = self._new_scroll_display()
         return self._scroll_displays[game_type]
 
     def prepare_and_display(
@@ -635,8 +720,63 @@ class SportsScrollDisplayManager:
         leagues: List[str],
         rankings_cache: Optional[Dict[str, int]] = None,
     ) -> bool:
-        """Build content for ``game_type`` and make it the active strip."""
-        scroll_display = self.get_scroll_display(game_type)
+        """Build content for ``game_type`` and make it the active strip.
+
+        Building a strip draws every card while the render thread waits for
+        it, with the panel frozen on its last frame: ~1.4s for seven football
+        cards at 192x48 on a Pi 4, at the start of every turn and again each
+        time the cycle completes. A recent or upcoming turn usually draws
+        exactly the strip its slate drew last time. So when nothing the strip
+        is drawn from has changed -- the games, the rankings, the config, the
+        panel size and the date -- that strip is rewound and shown again
+        instead, which leaves the plugin's prepare_scroll_content() uncalled.
+
+        Two leagues usually take turns on one game type (nfl_recent, then
+        ncaa_fb_recent), so each slate keeps its own display rather than
+        sharing one; see STRIP_MEMO_SLATES_PER_TYPE. Anything in doubt is
+        drawn again: a live strip, a turn with no games, inputs that cannot
+        be fingerprinted, a strip older than STRIP_MEMO_MAX_AGE_S, or one
+        changed since it was built.
+        """
+        keyed = self._strip_memo_key(games, game_type, leagues, rankings_cache)
+        restore: Optional[SportsScrollDisplay] = None
+        epoch = 0
+        with self._strip_lock:
+            if keyed is None:
+                self._forget_shown_strip(game_type)
+                scroll_display = self.get_scroll_display(game_type)
+            else:
+                reused = self._reuse_strip(game_type, *keyed)
+                if reused is not None:
+                    # What a fresh build leaves: the strip at its start, a new
+                    # cycle not yet complete, this game type active.
+                    reused.reset_scroll()
+                    self._current_game_type = game_type
+                    self.logger.debug(
+                        "Reusing the unchanged %s strip for %s",
+                        game_type, ", ".join(map(str, keyed[0][1])))
+                    return True
+                scroll_display, restore, epoch = self._display_to_build(
+                    game_type, keyed[0])
+            # Before the build, so data that changes during it reads as changed.
+            started = time.monotonic()
+        success = self._prepare_on(
+            scroll_display, games, game_type, leagues, rankings_cache)
+        if keyed is not None:
+            with self._strip_lock:
+                self._note_strip_built(
+                    game_type, keyed, scroll_display, restore, success, started,
+                    epoch)
+        return success
+
+    def _prepare_on(
+        self,
+        scroll_display: SportsScrollDisplay,
+        games: List[Dict],
+        game_type: str,
+        leagues: List[str],
+        rankings_cache: Optional[Dict[str, int]],
+    ) -> bool:
         try:
             success = scroll_display.prepare_scroll_content(
                 games, game_type, leagues, rankings_cache
@@ -653,6 +793,200 @@ class SportsScrollDisplayManager:
         if success:
             self._current_game_type = game_type
         return success
+
+    # ------------------------------------------------------------------
+    # Reusing an unchanged strip
+    # ------------------------------------------------------------------
+
+    def _strip_memo_key(
+        self,
+        games: Any,
+        game_type: str,
+        leagues: Any,
+        rankings_cache: Any,
+    ) -> Optional[Tuple[Tuple[str, Tuple[Any, ...]], Tuple[Any, ...]]]:
+        """``(slate, key)``: which display, and everything its strip is drawn
+        from. None when this strip must be drawn regardless.
+
+        The games go through sports_vegas.game_fingerprint, the same "has
+        this card changed" the live Vegas cards are redrawn on: the whole
+        game dict, so no field a card draws can be missed. The config is
+        fingerprinted by value, not by identity, so a config edited in place
+        counts as changed.
+        """
+        if game_type not in self.STRIP_MEMO_GAME_TYPES or not games:
+            return None
+        # Iterated twice (here and by the build), so a one-shot iterable
+        # would reach the build empty.
+        if not isinstance(games, (list, tuple)) or not isinstance(leagues, (list, tuple)):
+            return None
+        try:
+            slate = (game_type, tuple(leagues))
+            hash(slate)
+            key = (
+                tuple(sports_vegas.game_fingerprint(game) for game in games),
+                sports_vegas._freeze(rankings_cache),
+                sports_vegas._freeze(self.config),
+                (getattr(self.display_manager, "width", None),
+                 getattr(self.display_manager, "height", None)),
+                # A backstop: no card reads the clock today (game dates come
+                # in the game dicts), but a strip must not outlive its day.
+                time.localtime()[:3],
+            )
+        except Exception:
+            # A game dict changing size under a background update, say. The
+            # build reads it anyway; only the reuse is given up.
+            self.logger.debug("Strip for %s not reusable this turn", game_type,
+                              exc_info=True)
+            return None
+        return slate, key
+
+    def _strip_reusable(self, slot: _StripSlot, key: Tuple[Any, ...]) -> bool:
+        if slot.key is None or slot.strip is None:
+            return False
+        if time.monotonic() - slot.built_at >= self.STRIP_MEMO_MAX_AGE_S:
+            return False
+        helper = getattr(slot.display, "scroll_helper", None)
+        array = getattr(helper, "cached_array", None)
+        if array is None or slot.strip() is not array:
+            return False
+        has_strip = getattr(helper, "has_strip", None)
+        if callable(has_strip) and not has_strip():
+            return False
+        return bool(slot.key == key)
+
+    def _reuse_strip(
+        self, game_type: str, slate: Tuple[str, Tuple[Any, ...]], key: Tuple[Any, ...],
+    ) -> Optional[SportsScrollDisplay]:
+        """The display already showing this exact strip, made the active one."""
+        pool = self._strip_pools.get(game_type)
+        slot = pool.get(slate) if pool else None
+        if pool is None or slot is None or not self._strip_reusable(slot, key):
+            return None
+        pool.move_to_end(slate)
+        slot.last_used = time.monotonic()
+        # The display this replaces keeps its slot and strip for its own next
+        # turn, within the parked-strip budget.
+        self._scroll_displays[game_type] = slot.display
+        self._trim_parked_strips()
+        return slot.display
+
+    def _display_to_build(
+        self, game_type: str, slate: Tuple[str, Tuple[Any, ...]],
+    ) -> Tuple[SportsScrollDisplay, Optional[SportsScrollDisplay], int]:
+        """The display to draw ``slate`` on, made the active one.
+
+        Returns it; when it replaced another as the active display, that
+        one, to put back if the build fails -- a failed build left the
+        previous strip showing when the game type had one display; and the
+        slot's epoch the build must still find to record its key.
+        """
+        pool = self._strip_pools.setdefault(game_type, OrderedDict())
+        active = self._scroll_displays.get(game_type)
+        slot = pool.get(slate)
+        if slot is None:
+            if active is not None and not any(s.display is active for s in pool.values()):
+                # The game type's display, holding nothing reusable: this
+                # slate is drawn on it, exactly as before slates had their own.
+                slot = _StripSlot(active)
+            elif len(pool) < max(1, self.STRIP_MEMO_SLATES_PER_TYPE):
+                slot = _StripSlot(self._new_scroll_display())
+            else:
+                # The least recently shown slate's display draws this one.
+                _, slot = pool.popitem(last=False)
+            pool[slate] = slot
+        # Whatever was reusable on it is about to be drawn over.
+        slot.forget()
+        pool.move_to_end(slate)
+        slot.last_used = time.monotonic()
+        self._scroll_displays[game_type] = slot.display
+        replaced = active if active is not None and active is not slot.display else None
+        return slot.display, replaced, slot.epoch
+
+    def _note_strip_built(
+        self,
+        game_type: str,
+        keyed: Tuple[Tuple[str, Tuple[Any, ...]], Tuple[Any, ...]],
+        scroll_display: SportsScrollDisplay,
+        restore: Optional[SportsScrollDisplay],
+        success: bool,
+        started: float,
+        epoch: int,
+    ) -> None:
+        slate, key = keyed
+        pool = self._strip_pools.get(game_type)
+        slot = pool.get(slate) if pool else None
+        if (slot is None or slot.display is not scroll_display or slot.epoch != epoch
+                or self._scroll_displays.get(game_type) is not scroll_display):
+            # Another prepare moved on while this one built, or drew on this
+            # display too. Record nothing; the strip is drawn again next time.
+            return
+        array = getattr(scroll_display.scroll_helper, "cached_array", None)
+        if success and array is not None:
+            slot.key = key
+            slot.built_at = started
+            slot.strip = weakref.ref(array)
+        elif not success and restore is not None:
+            self._scroll_displays[game_type] = restore
+        self._trim_parked_strips()
+
+    def _forget_shown_strip(self, game_type: str) -> None:
+        """A build this memo cannot key is about to draw on the active display."""
+        active = self._scroll_displays.get(game_type)
+        for slot in (self._strip_pools.get(game_type) or {}).values():
+            if slot.display is active:
+                slot.forget()
+
+    @staticmethod
+    def _strip_bytes(scroll_display: SportsScrollDisplay) -> int:
+        """What keeping this display's strip costs: the strip's array, the
+        image beside it, and its Vegas items."""
+        array = getattr(scroll_display.scroll_helper, "cached_array", None)
+        total = int(array.nbytes) * 2 if array is not None else 0
+        for item in getattr(scroll_display, "_vegas_content_items", None) or ():
+            total += item.width * item.height * len(item.getbands())
+        return total
+
+    def _trim_parked_strips(self) -> None:
+        """Release the strips of displays not on screen until they fit
+        STRIP_MEMO_MAX_PARKED_BYTES: those that can never be reused first (a
+        failed build left an older slate's strip behind), then the least
+        recently shown. The display itself is kept, so its slate's next turn
+        draws on it again."""
+        # list() first: get_scroll_display() can add a game type from another
+        # thread (Vegas's 'mixed'), and a dict must not grow mid-iteration.
+        on_screen = {id(display) for display in list(self._scroll_displays.values())}
+        parked = []
+        total = 0
+        for pool in self._strip_pools.values():
+            for slot in pool.values():
+                if id(slot.display) in on_screen:
+                    continue
+                try:
+                    size = self._strip_bytes(slot.display)
+                except Exception:
+                    # Unmeasurable: assume it does not fit.
+                    size = self.STRIP_MEMO_MAX_PARKED_BYTES + 1
+                if size:
+                    parked.append((slot.last_used, size, slot))
+                    total += size
+        parked.sort(key=lambda entry: (entry[2].key is not None, entry[0]))
+        for _, size, slot in parked:
+            if total <= self.STRIP_MEMO_MAX_PARKED_BYTES:
+                break
+            slot.forget()
+            self._release_strip(slot.display)
+            total -= size
+
+    def _release_strip(self, scroll_display: SportsScrollDisplay) -> None:
+        """Drop a display's strip without SportsScrollDisplay.clear(), which
+        also tells the display manager nothing is scrolling -- not this
+        display's to say while another one is on screen."""
+        try:
+            scroll_display.scroll_helper.clear_cache()
+            scroll_display._vegas_content_items = []
+        except Exception:
+            self.logger.debug("Could not release a parked strip", exc_info=True)
 
     def display_frame(self, game_type: Optional[str] = None) -> bool:
         """Advance the active strip (or a named one) by one frame."""
@@ -676,8 +1010,19 @@ class SportsScrollDisplayManager:
         return scroll_display.is_scroll_complete()
 
     def clear_all(self) -> None:
-        """Clear every display and forget which one was active."""
-        for scroll_display in self._scroll_displays.values():
+        """Clear every display and forget which one was active.
+
+        The displays of slates not on screen too, and nothing cleared is
+        reused: the next prepare draws its strip again.
+        """
+        displays = list(self._scroll_displays.values())
+        with self._strip_lock:
+            for pool in self._strip_pools.values():
+                for slot in pool.values():
+                    slot.forget()
+                    if not any(slot.display is shown for shown in displays):
+                        displays.append(slot.display)
+        for scroll_display in displays:
             scroll_display.clear()
         self._current_game_type = ""
 
