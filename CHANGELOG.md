@@ -19,6 +19,33 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Cheap per-frame and per-fetch savings
+
+- `BaseOddsManager.get_odds()` no longer pretty-prints every odds response
+  for a debug line: the `json.dumps(..., indent=2)` calls in the fetch path
+  and `_extract_espn_data` are guarded with `isEnabledFor(DEBUG)`, and the
+  other debug f-strings there take %-style arguments. Same messages at DEBUG.
+- `ScrollHelper`'s integer frame path (`_get_visible_portion_integer`) takes
+  `tobytes()` straight from the strip's column slice instead of copying it
+  with `np.ascontiguousarray()` first; the bytes are identical (a test pins
+  them). At 512x64 on a Pi 4 the bytes step went from ~45 us to ~21 us a
+  frame.
+- `systemd/ledmatrix-web.service` sets `MALLOC_ARENA_MAX=2`, as
+  `ledmatrix.service` has since #476. Existing installs pick it up when
+  `scripts/install/install_service.sh` or `install_web_service.sh` is re-run;
+  until then the startup drift check reports the web unit as changed.
+- `APIHelper.get()`/`post()`, `BaseOddsManager.get_odds()`, the two
+  `LogoDownloader` team fetches and `DynamicTeamResolver`'s rankings fetch
+  parse with `src.common.json_body.response_json` (orjson when installed),
+  like `background_data_service` already did. A body orjson rejects falls
+  back to `response.json()`, so a bad body raises the same
+  `requests.exceptions.JSONDecodeError` these call sites already catch.
+- The `Scroll frame stats` line is logged at INFO only for a degraded window
+  (fps under 0.9 of the rate the window was locked to, or more than 1% of
+  frames stalled), the window after one, and a 5-minute heartbeat per
+  scroller, as the `Vegas FPS` line already was; every window is still logged
+  at DEBUG. `docs/SCROLL_PERFORMANCE.md` says how to see them all.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
