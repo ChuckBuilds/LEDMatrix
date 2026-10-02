@@ -154,6 +154,37 @@ policies are unchanged.
   change: an open preview now costs at most one encode a second, not up to
   five. Take both sides of an A/B pair on the same side of it.
 
+### Scroller-to-static handovers
+
+- A static plugin screen that follows a scroller no longer starts with the
+  scroller's leftovers. Nothing ended the scroll state at a handover; it
+  expired 2 s after the last scroll frame. So on a panel with scan-order
+  compensation the static screen's first frame went out with the lagging
+  rows (the bottom half on a 96x48 panel) taken from the ticker's last
+  frame: for the whole second it stays up after a scroll at one frame per
+  refresh, and for its first refresh after a slower, held one. The display
+  controller now calls the new
+  `DisplayManager.end_scroll_for_static_screen()` just before such a
+  screen's first `display()`, so the frames that call draws go out as
+  drawn, in one swap each, and `set_scrolling_state(False)` once it
+  returns. The scroll state and its frame hold stay until then, so the
+  handover is still timed, against the scroller's own pacing: late-frame
+  counts are unchanged.
+- The phantom ~1 s freeze when a static plugin screen follows a scroller is
+  no longer recorded: the 1 Hz loop's second frame was timed as a frame of the old
+  scroll, in the soak's freezes and as a `Render stall` in the log. On ledpi
+  that was 17 of 31 `Render stall over` lines (2026-09-15 to 10-01).
+- A screen's first frame is tagged `handover` in the frame stats, every
+  turn's, also when the rotation comes back to the same mode. A gap of
+  250 ms or more before it is counted in the new `handover_freezes`
+  (additive; the schema version is unchanged), not in `freezes` /
+  `freeze_by`, and `frame_soak.py` prints it as "Handover gaps": a
+  scroller rebuilding its content at the start of a turn shows up there.
+  **Freeze counts from soaks before and after this change are not
+  comparable.** A stall dump taken while that first `display()` is still
+  drawing says `in a handover gap` instead of `mid-scroll`, and the call
+  runs on a thread named `display-<plugin id>`.
+
 ## 3.8.0
 
 Live Vegas elements: plugin content that keeps changing while it scrolls
