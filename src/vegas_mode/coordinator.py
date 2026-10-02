@@ -255,7 +255,7 @@ class VegasModeCoordinator:
         if urgent is None:
             return False
         try:
-            return bool(urgent())
+            return bool(urgent())  # pylint: disable=not-callable
         except Exception:  # pylint: disable=broad-except
             logger.debug("Urgent interrupt test failed", exc_info=True)
             return False
