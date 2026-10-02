@@ -25,6 +25,23 @@ snapshot behind. A display that stops cleanly publishes ``running: false``
 on the way out, so readers see "stopped" at once rather than after the
 stale window. Nothing on the reading side reports a runtime fact from a
 snapshot that is not live.
+
+Render-loop liveness. The snapshot is written from its own thread, which
+keeps going when the render loop hangs inside a plugin. So the reader also
+checks the render loop's heartbeat (``src/display_watchdog.py``, the file
+``/api/v3/health`` reports as ``checks.display_loop``): a live snapshot from
+the process whose heartbeat has gone stale is ``stalled``, as the health
+check says, not ``live``. No extra writes: the heartbeat already exists, on
+tmpfs. A missing heartbeat (dev server, emulator, Windows, a display still
+starting up) or one from another process (a display restarted after a
+watchdog kill) says nothing, and the snapshot is judged on its own.
+
+A dead publisher. systemd removes the heartbeat's directory when the
+service stops, so after a watchdog kill there is no heartbeat to go stale.
+The reader then asks whether the snapshot's ``pid`` still exists (POSIX
+``kill(pid, 0)``, which sends nothing): a running snapshot from a process
+that is gone is ``stale`` at once rather than ``live`` for the rest of its
+``stale_after`` window.
 """
 
 import math
@@ -34,6 +51,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
+from src import display_watchdog
 from src.logging_config import get_logger
 from src.redaction import redact_credentials
 
@@ -70,6 +88,9 @@ _VERSION_CHARS = 40
 #: Reader statuses. Only LIVE carries runtime facts.
 LIVE = "live"
 STALE = "stale"
+#: The snapshot is fresh but the render loop's heartbeat is not: the display
+#: is hung (or was just killed by the watchdog), as /api/v3/health reports.
+STALLED = "stalled"
 STOPPED = "stopped"
 UNKNOWN = "unknown"
 
@@ -281,7 +302,9 @@ class PluginRuntimeView:
 
     ``status``: ``live`` (a fresh snapshot from a running display),
     ``stale`` (the last snapshot is older than its ``stale_after``: the
-    display is hung or died without cleaning up), ``stopped`` (the display
+    display is hung or died without cleaning up), ``stalled`` (the snapshot
+    is fresh but the same process's render-loop heartbeat is stale: the
+    render loop is hung), ``stopped`` (the display
     said so on its way out) or ``unknown`` (no readable snapshot). Only a
     live view reports per-plugin facts; every other status answers None for
     them, so a caller cannot pass stale truth on by accident.
@@ -292,6 +315,8 @@ class PluginRuntimeView:
     age_seconds: Optional[float] = None
     stale_after: float = STALE_AFTER
     plugins: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    #: Age of the render loop's heartbeat, when it was taken into account.
+    heartbeat_age_seconds: Optional[float] = None
 
     @property
     def live(self) -> bool:
@@ -321,6 +346,8 @@ class PluginRuntimeView:
             "published_at": self.published_at,
             "age_seconds": None if self.age_seconds is None else round(self.age_seconds, 1),
             "stale_after": self.stale_after,
+            "heartbeat_age_seconds": (None if self.heartbeat_age_seconds is None
+                                      else round(self.heartbeat_age_seconds, 1)),
         }
 
 
@@ -334,8 +361,56 @@ def _stale_after_of(snapshot: Dict[str, Any]) -> float:
     return min(max(number, _STALE_AFTER_MIN), _STALE_AFTER_MAX)
 
 
-def view_from_snapshot(snapshot: Any, now: Optional[float] = None) -> PluginRuntimeView:
-    """Judge a snapshot read from the cache; never raises."""
+def _heartbeat_age_for(snapshot: Dict[str, Any], heartbeat: Any,
+                       now_mono: Optional[float]) -> Optional[float]:
+    """Age of ``heartbeat`` if it comes from the process that published
+    ``snapshot``; None when there is none, it has no time, or it belongs to
+    another process (a restarted display, or a heartbeat left by a killed one)."""
+    if not isinstance(heartbeat, dict):
+        return None
+    beat_pid = heartbeat.get("pid")
+    snap_pid = snapshot.get("pid")
+    if (isinstance(beat_pid, bool) or not isinstance(beat_pid, int)
+            or isinstance(snap_pid, bool) or not isinstance(snap_pid, int)
+            or beat_pid != snap_pid):
+        return None
+    return display_watchdog.heartbeat_age(heartbeat, now_mono=now_mono)
+
+
+def process_exists(pid: int) -> Optional[bool]:
+    """Whether process ``pid`` exists: True, False, or None when this
+    platform cannot tell. POSIX only -- on Windows ``os.kill`` terminates.
+    Signal 0 sends nothing; EPERM (the display runs as root, the web
+    interface does not) still means the process is there."""
+    if os.name != "posix" or pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def view_from_snapshot(snapshot: Any, now: Optional[float] = None,
+                       heartbeat: Any = None,
+                       now_mono: Optional[float] = None,
+                       process_alive: Optional[Callable[[int], Optional[bool]]] = None,
+                       ) -> PluginRuntimeView:
+    """Judge a snapshot read from the cache; never raises.
+
+    ``heartbeat`` is the render loop's heartbeat
+    (``display_watchdog.read_heartbeat()``), or None when there is none. A
+    live snapshot whose process's heartbeat is at least
+    ``display_watchdog.HEARTBEAT_STALE_SECONDS`` old is ``stalled``: the
+    threshold /api/v3/health uses for ``checks.display_loop``.
+    ``process_alive`` (``process_exists`` when reading the real cache) says
+    whether the snapshot's publisher still exists; a running snapshot from
+    one that is gone is ``stale``.
+    """
     if not isinstance(snapshot, dict) or snapshot.get("schema") != SNAPSHOT_SCHEMA:
         return PluginRuntimeView(status=UNKNOWN)
     published_at = _epoch(snapshot.get("published_at"))
@@ -351,21 +426,34 @@ def view_from_snapshot(snapshot: Any, now: Optional[float] = None) -> PluginRunt
     if age > stale_after or age < -stale_after:
         return PluginRuntimeView(status=STALE, published_at=published_at,
                                  age_seconds=age, stale_after=stale_after)
+    pid = snapshot.get("pid")
+    if (process_alive is not None and isinstance(pid, int) and not isinstance(pid, bool)
+            and process_alive(pid) is False):
+        return PluginRuntimeView(status=STALE, published_at=published_at,
+                                 age_seconds=max(age, 0.0), stale_after=stale_after)
+    beat_age = _heartbeat_age_for(snapshot, heartbeat, now_mono)
+    if beat_age is not None and beat_age >= display_watchdog.HEARTBEAT_STALE_SECONDS:
+        return PluginRuntimeView(status=STALLED, published_at=published_at,
+                                 age_seconds=max(age, 0.0), stale_after=stale_after,
+                                 heartbeat_age_seconds=beat_age)
     plugins = snapshot.get("plugins")
     return PluginRuntimeView(
         status=LIVE, published_at=published_at, age_seconds=max(age, 0.0),
-        stale_after=stale_after,
+        stale_after=stale_after, heartbeat_age_seconds=beat_age,
         plugins={k: v for k, v in plugins.items() if isinstance(v, dict)}
         if isinstance(plugins, dict) else {},
     )
 
 
-def read_plugin_runtime(cache_manager: Any, now: Optional[float] = None) -> PluginRuntimeView:
-    """The display's latest snapshot, judged for staleness. Never raises; a
-    missing cache manager or an unreadable snapshot is ``unknown``.
+def read_plugin_runtime(cache_manager: Any, now: Optional[float] = None,
+                        heartbeat_path: Optional[str] = None) -> PluginRuntimeView:
+    """The display's latest snapshot, judged for staleness and against the
+    render loop's heartbeat. Never raises; a missing cache manager or an
+    unreadable snapshot is ``unknown``.
 
     memory_ttl=0: the key is written by the other process, so only the file
-    is current.
+    is current. ``heartbeat_path`` defaults to
+    ``display_watchdog.HEARTBEAT_PATH``.
     """
     if cache_manager is None:
         return PluginRuntimeView(status=UNKNOWN)
@@ -374,4 +462,11 @@ def read_plugin_runtime(cache_manager: Any, now: Optional[float] = None) -> Plug
     except Exception as err:
         logger.debug("Could not read the plugin runtime snapshot: %s", err, exc_info=True)
         return PluginRuntimeView(status=UNKNOWN)
-    return view_from_snapshot(snapshot, now=now)
+    try:
+        heartbeat = display_watchdog.read_heartbeat(
+            heartbeat_path or display_watchdog.HEARTBEAT_PATH)
+    except Exception as err:  # read_heartbeat does not raise; belt and braces
+        logger.debug("Could not read the display heartbeat: %s", err, exc_info=True)
+        heartbeat = None
+    return view_from_snapshot(snapshot, now=now, heartbeat=heartbeat,
+                              process_alive=process_exists)
