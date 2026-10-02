@@ -19,6 +19,30 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Outlined text: one rasterization
+
+- New `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0,
+  0), offsets=OUTLINE_SQUARE)` in `src/common/text_helper.py`, with
+  `OUTLINE_SQUARE` (the eight-sided outline the scoreboards draw) and
+  `OUTLINE_CROSS` (four sides). Outlined text was one `draw.text` per
+  outline offset plus one for the text, so FreeType rasterized the same
+  string nine times. This rasterizes it once and stamps the mask at each
+  offset: the same pixels, about 8x faster per outlined string (Pillow 12.3,
+  desktop). `test/test_text_helper.py` compares it with the nine-draw loop
+  across the bundled fonts, image and font modes, colours and positions,
+  and fails if it stops rasterizing once. Fractional coordinates, multiline
+  text, fonts other than a plain `FreeTypeFont`, image modes other than
+  RGB, RGBA and L, and a subclassed or replaced `draw.text` take the old
+  loop unchanged. A whole-pixel float such as `52.0`, which the scorebugs'
+  centring passes, is not fractional.
+- `SportsCoreSharedMixin._draw_text_with_outline`, which eight of the nine
+  scoreboards inherit for their switch-mode scorebug (ufc has its own), and
+  `TextHelper.draw_text_with_outline` now draw through it. Scroll and Vegas
+  cards still use each plugin's own `game_renderer.py` loop, so building a
+  scroll strip costs the same until the plugins adopt `draw_text_outlined`,
+  importing it with an `ImportError` fallback to their own loop (a separate
+  ledmatrix-plugins change after a core release ships it).
+
 ### Shared fetch service (stage 1)
 
 Core's own HTTP fetch paths now go through one service, so the plugins that
@@ -139,6 +163,69 @@ policies are unchanged.
   `get_scroll_display()` and `_scroll_displays` still answer with the strip
   on screen; a sport's `prepare_scroll_content()` is no longer called on
   every turn.
+
+### Web preview: less work per frame
+
+- Mid-scroll, `update_display()` no longer checksums every frame. The
+  checksum (`tobytes()` plus `adler32` over the whole framebuffer: ~0.17 ms a
+  frame at 256x64 on a Pi 4, so roughly twice that at 512x64 and well under
+  0.1 ms at 128x32) fed only the dirty-tracking skip, which never applies
+  while scrolling, and the preview snapshot's changed-frame check. The
+  snapshot now asks its policy first and hashes the frame only when a write
+  or touch could follow. That changes no snapshot decision:
+  `snapshot_policy.decide()` is monotone in `frame_changed`, and a test holds
+  it to that. Two small differences on the panel: the first static frame
+  after a scroll is pushed even when it matches the scroll's last frame (one
+  extra swap), and the frame on which a scroll that never said it stopped
+  times out is presented at a hold of 1 rather than the scroll's hold.
+- With the web preview open, the display writes the snapshot at most once a
+  second (`snapshot_policy.VIEWER_INTERVAL`, was 0.2 s). The preview already
+  showed at most one frame a second: its SSE stream re-read the file once a
+  second, so four PNG encodes in five were overwritten unread. The stream now
+  checks the file's mtime every 0.25 s (new `VIEWER_POLL_INTERVAL`) and sends
+  each frame soon after it is written, so the preview stays about as fresh;
+  it still touches the viewer marker once a second, and with no snapshot
+  file it still sends its placeholder once a second. A screen that animates
+  faster than once a second without marking itself as scrolling (a GIF, say)
+  was encoded on the render thread up to five times a second while the
+  preview was open, 12-14 ms each at 512x64 on a Pi 4; now at most once.
+- The snapshot PNG is written at `compress_level=1`. On a desktop that
+  encoded a text-dense 512x64 frame in about half Pillow's default time, into
+  a larger file (12 KB instead of 7 KB); sparser frames gain less.
+- `scripts/frame_soak.py --preview` soaks are not comparable across this
+  change: an open preview now costs at most one encode a second, not up to
+  five. Take both sides of an A/B pair on the same side of it.
+
+### Scroller-to-static handovers
+
+- A static plugin screen that follows a scroller no longer starts with the
+  scroller's leftovers. Nothing ended the scroll state at a handover; it
+  expired 2 s after the last scroll frame. So on a panel with scan-order
+  compensation the static screen's first frame went out with the lagging
+  rows (the bottom half on a 96x48 panel) taken from the ticker's last
+  frame: for the whole second it stays up after a scroll at one frame per
+  refresh, and for its first refresh after a slower, held one. The display
+  controller now calls the new
+  `DisplayManager.end_scroll_for_static_screen()` just before such a
+  screen's first `display()`, so the frames that call draws go out as
+  drawn, in one swap each, and `set_scrolling_state(False)` once it
+  returns. The scroll state and its frame hold stay until then, so the
+  handover is still timed, against the scroller's own pacing: late-frame
+  counts are unchanged.
+- The phantom ~1 s freeze when a static plugin screen follows a scroller is
+  no longer recorded: the 1 Hz loop's second frame was timed as a frame of the old
+  scroll, in the soak's freezes and as a `Render stall` in the log. On ledpi
+  that was 17 of 31 `Render stall over` lines (2026-09-15 to 10-01).
+- A screen's first frame is tagged `handover` in the frame stats, every
+  turn's, also when the rotation comes back to the same mode. A gap of
+  250 ms or more before it is counted in the new `handover_freezes`
+  (additive; the schema version is unchanged), not in `freezes` /
+  `freeze_by`, and `frame_soak.py` prints it as "Handover gaps": a
+  scroller rebuilding its content at the start of a turn shows up there.
+  **Freeze counts from soaks before and after this change are not
+  comparable.** A stall dump taken while that first `display()` is still
+  drawing says `in a handover gap` instead of `mid-scroll`, and the call
+  runs on a thread named `display-<plugin id>`.
 
 ## 3.8.0
 

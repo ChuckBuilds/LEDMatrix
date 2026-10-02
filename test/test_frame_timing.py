@@ -421,6 +421,31 @@ def test_watchdog_names_what_the_stalled_thread_is_waiting_on():
     assert "render_loop_waiting_on_a_lock" in text
 
 
+def test_watchdog_labels_a_stall_before_a_new_screens_first_frame(caplog):
+    # The display controller noted a handover and the next screen's first
+    # display() is still drawing: not a scroll that stopped.
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    rec.last_frame = (10.0, True, 1)
+    rec._ops = {frame_timing.HANDOVER_OP: 0}
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        dog.check(10.4, 0.0, None, False)
+    message = caplog.records[0].getMessage()
+    assert message.startswith("Render stall: no frame for 400ms in a handover gap")
+    assert "mid-scroll" not in message
+
+
+def test_watchdog_says_mid_scroll_when_nothing_is_handing_over(caplog):
+    rec = _FakeRecorder()
+    dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=0.0)
+    rec.last_frame = (10.0, True, 1)
+    rec._ops = {"extend": 100}      # other work pending is not a handover
+    with caplog.at_level("WARNING", logger="src.common.frame_timing"):
+        dog.check(10.4, 0.0, None, False)
+    assert caplog.records[0].getMessage().startswith(
+        "Render stall: no frame for 400ms mid-scroll")
+
+
 def test_watchdog_rate_limits_its_dumps(caplog):
     rec = _FakeRecorder()
     dog = frame_timing.StallWatchdog(rec, threshold=0.25, log_interval=30.0)

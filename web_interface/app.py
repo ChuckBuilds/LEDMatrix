@@ -33,6 +33,7 @@ from src.web_interface.error_handler import describe_exception
 from src.common.path_safety import (
     resolve_under, safe_path_component, safe_relative_parts,
 )
+from src.common import snapshot_policy
 from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
 from src.plugin_system.plugin_catalog import PluginCatalog
@@ -797,12 +798,19 @@ def display_preview_generator():
     """Generate display preview updates from snapshot file"""
     snapshot_path = display_preview.SNAPSHOT_PATH
     # Viewer marker: this generator only runs while the broadcaster has
-    # subscribers (it exits with no clients), so touching the marker each
-    # loop tells the DISPLAY service a browser is actually watching — it
-    # only pays for full-rate PNG snapshot encodes while this stays fresh
+    # subscribers (it exits with no clients), so touching the marker tells
+    # the DISPLAY service a browser is actually watching — it only pays for
+    # viewer-rate PNG snapshot encodes while this stays fresh
     # (see src/common/snapshot_policy.py).
     viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - fixed path matches display_manager
     last_modified = None
+    # While there is a snapshot, its mtime is checked every
+    # VIEWER_POLL_INTERVAL, so a new frame goes out soon after it lands
+    # rather than up to a second later. The rest keeps its old once-a-second
+    # pace: the marker touch (the display counts it fresh for
+    # VIEWER_MARKER_FRESH_SEC), and passes with no snapshot or an error,
+    # each of which sends a message.
+    last_marker_touch = None
 
     def _touch_viewer_marker():
         try:
@@ -821,10 +829,15 @@ def display_preview_generator():
         width, height = logical_size({})
     
     while True:
+        delay = 1.0
         try:
-            _touch_viewer_marker()
+            now = time.monotonic()
+            if last_marker_touch is None or now - last_marker_touch >= 1.0:
+                _touch_viewer_marker()
+                last_marker_touch = now
             # Check if snapshot file exists and has been modified
             if os.path.exists(snapshot_path):
+                delay = snapshot_policy.VIEWER_POLL_INTERVAL
                 current_modified = os.path.getmtime(snapshot_path)
                 
                 # Only read if file is new or has been updated
@@ -842,10 +855,11 @@ def display_preview_generator():
                 yield display_preview.preview_payload(width, height, None)
                 
         except Exception:
+            delay = 1.0
             app.logger.error("SSE generator error", exc_info=True)
             yield {'error': 'An error occurred; see server logs'}
         
-        time.sleep(1.0)  # the snapshot is re-read only when its mtime changes
+        time.sleep(delay)  # the snapshot is re-read only when its mtime changes
 
 # Logs generator for SSE
 def logs_generator():

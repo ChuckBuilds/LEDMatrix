@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -139,6 +140,95 @@ def test_aggregate_still_takes_frames_without_ops(tmp_path):
     r.aggregate([(PERIOD, 0.002, 0.004, 1)] * 5, 0)
     assert r.totals["scroll_frames"] == 5
     assert r.totals["op_frames"] == {}
+
+
+# -- screen handovers ---------------------------------------------------------
+# The display controller tags a screen's first frame "handover". A freeze that
+# frame ends is the next plugin drawing, not a scroll that stalled.
+
+
+def test_a_handover_freeze_is_not_a_freeze(tmp_path):
+    r = _recorder(tmp_path)
+    _frame(r, 100.0)
+    r.note_op("handover")
+    _frame(r, 101.4)                 # 1.4s to draw the next screen
+    r.note_op("extend", 10)
+    _frame(r, 101.8)                 # a real one, for contrast
+    totals = _totals(r)
+    assert totals["handover_freezes"] == 1
+    assert totals["freezes"] == 1
+    assert totals["freeze_by"] == {"<0.5s": 1, "0.5-1s": 0, "1-2s": 0, "2s+": 0}
+    assert totals["freeze_seconds"] == pytest.approx(0.4)
+    # Still on the "after work" table, with its freezes column.
+    assert totals["op_freezes"] == {"handover": 1, "extend": 1}
+
+
+def test_a_quick_handover_is_an_ordinary_timed_frame(tmp_path):
+    r = _recorder(tmp_path)
+    _frame(r, 100.0)
+    r.note_op("handover")
+    _frame(r, 100.0 + 4 * PERIOD)
+    totals = _totals(r)
+    assert totals["handover_freezes"] == totals["freezes"] == 0
+    assert totals["op_frames"] == {"handover": 1}
+    assert totals["late_op_frames"] == {"handover": 1}
+
+
+def test_a_dropped_note_tags_nothing(tmp_path):
+    # The first display() drew nothing: the tag must not wait for whatever
+    # frame comes next, here a stall a minute later.
+    r = _recorder(tmp_path)
+    _frame(r, 100.0)
+    r.note_op("handover")
+    r.drop_op("handover")
+    _frame(r, 101.0)
+    totals = _totals(r)
+    assert totals["handover_freezes"] == 0
+    assert totals["freezes"] == 1
+    assert totals["op_freezes"] == {}
+
+
+def test_dropping_a_note_keeps_other_kinds_and_is_harmless_when_none(tmp_path):
+    r = _recorder(tmp_path)
+    r.drop_op("handover")            # nothing noted: nothing to do
+    _frame(r, 100.0)
+    r.note_op("handover")
+    r.note_op("patch", 5)
+    r.drop_op("handover")
+    _frame(r, 100.0 + PERIOD)
+    r.drop_op("handover")            # already carried by a frame
+    totals = _totals(r)
+    assert totals["op_frames"] == {"patch": 1}
+
+
+def test_the_soak_report_prints_handover_gaps(tmp_path, capsys):
+    r = _recorder(tmp_path)
+    before = json.loads(json.dumps(r.snapshot()))
+    _frame(r, 100.0)
+    r.note_op("handover")
+    _frame(r, 100.5)
+    report = _report(r, before)
+    assert report["handover_freezes"] == 1
+    assert report["freezes"] == 0
+    frame_soak.print_report(report, 0.1)
+    assert "Handover gaps      1" in capsys.readouterr().out
+
+
+def test_a_report_from_an_older_recorder_has_no_handover_line(tmp_path, capsys):
+    # Stats written before the count existed: diffed and printed without it.
+    r = _recorder(tmp_path)
+    before = json.loads(json.dumps(r.snapshot()))
+    _frame(r, 100.0)
+    _frame(r, 100.0 + PERIOD)
+    r.drain()
+    after = json.loads(json.dumps(r.snapshot()))
+    after["updated"] = before["updated"] + 10.0
+    for stats in (before, after):
+        del stats["totals"]["handover_freezes"]
+    report = frame_soak.build_report(before, after, preview=False)
+    assert report["handover_freezes"] is None
+    frame_soak.print_report(report, 0.1)
+    assert "Handover gaps" not in capsys.readouterr().out
 
 
 # -- the soak report ----------------------------------------------------------
