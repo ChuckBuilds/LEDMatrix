@@ -80,6 +80,8 @@ class FakeHost:
         self.nrestarts = 0
         self.heartbeat = heartbeat
         self.display_started_at = -1000.0  # the pre-update display, long running
+        self.unit_restores = []  # (argv, commit checked out, restarts so far)
+        self.restore_ok = True
 
     def broken(self, kind):
         if self.running_head is None:
@@ -103,6 +105,10 @@ class FakeHost:
             if self.pip:
                 return self.pip(args, self)
             return done(args, rc=0 if self.pip_ok else 1)
+        if args[:3] == ['sudo', '-n', av.REFRESH_UNITS_PATH]:
+            self.unit_restores.append((list(args), git(self.repo, 'rev-parse', 'HEAD'),
+                                       len(self.restarts)))
+            return done(args, rc=0 if self.restore_ok else 1)
         if args[:4] == ['sudo', '-n', 'systemctl', 'restart']:
             if self.restart_failures:
                 self.restart_failures -= 1
@@ -405,3 +411,45 @@ def test_the_heartbeat_location_and_freshness_match_the_display():
     # window it has to stay healthy for.
     assert av.HEARTBEAT_FRESH_SECONDS + av.POLL_SECONDS < av.STABLE_SECONDS
     assert av.HEARTBEAT_FRESH_SECONDS > display_watchdog.BEAT_INTERVAL_SECONDS * 2
+
+
+# -- systemd units the update installed ------------------------------------------
+
+def test_a_rollback_restores_the_units_the_update_installed(tmp_path):
+    """The update installed new units (web_interface/unit_refresh.py); the
+    rollback puts the old ones back before restarting onto the old code."""
+    code, result, host, head, old, new = check(tmp_path, 'display_down', units_refreshed=True)
+    assert result['status'] == 'rolled_back' and head == old
+    assert len(host.unit_restores) == 1
+    argv, commit, restarts_before = host.unit_restores[0]
+    assert argv == ['sudo', '-n', av.REFRESH_UNITS_PATH, '--restore']
+    assert commit == old, 'restored after the code was rolled back'
+    assert restarts_before == 2, 'restored before the services restart onto the old code'
+    assert host.restarts[-2:] == [('ledmatrix.service', old), ('ledmatrix-web.service', old)]
+    assert result['detail'] is None
+
+
+@pytest.mark.parametrize('pending', [{}, {'units_refreshed': False}])
+def test_a_rollback_leaves_units_alone_when_the_update_did_not_change_them(tmp_path, pending):
+    # {} is what an updater from before this change writes.
+    code, result, host, head, old, new = check(tmp_path, 'display_down', **pending)
+    assert result['status'] == 'rolled_back' and host.unit_restores == []
+
+
+def test_a_healthy_update_keeps_its_new_units(tmp_path):
+    code, result, host, head, old, new = check(tmp_path, units_refreshed=True)
+    assert result['status'] == 'success' and host.unit_restores == []
+
+
+def test_a_failed_unit_restore_is_reported_but_the_rollback_stands(tmp_path):
+    repo, old, new = updated_repo(tmp_path)
+    av.write_pending(av.pending_path(repo), {'status': 'pending', 'old_head': old, 'new_head': new,
+                                             'display_was_active': True, 'dependency_failures': [],
+                                             'units_refreshed': True})
+    host = FakeHost(repo, new, 'display_down')
+    host.restore_ok = False
+    host.verifier().verify()
+    result = av.read_pending(av.pending_path(repo))
+    assert result['status'] == 'rolled_back'
+    assert git(repo, 'rev-parse', 'HEAD') == old
+    assert 'install_service.sh' in result['detail']
