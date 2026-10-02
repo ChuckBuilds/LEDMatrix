@@ -891,7 +891,8 @@ esac
 if [ "$AUTO_UPDATE" = "1" ] || [ "$AUTO_UPDATE" = "0" ] || [ -n "$UPDATE_CHANNEL" ]; then
     if python3 - "$PROJECT_ROOT_DIR/config/config.json" "$AUTO_UPDATE" "$UPDATE_CHANNEL" <<'PY'
 import json, os, sys, tempfile
-path, enabled, channel = sys.argv[1], sys.argv[2], sys.argv[3]
+path, enabled = sys.argv[1], sys.argv[2]
+channel = sys.argv[3] if len(sys.argv) > 3 else ""
 with open(path, encoding="utf-8") as f:
     config = json.load(f)
 if not isinstance(config.get("auto_update"), dict):
