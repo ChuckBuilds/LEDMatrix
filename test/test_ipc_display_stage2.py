@@ -4,8 +4,10 @@
   and answered with what the panel shows -- including when the dim schedule
   holds it lower, when the panel refuses it, and when the schedule has the
   display off;
-* ``plugin.reload`` is answered from the top of the loop pass, for every
-  outcome: reloaded (new instance registered, Vegas told), not running,
+* ``plugin.reload`` starts at the top of the loop pass and is answered once
+  its plugin-reload thread is done (test_plugin_reload_off_render_thread.py
+  has the timing), for every outcome: reloaded (new instance registered,
+  Vegas told), not running,
   loaded only for on-demand, failed to load, or raised;
 * the render thread wakes for a command in real time, not just on the fake
   clock (test_run_loop_socket_wake.py): within milliseconds on a static
@@ -141,7 +143,17 @@ def running(dc):
         pm.plugin_manifests[pid] = {'version': '2.0.0'}
         return True
 
+    def detach(pid):
+        return pm.plugins.pop(pid, None)
+
+    def unload_detached(pid, plugin):
+        calls.append(('unload', pid))
+        assert pid not in pm.plugins, "torn down while still loaded"
+        return True
+
     pm.unload_plugin = MagicMock(side_effect=unload)
+    pm.detach_plugin = MagicMock(side_effect=detach)
+    pm.unload_detached_plugin = MagicMock(side_effect=unload_detached)
     pm.reload_plugin = MagicMock(side_effect=reload)
     dc.plugin_manager = pm
     dc.plugin_display_modes = {'clock': ['clock_a', 'clock_b'], 'weather': ['weather']}
@@ -159,8 +171,12 @@ class TestReload:
         dc._control_server = FakeServer(*commands)
         dc._poll_on_demand_requests()          # the drain: queued, not applied
         assert dc._plugin_reload_pending
-        dc._apply_pending_plugin_reloads()     # the top of the next pass
+        dc._apply_pending_plugin_reloads()     # the top of the next pass: it starts
         assert not dc._plugin_reload_pending
+        for job in dc._plugin_reload_jobs:     # its plugin-reload thread
+            assert job.done.wait(5)
+        dc._finish_plugin_reloads()            # between two frames
+        assert not dc._plugin_reload_jobs
 
     def test_reloaded(self, running):
         dc = running.dc

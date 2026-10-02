@@ -333,8 +333,11 @@ class StreamManager:
         loaded = 0
 
         if hasattr(self.plugin_manager, 'plugins'):
-            loaded = len(self.plugin_manager.plugins)
-            for plugin_id, plugin in self.plugin_manager.plugins.items():
+            # A snapshot: a plugin reload adds and removes entries on its
+            # own thread (DisplayController._start_plugin_reload).
+            plugins = list(self.plugin_manager.plugins.items())
+            loaded = len(plugins)
+            for plugin_id, plugin in plugins:
                 if not getattr(plugin, 'enabled', False):
                     logger.debug("[%s] Vegas: skipped (not enabled)", plugin_id)
                     continue
