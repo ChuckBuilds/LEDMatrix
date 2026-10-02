@@ -184,6 +184,22 @@ policies are unchanged.
 
 ### Fixes
 
+- A plugin reload after a store update (`plugin.reload`, #720) no longer
+  freezes the panel during Vegas. On ledpi a football reload froze it for
+  3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
+  render thread, and its unload waited for the plugin's lock. The strip's
+  prefetch thread held that lock while it rebuilt the old instance's Vegas
+  content. The render thread now only takes the plugin out of the rotation
+  and out of the plugin manager (`PluginManager.detach_plugin`). A
+  `plugin-reload-<id>` thread waits for the lock, tears the old instance
+  down and loads the new one, and the new instance joins the rotation
+  between two frames. In a test with a 3.0 s render holding the lock, the
+  longest gap between frames went from 3017 ms to 9 ms. The reply still
+  reports the real outcome, the modes keep their places in the rotation,
+  and Vegas fetches the plugin again. While it reloads, an on-demand request
+  for the plugin is refused (`plugin-reloading`), and a config reconcile
+  neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
+  out a reload for the lock skips the old instance.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
@@ -230,6 +246,22 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- `/api/v3/plugins/installed` no longer reports the display's plugins as
+  `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
+  snapshot is written from its own thread, which kept going while the render
+  loop was hung. The web interface now also reads the render loop's
+  heartbeat: a fresh snapshot whose process's heartbeat is 60 s or older is
+  `data.runtime.status: "stalled"`, with the per-plugin fields null, and
+  `data.runtime` gains `heartbeat_age_seconds`. A snapshot from a process
+  that no longer exists, as after a watchdog kill (systemd removes the
+  heartbeat when the service stops), is `stale` at once instead of `live`
+  for up to 180 s. No new files or writes: both checks are on the reading
+  side.
+- `/api/v3/display/current-status` reflects a wake from scheduled-off, a
+  schedule-off blank, or an on-demand session starting or ending at once,
+  even when the mode name stays the same. The display republished its
+  current state only on a mode change or every 30 s, so `is_display_active`
+  and `on_demand_active` could be up to 30 s out of date.
 
 ### Scrolling
 
