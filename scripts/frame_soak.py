@@ -167,6 +167,29 @@ def op_rows(totals: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return rows
 
 
+def gc_window(before: Dict[str, Any], after: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Garbage collection over the run, or None from a service without the
+    monitor. The counters are cumulative since the service started, so they
+    are differenced like the totals; the longest is since the start."""
+    ga = after.get("gc")
+    if not ga:
+        return None
+    gb = before.get("gc") or {}
+    def minus(key):
+        return [a - b for a, b in zip(ga.get(key, []),
+                                      gb.get(key) or [0] * len(ga.get(key, [])))]
+    seconds = minus("seconds")
+    return {
+        "collections": minus("collections"),
+        "ms": [round(x * 1000.0, 1) for x in seconds],
+        "long_pauses": ga.get("long_pauses", 0) - gb.get("long_pauses", 0),
+        "long_ms": round((ga.get("long_seconds", 0.0)
+                          - gb.get("long_seconds", 0.0)) * 1000.0, 1),
+        "threshold_ms": ga.get("threshold_ms"),
+        "max_ms_since_start": ga.get("max_ms"),
+    }
+
+
 def build_report(before, after, preview: bool) -> Dict[str, Any]:
     delta = diff(before, after)
     totals = delta["totals"]
@@ -204,6 +227,7 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "timing_ms": {name: percentiles(h, bucket_ms)
                       for name, h in delta["histograms"].items()},
         "ops": op_rows(totals),
+        "gc": gc_window(before, after),
     }
     # The rate the panel held while rendering: the typical frame's interval
     # per refresh held. A few percent under the idle rate is normal (the Pi is
@@ -257,6 +281,13 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
     if report.get("handover_freezes") is not None:
         print(f"Handover gaps      {report['handover_freezes']}"
               "  >=250ms before a new screen's first frame; not in the freezes")
+    gc_stats = report.get("gc")
+    if gc_stats:
+        counts, ms = gc_stats["collections"], gc_stats["ms"]
+        print(f"Garbage collection gen0/1/2 {counts[0]}/{counts[1]}/{counts[2]}"
+              f" ({ms[0]}/{ms[1]}/{ms[2]} ms)  >={gc_stats['threshold_ms']:g}ms: "
+              f"{gc_stats['long_pauses']} ({gc_stats['long_ms']} ms)"
+              f"  longest since start {gc_stats['max_ms_since_start']} ms")
     print()
     print(f"{'ms':<18}{'p50':>8}{'p95':>8}{'p99':>8}{'max':>8}")
     for name in ("blit", "wait", "work", "interval_per_hold"):

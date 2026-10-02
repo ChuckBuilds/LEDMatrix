@@ -350,8 +350,9 @@ the same side of it.
 | **blit** | Copying the frame into the matrix canvas (`SetImage`). It grows with width × height × `pwm_bits`: ~5.5 ms at 512×64 with 8 bits on a Pi 4. It is the biggest fixed cost, and it sets the refresh rates a rig can hold one pixel per refresh at. |
 | **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
 | **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
+| **Garbage collection** | Python's cyclic collector stops every thread while it runs. Collections per generation in the run and the time they took, how many took 20 ms or more, and the longest since the service started. A long one tags the next frame `gc` (see *after work*), and a `Render stall` dump says when one ran inside the stall. Diagnostic only: nothing tunes the collector. Missing from stats written by an older service. |
 | **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
-| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land), `handover` (a new screen's first frame). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
+| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land), `handover` (a new screen's first frame), `gc` (a garbage collection of 20 ms or more ran since the frame before). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
 
 The refresh rate is estimated from the frames themselves (swaps that block on
 vsync can only land on refresh boundaries). Cross-check it with

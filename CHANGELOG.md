@@ -19,6 +19,20 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Garbage-collection pauses in the frame stats
+
+- The display now times every Python garbage collection
+  (`src.common.frame_timing.GcMonitor`, installed once per process from
+  `gc.callbacks`). The collector stops every thread while it runs, and a
+  long one looked like any other render stall. A collection of 20 ms or more
+  tags the next presented frame `gc`, so `scripts/frame_soak.py` shows its
+  late rate under *after work*; the stats file gains an additive `gc` block
+  (collections and seconds per generation, the longest, the long ones),
+  which the soak report prints as a "Garbage collection" line; and a
+  `Render stall` dump says when a long collection ran inside the stall.
+  `scripts/render_bench.py` records the same. Diagnostic only: nothing tunes,
+  freezes or disables the collector.
+
 ### Outlined text: one rasterization
 
 - New `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0,
