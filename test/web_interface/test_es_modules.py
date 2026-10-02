@@ -41,7 +41,9 @@ def _url(path):
 
 
 def test_the_module_directories_hold_modules():
-    assert {p.name for p in MODULES} >= {"boot.js", "registry.js", "api.js", "facade.js", "cache.js"}
+    assert {p.name for p in MODULES} >= {"boot.js", "registry.js", "api.js", "facade.js", "cache.js",
+                                         "durations.js", "operation-history.js", "raw-json.js",
+                                         "backup-restore.js"}
     for directory in MODULE_DIRS:
         # node needs this to import them in the JS tests; browsers ignore it.
         assert '"type": "module"' in (directory / "package.json").read_text(encoding="utf-8")
@@ -94,10 +96,71 @@ def test_every_import_resolves_inside_the_module_tree(module):
             f"{module.name}: {spec!r} leaves js/core and js/pages")
 
 
+# Converted so far: page name -> (its partial, the route that serves it). The
+# migration order is in docs/WEB_FRONTEND_ARCHITECTURE.md.
+CONVERTED = {
+    "cache": ("cache.html", "/partials/cache"),
+    "durations": ("durations.html", "/partials/durations"),
+    "operation-history": ("operation_history.html", "/partials/operation-history"),
+    "raw-json": ("raw_json.html", "/partials/raw-json"),
+    "backup-restore": ("backup_restore.html", "/partials/backup-restore"),
+}
+
+# Old window.* names that moved into a page module. Each stays as a
+# deprecated alias in boot.js that forwards to the module's export.
+ALIASES = {
+    "cache": ["deleteCacheFile"],
+    "raw-json": ["formatJson", "manualValidateJson", "validateJSON",
+                 "saveMainConfig", "saveSecretsConfig"],
+    "backup-restore": ["exportBackup", "loadBackupList", "validateRestoreFile",
+                       "clearRestore", "runRestore"],
+}
+
+
+def _boot():
+    return (JS / "core" / "boot.js").read_text(encoding="utf-8")
+
+
 def _registered_pages():
-    boot = (JS / "core" / "boot.js").read_text(encoding="utf-8")
-    return re.findall(r"registry\.register\('([\w-]+)',\s*function\(\)\s*\{\s*return import\('\.\./pages/([\w-]+)\.js'\)",
-                      boot)
+    return re.findall(r"'([\w-]+)':\s*page\(function\(\)\s*\{\s*return import\('\.\./pages/([\w-]+)\.js'\)",
+                      _boot())
+
+
+def test_every_converted_page_is_registered():
+    assert dict(_registered_pages()) == {name: name for name in CONVERTED}
+
+
+@pytest.mark.parametrize("name", sorted(CONVERTED))
+def test_a_converted_partial_roots_its_page(client, name):
+    partial, route = CONVERTED[name]
+    text = (PARTIALS / partial).read_text(encoding="utf-8")
+    assert f'data-page="{name}"' in text
+    assert "<script" not in text.lower()
+    # Its buttons are wired by the module, not by inline handlers naming
+    # globals (which would reach the code only through a deprecated alias).
+    assert "onclick=" not in text.lower()
+    module = (JS / "pages" / f"{name}.js").read_text(encoding="utf-8")
+    assert re.search(r"^export function init\(root, ctx\)", module, re.M)
+    # Rendered by the real route, the root is there exactly once.
+    resp = client.get(route)
+    assert resp.status_code == 200, route
+    assert resp.get_data(as_text=True).count(f'data-page="{name}"') == 1, route
+
+
+@pytest.mark.parametrize("name", sorted(ALIASES))
+def test_moved_globals_stay_as_aliases(name):
+    boot = _boot()
+    module = (JS / "pages" / f"{name}.js").read_text(encoding="utf-8")
+    for global_name in ALIASES[name]:
+        assert f"'{global_name}'" in boot, f"boot.js does not alias {global_name}"
+        assert re.search(rf"^export (?:function|const) {global_name}\b", module, re.M), (
+            f"pages/{name}.js does not export {global_name}")
+    # No template defines them any more.
+    for partial in PARTIALS.glob("*.html"):
+        text = partial.read_text(encoding="utf-8")
+        for global_name in ALIASES[name]:
+            assert f"window.{global_name} =" not in text, partial.name
+            assert f"function {global_name}(" not in text, partial.name
 
 
 def test_every_registered_page_has_its_module_and_partial():

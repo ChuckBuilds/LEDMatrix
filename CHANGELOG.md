@@ -19,6 +19,29 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: four more tabs are ES-module pages (stage 2)
+
+- Rotation, Operation History, Config Editor and Backup & Restore follow the
+  Cache tab (#703): each partial's inline `<script>` is now
+  `static/v3/js/pages/<name>.js` (`durations`, `operation-history`,
+  `raw-json`, `backup-restore`), started once per swap-in by the page
+  registry and stopped on swap-out. None of the four partials has an inline
+  script or `onclick` any more. Buttons carry `data-action` and use one
+  delegated listener. Server data is drawn with `textContent`.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `formatJson`, `manualValidateJson`,
+  `validateJSON`, `saveMainConfig`, `saveSecretsConfig`, `exportBackup`,
+  `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`.
+- Reads are cancelled when a tab is swapped away. Writes (save, delete,
+  export, restore) are not, and their result is still reported.
+- `core/api.js` accepts a raw `body` (a `FormData` upload).
+  `PluginOrderList.init()` accepts a `signal` for its plugin-list request.
+- Small fixes on the way: the Config Editor's "Invalid JSON" line no longer
+  puts the parser's message into `innerHTML`, and Operation History's
+  "Showing x to y of z" now resets when nothing matches.
+- New DOM suites `test/js/dom/test_{durations,operation_history,raw_json,backup_restore}_page.js`.
+  `test/web_interface/test_es_modules.py` pins the converted pages and the aliases.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
