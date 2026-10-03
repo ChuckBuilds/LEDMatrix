@@ -57,7 +57,8 @@ import freetype
 
 from src.common import snapshot_policy
 from src import display_watchdog
-from src.common.frame_timing import FrameTimingRecorder, install_gc_monitor
+from src.common.frame_timing import (
+    FrameTimingRecorder, install_gc_monitor, uninstall_gc_monitor)
 
 if TYPE_CHECKING:
     from src.common.render_gate import RenderGate
@@ -1407,6 +1408,8 @@ class DisplayManager:
         # The stall watchdog would otherwise outlive this manager.
         if getattr(self, 'frame_timing', None) is not None:
             self.frame_timing.close()
+            # Installed with the recorder; stop timing collections with it.
+            uninstall_gc_monitor()
         # Reset the singleton state when cleaning up
         DisplayManager._instance = None
 
