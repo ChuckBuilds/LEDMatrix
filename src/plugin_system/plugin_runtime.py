@@ -259,7 +259,8 @@ class PluginRuntimePublisher:
             if hub is not None and hub.readers_active():
                 return self.relaxed_refresh_interval
         except Exception:  # pylint: disable=broad-except
-            pass
+            # The normal interval is the safe answer: it only writes more.
+            logger.debug("State hub readers_active() failed; using the normal refresh", exc_info=True)
         return self.refresh_interval
 
     def _write(self, running: bool, refresh_interval: Optional[float] = None) -> None:
