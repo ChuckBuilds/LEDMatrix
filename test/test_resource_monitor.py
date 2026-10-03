@@ -18,6 +18,7 @@ from src.plugin_system.resource_monitor import (
     ResourceLimits,
     ResourceLimitExceeded,
     PSUTIL_AVAILABLE,
+    METRICS_SNAPSHOT_KEY,
 )
 
 
@@ -174,7 +175,7 @@ class TestMetricsPersistenceChurn:
         with patch.object(rm.time, "monotonic", return_value=12.0):
             mon.monitor_call("p", lambda: None)
         writes = [c for c in cache.set.call_args_list
-                  if "plugin_metrics:" in str(c)]
+                  if c.args and c.args[0] == rm.METRICS_SNAPSHOT_KEY]
         assert writes, \
             "the first snapshot was dropped because the process was young"
 
@@ -184,7 +185,7 @@ class TestMetricsPersistenceChurn:
         for _ in range(50):
             mon.monitor_call("p", lambda: None)
         writes = [c for c in cache.set.call_args_list
-                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+                  if c.args and c.args[0] == METRICS_SNAPSHOT_KEY]
         assert len(writes) == 1, (
             f"50 calls produced {len(writes)} metric writes; expected 1")
 
@@ -194,10 +195,10 @@ class TestMetricsPersistenceChurn:
         mon = PluginResourceMonitor(cache, enable_monitoring=False)
         mon.monitor_call("p", lambda: None)
         # pretend the interval has passed
-        mon._metrics_persisted_at["p"] -= rm._METRICS_PERSIST_INTERVAL + 1
+        mon._snapshot_persisted_at -= rm._METRICS_PERSIST_INTERVAL + 1
         mon.monitor_call("p", lambda: None)
         writes = [c for c in cache.set.call_args_list
-                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+                  if c.args and c.args[0] == METRICS_SNAPSHOT_KEY]
         assert len(writes) == 2
 
     def test_in_memory_metrics_stay_exact_while_writes_are_skipped(self):
@@ -213,8 +214,11 @@ class TestMetricsPersistenceChurn:
         mon.reset_metrics("p")
         mon.monitor_call("p", lambda: None)
         writes = [c for c in cache.set.call_args_list
-                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
-        assert len(writes) == 2, "reset should clear the throttle timestamp"
+                  if c.args and c.args[0] == METRICS_SNAPSHOT_KEY]
+        # The first call, the reset (which drops the plugin), the next call.
+        assert len(writes) == 3, "reset should clear the throttle timestamp"
+        assert "p" not in writes[1].args[1]["plugins"]
+        assert writes[2].args[1]["plugins"]["p"]["call_count"] == 1
 
     def test_a_failed_write_does_not_buy_the_next_interval_of_silence(self):
         """A set() that raises must not count as having persisted.
@@ -230,5 +234,107 @@ class TestMetricsPersistenceChurn:
         # the very next call must try again rather than skip the interval
         mon.monitor_call("p", lambda: None)
         writes = [c for c in cache.set.call_args_list
-                  if c.args and str(c.args[0]).startswith("plugin_metrics:")]
+                  if c.args and c.args[0] == METRICS_SNAPSHOT_KEY]
         assert len(writes) == 2, "a failed write should be retried, not skipped"
+
+
+class TestOneSnapshotForAllPlugins:
+    """Every plugin's metrics share one record, written at most once a minute.
+
+    A record per plugin, each throttled to 30 s, was still two writes a minute
+    per plugin. The web UI's output must not change: it reads the same numbers
+    for the same plugins, from the snapshot or, for a plugin the snapshot does
+    not have yet, from the per-plugin record an older version left.
+    """
+
+    @pytest.fixture
+    def cache_dir(self, tmp_path):
+        return str(tmp_path)
+
+    def _manager(self, cache_dir):
+        from src.cache_manager import CacheManager
+        with patch('src.cache_manager.CacheManager._get_writable_cache_dir',
+                   return_value=cache_dir):
+            manager = CacheManager()
+        manager.stop_cleanup_thread()
+        return manager
+
+    def test_many_plugins_one_write(self):
+        cache = _cache()
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        for _ in range(10):
+            for pid in ("a", "b", "c", "d"):
+                mon.monitor_call(pid, lambda: None)
+        sets = cache.set.call_args_list
+        assert len(sets) == 1
+        assert not any(str(c.args[0]).startswith("plugin_metrics:") for c in sets)
+
+    def test_the_web_reads_what_the_display_has(self, cache_dir):
+        display = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        for pid in ("a", "b"):
+            display.monitor_call(pid, lambda: None)
+        display._snapshot_persisted_at = None        # let the next call publish
+        display.monitor_call("a", lambda: None)
+        web = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        for pid in ("a", "b"):
+            assert web.get_metrics_summary(pid, force_reload=True) == \
+                display.get_metrics_summary(pid)
+        assert web.get_metrics_summary("a", force_reload=True)["call_count"] == 2
+
+    def test_a_per_plugin_record_from_an_older_version_is_still_read(self, cache_dir):
+        old = self._manager(cache_dir)
+        old.set("plugin_metrics:legacy", {"call_count": 9, "total_execution_time": 1.8,
+                                          "last_update_time": time.time()})
+        display = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        display.monitor_call("other", lambda: None)
+        web = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        assert web.get_metrics_summary("legacy", force_reload=True)["call_count"] == 9
+        # The display carries the count on from it, into the snapshot.
+        display.monitor_call("legacy", lambda: None)
+        display._snapshot_persisted_at = None
+        display.monitor_call("other", lambda: None)
+        assert web.get_metrics_summary("legacy", force_reload=True)["call_count"] == 10
+
+    def test_a_restart_keeps_plugins_it_has_not_run(self, cache_dir):
+        first = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        first.monitor_call("disabled_later", lambda: None)
+        restarted = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        restarted.monitor_call("running", lambda: None)
+        web = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        assert web.get_metrics_summary("disabled_later", force_reload=True)["call_count"] == 1
+        assert web.get_metrics_summary("running", force_reload=True)["call_count"] == 1
+
+    def test_a_reset_from_the_web_sticks_for_a_plugin_the_display_is_not_running(
+            self, cache_dir):
+        display = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        display.monitor_call("idle", lambda: None)
+        web = PluginResourceMonitor(self._manager(cache_dir), enable_monitoring=False)
+        assert web.get_metrics_summary("idle", force_reload=True)["call_count"] == 1
+        web.reset_metrics("idle")
+        display._snapshot_persisted_at = None
+        display.monitor_call("busy", lambda: None)
+        assert web.get_metrics_summary("idle", force_reload=True)["call_count"] == 0
+
+    def test_a_long_idle_plugin_is_dropped(self, cache_dir):
+        import src.plugin_system.resource_monitor as rm
+        manager = self._manager(cache_dir)
+        manager.set(METRICS_SNAPSHOT_KEY, {"schema": 1, "plugins": {
+            "gone": {"call_count": 3, "last_update_time":
+                     time.time() - rm._METRICS_SNAPSHOT_ENTRY_MAX_AGE - 10},
+            "recent": {"call_count": 4, "last_update_time": time.time() - 60},
+        }})
+        display = PluginResourceMonitor(manager, enable_monitoring=False)
+        display.monitor_call("p", lambda: None)
+        plugins = manager.get(METRICS_SNAPSHOT_KEY, max_age=None, memory_ttl=0)["plugins"]
+        assert set(plugins) == {"recent", "p"}
+
+    @pytest.mark.parametrize("junk", [[1, 2], {"schema": 99, "plugins": {"p": {}}},
+                                      {"schema": 1, "plugins": "nope"}])
+    def test_an_unusable_snapshot_is_ignored(self, junk):
+        cache = MagicMock()
+        cache.get.side_effect = lambda key, **kw: junk if key == METRICS_SNAPSHOT_KEY else None
+        mon = PluginResourceMonitor(cache, enable_monitoring=False)
+        assert mon.get_metrics_summary("p", force_reload=True)["call_count"] == 0
+        mon.monitor_call("p", lambda: None)
+        written = cache.set.call_args.args[1]
+        assert written["plugins"]["p"]["call_count"] == 1

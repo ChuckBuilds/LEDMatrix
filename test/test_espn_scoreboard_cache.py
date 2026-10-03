@@ -13,6 +13,7 @@ No network: sessions are fakes, and the fetch service is a fresh one per test.
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import date, datetime
@@ -321,6 +322,10 @@ class TestWithARealCacheManager:
         record["timestamp"] = time.time() - seconds
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(record, fh)
+        # Rewriting the file moves its mtime to now, and the disk cache takes a
+        # record's age from the newer of its timestamp and its mtime (an
+        # unchanged re-save only touches the file), so age the mtime as well.
+        os.utime(path, (record["timestamp"], record["timestamp"]))
         cm._memory_cache_component.clear()
 
     def test_a_writers_long_ttl_does_not_outlast_the_readers(self, cm, service):
