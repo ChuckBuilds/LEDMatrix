@@ -84,6 +84,43 @@ python3 web_interface/start.py
 
 ### Installation & Build Issues
 
+#### "This version of Raspberry Pi OS is not supported"
+
+LEDMatrix installs on Raspberry Pi OS Lite **Trixie** (Debian 13, Python
+3.13) or **Bookworm** (Debian 12, Python 3.11). The installer checks
+`/etc/os-release` before it changes anything and stops on anything else.
+
+**Check what you have:**
+```bash
+grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+python3 --version
+```
+
+**Solutions:**
+- `VERSION_ID="11"` (Bullseye) or older: flash a new card with Raspberry Pi
+  Imager, choosing Raspberry Pi OS Lite (64-bit). Trixie is recommended;
+  Bookworm (Legacy) also works. An in-place upgrade from Bullseye is not
+  supported by Raspberry Pi and is not worth the risk.
+- "Desktop environment detected": use the Lite image, not the desktop one.
+- "python3 is Python 3.x; LEDMatrix needs Python 3.11 or newer": something
+  has replaced the system `python3`. Point it back at the OS's own Python
+  (`/usr/bin/python3` should be 3.11 on Bookworm, 3.13 on Trixie).
+- `sudo bash scripts/check_system_compatibility.sh` runs the same checks
+  without installing anything.
+
+#### "This Pi manages its network with dhcpcd, not NetworkManager"
+
+A warning, not an error: the install carries on and the display works. But
+choosing a WiFi network from the web page and the `LEDMatrix-Setup` hotspot
+both need NetworkManager, the default on Bookworm and Trixie. It appears
+when dhcpcd was selected in `raspi-config`. Switch back with a keyboard and
+screen attached (or over Ethernet), since the WiFi connection drops briefly:
+
+```bash
+sudo raspi-config   # Advanced Options -> Network Config -> NetworkManager
+sudo reboot
+```
+
 #### Step 6 fails: "Failed building wheel for rgbmatrix"
 
 **Symptoms:**
@@ -407,9 +444,16 @@ then restore only that file, for example
 
 5. **Check required services:**
    ```bash
+   systemctl is-active NetworkManager   # must say "active"
    sudo systemctl status hostapd
    sudo systemctl status dnsmasq
    ```
+   On a fresh install `hostapd` shows as **masked**. That is expected, on
+   Bookworm and Trixie alike: Debian's hostapd package masks the service
+   when it is installed without a configuration, so the hotspot is brought
+   up through NetworkManager instead (look for `nmcli hotspot fallback` in
+   `journalctl -u ledmatrix-wifi-monitor`). If NetworkManager is not
+   active, see "This Pi manages its network with dhcpcd" above.
 
 6. **Manually enable AP mode:**
    ```bash

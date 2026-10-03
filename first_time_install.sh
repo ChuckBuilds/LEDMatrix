@@ -47,38 +47,51 @@ if echo "${DEVICE_MODEL:-}" | grep -qi "Raspberry Pi 5"; then
     echo "Raspberry Pi 5 detected — will verify RP1 library support."
 fi
 
-# Check OS version - must be Raspberry Pi OS Lite (Trixie)
+# Check OS version - must be Raspberry Pi OS Lite, Bookworm or Trixie.
+# The rules live in scripts/install/lib_os.sh, shared with
+# scripts/check_system_compatibility.sh.
 echo ""
 echo "Checking operating system requirements..."
 echo "----------------------------------------"
 OS_CHECK_FAILED=0
+OS_RELEASE=""
 
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    echo "Detected OS: $PRETTY_NAME"
-    echo "Version ID: ${VERSION_ID:-unknown}"
-    
-    # Check if it's Raspberry Pi OS or Debian
-    if [[ "$ID" != "raspbian" ]] && [[ "$ID" != "debian" ]]; then
-        echo "✗ ERROR: This script requires Raspberry Pi OS (raspbian/debian)"
-        echo "  Detected OS ID: $ID"
-        OS_CHECK_FAILED=1
-    fi
-    
-    # Check if it's Debian 13 (Trixie)
-    if [ "${VERSION_ID:-0}" != "13" ]; then
-        echo "✗ ERROR: This script requires Raspberry Pi OS Lite (Trixie) - Debian 13"
-        echo "  Detected version: ${VERSION_ID:-unknown}"
-        echo "  Please upgrade to Raspberry Pi OS Lite (Trixie) before continuing"
-        OS_CHECK_FAILED=1
+OS_LIB="$(cd "$(dirname "$0")" && pwd)/scripts/install/lib_os.sh"
+if [ ! -f "$OS_LIB" ]; then
+    echo "✗ ERROR: $OS_LIB is missing, so the operating system cannot be checked."
+    echo "  Your LEDMatrix download is incomplete. Download it again and re-run this script:"
+    echo "    git clone https://github.com/ChuckBuilds/LEDMatrix.git"
+    exit 1
+fi
+# shellcheck source=scripts/install/lib_os.sh
+. "$OS_LIB"
+
+if [ -r "$LM_OS_RELEASE_FILE" ]; then
+    echo "Detected OS: $(lm_os_field PRETTY_NAME)"
+    OS_VERSION_ID=$(lm_os_field VERSION_ID)
+    echo "Version ID: ${OS_VERSION_ID:-unknown}"
+
+    if OS_RELEASE=$(lm_os_release); then
+        echo "✓ $(lm_release_label "$OS_RELEASE") detected"
     else
-        echo "✓ Debian 13 (Trixie) detected"
+        OS_ID=$(lm_os_field ID)
+        if [[ "$OS_ID" != "raspbian" ]] && [[ "$OS_ID" != "debian" ]]; then
+            echo "✗ ERROR: This script requires Raspberry Pi OS (raspbian/debian)"
+            echo "  Detected OS ID: ${OS_ID:-unknown}"
+        else
+            echo "✗ ERROR: This version of Raspberry Pi OS is not supported"
+            echo "  Detected version: ${OS_VERSION_ID:-unknown}"
+            echo "  Supported: Trixie (Debian 13) and Bookworm (Debian 12)"
+        fi
+        OS_CHECK_FAILED=1
     fi
-    
+
     # Check if it's the Lite version (no desktop environment)
     # Check for desktop packages or desktop services
     DESKTOP_DETECTED=0
-    if dpkg -l | grep -qE "^ii.*raspberrypi-ui-mods|^ii.*lxde|^ii.*xfce|^ii.*gnome|^ii.*kde"; then
+    # grep without -q: -q exits at the first match, dpkg then dies of SIGPIPE,
+    # and pipefail turns a found desktop into "not found".
+    if dpkg -l | grep -E "^ii.*raspberrypi-ui-mods|^ii.*lxde|^ii.*xfce|^ii.*gnome|^ii.*kde" >/dev/null; then
         DESKTOP_DETECTED=1
     fi
     if systemctl list-units --type=service --state=running 2>/dev/null | grep -qE "lightdm|gdm3|sddm|lxdm"; then
@@ -96,23 +109,52 @@ if [ -f /etc/os-release ]; then
         echo "✓ Lite version confirmed (no desktop environment)"
     fi
 else
-    echo "✗ ERROR: Could not detect OS version (/etc/os-release not found)"
+    echo "✗ ERROR: Could not detect OS version ($LM_OS_RELEASE_FILE not found)"
     OS_CHECK_FAILED=1
+fi
+
+# Python: whatever python3 the release ships (3.11 on Bookworm, 3.13 on
+# Trixie). Checked only when python3 is already there -- Step 1 installs it
+# otherwise, and on a supported release that brings the release's own version.
+if [ "$OS_CHECK_FAILED" -eq 0 ]; then
+    if PYTHON3_VERSION=$(lm_python_version); then
+        case "$(lm_python_check "$PYTHON3_VERSION")" in
+            ok)
+                echo "✓ Python $PYTHON3_VERSION detected"
+                ;;
+            too-old)
+                echo "✗ ERROR: python3 is Python $PYTHON3_VERSION; LEDMatrix needs Python 3.$LM_PYTHON_MIN_MINOR or newer"
+                echo "  $(lm_release_label "$OS_RELEASE") ships Python $(lm_release_python "$OS_RELEASE"). Something on this"
+                echo "  system has changed which Python 'python3' runs; point it back at the system Python."
+                OS_CHECK_FAILED=1
+                ;;
+            *)
+                echo "⚠ python3 is Python $PYTHON3_VERSION, which LEDMatrix has not been tested with"
+                echo "  (tested: 3.$LM_PYTHON_MIN_MINOR to 3.$LM_PYTHON_MAX_MINOR). Continuing anyway."
+                ;;
+        esac
+    else
+        echo "python3 not found yet; Step 1 installs it."
+    fi
 fi
 
 if [ "$OS_CHECK_FAILED" -eq 1 ]; then
     echo ""
-    echo "Installation cannot continue. Please install Raspberry Pi OS Lite (Trixie) and try again."
-    echo ""
-    echo "To install Raspberry Pi OS Lite (Trixie):"
-    echo "  1. Download from: https://www.raspberrypi.com/software/operating-systems/"
-    echo "  2. Select 'Raspberry Pi OS Lite (64-bit)' with Debian 13 (Trixie)"
-    echo "  3. Flash to SD card using Raspberry Pi Imager"
-    echo "  4. Boot and run this script again"
+    echo "Installation cannot continue."
+    lm_print_supported_os_help
     exit 1
 fi
 
 echo "✓ OS requirements met"
+
+# WiFi setup (the web page's WiFi tab and the LEDMatrix-Setup hotspot) needs
+# NetworkManager. Both releases use it by default; say so plainly if this Pi
+# does not, but carry on -- the display itself does not depend on it.
+case "$(lm_network_stack)" in
+    networkmanager) echo "✓ NetworkManager is managing the network" ;;
+    dhcpcd) lm_print_dhcpcd_advice ;;
+    *) echo "⚠ Could not tell which service manages the network; WiFi setup from the web page needs NetworkManager" ;;
+esac
 echo ""
 
 # The user who ran the installer: SUDO_USER once we are running under sudo
@@ -1370,15 +1412,16 @@ if ! command -v setcap >/dev/null 2>&1; then
     echo "⚠ setcap not found, skipping capability configuration"
     echo "  Install libcap2-bin if you need hardware timing capabilities"
 else
-    # Find the Python binary and resolve symlinks to get the real binary
+    # The binary the services run (ExecStart=/usr/bin/python3), symlinks
+    # resolved: python3.11 on Bookworm, python3.13 on Trixie. This used to
+    # prefer /usr/bin/python3.13 whenever it existed, which would set the
+    # capability on an interpreter the services never run if python3 pointed
+    # elsewhere.
     PYTHON_BIN=""
     PYTHON_VER=""
-    if [ -f "/usr/bin/python3.13" ]; then
-        PYTHON_BIN=$(readlink -f /usr/bin/python3.13)
-        PYTHON_VER="3.13"
-    elif [ -f "/usr/bin/python3" ]; then
+    if [ -f "/usr/bin/python3" ]; then
         PYTHON_BIN=$(readlink -f /usr/bin/python3)
-        PYTHON_VER=$(python3 --version 2>&1 | grep -oP '(?<=Python )\d+\.\d+' || echo "unknown")
+        PYTHON_VER=$(lm_python_version /usr/bin/python3) || PYTHON_VER="unknown"
     fi
 
     if [ -n "$PYTHON_BIN" ] && [ -f "$PYTHON_BIN" ]; then

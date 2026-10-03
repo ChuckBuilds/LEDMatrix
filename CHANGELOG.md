@@ -19,6 +19,34 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Install
+
+- Raspberry Pi OS **Bookworm** (Debian 12, Python 3.11) is supported,
+  alongside **Trixie** (Debian 13, Python 3.13). The installer used to stop
+  on anything but Trixie. Which releases and Pythons are accepted now lives
+  in one place, `scripts/install/lib_os.sh`, which `first_time_install.sh`
+  and `scripts/check_system_compatibility.sh` both read, so the two can no
+  longer disagree (the compatibility check called Bookworm an error, and
+  still accepted Python 3.10, which the rgbmatrix bindings refuse). An
+  unsupported system gets plain directions to the right image; a `python3`
+  older than 3.11 stops the install before anything changes.
+- The installer says up front when the Pi runs dhcpcd instead of
+  NetworkManager, and how to switch back: the web page's WiFi tab and the
+  `LEDMatrix-Setup` hotspot need NetworkManager. Not fatal, and it does not
+  switch the network stack itself, since that can cut the SSH session.
+- The desktop check no longer misses a desktop install: `dpkg -l | grep -q`
+  under `pipefail` read a match as "not found".
+- `cap_sys_nice` is set on the interpreter the services run
+  (`/usr/bin/python3`); it preferred `/usr/bin/python3.13` whenever it
+  existed.
+- The Step 7 dependency fallback (`scripts/install_dependencies_apt.py`) no
+  longer accepts apt packages older than the pins -- Bookworm's Flask 2.2.2
+  and Pillow 9.4, Trixie's Flask 3.1.1 and Pillow 11.1. The floors are read
+  from `web_interface/requirements.txt`, and pip is asked for `Pillow`, not
+  `PIL`.
+- CI runs the unit and plugin-safety suites on Python 3.11 and 3.13 (was
+  3.12); mypy targets 3.11.
+
 ### Updates refresh the systemd units; new installs run the newest release
 
 - **Updates now install changed systemd units.** An update (Update Code, or

@@ -6,8 +6,8 @@ Complete / Web UI Access" summary. `reboot` returns at once and the script
 carried on printing while the system went down, so the SSH session usually
 dropped before the user saw the web UI address.
 
-first_time_install.sh exits on anything but Raspberry Pi OS Trixie before it
-parses its arguments, so the behavioural test runs only the tail of the
+first_time_install.sh exits on anything but Raspberry Pi OS Bookworm or Trixie
+before it parses its arguments, so the behavioural test runs only the tail of the
 script -- from the summary to the end -- with systemctl, nmcli, hostname, ip
 and reboot stubbed.
 """
