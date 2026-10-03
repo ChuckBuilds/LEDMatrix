@@ -143,6 +143,30 @@ for VERIFY_UNIT in ledmatrix-update-verify.service ledmatrix-update-verify.path;
     fi
 done
 
+# The helper updates run (through sudo, see lib_sudoers.sh) to install these
+# same units when a new version changes their templates, and to put the old
+# ones back if the automatic update rolls back. Root-owned and outside the
+# checkout, so the web user who owns the checkout cannot change what sudo runs.
+# Not fatal: without it, updates leave the units for the next reinstall.
+REFRESH_UNITS_SRC="$PROJECT_ROOT_DIR/scripts/install/ledmatrix_refresh_units.py"
+REFRESH_UNITS_DEST=/usr/local/sbin/ledmatrix-refresh-units
+if [ -f "$REFRESH_UNITS_SRC" ]; then
+    if sudo install -D -o root -g root -m 0755 "$REFRESH_UNITS_SRC" "$REFRESH_UNITS_DEST"; then
+        echo "Installed $REFRESH_UNITS_DEST (lets updates refresh these units)"
+    else
+        echo "WARNING: could not install $REFRESH_UNITS_DEST; updates will not refresh the systemd units" >&2
+    fi
+fi
+# The units above are copied from mktemp files, which are 0600. 0644 is what
+# first_time_install.sh (Step 8.1) sets, and lets the web interface compare
+# them with the templates after an update without root.
+for INSTALLED_UNIT in ledmatrix.service ledmatrix-web.service \
+        ledmatrix-update-verify.service ledmatrix-update-verify.path; do
+    if [ -f "/etc/systemd/system/$INSTALLED_UNIT" ]; then
+        sudo chmod 644 "/etc/systemd/system/$INSTALLED_UNIT" || true
+    fi
+done
+
 echo "Reloading systemd daemon for web service..."
 sudo systemctl daemon-reload
 

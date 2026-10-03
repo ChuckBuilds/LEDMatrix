@@ -3,6 +3,10 @@
 # LED Matrix One-Shot Installation Script
 # This script provides a single-command installation experience
 # Usage: curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | bash
+#
+# A new install runs the newest release (the stable update channel). For the
+# newest code from main instead (the beta channel), set LEDMATRIX_CHANNEL=beta:
+#   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | LEDMATRIX_CHANNEL=beta bash
 
 set -Eeuo pipefail
 
@@ -205,6 +209,114 @@ check_sudo() {
     print_success "Sudo access confirmed"
 }
 
+# --- release checkout helpers ------------------------------------------------
+# Which version an install runs. The rules are web_interface/update_channel.py's,
+# so the installer and the web interface's updates agree:
+#   stable (default)  the newest vX.Y.Z tag by semantic version; pre-releases
+#                     (v3.8.0-rc1), leading zeros and other tags are ignored
+#   beta              main, the newest code
+# Never backwards: an existing checkout moves to a release only when that
+# release contains its current commit (git merge-base --is-ancestor).
+# Never fatal: whatever goes wrong, the install carries on with the checkout
+# as it is.
+
+# Print "stable" or "beta": LEDMATRIX_CHANNEL when it is set, else the
+# existing install's auto_update.channel (CONFIG_FILE), else stable.
+_lm_channel() {
+    local config_file="${1:-}" value
+    value=$(printf '%s' "${LEDMATRIX_CHANNEL:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+    case "$value" in
+        stable|beta) printf '%s\n' "$value"; return 0 ;;
+        "") ;;
+        *) print_warning "LEDMATRIX_CHANNEL=${LEDMATRIX_CHANNEL} is not stable or beta; using stable" >&2
+           printf 'stable\n'; return 0 ;;
+    esac
+    if [ -n "$config_file" ] && [ -f "$config_file" ] && command -v python3 >/dev/null 2>&1; then
+        value=$(python3 - "$config_file" 2>/dev/null <<'PY' || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        section = json.load(f).get("auto_update")
+    value = section.get("channel") if isinstance(section, dict) else None
+    print(value.strip().lower() if isinstance(value, str) else "")
+except Exception:
+    print("")
+PY
+)
+        if [ "$value" = "beta" ]; then
+            printf 'beta\n'
+            return 0
+        fi
+    fi
+    printf 'stable\n'
+}
+
+# Print the newest release tag of the repository in the current directory,
+# or nothing when it has none.
+_lm_newest_release_tag() {
+    git tag --list 'v*' 2>/dev/null \
+        | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+        | sort -t. -k1.2,1n -k2,2n -k3,3n \
+        | tail -n 1 || true
+}
+
+# A fresh clone (on main): move to the newest release unless beta was asked for.
+_lm_checkout_release_after_clone() {
+    local channel tag
+    channel=$(_lm_channel "")
+    if [ "$channel" = "beta" ]; then
+        print_success "Beta channel: installing the newest code from main"
+        return 0
+    fi
+    tag=$(_lm_newest_release_tag)
+    if [ -z "$tag" ]; then
+        print_warning "No release found; installing the newest code from main"
+        return 0
+    fi
+    if git -c advice.detachedHead=false checkout --quiet --detach "${tag}^{commit}"; then
+        print_success "Installing release $tag (stable channel)"
+    else
+        print_warning "Could not check out release $tag; installing the newest code from main"
+    fi
+    return 0
+}
+
+# An existing checkout: move it forward along its channel, never backwards.
+# Returns 1 when it should be updated the way it always was (a fast-forward
+# pull of its branch): beta, or stable on a branch newer than every release.
+_lm_update_existing_checkout() {
+    local channel tag head tag_sha
+    channel=$(_lm_channel "config/config.json")
+    if [ "$channel" = "beta" ]; then
+        return 1
+    fi
+    if ! git fetch --quiet --tags --force origin >/dev/null 2>&1; then
+        print_warning "Could not fetch release tags; keeping the current version"
+        return 0
+    fi
+    tag=$(_lm_newest_release_tag)
+    head=$(git rev-parse --verify --quiet HEAD 2>/dev/null || true)
+    if [ -n "$tag" ] && [ -n "$head" ] && git merge-base --is-ancestor "$head" "$tag" 2>/dev/null; then
+        tag_sha=$(git rev-parse --verify --quiet "${tag}^{commit}" 2>/dev/null || true)
+        if [ "$head" = "$tag_sha" ]; then
+            print_success "Already on the newest release, $tag"
+        elif git -c advice.detachedHead=false checkout --quiet --detach "${tag}^{commit}"; then
+            print_success "Updated to release $tag (stable channel)"
+        else
+            print_warning "Could not move to release $tag (local changes?); keeping the current version"
+        fi
+        return 0
+    fi
+    if git symbolic-ref --quiet HEAD >/dev/null 2>&1; then
+        # Newer than the newest release (or no release yet): follow the branch
+        # until a release includes this version, as updates do.
+        return 1
+    fi
+    print_success "This checkout is newer than the newest release${tag:+ ($tag)}; leaving it as it is"
+    return 0
+}
+# --- end release checkout helpers --------------------------------------------
+
 # Main installation function
 main() {
     print_step "LED Matrix One-Shot Installation"
@@ -292,7 +404,10 @@ main() {
             
             # Try to safely update current branch first (fast-forward only to avoid unintended merges)
             PULL_SUCCESS=false
-            if git pull --ff-only origin "$CURRENT_BRANCH" >/dev/null 2>&1; then
+            # Stable: the newest release, if it contains this version.
+            if _lm_update_existing_checkout; then
+                PULL_SUCCESS=true
+            elif git pull --ff-only origin "$CURRENT_BRANCH" >/dev/null 2>&1; then
                 print_success "Repository updated successfully (branch: $CURRENT_BRANCH)"
                 PULL_SUCCESS=true
             else
@@ -323,10 +438,12 @@ main() {
             rm -rf "$REPO_DIR"
             print_success "Cloning repository..."
             retry git clone "$REPO_URL" "$REPO_DIR"
+            (cd "$REPO_DIR" && _lm_checkout_release_after_clone) || print_warning "Could not choose a release; installing the newest code from main"
         fi
     else
         print_success "Cloning repository to $REPO_DIR..."
         retry git clone "$REPO_URL" "$REPO_DIR"
+        (cd "$REPO_DIR" && _lm_checkout_release_after_clone) || print_warning "Could not choose a release; installing the newest code from main"
     fi
     
     # Verify repository is accessible
@@ -397,6 +514,7 @@ main() {
         sudo -E env TMPDIR=/tmp LEDMATRIX_ASSUME_YES=1 \
             LEDMATRIX_APT_UPDATED="${LEDMATRIX_APT_UPDATED:-0}" \
             LEDMATRIX_AUTO_UPDATE="${LEDMATRIX_AUTO_UPDATE:-}" \
+            LEDMATRIX_CHANNEL="${LEDMATRIX_CHANNEL:-}" \
             bash ./first_time_install.sh -y </dev/null
     fi
     INSTALL_EXIT_CODE=$?

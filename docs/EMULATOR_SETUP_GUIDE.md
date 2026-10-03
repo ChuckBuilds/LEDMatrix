@@ -17,13 +17,13 @@ The LEDMatrix emulator allows you to run and test LEDMatrix displays on your com
 ## Prerequisites
 
 ### System Requirements
-- Python 3.10 or higher
+- Python 3.11 or higher (3.11 and 3.13 are tested)
 - Windows, macOS, or Linux
 - At least 2GB RAM (4GB recommended)
 - Internet connection for plugin downloads
 
 ### Required Software
-- Python 3.10+
+- Python 3.11+
 - pip (Python package manager)
 - Git (for plugin management)
 

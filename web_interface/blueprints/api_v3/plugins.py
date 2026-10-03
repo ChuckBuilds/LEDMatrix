@@ -52,7 +52,8 @@ def get_installed_plugins():
     display publishes (src/plugin_system/plugin_runtime.py), and only while
     that snapshot is live: when the display is stopped, hung or has never
     published, they are null and ``data.runtime.status`` says why
-    (``stale``, ``stopped``, ``unknown``) instead of passing on old truth.
+    (``stalled``, ``stale``, ``stopped``, ``unknown``) instead of passing on
+    old truth.
     Health, metrics and errors are served by /plugins/health,
     /plugins/metrics and /errors.
     """

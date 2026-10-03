@@ -15,6 +15,12 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 - Power supply (5V, 4A minimum recommended)
 - MicroSD card (16GB minimum)
 
+**Software:**
+- Raspberry Pi OS Lite, Trixie (Debian 13) or Bookworm (Debian 12). Trixie
+  is the current release; Bookworm is listed as Legacy in Raspberry Pi
+  Imager. No other system is supported, and the installer says so up front.
+- The OS's own Python: 3.13 on Trixie, 3.11 on Bookworm
+
 **Network:**
 - WiFi network (or Ethernet cable)
 - Computer with web browser on same network
@@ -28,7 +34,8 @@ This guide will help you set up your LEDMatrix display for the first time and ge
 There is no prebuilt SD card image — you install LEDMatrix onto stock
 Raspberry Pi OS Lite yourself:
 
-1. Flash Raspberry Pi OS Lite to the MicroSD card (Raspberry Pi Imager)
+1. Flash Raspberry Pi OS Lite (Trixie, or Bookworm) to the MicroSD card
+   (Raspberry Pi Imager)
 2. Connect the LED matrix to your Raspberry Pi, insert the card, and
    power on
 3. SSH into the Pi and run the one-shot installer:
@@ -38,6 +45,17 @@ Raspberry Pi OS Lite yourself:
    or clone the repo and run `sudo ./first_time_install.sh` — see the
    [README Installation Steps / Quick Install](../README.md#installation-steps)
    for full details
+
+   The one-shot installer installs the newest release (the **stable** update
+   channel). To run the newest, unreleased code from `main` instead (the
+   **beta** channel), put `LEDMATRIX_CHANNEL=beta` in front of `bash`:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | LEDMATRIX_CHANNEL=beta bash
+   ```
+   A manual clone starts on `main`; add `--beta` to `first_time_install.sh`
+   to stay on it, or leave it off and the first update after the next
+   release moves the device onto releases. You can switch channels later on
+   the General tab.
 
 **Expected Behavior after install:**
 - LED matrix will light up

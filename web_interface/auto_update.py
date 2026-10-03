@@ -603,6 +603,9 @@ class AutoUpdater:
             'release': info.get('release') if new_head == info.get('upstream_head') else None,
             'display_was_active': display_was_active,
             'dependency_failures': list(core.get('dependency_failures') or []),
+            # The update installed new systemd units: a rollback puts the
+            # previous ones back (ledmatrix-refresh-units --restore).
+            'units_refreshed': (core.get('unit_refresh') or {}).get('status') == 'refreshed',
             'created_at': self.clock(),
         }
 
