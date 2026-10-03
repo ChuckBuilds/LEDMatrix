@@ -95,11 +95,13 @@ class StartupValidator:
     def _validate_systemd_units(self) -> None:
         """Warn when an installed unit has drifted from the repo's template.
 
-        Nothing re-applies these after the first install. `git pull` -- which is
-        what the web UI's update button runs -- brings a new template into the
-        checkout, but nothing copies it to /etc/systemd/system and nothing runs
-        `systemctl daemon-reload`, so the unit that actually runs is whatever
-        first_time_install.sh wrote on day one.
+        Before updates refreshed units, nothing re-applied these after the
+        first install: `git pull` brought a new template into the checkout,
+        but nothing copied it to /etc/systemd/system, so the unit that
+        actually ran was whatever first_time_install.sh wrote on day one.
+        Updates now install changed units through the root helper
+        ledmatrix-refresh-units (web_interface/unit_refresh.py) -- but only on
+        a device whose installer granted it, so this still catches the rest.
 
         That makes every hardening added to a unit inert on existing installs.
         Measured on one rig: the installed unit was thirteen days older than the
@@ -141,10 +143,11 @@ class StartupValidator:
 
                 if self._unit_body(expected) != self._unit_body(actual):
                     self.warnings.append(
-                        f"{installed.name} differs from {template_rel}; the "
-                        "installed unit is not refreshed by an update, so "
+                        f"{installed.name} differs from {template_rel}, so "
                         "settings added to the template are not in effect. "
-                        "Re-run scripts/install/install_service.sh to apply them."
+                        "Updates apply them only once the installer has granted "
+                        "ledmatrix-refresh-units: re-run "
+                        "scripts/install/install_service.sh (or first_time_install.sh) to apply them."
                     )
         except OSError as e:
             self.logger.debug("Could not compare systemd units: %s", e)

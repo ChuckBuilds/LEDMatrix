@@ -265,6 +265,8 @@ SKIP_SWAP=${LEDMATRIX_SKIP_SWAP:-0}
 BUILD_JOBS_OVERRIDE=${LEDMATRIX_BUILD_JOBS:-}
 # Weekly automatic updates: 1 on, 0 off, empty = ask (interactive) or leave as is.
 AUTO_UPDATE=${LEDMATRIX_AUTO_UPDATE:-}
+# Update channel written to config.json: stable, beta, or empty = leave as is.
+UPDATE_CHANNEL=$(printf '%s' "${LEDMATRIX_CHANNEL:-}" | tr '[:upper:]' '[:lower:]')
 
 usage() {
     cat <<USAGE
@@ -282,12 +284,18 @@ Options:
       --enable-auto-update  Turn on weekly automatic updates (with health
                             check and automatic rollback)
       --no-auto-update      Leave weekly automatic updates off
+      --beta                Follow main, the newest code (the beta update
+                            channel). Without it, updates follow releases
+                            (stable). It sets the channel; it does not move
+                            this checkout -- the one-shot installer picks the
+                            version, and so does the next update.
   -h, --help                Show this help message and exit
 
 Environment variables (same effect as flags):
   LEDMATRIX_ASSUME_YES=1, RPI_RGB_FORCE_REBUILD=1, LEDMATRIX_SKIP_SOUND=1,
   LEDMATRIX_SKIP_PERF=1, LEDMATRIX_SKIP_REBOOT_PROMPT=1,
-  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N, LEDMATRIX_AUTO_UPDATE=1|0
+  LEDMATRIX_SKIP_SWAP=1, LEDMATRIX_BUILD_JOBS=N, LEDMATRIX_AUTO_UPDATE=1|0,
+  LEDMATRIX_CHANNEL=stable|beta
 
 Low-memory devices:
   On a Pi with under 2GB of RAM the C++ build is limited to fewer parallel
@@ -307,6 +315,7 @@ while [ $# -gt 0 ]; do
         --skip-swap) SKIP_SWAP=1 ;;
         --enable-auto-update) AUTO_UPDATE=1 ;;
         --no-auto-update) AUTO_UPDATE=0 ;;
+        --beta) UPDATE_CHANNEL=beta ;;
         --build-jobs)
             shift
             if [ $# -eq 0 ]; then echo "--build-jobs requires a number"; usage; exit 1; fi
@@ -915,15 +924,25 @@ if [ -z "$AUTO_UPDATE" ] && [ "$ASSUME_YES" != "1" ] && [ -t 0 ]; then
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then AUTO_UPDATE=1; else AUTO_UPDATE=0; fi
 fi
-if [ "$AUTO_UPDATE" = "1" ] || [ "$AUTO_UPDATE" = "0" ]; then
-    if python3 - "$PROJECT_ROOT_DIR/config/config.json" "$AUTO_UPDATE" <<'PY'
+case "$UPDATE_CHANNEL" in
+    stable|beta|"") ;;
+    *) echo "⚠ LEDMATRIX_CHANNEL=$UPDATE_CHANNEL is not stable or beta; leaving the update channel as it is"
+       UPDATE_CHANNEL="" ;;
+esac
+# The update channel, likewise only when asked for (--beta / LEDMATRIX_CHANNEL).
+if [ "$AUTO_UPDATE" = "1" ] || [ "$AUTO_UPDATE" = "0" ] || [ -n "$UPDATE_CHANNEL" ]; then
+    if python3 - "$PROJECT_ROOT_DIR/config/config.json" "$AUTO_UPDATE" "$UPDATE_CHANNEL" <<'PY'
 import json, os, sys, tempfile
-path, enabled = sys.argv[1], sys.argv[2] == "1"
+path, enabled = sys.argv[1], sys.argv[2]
+channel = sys.argv[3] if len(sys.argv) > 3 else ""
 with open(path, encoding="utf-8") as f:
     config = json.load(f)
 if not isinstance(config.get("auto_update"), dict):
     config["auto_update"] = {}
-config["auto_update"]["enabled"] = enabled
+if enabled in ("0", "1"):
+    config["auto_update"]["enabled"] = enabled == "1"
+if channel:
+    config["auto_update"]["channel"] = channel
 # Written beside the original and swapped in whole: the display service's
 # config watcher may be running and must never read a half-written file.
 original = os.stat(path)
@@ -944,9 +963,11 @@ except BaseException:
     raise
 PY
     then
-        if [ "$AUTO_UPDATE" = "1" ]; then echo "✓ Weekly automatic updates enabled"; else echo "✓ Weekly automatic updates off"; fi
+        if [ "$AUTO_UPDATE" = "1" ]; then echo "✓ Weekly automatic updates enabled"
+        elif [ "$AUTO_UPDATE" = "0" ]; then echo "✓ Weekly automatic updates off"; fi
+        if [ -n "$UPDATE_CHANNEL" ]; then echo "✓ Update channel: $UPDATE_CHANNEL"; fi
     else
-        echo "⚠ Could not set auto_update in config/config.json; turn it on from the General tab instead"
+        echo "⚠ Could not set auto_update in config/config.json; set it from the General tab instead"
     fi
 fi
 

@@ -5,11 +5,18 @@ This directory contains scripts for installing and configuring the LEDMatrix sys
 ## Scripts
 
 - **`one-shot-install.sh`** - Single-command installer; clones the
-  repo, checks prerequisites, then runs `first_time_install.sh`.
-  Invoked via `curl ... | bash` from the project root README.
+  repo, checks out the newest release (or `main` with
+  `LEDMATRIX_CHANNEL=beta`), checks prerequisites, then runs
+  `first_time_install.sh`. Invoked via `curl ... | bash` from the project
+  root README. Re-running it never moves a checkout to an older version.
 - **`install_service.sh`** - Installs, enables and starts the display
   service (`ledmatrix.service`), the web interface service
-  (`ledmatrix-web.service`) and the update-verify units (systemd)
+  (`ledmatrix-web.service`) and the update-verify units (systemd), and
+  installs `/usr/local/sbin/ledmatrix-refresh-units`
+- **`ledmatrix_refresh_units.py`** - Not run from here: `install_service.sh`
+  installs a root-owned copy as `/usr/local/sbin/ledmatrix-refresh-units`,
+  which updates run through sudo to install changed units (and the
+  automatic update's rollback, with `--restore`, to put them back)
 - **`install_web_service.sh`** - Installs only the web interface service
   and the update-verify units (systemd)
 - **`install_wifi_monitor.sh`** - Installs the WiFi monitor daemon service

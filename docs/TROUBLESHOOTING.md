@@ -365,6 +365,49 @@ commit, then switches to releases on its own.
 3. **Local changes after a channel switch:** edits that no longer fit the new
    version are kept in the git stash rather than lost; `git stash list`
    shows them as "LEDMatrix autostash before update".
+4. **A new install is on a release, not `main`.** The one-shot installer
+   checks out the newest release. For the newest code instead, install with
+   `LEDMATRIX_CHANNEL=beta`:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | LEDMATRIX_CHANNEL=beta bash
+   ```
+
+---
+
+#### Issue: "service settings ... are not applied yet" after an update
+
+**Symptoms:**
+- Update Code's message, or the web interface log, says an update changes
+  service settings that are not applied yet, and to run the installer
+- The display logs `ledmatrix.service differs from systemd/ledmatrix.service`
+  at startup
+
+**Explanation:** updates install the systemd units a new version changes
+through the root helper `/usr/local/sbin/ledmatrix-refresh-units`, which the
+installer sets up and grants to the web user in
+`/etc/sudoers.d/ledmatrix_web`. A device installed before that has neither,
+so the new unit settings (for example the display's watchdog) wait for a
+reinstall. The update itself is fine.
+
+**Solution:** re-run the installer once, as root:
+```bash
+cd ~/LEDMatrix
+sudo ./first_time_install.sh
+# or, lighter: install the units and helper, then the sudo rules
+sudo ./scripts/install/install_service.sh
+./scripts/install/configure_web_sudo.sh
+```
+Check it worked:
+```bash
+ls -l /usr/local/sbin/ledmatrix-refresh-units   # root root, rwxr-xr-x
+sudo -l | grep ledmatrix-refresh-units           # the two rules
+```
+A message that the helper **refused** a unit (`refusing to install it`)
+means a template in `systemd/` was edited so that it would run as another
+account or from another folder. The message names the template. Look at
+what changed with `git diff -- systemd/`, save any edit you want to keep,
+then restore only that file, for example
+`git checkout -- systemd/ledmatrix-web.service`.
 
 ---
 
@@ -634,9 +677,10 @@ stack into the log, so it says which plugin was stuck.
    apart, so a plugin that hangs on every start does not restart the display
    hundreds of times an hour.
 
-4. **Is the watchdog installed?** Installs from before it keep their old unit
-   until the installer is re-run (a startup warning says the unit differs
-   from its template):
+4. **Is the watchdog installed?** Updates install new unit settings once the
+   installer has set up `ledmatrix-refresh-units`; installs from before that
+   keep their old unit until the installer is re-run (a startup warning says
+   the unit differs from its template):
    ```bash
    systemctl show -p WatchdogUSec ledmatrix   # 2min once running; 0 = not installed
    sudo ./scripts/install/install_service.sh
