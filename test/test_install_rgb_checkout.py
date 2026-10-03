@@ -236,3 +236,99 @@ class TestOneShotContract:
         assert "--recurse-submodules" not in ONE_SHOT.read_text(encoding="utf-8")
         installer = INSTALLER.read_text(encoding="utf-8")
         assert re.search(rf"submodule update --init --recursive {SUB}", installer)
+
+
+PATCH_DIR = ROOT / "patches" / "rpi-rgb-led-matrix"
+
+
+def _write_patch(project: Path, name: str, old: str, new: str) -> Path:
+    """A git patch rewriting the fake library's Makefile from `old` to `new`."""
+    patch = project / "patches" / "rpi-rgb-led-matrix" / name
+    patch.parent.mkdir(parents=True, exist_ok=True)
+    patch.write_text(
+        "A note before the diff, as the shipped patches carry.\n\n"
+        "diff --git a/Makefile b/Makefile\n"
+        "--- a/Makefile\n"
+        "+++ b/Makefile\n"
+        "@@ -1 +1 @@\n"
+        f"-{old}\n"
+        "\\ No newline at end of file\n"
+        f"+{new}\n"
+        "\\ No newline at end of file\n",
+        encoding="utf-8",
+    )
+    return patch
+
+
+def _makefile(project: Path) -> str:
+    return (project / SUB / "Makefile").read_text(encoding="utf-8")
+
+
+def _status(project: Path, env: dict) -> str:
+    return git("status", "--porcelain", cwd=project / SUB, env=env)
+
+
+class TestLibraryPatches:
+    """patches/rpi-rgb-led-matrix/*.patch go in for the build and come back out."""
+
+    def test_applied_for_the_build_and_reverted_after(self, make_project, git_env):
+        project = make_project("B")
+        _write_patch(project, "0001-x.patch", "A", "patched")
+        result = run_helpers(
+            f'_apply_rgb_patches; cat "{project / SUB / "Makefile"}"; echo; _revert_rgb_patches',
+            project, git_env)
+        assert result.returncode == 0, result.stderr
+        assert "Applied library patch 0001-x.patch" in result.stdout
+        assert "patched" in result.stdout          # what the build would see
+        assert _makefile(project) == "A"            # and the checkout afterwards
+        assert _status(project, git_env) == ""
+
+    def test_already_applied_is_left_alone(self, make_project, git_env):
+        project = make_project("B")
+        _write_patch(project, "0001-x.patch", "A", "patched")
+        (project / SUB / "Makefile").write_text("patched", encoding="utf-8")
+        result = run_helpers("_apply_rgb_patches; _revert_rgb_patches", project, git_env)
+        assert result.returncode == 0, result.stderr
+        assert "already applied" in result.stdout
+        assert _makefile(project) == "patched"      # not reverted: it was not ours
+
+    def test_a_patch_that_does_not_apply_is_skipped_not_fatal(self, make_project, git_env):
+        project = make_project("B")
+        _write_patch(project, "0001-x.patch", "something else", "patched")
+        result = run_helpers("_apply_rgb_patches; _revert_rgb_patches; echo REACHED", project, git_env)
+        assert result.returncode == 0, result.stderr
+        assert "ERR_TRAP_FIRED" not in result.stderr
+        assert "does not apply" in result.stdout and "REACHED" in result.stdout
+        assert _makefile(project) == "A"
+
+    def test_no_patch_directory_is_a_no_op(self, make_project, git_env):
+        project = make_project("B")
+        result = run_helpers("_apply_rgb_patches; _revert_rgb_patches; echo REACHED", project, git_env)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "REACHED"
+
+    def test_revert_twice_is_harmless(self, make_project, git_env):
+        # The EXIT trap runs _revert_rgb_patches again after Step 6 already has.
+        project = make_project("B")
+        _write_patch(project, "0001-x.patch", "A", "patched")
+        result = run_helpers("_apply_rgb_patches; _revert_rgb_patches; _revert_rgb_patches", project, git_env)
+        assert result.returncode == 0, result.stderr
+        assert _makefile(project) == "A" and "Could not revert" not in result.stdout
+
+    def test_build_is_wrapped_and_the_exit_trap_reverts(self):
+        installer = INSTALLER.read_text(encoding="utf-8")
+        apply_at = installer.index("_apply_rgb_patches\n        if run_rgbmatrix_build")
+        assert installer.index("_revert_rgb_patches\n        cat \"$BUILD_OUTPUT\"") > apply_at
+        assert re.search(r"^trap '[^']*_revert_rgb_patches[^']*' EXIT", installer, re.M)
+
+    def test_shipped_patches_are_git_patches_against_the_library(self, tmp_path, git_env):
+        patches = sorted(PATCH_DIR.glob("*.patch"))
+        assert patches, "no shipped library patches"
+        repo = tmp_path / "r"
+        repo.mkdir()
+        git("init", "-q", ".", cwd=repo, env=git_env)
+        for patch in patches:
+            stat = git("apply", "--numstat", str(patch), cwd=repo, env=git_env)
+            files = {line.split("\t")[2] for line in stat.splitlines()}
+            assert files <= {"lib/framebuffer.cc", "bindings/python/rgbmatrix/core.pyx",
+                             "bindings/python/rgbmatrix/cppinc.pxd"}, files

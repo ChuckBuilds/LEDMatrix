@@ -190,6 +190,51 @@ _sync_rgb_submodule() {
     fi
     return 0
 }
+
+# LEDMatrix's own changes to the library live in patches/rpi-rgb-led-matrix/ and
+# are applied only for the build: _apply_rgb_patches before it, _revert_rgb_patches
+# after it, success or not. The checkout is left exactly as it was, so `git pull`
+# and _sync_rgb_submodule never meet local modifications in the submodule.
+# A patch that no longer applies (a submodule bump, a hand-edited checkout) is
+# reported and skipped -- the unpatched library still builds and works, so it is
+# never fatal. One that is already applied is left alone and not reverted.
+_RGB_APPLIED_PATCHES=()
+
+_apply_rgb_patches() {
+    local sub="$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master"
+    local dir="$PROJECT_ROOT_DIR/patches/rpi-rgb-led-matrix" patch name
+    _RGB_APPLIED_PATCHES=()
+    [ -d "$dir" ] || return 0
+    for patch in "$dir"/*.patch; do
+        [ -f "$patch" ] || continue
+        name=$(basename "$patch")
+        if _git_as_repo_owner -C "$sub" apply --check "$patch" >/dev/null 2>&1; then
+            if _git_as_repo_owner -C "$sub" apply "$patch"; then
+                _RGB_APPLIED_PATCHES+=("$patch")
+                echo "Applied library patch $name"
+            else
+                echo "⚠ Could not apply library patch $name; building without it"
+            fi
+        elif _git_as_repo_owner -C "$sub" apply --reverse --check "$patch" >/dev/null 2>&1; then
+            echo "Library patch $name is already applied"
+        else
+            echo "⚠ Library patch $name does not apply to this checkout; building without it"
+        fi
+    done
+    return 0
+}
+
+_revert_rgb_patches() {
+    local sub="$PROJECT_ROOT_DIR/rpi-rgb-led-matrix-master" i
+    # Last applied first, in case two patches touch the same file.
+    for ((i = ${#_RGB_APPLIED_PATCHES[@]} - 1; i >= 0; i--)); do
+        if ! _git_as_repo_owner -C "$sub" apply --reverse "${_RGB_APPLIED_PATCHES[i]}"; then
+            echo "⚠ Could not revert $(basename "${_RGB_APPLIED_PATCHES[i]}"); restore the checkout with: git -C $sub checkout -- ."
+        fi
+    done
+    _RGB_APPLIED_PATCHES=()
+    return 0
+}
 # --- end rpi-rgb-led-matrix checkout helpers ---------------------------------
 
 # Determine the Project Root Directory (where this script is located)
@@ -291,10 +336,12 @@ else
     lm_remove_build_swap() { return 0; }
 fi
 
-# Remove the temporary build swapfile no matter how the script ends. Step 6
-# tears it down itself; this is the backstop for the error path, since
-# on_error ends in `exit` and EXIT traps still run.
-trap 'lm_remove_build_swap' EXIT
+# Remove the temporary build swapfile, and take any library patches back out
+# of the submodule, no matter how the script ends. Step 6 does both itself;
+# this is the backstop for the error path (on_error ends in `exit` and EXIT
+# traps still run) and for an interrupted build. _revert_rgb_patches only
+# touches patches it applied, so running it twice is harmless.
+trap 'lm_remove_build_swap; _revert_rgb_patches' EXIT
 
 # Helpers
 retry() {
@@ -1226,9 +1273,11 @@ else
         fi
         BUILD_OUTPUT=$(mktemp)
         BUILD_SUCCESS=false
+        _apply_rgb_patches
         if run_rgbmatrix_build "$BUILD_JOBS" "$BUILD_OUTPUT"; then
             BUILD_SUCCESS=true
         fi
+        _revert_rgb_patches
         cat "$BUILD_OUTPUT" >> "$LOG_FILE"
         if [ "$BUILD_SUCCESS" != true ]; then
             print_rgbmatrix_build_failure "$BUILD_OUTPUT"
