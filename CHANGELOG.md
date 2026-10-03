@@ -228,6 +228,16 @@ policies are unchanged.
 
 ### Fixes
 
+- The garbage-collection timer (`GcMonitor`, above) no longer prints
+  `Exception ignored while calling GC callback ... 'NoneType' object has no
+  attribute 'perf_counter'` when the display service or a test run exits.
+  A collection during interpreter shutdown called it after the module's
+  `time` global was torn down. The monitor now binds its clock at
+  construction and does nothing once `sys.is_finalizing()`;
+  `install_gc_monitor()` unregisters it with `atexit`, and
+  `DisplayManager.cleanup()` (reached from SIGTERM through `run()`'s
+  `finally`) unregisters it with the frame recorder. New
+  `frame_timing.uninstall_gc_monitor()`.
 - A plugin reload after a store update (`plugin.reload`, #720) no longer
   freezes the panel during Vegas. On ledpi a football reload froze it for
   3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
