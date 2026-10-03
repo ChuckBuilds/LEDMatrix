@@ -118,6 +118,18 @@ class TestDisplayManagerResourceManagement:
 
             dm.matrix.Clear.assert_called()
 
+    def test_cleanup_takes_the_gc_monitor_out_of_gc_callbacks(
+            self, test_config, mock_rgb_matrix):
+        """The service stops (SIGTERM -> run()'s finally -> cleanup()) with
+        its collection timer unregistered, not left for interpreter teardown."""
+        import gc
+        with patch.dict('os.environ', {'EMULATOR': 'false'}):
+            dm = DisplayManager(test_config)
+            monitor = dm.frame_timing.gc_monitor
+            assert monitor in gc.callbacks
+            dm.cleanup()
+            assert monitor not in gc.callbacks
+
 
 class TestDisplayManagerDoubleSided:
     """Double-sided mode: render once at logical size, tile across the chain."""

@@ -40,6 +40,20 @@ listed here.
 - ``live_games``, read with ``getattr`` -- ``_needs_previous_day``.
 - ``background_service``, read with ``getattr`` --
   ``_background_fetches_espn_ranges``.
+- ``sport`` and ``league`` (ESPN's path segments, e.g. ``football`` /
+  ``nfl``) -- ``_schedule_cache_key``, and ``_fetch_season_directly`` when
+  it is given no key and cannot read one from its URL.
+
+THE SCHEDULE CACHE KEY (fetch service stage 2)
+----------------------------------------------
+``_schedule_cache_key`` names a schedule window with the canonical
+``espn_scoreboard_cache_key`` instead of a plugin-built
+``{sport_key}_schedule_{window}``, and ``_cached_schedule`` reads it with the
+old key as a fallback for one release, so an upgrade serves the copy already
+on disk instead of refetching every league at once. The canonical key
+carries the window's dates, so it moves on a day as the window slides; a
+miss on it also deletes the copy for the day before, so a league keeps one
+window file instead of a week of them.
 
 Add it as a base of the plugin's ``SportsCore``, e.g.
 ``class SportsCore(SportsFetchMixin, SportsCoreSharedMixin,
@@ -50,9 +64,31 @@ constant on the plugin's own class still wins over the mixin's.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, Iterable, Optional
 
-from src.common.espn_dates import ESPN_MAX_LIMIT, fetch_espn_scoreboard
+from src.common.espn_dates import (
+    ESPN_MAX_LIMIT,
+    espn_scoreboard_cache_key,
+    espn_scoreboard_cache_key_for_url,
+    fetch_espn_scoreboard,
+    parse_espn_date_range,
+)
+from src.common.fetch_service import get_fetch_service
+
+_ESPN_SITE = "https://site.api.espn.com/"
+
+
+def _previous_window_key(cache_key: str) -> Optional[str]:
+    """The canonical key of the same window one day earlier, or None when
+    ``cache_key`` is not a canonical day-range key."""
+    head, sep, dates = cache_key.rpartition("_")
+    if not sep or not head.startswith("espn_scoreboard_"):
+        return None
+    span = parse_espn_date_range(dates)
+    if span is None:
+        return None
+    start, end = (day - timedelta(days=1) for day in span)
+    return f"{head}_{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
 
 
 class SportsFetchMixin:
@@ -65,6 +101,8 @@ class SportsFetchMixin:
     cache_manager: Any
     logger: logging.Logger
     _games_lock: threading.RLock
+    sport: str
+    league: str
 
     #: How many games past the one on screen keep their odds warm. One is
     #: enough for the line to be ready when the rotation advances; more just
@@ -154,18 +192,66 @@ class SportsFetchMixin:
         service = getattr(self, "background_service", None)
         return bool(getattr(service, "handles_espn_date_ranges", False))
 
+    def _schedule_cache_key(self, datestring: str) -> str:
+        """The canonical cache key for this league's schedule over
+        ``datestring`` (``espn_scoreboard_cache_key``)."""
+        return espn_scoreboard_cache_key(self.sport, self.league, datestring)
+
+    def _cached_schedule(self, cache_key: str, legacy_keys: Iterable[str] = ()) -> Any:
+        """What ``self.cache_manager.get(cache_key)`` returns, falling back
+        to each of ``legacy_keys`` (the plugin's pre-canonical keys) in turn.
+
+        The same read the managers made before -- same default max age, a
+        stored ttl still wins -- so moving to the canonical key changes
+        where a schedule is cached, not for how long. A read from an old key
+        is counted (``legacy_cache_hits``) so it is visible when the
+        fallback can go. A miss on the canonical key also deletes the same
+        window's copy from the day before (see the module docstring).
+        """
+        cached = self.cache_manager.get(cache_key)
+        if cached:
+            return cached
+        self._retire_previous_window(cache_key)
+        for legacy in legacy_keys:
+            if not legacy or legacy == cache_key:
+                continue
+            cached = self.cache_manager.get(legacy)
+            if cached:
+                try:
+                    get_fetch_service().note_cache_hit(
+                        _ESPN_SITE, legacy=True, avoided_request=False)
+                except Exception:  # noqa: BLE001 - counting never breaks a read
+                    pass
+                return cached
+        return None
+
+    def _retire_previous_window(self, cache_key: str) -> None:
+        previous = _previous_window_key(cache_key)
+        delete = getattr(self.cache_manager, "delete", None)
+        if previous is None or not callable(delete):
+            return
+        try:
+            delete(previous)
+        except Exception as e:  # noqa: BLE001 - housekeeping only
+            self.logger.debug(f"Could not delete old schedule copy {previous}: {e}")
+
     def _fetch_season_directly(
         self,
         url: str,
         datestring: str,
-        cache_key: str,
+        cache_key: Optional[str],
         label: str,
         ttl: Optional[int] = None,
     ) -> Optional[Dict]:
         """Fetch a season schedule on this thread, in chunks ESPN accepts, and cache it.
 
         ``label`` names the schedule in log lines, e.g. ``"2026 season"``.
+        ``cache_key=None`` caches it under the canonical key
+        (``espn_scoreboard_cache_key`` for ``url``'s sport and league).
         """
+        if cache_key is None:
+            cache_key = (espn_scoreboard_cache_key_for_url(url, datestring)
+                         or self._schedule_cache_key(datestring))
         try:
             data = fetch_espn_scoreboard(
                 self.session,
