@@ -46,6 +46,46 @@ accepts both, but the store flags the old spelling as deprecated
   scroller, as the `Vegas FPS` line already was; every window is still logged
   at DEBUG. `docs/SCROLL_PERFORMANCE.md` says how to see them all.
 
+### Fewer SD-card writes from the cache
+
+- **An unchanged `CacheManager.set()` no longer rewrites the file.**
+  `DiskCache` already skipped a payload identical to the last one it wrote,
+  but `set()` stamps every record with the current time, so for `set()` the
+  payload never matched and every unchanged re-save was a full rewrite. The
+  comparison now leaves out a header-first record's timestamp (the `ttl` and
+  the data still count), and the newer timestamp is kept in the file's mtime
+  instead: a skipped save touches the file to the record's timestamp, and a
+  real write pins mtime to the record's own timestamp. Every reader ages a
+  record from the newer of the two -- `DiskCache.get`, its header-only
+  staleness check, and the record it returns, whose `timestamp` is the newer
+  value, so `CacheManager.get`, the memory tier and plugins reading
+  `record['timestamp']` all agree; the retention sweep and the web UI's cache
+  list already used mtime. The mtime is trusted at most an hour past the
+  record's own timestamp, and unchanged data is rewritten once an hour, so a
+  file copied without its mtime reads at most an hour fresher than its
+  contents. 100 identical `set()` calls of a 32 KB record: 100 writes before,
+  1 after.
+- **Plugin metrics are one record, written at most once a minute.** The
+  resource monitor wrote a `plugin_metrics:<id>` record per plugin, each at
+  most every 30 s: two writes a minute per plugin, 28 on a fourteen-plugin
+  rig. Every plugin's metrics now go in one `plugin_metrics_snapshot` record
+  (`{"schema": 1, "plugins": {id: record}}`, each record shaped as before),
+  written at most once a minute. `GET /api/v3/plugins/metrics` and
+  `/plugins/metrics/<id>` return the same fields; the numbers can be up to a
+  minute old instead of 30 s. A plugin the snapshot does not have yet is
+  still read from its old `plugin_metrics:<id>` record, which nothing writes
+  any more and the cache's retention removes. Each write starts from the
+  snapshot on disk, so plugins the display has not run since a restart keep
+  their numbers, and a reset from the web UI sticks for a plugin the display
+  is not running, as it did. A plugin with no call for 30 days is dropped from
+  the snapshot, as its record used to age out.
+- **`CacheManager` no longer loads the config when it is built.** Every
+  manager built a `ConfigManager` and loaded the whole config for a cache
+  strategy that stopped reading it. `cache_manager.config_manager` is still
+  there -- the sports plugins resolve the global timezone through it -- and
+  is now built and loaded on first access; assigning it still replaces it.
+  `CacheStrategy` is given no config manager (it reads none).
+
 ### Plugin update tick: a few times a second, not every frame
 
 - The frame loops and the dwell sleep ran

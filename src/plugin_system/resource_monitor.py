@@ -8,7 +8,7 @@ Provides resource limits and performance monitoring.
 import math
 import time
 import threading
-from typing import Dict, Optional, Any, Callable, cast
+from typing import Dict, Optional, Any, Callable, Set, cast
 from dataclasses import dataclass, field, fields
 
 from src.logging_config import get_logger
@@ -99,18 +99,33 @@ class ResourceMetrics:
     last_update_time: float = field(default_factory=time.time)
 
 
-#: How often a plugin's metrics are written to the cache, in seconds.
+#: How often the metrics snapshot is written to the cache, in seconds.
 #:
 #: Persisting on every call meant a small file rewritten roughly nine times a
 #: minute per plugin. On a rig with fourteen active plugins that was ~126
 #: writes a minute for metrics alone, and since each ~350-byte file costs a
 #: 4KB block plus an ext4 journal entry, it dominated the device's write
-#: volume -- on an SD card, which wears out.
+#: volume -- on an SD card, which wears out. Throttling each plugin's own
+#: record to once per 30 s still left two writes a minute per plugin, so all
+#: plugins now share one record (METRICS_SNAPSHOT_KEY), written at most once
+#: a minute: one write a minute however many plugins there are.
 #:
 #: The in-memory copy stays authoritative and exact; only the cross-process
-#: snapshot the web UI reads is delayed, and telemetry up to half a minute old
-#: is still a fair description of a long-running plugin.
-_METRICS_PERSIST_INTERVAL = 30.0
+#: snapshot the web UI reads is delayed, and telemetry up to a minute old is
+#: still a fair description of a long-running plugin.
+_METRICS_PERSIST_INTERVAL = 60.0
+
+#: The one cache record holding every plugin's metrics:
+#: ``{"schema": 1, "plugins": {plugin_id: <metrics record>}}``, each metrics
+#: record shaped as the per-plugin ``plugin_metrics:<id>`` records were. Those
+#: older records are still read for a plugin the snapshot does not have yet
+#: (an upgrade, or a plugin that has not run since), never written.
+METRICS_SNAPSHOT_KEY = "plugin_metrics_snapshot"
+_METRICS_SNAPSHOT_SCHEMA = 1
+
+#: A plugin with no call for this long is dropped from the snapshot -- what
+#: the cache's 30-day default retention did to its own record before.
+_METRICS_SNAPSHOT_ENTRY_MAX_AGE = 30 * 86400
 
 
 class PluginResourceMonitor:
@@ -140,10 +155,15 @@ class PluginResourceMonitor:
         self._metrics: Dict[str, ResourceMetrics] = {}
         self._limits: Dict[str, ResourceLimits] = {}
         self._bad_limits_warned: set = set()
-        # When each plugin's metrics last reached the cache. Metrics change on
-        # every call, so they cannot be de-duplicated the way health state can;
-        # they are rate-limited instead. See _METRICS_PERSIST_INTERVAL.
-        self._metrics_persisted_at: Dict[str, float] = {}
+        # When the metrics snapshot last reached the cache (monotonic), None
+        # until it has. Metrics change on every call, so they cannot be
+        # de-duplicated the way health state can; they are rate-limited
+        # instead. See _METRICS_PERSIST_INTERVAL.
+        self._snapshot_persisted_at: Optional[float] = None
+        # Plugins whose metrics this process recorded since the last snapshot
+        # write: only their entries are overwritten, the rest are kept as
+        # found on disk.
+        self._metrics_dirty: Set[str] = set()
 
         # Lock for thread-safe access
         self._lock = threading.Lock()
@@ -247,10 +267,14 @@ class PluginResourceMonitor:
         with self._lock:
             if force_reload or plugin_id not in self._metrics:
                 # Try to load from cache
-                cache_key = self._get_metrics_key(plugin_id)
-                cached = self.cache_manager.get(
-                    cache_key, max_age=None, memory_ttl=0 if force_reload else None
-                )
+                memory_ttl = 0 if force_reload else None
+                cached = self._read_snapshot(memory_ttl).get(plugin_id)
+                if cached is None:
+                    # Not in the snapshot: the per-plugin record an older
+                    # version wrote, if there is one.
+                    cached = self.cache_manager.get(
+                        self._get_metrics_key(plugin_id), max_age=None,
+                        memory_ttl=memory_ttl)
                 if cached:
                     metrics = self._metrics_from_cache(plugin_id, cached)
                 else:
@@ -498,12 +522,70 @@ class PluginResourceMonitor:
             summaries[plugin_id] = self.get_metrics_summary(plugin_id)
         return summaries
     
-    def _persist_metrics(self, plugin_id: str, metrics: ResourceMetrics,
-                         force: bool = False) -> None:
-        """Write a plugin's metrics to the cache, at most once per interval.
+    def _read_snapshot(self, memory_ttl: Optional[int] = None) -> Dict[str, Any]:
+        """The snapshot's per-plugin records, or {} if there is none usable.
 
         Caller must hold ``self._lock``.
         """
+        cached = self.cache_manager.get(
+            METRICS_SNAPSHOT_KEY, max_age=None, memory_ttl=memory_ttl)
+        if not isinstance(cached, dict) or cached.get('schema') != _METRICS_SNAPSHOT_SCHEMA:
+            return {}
+        plugins = cached.get('plugins')
+        return plugins if isinstance(plugins, dict) else {}
+
+    @staticmethod
+    def _metrics_record(metrics: ResourceMetrics) -> Dict[str, Any]:
+        """One plugin's entry in the snapshot."""
+        return {
+            'memory_mb': metrics.memory_mb,
+            'cpu_percent': metrics.cpu_percent,
+            'execution_time': metrics.execution_time,
+            'call_count': metrics.call_count,
+            'total_execution_time': metrics.total_execution_time,
+            'max_execution_time': metrics.max_execution_time,
+            'min_execution_time': (metrics.min_execution_time
+                                   if metrics.min_execution_time != float('inf')
+                                   else 0.0),
+            'last_update_time': metrics.last_update_time,
+        }
+
+    def _write_snapshot(self, drop: Optional[str] = None) -> None:
+        """Write the snapshot: what is on disk, with this process's recorded
+        plugins updated and ``drop`` removed.
+
+        Starting from the disk copy rather than from memory keeps the entries
+        of plugins this process has not run -- disabled ones, which the web UI
+        still shows -- and a reset made from the other process.
+
+        Caller must hold ``self._lock``.
+        """
+        plugins = dict(self._read_snapshot(memory_ttl=0))
+        if drop is not None:
+            plugins.pop(drop, None)
+        for plugin_id in self._metrics_dirty:
+            if plugin_id in self._metrics:
+                plugins[plugin_id] = self._metrics_record(self._metrics[plugin_id])
+        cutoff = time.time() - _METRICS_SNAPSHOT_ENTRY_MAX_AGE
+        for plugin_id, record in list(plugins.items()):
+            last = record.get('last_update_time') if isinstance(record, dict) else None
+            if isinstance(last, (int, float)) and last < cutoff:
+                del plugins[plugin_id]
+        self.cache_manager.set(METRICS_SNAPSHOT_KEY, {
+            'schema': _METRICS_SNAPSHOT_SCHEMA,
+            'plugins': plugins,
+        })
+        # Only once the write has landed, so a failed one is retried in full.
+        self._metrics_dirty.clear()
+
+    def _persist_metrics(self, plugin_id: str, metrics: ResourceMetrics,
+                         force: bool = False) -> None:
+        """Record that a plugin's metrics changed, and write the snapshot if
+        the last write is at least an interval old.
+
+        Caller must hold ``self._lock``.
+        """
+        self._metrics_dirty.add(plugin_id)
         # Monotonic, not wall clock: these devices have no RTC, so the clock
         # jumps by however far off boot-time was the moment NTP first syncs.
         # A forward jump would allow an early write, a backward one would
@@ -515,35 +597,26 @@ class PluginResourceMonitor:
         # single run -- the throttle swallowed the very first snapshot, which
         # is the one that matters most after a restart.
         now = time.monotonic()
-        last_written = self._metrics_persisted_at.get(plugin_id)
+        last_written = self._snapshot_persisted_at
         if (not force and last_written is not None
                 and now - last_written < _METRICS_PERSIST_INTERVAL):
             return
-        cache_key = self._get_metrics_key(plugin_id)
-        self.cache_manager.set(cache_key, {
-            'memory_mb': metrics.memory_mb,
-            'cpu_percent': metrics.cpu_percent,
-            'execution_time': metrics.execution_time,
-            'call_count': metrics.call_count,
-            'total_execution_time': metrics.total_execution_time,
-            'max_execution_time': metrics.max_execution_time,
-            'min_execution_time': (metrics.min_execution_time
-                                   if metrics.min_execution_time != float('inf')
-                                   else 0.0),
-            'last_update_time': metrics.last_update_time,
-        })
+        self._write_snapshot()
         # Only after the write lands. Marking it first would mean a failed
         # set() bought the next interval's silence without leaving a snapshot.
-        self._metrics_persisted_at[plugin_id] = now
+        self._snapshot_persisted_at = now
 
     def reset_metrics(self, plugin_id: str) -> None:
         """Reset metrics for a plugin."""
         with self._lock:
             if plugin_id in self._metrics:
                 self._metrics[plugin_id] = ResourceMetrics()
-                cache_key = self._get_metrics_key(plugin_id)
-                self.cache_manager.delete(cache_key)
+                self._metrics_dirty.discard(plugin_id)
+                self._write_snapshot(drop=plugin_id)
+                # The record an older version wrote, so the reader's fallback
+                # cannot bring the old numbers back.
+                self.cache_manager.delete(self._get_metrics_key(plugin_id))
                 # Let the next call persist immediately rather than leaving the
-                # deleted key absent for the rest of the interval.
-                self._metrics_persisted_at.pop(plugin_id, None)
+                # plugin absent from the snapshot for the rest of the interval.
+                self._snapshot_persisted_at = None
 
