@@ -145,13 +145,49 @@ class TestContextImageCache:
         a = ctx.fit_image(img, (20, 20))
         assert ctx.fit_image(img, (20, 20)) is a
 
-    def test_id_safety_pins_source(self, ctx):
-        # id()-keyed entries must pin the source image so a recycled id
-        # can't alias a dead image's cache entry.
+    def test_id_keyed_entry_does_not_pin_source(self, ctx):
+        import gc
+        import weakref
+
         img = _solid(10, 10)
         ctx.fit_image(img, (20, 20))
-        pinned = [entry[1] for entry in ctx._image_cache.values()]
-        assert img in pinned
+        assert len(ctx._image_cache) == 1
+        watch = weakref.ref(img)
+        del img
+        gc.collect()
+        assert watch() is None  # the cache did not keep it alive
+        assert len(ctx._image_cache) == 0  # and its entry went with it
+
+    def test_fresh_image_each_frame_holds_nothing(self, ctx):
+        # draw_image(Image.open(path), box) every frame: the old pinning
+        # filled all 64 slots with dead-weight sources.
+        for _ in range(ctx._IMAGE_CACHE_MAX * 2):
+            ctx.fit_image(_solid(50, 50), (20, 20))
+        assert len(ctx._image_cache) == 0
+
+    def test_recycled_id_does_not_alias(self, ctx):
+        # A same-size image at a recycled address must not get the dead
+        # image's fit, even if the entry somehow outlived its source.
+        red = _solid(10, 10, (255, 0, 0, 255))
+        first = ctx.fit_image(red, (20, 20))
+        key = next(iter(ctx._image_cache))
+        entry = ctx._image_cache[key]
+        ctx._image_cache[key] = (entry[0], lambda: None)  # source "gone"
+        again = ctx.fit_image(red, (20, 20))
+        assert again is not first  # refit, not a stale hit
+        assert ctx.fit_image(red, (20, 20)) is again
+
+    def test_unweakrefable_source_is_pinned(self, ctx, monkeypatch):
+        import src.adaptive_layout as layout_mod
+
+        def no_weakref(*_args, **_kwargs):
+            raise TypeError("cannot create weak reference")
+
+        monkeypatch.setattr(layout_mod.weakref, "ref", no_weakref)
+        img = _solid(10, 10)
+        a = ctx.fit_image(img, (20, 20))
+        assert ctx.fit_image(img, (20, 20)) is a
+        assert next(iter(ctx._image_cache.values()))[1]() is img
 
     def test_cache_key_entries_do_not_pin(self, ctx):
         img = _solid(10, 10)
