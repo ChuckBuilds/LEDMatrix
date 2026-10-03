@@ -367,7 +367,10 @@ sudo -l | grep ledmatrix-refresh-units           # the two rules
 ```
 A message that the helper **refused** a unit (`refusing to install it`)
 means a template in `systemd/` was edited so that it would run as another
-account or from another folder; restore it with `git checkout -- systemd/`.
+account or from another folder. The message names the template. Look at
+what changed with `git diff -- systemd/`, save any edit you want to keep,
+then restore only that file, for example
+`git checkout -- systemd/ledmatrix-web.service`.
 
 ---
 

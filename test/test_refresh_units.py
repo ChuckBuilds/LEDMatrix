@@ -39,6 +39,11 @@ try:
 except ImportError:  # Windows
     WEB_USER = 'ledpi'
 
+# An account a hostile template switches the web unit to. Root, unless the
+# tests themselves run as root: then root *is* the web user and switching to
+# it changes nothing, so use another account.
+OTHER_USER = 'root' if WEB_USER != 'root' else 'nobody'
+
 
 class Host:
     """A project checkout, an /etc/systemd/system, and a fake systemctl."""
@@ -156,11 +161,56 @@ def test_it_must_run_as_root(host):
     assert 'WatchdogSec=60' not in host.installed(ru.DISPLAY_UNIT)
 
 
+def _failing_reload(host):
+    real = host.run
+    def run(args, **kwargs):
+        if args == ['systemctl', 'daemon-reload'] and host.reloads == 0:
+            host.calls.append(list(args))
+            return subprocess.CompletedProcess(args, 1, stdout='', stderr='boom')
+        return real(args, **kwargs)
+    return run
+
+
+def test_a_failed_daemon_reload_puts_the_old_units_back(host):
+    # The web side reports this as a failure and records no units_refreshed,
+    # so a rollback would not --restore: the helper must undo it itself.
+    old = host.installed(ru.DISPLAY_UNIT)
+    host.set_template(ru.DISPLAY_UNIT, watchdog_added(host.template(ru.DISPLAY_UNIT)))
+    host.run = _failing_reload(host)
+
+    with pytest.raises(ru.RefreshError):
+        host.refresher().refresh()
+    assert host.installed(ru.DISPLAY_UNIT) == old
+    assert host.reloads == 2  # the failed one, then one after putting it back
+    assert not (host.backup / ru.MANIFEST).exists()
+
+
+def test_a_failed_write_puts_back_the_units_already_written(host, monkeypatch):
+    old = {name: host.installed(name) for name in (ru.DISPLAY_UNIT, ru.WEB_UNIT)}
+    for name in old:
+        host.set_template(name, watchdog_added(host.template(name)))
+    refresher = host.refresher()
+    real_write = refresher._write_unit
+    writes = []
+
+    def write(name, text):
+        writes.append(name)
+        if len(writes) == 2:
+            raise OSError('disk full')
+        real_write(name, text)
+    monkeypatch.setattr(refresher, '_write_unit', write)
+
+    with pytest.raises(OSError):
+        refresher.refresh()
+    first = writes[0]
+    assert host.installed(first) == old[first]
+    assert all(host.installed(name) == old[name] for name in old)
+
 # -- what it refuses ------------------------------------------------------------
 
 @pytest.mark.parametrize('unit, edit', [
     # The web interface's unit switched to root by a template edit.
-    (ru.WEB_UNIT, lambda t: t.replace('User=__USER__', 'User=root')),
+    (ru.WEB_UNIT, lambda t: t.replace('User=__USER__', f'User={OTHER_USER}')),
     # The display's unit switched to another account.
     (ru.DISPLAY_UNIT, lambda t: t.replace('User=root', 'User=nobody')),
     # A second User= line.
@@ -248,7 +298,7 @@ def test_any_other_command_line_is_refused(argv):
 
 
 def test_main_reports_a_refusal_as_a_failure(host, capsys):
-    host.set_template(ru.WEB_UNIT, host.template(ru.WEB_UNIT).replace('User=__USER__', 'User=root'))
+    host.set_template(ru.WEB_UNIT, host.template(ru.WEB_UNIT).replace('User=__USER__', f'User={OTHER_USER}'))
     assert ru.main(['ledmatrix-refresh-units'], refresher=host.refresher()) == ru.EXIT_FAILED
     assert 'refusing' in capsys.readouterr().err
 
@@ -469,7 +519,7 @@ def test_web_side_on_a_machine_without_the_units_does_nothing(tmp_path):
 
 
 def test_web_side_never_raises_on_a_broken_template(host, tmp_path):
-    host.set_template(ru.WEB_UNIT, host.template(ru.WEB_UNIT).replace('User=__USER__', 'User=root'))
+    host.set_template(ru.WEB_UNIT, host.template(ru.WEB_UNIT).replace('User=__USER__', f'User={OTHER_USER}'))
     sudo = Sudo()
     result = _web(host, tmp_path, sudo)
     assert result['status'] == unit_refresh.FAILED and sudo.calls == []

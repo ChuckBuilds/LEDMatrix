@@ -371,12 +371,38 @@ class Refresher:
                 f.write(current)
         with open(os.path.join(folder, MANIFEST), 'w', encoding='utf-8') as f:
             json.dump({'units': sorted(changes)}, f)
-        for name, (_, rendered) in changes.items():
-            self._write_unit(name, rendered)
-        self._systemctl('daemon-reload')
+        try:
+            for name, (_, rendered) in changes.items():
+                self._write_unit(name, rendered)
+            self._systemctl('daemon-reload')
+        except BaseException:
+            # A failed refresh is reported as a failure, so the update records
+            # no units_refreshed and a rollback would not --restore. Put the
+            # replaced units back now, rather than leave a half-written set
+            # under the old code.
+            self._undo(changes, folder)
+            raise
         self._restart_path_unit_if_active(changes)
         self.log('units refreshed: ' + ' '.join(sorted(changes)))
         return sorted(changes)
+
+    def _undo(self, changes, folder):
+        """Best effort: reinstall the units a failed refresh replaced."""
+        undone = True
+        for name, (current, _) in changes.items():
+            try:
+                self._write_unit(name, current)
+            except OSError as e:
+                undone = False
+                self.log(f'units: could not put back {name}: {e}')
+        try:
+            self.run(['systemctl', 'daemon-reload'], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            self.log(f'units: daemon-reload after putting units back failed: {e}')
+        if undone:
+            # Nothing is left to restore; keep the backup only if a unit could
+            # not be put back, so a manual --restore still can.
+            self._clear_backup(folder)
 
     def restore(self):
         if not self.is_root():
