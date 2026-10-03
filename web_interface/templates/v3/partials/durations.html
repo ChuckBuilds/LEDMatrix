@@ -1,5 +1,8 @@
 {% import 'v3/partials/_macros.html' as ui %}
-<div class="bg-white rounded-lg shadow p-6">
+{# No inline script: static/v3/js/pages/durations.js starts the rotation-order
+   list. The page registry (static/v3/js/core/registry.js) starts it when this
+   root appears and stops it when the partial is swapped away. #}
+<div class="bg-white rounded-lg shadow p-6" data-page="durations">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Rotation &amp; Durations</h2>
         <p class="mt-1 text-sm text-gray-600">Set the order plugins rotate on the display and how long each screen is shown. Durations are in seconds.</p>
@@ -77,34 +80,3 @@
         </div>
     </form>
 </div>
-
-<script>
-(function () {
-    // Shared drag-and-drop plugin list (static/v3/js/widgets/plugin-order-list.js,
-    // same module the Vegas Scroll section uses).
-    function initRotationOrderList(attempt) {
-        const container = document.getElementById('rotation_plugin_order');
-        if (!container) return;
-        if (!window.PluginOrderList) {
-            // Widget script is deferred; retry briefly, then surface a real
-            // error instead of showing "Loading…" forever.
-            if ((attempt || 0) < 50) {
-                setTimeout(function() { initRotationOrderList((attempt || 0) + 1); }, 100);
-            } else {
-                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
-                container.className = 'text-sm text-red-500';
-            }
-            return;
-        }
-        window.PluginOrderList.init({
-            containerId: 'rotation_plugin_order',
-            orderInputId: 'rotation_plugin_order_value'
-        });
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initRotationOrderList);
-    } else {
-        initRotationOrderList();
-    }
-}());
-</script>

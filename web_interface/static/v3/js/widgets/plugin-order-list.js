@@ -12,7 +12,9 @@
  *       orderInputId: 'vegas_plugin_order_value', // hidden input, JSON array of ids
  *       excludedInputId: 'vegas_excluded_plugins_value', // optional: adds an
  *           // include-checkbox per row; unchecked ids collect here (JSON array)
- *       showVegasModeBadge: true                  // optional: Scroll/Pause/Excluded badge
+ *       showVegasModeBadge: true,                 // optional: Scroll/Pause/Excluded badge
+ *       signal: ctx.signal                        // optional: AbortSignal that cancels
+ *           // the plugin-list request (a page module's ctx.signal)
  *   });
  *
  * The container re-renders from /api/v3/plugins/installed each init; the
@@ -97,7 +99,7 @@
             });
         }
 
-        fetch('/api/v3/plugins/installed')
+        fetch('/api/v3/plugins/installed', { signal: options.signal })
             .then(response => response.json())
             .then(data => {
                 const allPlugins = (data.data && data.data.plugins) || data.plugins || [];
@@ -216,6 +218,8 @@
                 syncInputs();
             })
             .catch(error => {
+                // The page was swapped away (options.signal): nothing to draw.
+                if (error && error.name === 'AbortError') return;
                 console.error('Error fetching plugins:', error);
                 const err = document.createElement('p');
                 err.className = 'text-sm text-red-500';

@@ -19,6 +19,227 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fewer SD-card writes from the cache
+
+- **An unchanged `CacheManager.set()` no longer rewrites the file.**
+  `DiskCache` already skipped a payload identical to the last one it wrote,
+  but `set()` stamps every record with the current time, so for `set()` the
+  payload never matched and every unchanged re-save was a full rewrite. The
+  comparison now leaves out a header-first record's timestamp (the `ttl` and
+  the data still count), and the newer timestamp is kept in the file's mtime
+  instead: a skipped save touches the file to the record's timestamp, and a
+  real write pins mtime to the record's own timestamp. Every reader ages a
+  record from the newer of the two -- `DiskCache.get`, its header-only
+  staleness check, and the record it returns, whose `timestamp` is the newer
+  value, so `CacheManager.get`, the memory tier and plugins reading
+  `record['timestamp']` all agree; the retention sweep and the web UI's cache
+  list already used mtime. The mtime is trusted at most an hour past the
+  record's own timestamp, and unchanged data is rewritten once an hour, so a
+  file copied without its mtime reads at most an hour fresher than its
+  contents. 100 identical `set()` calls of a 32 KB record: 100 writes before,
+  1 after.
+- **Plugin metrics are one record, written at most once a minute.** The
+  resource monitor wrote a `plugin_metrics:<id>` record per plugin, each at
+  most every 30 s: two writes a minute per plugin, 28 on a fourteen-plugin
+  rig. Every plugin's metrics now go in one `plugin_metrics_snapshot` record
+  (`{"schema": 1, "plugins": {id: record}}`, each record shaped as before),
+  written at most once a minute. `GET /api/v3/plugins/metrics` and
+  `/plugins/metrics/<id>` return the same fields; the numbers can be up to a
+  minute old instead of 30 s. A plugin the snapshot does not have yet is
+  still read from its old `plugin_metrics:<id>` record, which nothing writes
+  any more and the cache's retention removes. Each write starts from the
+  snapshot on disk, so plugins the display has not run since a restart keep
+  their numbers, and a reset from the web UI sticks for a plugin the display
+  is not running, as it did. A plugin with no call for 30 days is dropped from
+  the snapshot, as its record used to age out.
+- **`CacheManager` no longer loads the config when it is built.** Every
+  manager built a `ConfigManager` and loaded the whole config for a cache
+  strategy that stopped reading it. `cache_manager.config_manager` is still
+  there -- the sports plugins resolve the global timezone through it -- and
+  is now built and loaded on first access; assigning it still replaces it.
+  `CacheStrategy` is given no config manager (it reads none).
+
+### Plugin update tick: a few times a second, not every frame
+
+- The frame loops and the dwell sleep ran
+  `PluginManager.run_scheduled_updates()` after every frame, about 125 times
+  a second on a scroller. Each pass copies the plugin dict and takes several
+  locks per plugin, almost always to find nothing due: about 100 us with 20
+  plugins on a Pi 4, 1.2% of the render thread. They now call
+  `DisplayController._tick_plugin_updates_if_due()`, which runs the pass at
+  most every `PLUGIN_UPDATE_TICK_INTERVAL` (0.25 s), so a 4 s scroll runs 16
+  passes instead of 500. No update interval is shorter than 5 s
+  (`MIN_DYNAMIC_UPDATE_INTERVAL`), and the 1 Hz frame loop already ticked
+  once a second, so an update starts at most a quarter second later.
+- The top of each loop pass still runs it unthrottled, so a plugin just
+  loaded, reloaded or enabled for on-demand is updated at once. Vegas's own
+  update thread (`_tick_plugin_updates_for_vegas`) is unchanged.
+  `test/test_plugin_update_tick_throttle.py` covers both, on the real
+  `run()` through the golden-trace harness.
+
+### Strip checks no longer build the PIL image
+
+- `SportsScrollDisplay.display_scroll_frame` (every frame) and
+  `has_cached_content`, and the sync follower's per-frame check of the Vegas
+  strip, asked whether there was a strip by reading
+  `ScrollHelper.cached_image`. After the helper deferred the image (an
+  append, trim or patch), that read built it from `cached_array` and kept
+  it: 3.5 ms and about 1 MiB more held for a 4288x64 strip, on top of the
+  array's 0.8 MiB. They now ask `has_strip()`, which gives the same answer
+  from the helper's bookkeeping. A scoreboard whose `scroll_helper` has no
+  `has_strip` (its own helper, a test double) is still asked
+  `cached_image`.
+- A strip built with `create_scrolling_image` or `set_scrolling_image`
+  still keeps both the image and the array, as before.
+
+### Faster frame copy into the panel (library patch, applied at build time)
+
+- Copying each frame into the panel buffer (`SetImage`) was the biggest CPU
+  cost LEDMatrix owns on large panels: 6-7.5 ms per frame on a 512x64 Pi 4 at
+  ~85 fps, about 60% of a core. The library's binding walked the image column
+  by column and set one pixel at a time, and each pixel rewrote a word in
+  every PWM bit plane, 2KB apart, so nearly every write missed the cache.
+  `patches/rpi-rgb-led-matrix/0001-bulk-setimage.patch` copies row by row in
+  one bulk call per row, with the colour lookup done once and branch-free
+  bit-plane writes. The panel buffer is byte-identical to before (882 checks
+  across image types, offsets, PWM bits, brightness, inverse colours and a
+  pixel mapper).
+- Measured on hdpi (Pi 4, 4x128x64): frame copy 6.57 -> 2.21 ms, the display
+  process 139% -> 103% of a core, late frames 7.8 -> 5.4 per 1,000.
+- `first_time_install.sh` applies the patch to `rpi-rgb-led-matrix-master`
+  just before building the binding and takes it back out straight after (and
+  on any exit), so the submodule stays at its pinned commit with no local
+  changes. A patch that no longer applies after a submodule bump is reported
+  and skipped; the unpatched library still builds.
+- Existing installs keep the library they have until it is rebuilt:
+  `sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh`.
+  `scripts/build_rgbmatrix_nogil.sh` builds from an unpatched copy and is
+  unchanged.
+
+### Install
+
+- Raspberry Pi OS **Bookworm** (Debian 12, Python 3.11) is supported,
+  alongside **Trixie** (Debian 13, Python 3.13). The installer used to stop
+  on anything but Trixie. Which releases and Pythons are accepted now lives
+  in one place, `scripts/install/lib_os.sh`, which `first_time_install.sh`
+  and `scripts/check_system_compatibility.sh` both read, so the two can no
+  longer disagree (the compatibility check called Bookworm an error, and
+  still accepted Python 3.10, which the rgbmatrix bindings refuse). An
+  unsupported system gets plain directions to the right image; a `python3`
+  older than 3.11 stops the install before anything changes.
+- The installer says up front when the Pi runs dhcpcd instead of
+  NetworkManager, and how to switch back: the web page's WiFi tab and the
+  `LEDMatrix-Setup` hotspot need NetworkManager. Not fatal, and it does not
+  switch the network stack itself, since that can cut the SSH session.
+- The desktop check no longer misses a desktop install: `dpkg -l | grep -q`
+  under `pipefail` read a match as "not found".
+- `cap_sys_nice` is set on the interpreter the services run
+  (`/usr/bin/python3`); it preferred `/usr/bin/python3.13` whenever it
+  existed.
+- The Step 7 dependency fallback (`scripts/install_dependencies_apt.py`) no
+  longer accepts apt packages older than the pins -- Bookworm's Flask 2.2.2
+  and Pillow 9.4, Trixie's Flask 3.1.1 and Pillow 11.1. The floors are read
+  from `web_interface/requirements.txt`, and pip is asked for `Pillow`, not
+  `PIL`.
+- CI runs the unit and plugin-safety suites on Python 3.11 and 3.13 (was
+  3.12); mypy targets 3.11.
+
+### Updates refresh the systemd units; new installs run the newest release
+
+- **Updates now install changed systemd units.** An update (Update Code, or
+  the weekly automatic update) moved the checkout's `systemd/*.service`
+  templates but never the units systemd runs, so settings added after a
+  device was installed -- #687's render-loop watchdog, for one -- only ever
+  arrived with a reinstall. After an update that moves HEAD, the web
+  interface compares the installed `ledmatrix.service`,
+  `ledmatrix-web.service` and `ledmatrix-update-verify.{service,path}` with
+  the new templates (rendered exactly as `install_service.sh` does, comments
+  ignored as the startup drift warning does) and, when they differ, runs the
+  new root-owned helper `/usr/local/sbin/ledmatrix-refresh-units`
+  (`scripts/install/ledmatrix_refresh_units.py`) through sudo: it installs
+  the changed units and runs `systemctl daemon-reload`, so the restart that
+  follows the update runs under them. Update Code's message says so.
+- **Rollback restores them.** The helper keeps the units it replaced
+  (`/var/lib/ledmatrix/unit-backup`, root only); when the automatic update's
+  health check rolls an update back, it runs `ledmatrix-refresh-units
+  --restore` before restarting the services onto the old code.
+- **The sudo rule needs a reinstall.** `install_service.sh` installs the
+  helper and `lib_sudoers.sh` grants it with exactly two command lines (no
+  arguments, and `--restore`). A device installed before this has neither;
+  its updates keep working, log that the new unit settings need a reinstall
+  and say so in Update Code's message, the same remedy as the startup
+  "unit drift" warning. Re-run `sudo ./first_time_install.sh` once (or
+  `sudo ./scripts/install/install_service.sh` then
+  `./scripts/install/configure_web_sudo.sh`).
+- `install_service.sh` now leaves the units it installs mode `0644`, as
+  `first_time_install.sh` already did; run on its own it left them `0600`.
+- **New installs run the newest release.** The one-shot installer cloned
+  `main`'s tip, so a new device ran unreleased code until the next release.
+  It now checks out the newest `vX.Y.Z` tag after cloning (the same semver
+  rules as `web_interface/update_channel.py`), and that release's own
+  `first_time_install.sh` runs. `LEDMATRIX_CHANNEL=beta` installs `main`
+  instead and records the beta channel; `first_time_install.sh --beta` (or
+  `LEDMATRIX_CHANNEL=beta|stable`) records a channel for a manual install.
+- **Re-running the one-shot never moves backwards.** On an existing stable
+  checkout it moves to the newest release only when that release contains
+  the current commit; a checkout newer than every release keeps its
+  fast-forward pull (on a branch) or stays put (detached), and beta keeps the
+  pull it always had. It used to fast-forward a detached release checkout to
+  `main`'s tip.
+
+### Control socket stage 3: the display's state over the socket
+
+- Two new commands, still protocol version 1. `state.get` returns a
+  versioned snapshot of what the display is doing: the current mode and
+  plugin, the on-demand session, the brightness, the plugin runtime
+  snapshot and the render loop's heartbeat age. With `since`/`epoch` it
+  returns a short "unchanged" answer. `state.subscribe` returns the same
+  snapshot, then pushes a `state` event on every change (always the latest
+  version) and a `tick` at least every 5 s. The display serves all of it
+  from memory (`StateHub` in `src/ipc/server.py`), and publishing never
+  waits for a reader. Subscribers have their own bound (4), separate from
+  the 8 request slots, and one that stops reading is dropped after the 2 s
+  IO timeout. See `docs/IPC_CONTROL_SOCKET.md`, "The state stream".
+- The web interface holds one subscription per process
+  (`web_interface/display_state.py`). `/display/current-status`,
+  `/display/on-demand/status`, the plugin runtime fields of
+  `/plugins/installed` and `/plugins/state`, the reconciliations and
+  `/health`'s `display_loop` read it first. When the socket is missing (a
+  stopped or older display, Windows), they fall back to the cache keys and
+  the heartbeat file. Each answer has a `source` (`socket`, `cache` or
+  `heartbeat_file`). The stale and stalled rules from #726 apply the same
+  way to both.
+- Fewer SD-card writes while the socket serves those readers.
+  `display_current_state` is written once a minute and on a flag change,
+  not on every mode change. The `plugin_runtime_snapshot` refresh goes from
+  60 s to 120 s. For a rotation of 15 s screens, that is 1.5 cache writes a
+  minute instead of 5. Both keys keep being written for one release.
+- `RenderWatchdog.liveness()` reports the heartbeat age from memory.
+  `PluginRuntimeView` has a `source`, and `describe()` includes it.
+
+### Web UI: four more tabs are ES-module pages (stage 2)
+
+- Rotation, Operation History, Config Editor and Backup & Restore follow the
+  Cache tab (#703): each partial's inline `<script>` is now
+  `static/v3/js/pages/<name>.js` (`durations`, `operation-history`,
+  `raw-json`, `backup-restore`), started once per swap-in by the page
+  registry and stopped on swap-out. None of the four partials has an inline
+  script or `onclick` any more. Buttons carry `data-action` and use one
+  delegated listener. Server data is drawn with `textContent`.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `formatJson`, `manualValidateJson`,
+  `validateJSON`, `saveMainConfig`, `saveSecretsConfig`, `exportBackup`,
+  `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`.
+- Reads are cancelled when a tab is swapped away. Writes (save, delete,
+  export, restore) are not, and their result is still reported.
+- `core/api.js` accepts a raw `body` (a `FormData` upload).
+  `PluginOrderList.init()` accepts a `signal` for its plugin-list request.
+- Small fixes on the way: the Config Editor's "Invalid JSON" line no longer
+  puts the parser's message into `innerHTML`, and Operation History's
+  "Showing x to y of z" now resets when nothing matches.
+- New DOM suites `test/js/dom/test_{durations,operation_history,raw_json,backup_restore}_page.js`.
+  `test/web_interface/test_es_modules.py` pins the converted pages and the aliases.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
@@ -117,6 +338,50 @@ policies are unchanged.
   `GET /api/v3/plugins/fetch-stats`.
 - `fetch_service` is a core config section (`src/core_config_keys.py`).
 
+### Shared fetch service (stage 2: one scoreboard cache key, a max-age response cache)
+
+- **One cache key per ESPN scoreboard.** `espn_scoreboard_cache_key(sport,
+  league, dates)` in `src/common/espn_dates.py` names a scoreboard by ESPN's
+  own path (`football`/`nfl`) and its `dates=` value, so every consumer of
+  the same scoreboard shares one cached copy. Before, odds-ticker cached it as
+  `scoreboard_data_{sport}_{league}_{date}`, `APIHelper` as
+  `espn_{sport}_{league}_{date}` and the scoreboards as
+  `{sport_key}_schedule_{window}`.
+- **Cache-through helpers.** `get_espn_scoreboard()` returns a cached copy at
+  most `max_age` seconds old and otherwise fetches with
+  `fetch_espn_scoreboard` and caches the result; `read_espn_scoreboard_cache()`
+  and `store_espn_scoreboard_cache()` are the two halves (the read takes an
+  `accept(data, age)` predicate, e.g. a shorter limit for a payload holding a
+  live game). A read checks the
+  record's own timestamp, so a writer's stored ttl can no longer make a
+  reader take data older than its own TTL; the shared entry stores no ttl.
+  Old keys are passed as `legacy_keys` and read after the canonical one for
+  one release, so an upgrade does not refetch every league at once.
+- **Core callers use the key.** `APIHelper.fetch_espn_scoreboard` caches
+  under it by default (an explicit `cache_key` still works as before; the old
+  default key is read as a fallback). `SportsFetchMixin` gains
+  `_schedule_cache_key()` and `_cached_schedule()` for the scoreboards'
+  schedule windows (the same read as before, with the old key as fallback,
+  and a miss deletes the previous day's copy of a sliding window), and
+  `_fetch_season_directly(cache_key=None)` uses the canonical key. The
+  scoreboards and odds-ticker move to it in a plugins release that requires
+  this core.
+- **Response cache.** A `200` with `Cache-Control: max-age=N` (minus `Age`)
+  answers an identical GET for N seconds without a request; ESPN sends no
+  validators, only max-age (1 to ~500 s, measured 2026-10-02). A caller says
+  how old a response it accepts with `fetch_get(..., cache_max_age=)` /
+  `fetch_espn_scoreboard(..., cache_max_age=)`; one that does not say gets at
+  most 30 s (`fetch_service.response_cache.default_max_age`).
+  `BaseOddsManager.get_odds` passes its update interval, `APIHelper.get` its
+  `cache_ttl`, and `get_espn_scoreboard` its `max_age`. `no-store`,
+  `no-cache`, `private`, `Vary: *` and `Set-Cookie` responses are never kept.
+  Bounded: 64 entries, 6 MB, 2 MB each; never longer than 10 minutes.
+- **Counters.** `memo_hits` (answered by the response cache), `cache_hits`
+  (scoreboard fetches answered by a shared cache entry) and
+  `legacy_cache_hits` (reads from a pre-stage-2 key), per plugin and per
+  host, and the response cache's size, in `GET /api/v3/plugins/fetch-stats`.
+- No new module; every change is additive to existing signatures.
+
 ### Control socket (stage 2: wake-ups, brightness, plugin reload)
 
 - **Socket commands land at once.** Stage 1's socket was no faster than the
@@ -162,6 +427,9 @@ policies are unchanged.
   this release: plugins reach it through `APIHelper` and `espn_dates`, and
   should not import it directly until a plugin-facing API ships (stage 3), so
   it sets no `ledmatrix_min_version` floor.
+- `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
+  Core-internal: plugins have no reason to import it, so it sets no
+  `ledmatrix_min_version` floor.
 
 ### Tooling
 
@@ -179,9 +447,46 @@ policies are unchanged.
   (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
   `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
   identical before and after the move.
+- Display loop stage 2: an Arbiter decides who gets the panel. Each pass,
+  `run()` gathers a small snapshot (the schedule, the on-demand flag, the
+  sync follower, the pending WiFi notice) and calls
+  `Arbiter.decide(state, inputs, now)` in `src/display_arbiter.py`, a pure
+  function, which returns a `ScreenPlan`. It decides the scheduled-off
+  blank, the follower frame and the WiFi notice; on-demand, live priority,
+  Vegas and the rotation return a `LEGACY` plan and run the existing code.
+  The WiFi notice's mid-screen rule (`wifi_notice_preempts`) moves there
+  too. No behaviour change: the golden traces regenerate byte-identical.
+  `test/test_display_arbiter.py` tests `decide()` with a table of all 16
+  combinations of its inputs.
 
 ### Fixes
 
+- The garbage-collection timer (`GcMonitor`, above) no longer prints
+  `Exception ignored while calling GC callback ... 'NoneType' object has no
+  attribute 'perf_counter'` when the display service or a test run exits.
+  A collection during interpreter shutdown called it after the module's
+  `time` global was torn down. The monitor now binds its clock at
+  construction and does nothing once `sys.is_finalizing()`;
+  `install_gc_monitor()` unregisters it with `atexit`, and
+  `DisplayManager.cleanup()` (reached from SIGTERM through `run()`'s
+  `finally`) unregisters it with the frame recorder. New
+  `frame_timing.uninstall_gc_monitor()`.
+- A plugin reload after a store update (`plugin.reload`, #720) no longer
+  freezes the panel during Vegas. On ledpi a football reload froze it for
+  3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
+  render thread, and its unload waited for the plugin's lock. The strip's
+  prefetch thread held that lock while it rebuilt the old instance's Vegas
+  content. The render thread now only takes the plugin out of the rotation
+  and out of the plugin manager (`PluginManager.detach_plugin`). A
+  `plugin-reload-<id>` thread waits for the lock, tears the old instance
+  down and loads the new one, and the new instance joins the rotation
+  between two frames. In a test with a 3.0 s render holding the lock, the
+  longest gap between frames went from 3017 ms to 9 ms. The reply still
+  reports the real outcome, the modes keep their places in the rotation,
+  and Vegas fetches the plugin again. While it reloads, an on-demand request
+  for the plugin is refused (`plugin-reloading`), and a config reconcile
+  neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
+  out a reload for the lock skips the old instance.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
@@ -228,6 +533,22 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- `/api/v3/plugins/installed` no longer reports the display's plugins as
+  `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
+  snapshot is written from its own thread, which kept going while the render
+  loop was hung. The web interface now also reads the render loop's
+  heartbeat: a fresh snapshot whose process's heartbeat is 60 s or older is
+  `data.runtime.status: "stalled"`, with the per-plugin fields null, and
+  `data.runtime` gains `heartbeat_age_seconds`. A snapshot from a process
+  that no longer exists, as after a watchdog kill (systemd removes the
+  heartbeat when the service stops), is `stale` at once instead of `live`
+  for up to 180 s. No new files or writes: both checks are on the reading
+  side.
+- `/api/v3/display/current-status` reflects a wake from scheduled-off, a
+  schedule-off blank, or an on-demand session starting or ending at once,
+  even when the mode name stays the same. The display republished its
+  current state only on a mode change or every 30 s, so `is_display_active`
+  and `on_demand_active` could be up to 30 s out of date.
 
 ### Scrolling
 

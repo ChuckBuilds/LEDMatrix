@@ -30,6 +30,11 @@ later the state stream). A few commands (:data:`AWAITED_COMMANDS`) are
 answered only once the render thread has applied them, or with ``pending``
 when it has not within :data:`AWAIT_SECONDS`.
 
+``state.subscribe`` is the one exception to "one response per request": its
+response is followed, on the same connection, by :class:`StateEvent` lines
+the display pushes until either side hangs up. Events carry ``event``
+instead of ``ok``.
+
 New commands are added within a protocol version: a display that does not
 know one answers ``unknown_command``, the client falls back, and ``hello``
 lists the commands a display knows. The version changes only when the
@@ -142,11 +147,14 @@ class Command:
     ON_DEMAND_STATUS = 'on_demand.status'
     BRIGHTNESS_SET = 'brightness.set'
     PLUGIN_RELOAD = 'plugin.reload'
+    STATE_GET = 'state.get'
+    STATE_SUBSCRIBE = 'state.subscribe'
 
 
 #: Every command version 1 defines, in the order ``hello`` reports them.
-#: ``brightness.set`` and ``plugin.reload`` came in stage 2, within version 1
-#: (see the module docstring on adding commands).
+#: ``brightness.set`` and ``plugin.reload`` came in stage 2, and ``state.get``
+#: and ``state.subscribe`` in stage 3, all within version 1 (see the module
+#: docstring on adding commands).
 COMMANDS: Tuple[str, ...] = (
     Command.HELLO,
     Command.PING,
@@ -155,6 +163,8 @@ COMMANDS: Tuple[str, ...] = (
     Command.ON_DEMAND_STATUS,
     Command.BRIGHTNESS_SET,
     Command.PLUGIN_RELOAD,
+    Command.STATE_GET,
+    Command.STATE_SUBSCRIBE,
 )
 
 #: Commands that are queued for the render thread.
@@ -172,6 +182,25 @@ AWAIT_SECONDS: Dict[str, float] = {
     Command.PLUGIN_RELOAD: 10.0,
 }
 AWAITED_COMMANDS = frozenset(AWAIT_SECONDS)
+
+#: The state stream (stage 3). ``state.subscribe`` turns its connection into
+#: a one-way stream of :class:`StateEvent` lines. Subscribers have their own
+#: bound, separate from the short request connections, so they can never
+#: take the slots a command needs.
+MAX_SUBSCRIBERS = 4
+
+#: A subscriber hears from the display at least this often: a ``state``
+#: event when something changed, else a ``tick`` carrying the render loop's
+#: liveness. A client that has heard nothing for a few of these treats its
+#: copy as unknown.
+SUBSCRIBE_KEEPALIVE_SECONDS = 5.0
+
+#: The shape of the ``state`` object in a state snapshot. Bumped only when a
+#: field changes meaning; new fields are added within a schema.
+STATE_SCHEMA = 1
+
+#: The sections of a state snapshot, in the order they are documented.
+STATE_SECTIONS: Tuple[str, ...] = ('display', 'on_demand', 'brightness', 'plugins', 'loop')
 
 #: Brightness, in percent, as the display's hardware setting takes it.
 MIN_BRIGHTNESS = 0
@@ -477,8 +506,65 @@ class PluginReloadArgs:
         return cls(plugin_id=plugin_id)
 
 
+def _optional_version(args: Mapping[str, Any], key: str) -> Optional[int]:
+    value = args.get(key)
+    if value is None:
+        return None
+    if not _is_int(value) or value < 0:
+        raise ProtocolError(ErrorCode.INVALID_ARGS, f'{key} must be a non-negative integer')
+    return value
+
+
+def _optional_epoch(args: Mapping[str, Any]) -> Optional[str]:
+    value = args.get('epoch')
+    if value is None or value == '':
+        return None
+    if not _valid_id(value):
+        raise ProtocolError(ErrorCode.INVALID_ARGS,
+                            f'epoch must be a printable string of 1-{MAX_ID_LENGTH} characters')
+    return str(value)
+
+
+@dataclass(frozen=True)
+class StateGetArgs:
+    """``state.get``: the display's state, as a versioned snapshot.
+
+    With ``since`` and the ``epoch`` it came from, the answer is only
+    ``{changed: false, version, epoch, served_at, loop}`` while the state is
+    still at that version, so a poller that already has it is sent no state.
+    """
+    since: Optional[int] = None
+    epoch: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'since': self.since, 'epoch': self.epoch}
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'StateGetArgs':
+        return cls(since=_optional_version(args, 'since'), epoch=_optional_epoch(args))
+
+
+@dataclass(frozen=True)
+class StateSubscribeArgs:
+    """``state.subscribe``: the snapshot now, then a push stream of changes.
+
+    The response is the snapshot ``state.get`` returns. After it the
+    connection carries only :class:`StateEvent` lines from the display: a
+    ``state`` event whenever the state changes (always the latest version,
+    so a reader that falls behind skips versions instead of queueing them),
+    and a ``tick`` at least every :data:`SUBSCRIBE_KEEPALIVE_SECONDS`.
+    """
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {}
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'StateSubscribeArgs':
+        return cls()
+
+
 CommandArgs = Union[HelloArgs, OnDemandStartArgs, OnDemandStopArgs, NoArgs,
-                    BrightnessSetArgs, PluginReloadArgs]
+                    BrightnessSetArgs, PluginReloadArgs, StateGetArgs, StateSubscribeArgs]
 
 #: The arguments of a command that goes on the render thread's queue.
 QueuedArgs = Union[OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs]
@@ -491,6 +577,8 @@ _ARG_TYPES: Dict[str, Any] = {
     Command.ON_DEMAND_STATUS: NoArgs,
     Command.BRIGHTNESS_SET: BrightnessSetArgs,
     Command.PLUGIN_RELOAD: PluginReloadArgs,
+    Command.STATE_GET: StateGetArgs,
+    Command.STATE_SUBSCRIBE: StateSubscribeArgs,
 }
 
 
@@ -561,6 +649,100 @@ class PluginReloadResult(TypedDict):
     reloaded: bool
     version: Optional[str]
     modes: List[str]
+
+
+class LoopState(TypedDict):
+    """``loop``: is the render loop still going round?
+
+    ``heartbeat_age_seconds`` is the age of the render thread's last beat,
+    measured in memory by the display when it answered -- the same beat that
+    writes ``display-heartbeat.json``. None until the loop has drawn its first
+    frame. At ``stale_after`` or more the loop is stalled: the threshold
+    ``/api/v3/health`` uses.
+    """
+    heartbeat_age_seconds: Optional[float]
+    armed: bool
+    stale_after: float
+
+
+class StateSnapshot(TypedDict, total=False):
+    """The answer to ``state.get`` and ``state.subscribe``, and the
+    ``result`` of a ``state`` event.
+
+    ``version`` counts changes to the state within one ``epoch`` (one run of
+    the display process): a reader that sees a new epoch starts over.
+    ``changed`` is False only for a ``state.get`` whose ``since`` is still
+    current, and then ``state`` is absent. ``served_at`` is the display's
+    wall clock when it answered. ``loop`` is measured at that moment, so it
+    is also inside ``state``.
+
+    ``state`` holds the sections in :data:`STATE_SECTIONS`:
+
+    * ``display``: what ``display_current_state`` holds (mode, plugin_id,
+      mode_index, total_modes, on_demand_active, is_display_active,
+      last_updated);
+    * ``on_demand``: what ``display_on_demand_state`` holds;
+    * ``brightness``: ``{brightness, panel_brightness, dimmed}``;
+    * ``plugins``: the plugin runtime snapshot (``plugin_runtime_snapshot``),
+      or None when there is none (or it was too large to send);
+    * ``loop``: :class:`LoopState`.
+
+    A section the display has not published yet is None.
+    """
+    schema: int
+    version: int
+    epoch: str
+    pid: int
+    served_at: float
+    changed: bool
+    state: Dict[str, Any]
+    loop: LoopState
+
+
+class StateEventKind:
+    STATE = 'state'   # result: a full StateSnapshot, the latest version
+    TICK = 'tick'     # result: {version, epoch, pid, served_at, loop}; nothing changed
+
+
+@dataclass(frozen=True)
+class StateEvent:
+    """One message the display pushes to a subscriber.
+
+    ``{"v": 1, "id": "<the subscribe request's id>", "event": "state" | "tick",
+    "result": {...}}``. It has no ``ok``, which is how a reader tells it from
+    a response.
+    """
+    id: str
+    event: str
+    result: Dict[str, Any]
+    v: int = PROTOCOL_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'v': self.v, 'id': self.id, 'event': self.event, 'result': dict(self.result)}
+
+    @classmethod
+    def from_dict(cls, obj: Any) -> 'StateEvent':
+        """Validate an event. Raises :class:`ProtocolError` (BAD_REQUEST)."""
+        if not isinstance(obj, dict):
+            raise ProtocolError(ErrorCode.BAD_REQUEST, 'an event must be a JSON object')
+        version = obj.get('v')
+        if not _is_int(version):
+            raise ProtocolError(ErrorCode.BAD_REQUEST, 'v must be an integer')
+        raw_id = obj.get('id')
+        if not isinstance(raw_id, str):
+            raise ProtocolError(ErrorCode.BAD_REQUEST, 'id must be a string')
+        event = obj.get('event')
+        if event not in (StateEventKind.STATE, StateEventKind.TICK):
+            raise ProtocolError(ErrorCode.BAD_REQUEST, 'event must be "state" or "tick"')
+        result = obj.get('result')
+        if not isinstance(result, dict):
+            raise ProtocolError(ErrorCode.BAD_REQUEST, 'result must be a JSON object')
+        return cls(id=raw_id, event=event, result=result, v=version)
+
+
+def is_event(obj: Any) -> bool:
+    """Whether a decoded message is a pushed event rather than a response."""
+    return isinstance(obj, dict) and 'event' in obj and 'ok' not in obj
 
 
 def negotiate_version(client_versions: Tuple[int, ...]) -> Optional[int]:

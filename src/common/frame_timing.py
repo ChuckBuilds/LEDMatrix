@@ -121,6 +121,7 @@ three times per threshold, so keep it to diagnostic runs, not soaks.
 
 from __future__ import annotations
 
+import atexit
 import copy
 import gc
 import json
@@ -213,10 +214,19 @@ class GcMonitor:
     lock: the render thread and the stats writer only read them.
 
     Install it once per process with :func:`install_gc_monitor`.
+
+    Collections still run while the interpreter shuts down, after module
+    globals such as ``time`` may already be torn down to ``None``. The clock
+    and ``sys.is_finalizing`` are bound here so the callback never looks a
+    global up, it does nothing once finalization has begun, and
+    :func:`install_gc_monitor` unregisters it at exit anyway.
     """
 
-    def __init__(self, threshold: float = GC_PAUSE_SECONDS):
+    def __init__(self, threshold: float = GC_PAUSE_SECONDS,
+                 clock: Callable[[], float] = time.perf_counter):
         self.threshold = threshold
+        self._clock = clock
+        self._is_finalizing = sys.is_finalizing
         self._started: Optional[float] = None
         #: Per generation (0, 1, 2), since the monitor was installed.
         self.collections = [0, 0, 0]
@@ -232,7 +242,9 @@ class GcMonitor:
         self.last_long: Optional[Tuple[float, float]] = None
 
     def __call__(self, phase: str, info: Dict[str, Any]) -> None:
-        now = time.perf_counter()
+        if self._is_finalizing():
+            return
+        now = self._clock()
         if phase == "start":
             self._started = now
             return
@@ -267,13 +279,36 @@ _gc_monitor_lock = threading.Lock()
 
 
 def install_gc_monitor() -> GcMonitor:
-    """The process's GcMonitor, installed in ``gc.callbacks`` on first call."""
+    """The process's GcMonitor, installed in ``gc.callbacks`` on first call.
+
+    It is unregistered at exit (:func:`uninstall_gc_monitor`), before the
+    interpreter tears module globals down.
+    """
     global _gc_monitor
     with _gc_monitor_lock:
         if _gc_monitor is None:
             _gc_monitor = GcMonitor()
             gc.callbacks.append(_gc_monitor)
+            atexit.register(uninstall_gc_monitor)
         return _gc_monitor
+
+
+def uninstall_gc_monitor() -> None:
+    """Take the process's GcMonitor out of ``gc.callbacks``; safe to repeat.
+
+    A recorder that still holds the monitor keeps its counters; they just
+    stop moving. The next :func:`install_gc_monitor` installs a fresh one.
+    """
+    global _gc_monitor
+    with _gc_monitor_lock:
+        monitor, _gc_monitor = _gc_monitor, None
+        if monitor is None:
+            return
+        atexit.unregister(uninstall_gc_monitor)
+        try:
+            gc.callbacks.remove(monitor)
+        except ValueError:
+            pass
 
 
 #: One presented frame's interval: (interval, blit, wait, hold, ops), where

@@ -258,6 +258,15 @@ class FakePluginManager:
         self.plugins.pop(plugin_id, None)
         return True
 
+    def detach_plugin(self, plugin_id):
+        return self.plugins.pop(plugin_id, None)
+
+    def unload_detached_plugin(self, plugin_id, plugin):
+        return True
+
+    def reload_plugin(self, plugin_id):
+        return False
+
     def get_plugin_lock(self, plugin_id):
         if plugin_id in self.no_lock:
             return None  # as when loading failed part-way
@@ -549,7 +558,19 @@ class RunLoopHarness:
         self.sync = FakeSync(self)
         self.dm = self._display_manager()
         self._displayed_this_pass = False
+        #: How long a plugin reload's own thread takes, on the fake clock.
+        self.reload_seconds = 0.0
         self.controller = self._build()
+        self.controller._spawn_plugin_reload = self._spawn_plugin_reload
+
+    def _spawn_plugin_reload(self, job) -> None:
+        """The plugin-reload thread, on the fake clock: the job runs
+        ``reload_seconds`` after it was started, meanwhile the render thread
+        carries on (at once when that is 0)."""
+        if self.reload_seconds <= 0:
+            job.run(self.pm)
+        else:
+            self.clock.at(self.clock.rel() + self.reload_seconds, lambda: job.run(self.pm))
 
     # -- event log -----------------------------------------------------------
     def log(self, kind: str, subject: Any = None, quiet: bool = False, **data):

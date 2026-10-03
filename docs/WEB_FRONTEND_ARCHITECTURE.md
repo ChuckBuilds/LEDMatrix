@@ -46,6 +46,7 @@ static/v3/js/
             store.js (the one installed-plugin store), form/renderer.js
   pages/                one module per tab partial
     cache.js            export init(root, ctx), destroy(root, ctx)
+    durations.js, operation-history.js, raw-json.js, backup-restore.js
     ...
 ```
 
@@ -57,9 +58,29 @@ A converted partial has no `<script>`. Its root element names its page:
 <div class="..." data-page="cache"> ... </div>
 ```
 
-`core/boot.js` registers each page with a loader:
-`registry.register('cache', () => import('../pages/cache.js'))`. A page's
-module is fetched only when its partial first appears.
+`core/boot.js` lists each page with a loader,
+`'cache': page(function() { return import('../pages/cache.js'); })`, and
+registers them all. A page's module is fetched only when its partial first
+appears. `page()` remembers the module once loaded, so the alias of an old
+synchronous global (`validateJSON` returns a boolean) still answers
+synchronously while its page is on screen.
+
+The conventions the converted pages share:
+
+- **Buttons name an action.** A partial's buttons carry `data-action` (and
+  any argument as another `data-*` attribute) instead of an `onclick` that
+  names a global. One delegated listener on the page root handles them all,
+  including rows drawn later.
+- **Server data is drawn with `textContent`**, never a markup string.
+- **Reads are cancelled, writes are not.** Loads pass `ctx.signal`, so a swap
+  cancels them. Saves, deletes, exports and restores do not: the server
+  finishes them anyway, so the page still reports the result in a
+  notification but draws nothing into a page that has gone.
+- **Old globals become aliases.** Each `window.*` name a page used to define
+  is made in `boot.js` with `alias(page, name, replacement)`, which forwards
+  to the module's export of the same name and warns once.
+- **Timers are cleared in `destroy()`**, the one thing `ctx.signal` cannot
+  undo by itself.
 
 `core/registry.js` handles the rest:
 
@@ -214,10 +235,10 @@ are the inline script in each partial today.
 | # | Page | Inline JS | Why it is here |
 |---|---|---|---|
 | 1 | Cache (`cache.html`) | 163 lines, now 0 | **Done in stage 1.** One endpoint pair, no globals other pages use. The reference conversion |
-| 2 | Rotation (`durations.html`) | 29 | Tiny. One htmx form |
-| 3 | Operation History | 293 | No globals, read-only list |
-| 4 | Config Editor (`raw_json.html`) | 212 | No globals. CodeMirror is set up and torn down in init/destroy |
-| 5 | Backup & Restore | 232 | 5 globals used only by its own `onclick`s; these become delegated listeners plus deprecated aliases |
+| 2 | Rotation (`durations.html`) | 29 lines, now 0 | **Done in stage 2.** The form stays plain htmx; the page starts the shared rotation-order widget, whose plugin-list request now takes `ctx.signal`. Its `hx-on` and `onsubmit` attributes call shared globals (`showSaveResult`, `fixInvalidNumberInputs`) and move with step 6 |
+| 3 | Operation History | 293 lines, now 0 | **Done in stage 2.** Read-only list; rows drawn with `textContent`, the search debounce cleared on destroy. The "Showing x to y" counters now also reset when nothing matches |
+| 4 | Config Editor (`raw_json.html`) | 212 lines, now 0 | **Done in stage 2.** Plain textareas (no CodeMirror on this page). It defined 5 globals after all (`formatJson`, `manualValidateJson`, `validateJSON`, `saveMainConfig`, `saveSecretsConfig`); nothing else used them, and they are deprecated aliases now. The live "Invalid JSON" line no longer puts the parser's message into `innerHTML` |
+| 5 | Backup & Restore | 232 lines, now 0 | **Done in stage 2.** Its 5 globals (`exportBackup`, `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`) are deprecated aliases; the buttons are delegated `data-action`s. Uploads go through `ctx.api.request(..., { body: formData })` (`api.js` gained a raw `body` option) |
 | 6 | Schedule | 193 | 2 globals used as `hx-on` response handlers. Moves `hx-on` handlers into page listeners |
 | 7 | General | 147 | `webLogin` global and the security section. The first page that touches login |
 | 8 | Display | 231 | First page with `LEDVisibility` timers: those move to a `ctx.visibility` service that stops on destroy |
@@ -260,7 +281,11 @@ Unit suites need only node. They import the shipped modules directly:
 | `unit/test_page_registry.js` | Unit, minimal DOM shim | The lifecycle: one init per root, destroy on swap, a veto keeps the page, swaps elsewhere leave it alone, the sweep, lazy loading, a destroy while loading, error containment |
 | `unit/test_core_modules.js` | Unit | `api.js` (envelope, errors, abort, login redirect, path check) and `facade.js` (facade, aliases) |
 | `dom/test_cache_page.js` | DOM: real partial, real API shape | No inline script; one request per swap and per Refresh after five swaps; a cancelled request draws nothing; hostile keys stay text; delete, empty, error, network and login states |
-| `test/web_interface/test_es_modules.py` | pytest | MIME type; `no-cache` without `?v` and immutable with it; `boot.js` loads last; every import resolves inside `core/` and `pages/`; every registered page has its module and exactly one partial root; a converted partial has no `<script>` |
+| `dom/test_durations_page.js` | DOM: real partial, real widget, real API shape | One plugin-list request per swap; Move down moves one place after five swaps; the swap cancels a request in flight; a late-loading widget is waited for, and a page swapped away while waiting starts nothing; hostile names stay text |
+| `dom/test_operation_history_page.js` | DOM: real partial, real API shape | One history request per swap and per Refresh; the plugin filter filled once (from `PluginAPI`'s cache when loaded); paging, filters, debounced search, Clear (one DELETE), error/network/login states, cancel on swap; hostile ids, users and errors stay text |
+| `dom/test_raw_json_page.js` | DOM: real partial, real config | One POST per Save after five swaps, to the right file; Format and Validate act once; invalid JSON never sent and its message stays text; a save survives a swap and is still reported; the old globals' entry points |
+| `dom/test_backup_restore_page.js` | DOM: real partial, real API shape | One request per Refresh, Delete, Export (busy button ignores a second click), Inspect and Restore after five swaps; the upload's fields and the six restore options; reads cancelled by a swap, writes not; hostile file and host names stay text; the old globals' entry points |
+| `test/web_interface/test_es_modules.py` | pytest | MIME type; `no-cache` without `?v` and immutable with it; `boot.js` loads last; every import resolves inside `core/` and `pages/`; the converted pages are exactly the registered ones, each with its module, `init`, and one root in the rendered partial; a converted partial has no `<script>` and no `onclick`; every moved global is aliased in `boot.js` and exported by its module, and no template defines it any more |
 | `test/test_field_model_parity.py` | pytest | The model against the macro for every available schema |
 
 What each future step adds:

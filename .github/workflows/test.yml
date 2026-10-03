@@ -14,8 +14,14 @@ permissions:
 
 jobs:
   plugin-safety:
-    name: Plugin safety harness + unit tests
+    name: Plugin safety harness + unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # The two Pythons the installer supports: Raspberry Pi OS Bookworm ships
+    # 3.11 and Trixie 3.13.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
     env:
       # The bundled fixture plugin gives the harness at least one real plugin
       # to render, and REQUIRE_PLUGINS turns "discovered zero plugins" into a
@@ -29,7 +35,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
@@ -43,8 +49,13 @@ jobs:
           pytest --no-cov test/plugins/
 
   unit-tests:
-    name: Core unit tests
+    name: Core unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Bookworm's Python (3.11) and Trixie's (3.13); see plugin-safety.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -52,7 +63,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
@@ -84,7 +95,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -123,7 +134,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       # Downloads the pinned standalone Tailwind CLI (SHA-256 checked; no
       # Node), rebuilds static/v3/tailwind.css and plugin-frame.css from the
@@ -142,7 +153,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
 
       # The runtime requirements are installed so mypy sees the real types of
@@ -181,7 +192,7 @@ jobs:
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       # Stdlib only; exits 0 whatever it finds.
       - name: Report method-family drift across the nine scoreboards

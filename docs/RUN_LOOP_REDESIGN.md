@@ -44,7 +44,9 @@ Each pass, in order:
 3. Poll on-demand requests and expiry, release plugins loaded only for
    on-demand, tick plugin updates, drop an expired WiFi notice, evaluate
    the schedule (an on-demand session overrides scheduled-off), apply the
-   brightness target.
+   brightness target. Then gather the Arbiter's inputs
+   (`_arbiter_inputs`) and call `Arbiter.decide()`, which picks one of
+   steps 4-6 or returns `LEGACY` for steps 7-9 (stage 2).
 4. **Scheduled off:** blank, dwell up to 60 s. `_blank_while_scheduled_off`
 5. **Follower:** render one frame from the leader. `_run_follower_frame`
 6. **WiFi notice** (unless on-demand): draw it, dwell 0.5 s. `_show_wifi_notice`.
@@ -70,8 +72,9 @@ Each pass, in order:
    next mode (`_advance_after_screen`).
 
 The helpers named above were extracted in stage 1 without changing
-behaviour. The frame loops, the Vegas branch and every early exit are still
-inline in `run()`.
+behaviour. Since stage 2 the choice between steps 4, 5, 6 and the rest is
+made by `Arbiter.decide()` in `src/display_arbiter.py`. The frame loops, the
+Vegas branch and every early exit are still inline in `run()`.
 
 ## Target design
 
@@ -160,7 +163,7 @@ that the harness patches in today.
 | 4 | Vegas as a Source driven by `run_frame()` | none intended | traces against the real coordinator; ledpi Vegas soak A/B |
 | 5 | Plugins declare `frame_policy` | DEBUG instead of INFO for the FPS line | traces; soak on a static-heavy rotation |
 
-### Stage 1 (this PR)
+### Stage 1 (#704)
 
 - `test/_run_loop_harness.py` builds a real `DisplayController` through
   `__init__` on in-memory fakes (plugins, cache, config service, plugin
@@ -194,7 +197,7 @@ that the harness patches in today.
 - Twelve helpers were extracted from `run()` (listed under "What `run()`
   does today"). Breaking any one of them fails at least one golden trace.
 
-### Stage 2: Arbiter, starting with Follower and Wifi
+### Stage 2: Arbiter, starting with Follower and Wifi (done)
 
 1. Add `ScreenPlan` and an `Arbiter` with the ScheduledOff gate, Follower
    and Wifi. Every other case returns a `LEGACY` plan, which means "carry on
@@ -211,12 +214,68 @@ that the harness patches in today.
 Follower and Wifi go first because each is one self-contained branch that
 ends the pass. They prove the plumbing without touching the frame loops.
 
+What shipped:
+
+- `src/display_arbiter.py` (on the mypy ratchet) holds `Source`
+  (`SCHEDULED_OFF`, `FOLLOWER`, `WIFI`, `LEGACY`), `ArbiterInputs`,
+  `ArbiterState`, `WifiNotice`, `ScreenPlan` and `Arbiter.decide`.
+  `ScreenPlan` has only the fields stage 2 uses: `source`, `max_duration`
+  (60 s for the blank, 0.5 s for the notice, the constants `run()` used to
+  hard-code) and `notice`. `mode`, `plugin`, the other durations,
+  `frame_policy` and `preemptible_by` arrive with the Sources that need them.
+- `ArbiterState` is empty: no stage-2 Source remembers anything between
+  passes. `now` is passed but not read, because the top-of-pass WiFi check
+  never compared the expiry and must not start (the table pins this).
+- `ArbiterInputs` holds `schedule_on`, `on_demand_active`,
+  `follower_active` and `wifi_notice`. `_arbiter_inputs` derives
+  `schedule_on` as `is_display_active and not on_demand_schedule_override`,
+  so the gate (blank when the schedule is off and no on-demand session
+  overrides it) blanks exactly when `is_display_active` is False, as before,
+  including #714's on-demand ending in off hours. It reads the WiFi notice
+  only when the notice could win, because `_check_wifi_status_message` has
+  side effects (its 1 Hz throttle, deleting an expired file) that those
+  passes never had.
+- The mid-screen rule is `wifi_notice_preempts(notice, on_demand, now)`,
+  which `_wifi_notice_pending` calls; it does compare the expiry.
+- `run()` still calls `_publish_current_mode_state_if_changed`,
+  `_apply_pending_vegas_init` and `process_deferred_updates` at the same
+  points relative to the branches, so the order of side effects in a pass
+  is unchanged.
+- `test/test_display_arbiter.py`: the 16-row table (every combination of
+  the four inputs, written out), the mid-screen table, purity checks (no
+  clock reads, nothing mutated, no I/O imports), and the controller's
+  snapshot through an on-demand session that overrides the schedule and
+  ends. A mutation run broke 23 pieces once each (the gate, the order, each
+  Source, the dwells, the expiry comparison, the snapshot's reads, each
+  dispatch in `run()`); every one failed a test.
+
 ### Stage 3: ScreenRunner and `PREEMPTED`
 
 Move the two frame loops, the make-up dwell and the dynamic-duration exit
 into `ScreenRunner.run(plan)` with an injected `FrameClock`. Replace the
 five re-checks with `PREEMPTED`. Add the OnDemand, Live and Rotation Sources
 so `LEGACY` is left meaning only Vegas.
+
+Concretely, from where stage 2 left off:
+
+1. `ArbiterState` gains the rotation index, the on-demand mode list, index,
+   expiry and pin, and the live resume point (today `current_mode_index`,
+   `on_demand_*` and the live-priority stash). `ArbiterInputs` gains the
+   live modes (`_collect_live_modes`) and whether Vegas is enabled and keeps
+   live content in the ticker.
+2. OnDemand returns its current mode with `_clamp_to_on_demand`'s bound,
+   reading `now` for the expiry. Live returns the next live mode
+   (round-robin). Rotation returns `available_modes[current_mode_index]`.
+   `ScreenPlan` gains `mode`, `plugin`, `min_duration`, `max_duration`,
+   `dynamic`, `frame_policy` and `preemptible_by`.
+3. `ScreenRunner.run(plan)` returns an `ExitReason`; `state.after(plan,
+   outcome)` replaces `_advance_after_screen` and the live-resume
+   bookkeeping. Each mid-screen check asks `decide()` whether a Source in
+   `plan.preemptible_by` now wins, so `_screen_preempted`,
+   `_check_live_takeover` and `_wifi_notice_pending` become one call.
+4. The control socket (`_drain_control_commands`, `_wait_for_control`) and
+   state publishing stay where they are; the runner calls them at its
+   service points.
 
 This stage touches frame pacing (the 8 ms deadline sleep, the 1 ms yield),
 so it needs a frame soak on ledpi, A/B against main. Coordinate with

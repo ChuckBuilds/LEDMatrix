@@ -84,6 +84,43 @@ python3 web_interface/start.py
 
 ### Installation & Build Issues
 
+#### "This version of Raspberry Pi OS is not supported"
+
+LEDMatrix installs on Raspberry Pi OS Lite **Trixie** (Debian 13, Python
+3.13) or **Bookworm** (Debian 12, Python 3.11). The installer checks
+`/etc/os-release` before it changes anything and stops on anything else.
+
+**Check what you have:**
+```bash
+grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+python3 --version
+```
+
+**Solutions:**
+- `VERSION_ID="11"` (Bullseye) or older: flash a new card with Raspberry Pi
+  Imager, choosing Raspberry Pi OS Lite (64-bit). Trixie is recommended;
+  Bookworm (Legacy) also works. An in-place upgrade from Bullseye is not
+  supported by Raspberry Pi and is not worth the risk.
+- "Desktop environment detected": use the Lite image, not the desktop one.
+- "python3 is Python 3.x; LEDMatrix needs Python 3.11 or newer": something
+  has replaced the system `python3`. Point it back at the OS's own Python
+  (`/usr/bin/python3` should be 3.11 on Bookworm, 3.13 on Trixie).
+- `sudo bash scripts/check_system_compatibility.sh` runs the same checks
+  without installing anything.
+
+#### "This Pi manages its network with dhcpcd, not NetworkManager"
+
+A warning, not an error: the install carries on and the display works. But
+choosing a WiFi network from the web page and the `LEDMatrix-Setup` hotspot
+both need NetworkManager, the default on Bookworm and Trixie. It appears
+when dhcpcd was selected in `raspi-config`. Switch back with a keyboard and
+screen attached (or over Ethernet), since the WiFi connection drops briefly:
+
+```bash
+sudo raspi-config   # Advanced Options -> Network Config -> NetworkManager
+sudo reboot
+```
+
 #### Step 6 fails: "Failed building wheel for rgbmatrix"
 
 **Symptoms:**
@@ -328,6 +365,49 @@ commit, then switches to releases on its own.
 3. **Local changes after a channel switch:** edits that no longer fit the new
    version are kept in the git stash rather than lost; `git stash list`
    shows them as "LEDMatrix autostash before update".
+4. **A new install is on a release, not `main`.** The one-shot installer
+   checks out the newest release. For the newest code instead, install with
+   `LEDMATRIX_CHANNEL=beta`:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ChuckBuilds/LEDMatrix/main/scripts/install/one-shot-install.sh | LEDMATRIX_CHANNEL=beta bash
+   ```
+
+---
+
+#### Issue: "service settings ... are not applied yet" after an update
+
+**Symptoms:**
+- Update Code's message, or the web interface log, says an update changes
+  service settings that are not applied yet, and to run the installer
+- The display logs `ledmatrix.service differs from systemd/ledmatrix.service`
+  at startup
+
+**Explanation:** updates install the systemd units a new version changes
+through the root helper `/usr/local/sbin/ledmatrix-refresh-units`, which the
+installer sets up and grants to the web user in
+`/etc/sudoers.d/ledmatrix_web`. A device installed before that has neither,
+so the new unit settings (for example the display's watchdog) wait for a
+reinstall. The update itself is fine.
+
+**Solution:** re-run the installer once, as root:
+```bash
+cd ~/LEDMatrix
+sudo ./first_time_install.sh
+# or, lighter: install the units and helper, then the sudo rules
+sudo ./scripts/install/install_service.sh
+./scripts/install/configure_web_sudo.sh
+```
+Check it worked:
+```bash
+ls -l /usr/local/sbin/ledmatrix-refresh-units   # root root, rwxr-xr-x
+sudo -l | grep ledmatrix-refresh-units           # the two rules
+```
+A message that the helper **refused** a unit (`refusing to install it`)
+means a template in `systemd/` was edited so that it would run as another
+account or from another folder. The message names the template. Look at
+what changed with `git diff -- systemd/`, save any edit you want to keep,
+then restore only that file, for example
+`git checkout -- systemd/ledmatrix-web.service`.
 
 ---
 
@@ -364,9 +444,16 @@ commit, then switches to releases on its own.
 
 5. **Check required services:**
    ```bash
+   systemctl is-active NetworkManager   # must say "active"
    sudo systemctl status hostapd
    sudo systemctl status dnsmasq
    ```
+   On a fresh install `hostapd` shows as **masked**. That is expected, on
+   Bookworm and Trixie alike: Debian's hostapd package masks the service
+   when it is installed without a configuration, so the hotspot is brought
+   up through NetworkManager instead (look for `nmcli hotspot fallback` in
+   `journalctl -u ledmatrix-wifi-monitor`). If NetworkManager is not
+   active, see "This Pi manages its network with dhcpcd" above.
 
 6. **Manually enable AP mode:**
    ```bash
@@ -590,9 +677,10 @@ stack into the log, so it says which plugin was stuck.
    apart, so a plugin that hangs on every start does not restart the display
    hundreds of times an hour.
 
-4. **Is the watchdog installed?** Installs from before it keep their old unit
-   until the installer is re-run (a startup warning says the unit differs
-   from its template):
+4. **Is the watchdog installed?** Updates install new unit settings once the
+   installer has set up `ledmatrix-refresh-units`; installs from before that
+   keep their old unit until the installer is re-run (a startup warning says
+   the unit differs from its template):
    ```bash
    systemctl show -p WatchdogUSec ledmatrix   # 2min once running; 0 = not installed
    sudo ./scripts/install/install_service.sh

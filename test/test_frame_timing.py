@@ -626,7 +626,7 @@ def test_render_bench_strip_lights_a_real_share_of_pixels():
 def _collection(monitor, monkeypatch, start, took, generation=2):
     """One collection of ``took`` seconds, as gc.callbacks would report it."""
     clock = iter([start, start + took])
-    monkeypatch.setattr(frame_timing.time, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(monitor, "_clock", lambda: next(clock))
     monitor("start", {"generation": generation})
     monitor("stop", {"generation": generation, "collected": 0, "uncollectable": 0})
     monkeypatch.undo()
@@ -739,3 +739,71 @@ def test_installing_the_gc_monitor_twice_installs_it_once():
     first = frame_timing.install_gc_monitor()
     assert frame_timing.install_gc_monitor() is first
     assert sum(1 for cb in gc.callbacks if cb is first) == 1
+
+
+def test_uninstalling_the_gc_monitor_removes_it_and_can_repeat():
+    import gc
+    first = frame_timing.install_gc_monitor()
+    frame_timing.uninstall_gc_monitor()
+    frame_timing.uninstall_gc_monitor()
+    assert first not in gc.callbacks
+    second = frame_timing.install_gc_monitor()
+    assert second is not first
+    assert sum(1 for cb in gc.callbacks if cb is second) == 1
+
+
+def test_the_gc_monitor_needs_no_module_globals(monkeypatch):
+    # At shutdown, module globals can be torn down to None while a collection
+    # still calls the monitor ("'NoneType' object has no attribute
+    # 'perf_counter'"). Its clock is bound at construction.
+    monitor = frame_timing.GcMonitor(threshold=0.0)
+    monkeypatch.setattr(frame_timing, "time", None)
+    monkeypatch.setattr(frame_timing, "sys", None)
+    monitor("start", {"generation": 2})
+    monitor("stop", {"generation": 2})
+    assert monitor.collections == [0, 0, 1]
+
+
+def test_the_gc_monitor_does_nothing_once_the_interpreter_is_finalizing(monkeypatch):
+    monitor = frame_timing.GcMonitor(threshold=0.0)
+    monkeypatch.setattr(monitor, "_is_finalizing", lambda: True)
+    monkeypatch.setattr(monitor, "_clock", lambda: pytest.fail("clock read"))
+    monitor("start", {"generation": 2})
+    monitor("stop", {"generation": 2})
+    assert monitor.collections == [0, 0, 0]
+
+
+_EXIT_SCRIPT = """
+import atexit, gc, sys
+sys.path.insert(0, {root!r})
+from src.common import frame_timing
+
+# Registered before the monitor, so it runs after the monitor's own exit hook.
+atexit.register(lambda: print("installed at exit:", any(
+    isinstance(cb, frame_timing.GcMonitor) for cb in gc.callbacks)))
+monitor = frame_timing.install_gc_monitor()
+gc.collect()
+assert monitor.collections[2] >= 1
+
+class Garbage:
+    # Makes cyclic garbage while modules are being torn down, so collections
+    # run during finalization.
+    def __del__(self):
+        for _ in range(5000):
+            cycle = []
+            cycle.append(cycle)
+
+keep = Garbage()
+keep.self = keep
+"""
+
+
+def test_a_process_with_the_gc_monitor_exits_cleanly():
+    import subprocess
+    root = str(Path(__file__).resolve().parent.parent)
+    proc = subprocess.run(
+        [sys.executable, "-c", _EXIT_SCRIPT.format(root=root)],
+        capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "Exception ignored" not in proc.stderr
+    assert "installed at exit: False" in proc.stdout

@@ -28,6 +28,7 @@ freetype.Face, so it drops straight into DisplayManager.draw_text().
 """
 
 import logging
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -332,9 +333,10 @@ class LayoutContext:
         # a plugin fitting changing text (a live game clock, a ticker) on a
         # 24/7 service would otherwise grow this without bound.
         self._fit_cache: "OrderedDict[Any, FitResult]" = OrderedDict()
-        # LRU-bounded (images are big). Entries hold a strong reference to
-        # the source image when keyed by id() so the id can't be recycled
-        # out from under the cache.
+        # LRU-bounded (images are big). An id()-keyed entry watches its
+        # source image through a weak reference and is dropped when the
+        # source is freed (see fit_image), so the id can't be recycled out
+        # from under the cache and the cache never keeps the source alive.
         self._image_cache: "OrderedDict[Any, Tuple[Any, Any]]" = OrderedDict()
 
     _IMAGE_CACHE_MAX = 64
@@ -536,8 +538,15 @@ class LayoutContext:
         cached per (image, box size, options) for this panel size.
 
         Prefer a stable ``cache_key`` (e.g. "logo:KC") for images that get
-        reloaded — the default id()-based key is safe (the entry pins the
-        source image) but misses across reloads of the same content.
+        reloaded — the default id()-based key misses across reloads of the
+        same content.
+
+        An id()-keyed entry lives only as long as its source image: it holds
+        a weak reference and is dropped when the source is freed. It used to
+        pin the source instead, so a plugin passing a freshly loaded image
+        each frame (``draw_image(Image.open(path), box)``, the documented
+        one-liner) never hit and kept the last 64 sources alive — ~64MB for
+        500x500 RGBA team logos, the median size under assets/sports.
         """
         from src.adaptive_images import fit_image as _fit_image
 
@@ -547,18 +556,31 @@ class LayoutContext:
         key = ("image", identity, img.size, box_w, box_h, mode,
                crop_to_ink, anchor, resample_name, upscale)
 
-        cached = self._image_cache.get(key)
-        if cached is not None:
-            self._image_cache.move_to_end(key)
+        cache = self._image_cache
+        cached = cache.get(key)
+        # An id()-keyed hit must still be this very image; the callback below
+        # normally removes a dead source's entry before its id can recur.
+        if cached is not None and (cache_key is not None or cached[1]() is img):
+            cache.move_to_end(key)
             return cached[0]
 
         result = _fit_image(img, (box_w, box_h), mode=mode,
                             crop_to_ink=crop_to_ink, anchor=anchor,
                             resample=resample, upscale=upscale)
-        # Pin the source only for id()-keyed entries (see docstring).
-        self._image_cache[key] = (result, img if cache_key is None else None)
-        while len(self._image_cache) > self._IMAGE_CACHE_MAX:
-            self._image_cache.popitem(last=False)
+        source = None
+        if cache_key is None:
+            def _forget(ref: Any, key: Any = key) -> None:
+                entry = cache.get(key)
+                if entry is not None and entry[1] is ref:
+                    cache.pop(key, None)
+            try:
+                source = weakref.ref(img, _forget)
+            except TypeError:
+                # Not weak-referenceable: pin it, as before.
+                source = lambda img=img: img  # noqa: E731
+        cache[key] = (result, source)
+        while len(cache) > self._IMAGE_CACHE_MAX:
+            cache.popitem(last=False)
         return result
 
     # ---- text utilities ------------------------------------------------

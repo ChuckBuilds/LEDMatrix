@@ -4,6 +4,7 @@
  *   const api = createApi();
  *   const body = await api.get('/api/v3/cache/list', { signal });
  *   await api.post('/api/v3/cache/delete', { key }, { signal });
+ *   await api.request('POST', '/api/v3/backup/validate', { body: formData });
  *
  * Every call resolves to the parsed JSON body, or rejects with an ApiError:
  *   error.status         the HTTP status (0 when no HTTP answer arrived)
@@ -77,6 +78,10 @@ export function createApi(options = {}) {
         if (opts.json !== undefined) {
             init.headers['Content-Type'] = 'application/json';
             init.body = JSON.stringify(opts.json);
+        } else if (opts.body !== undefined) {
+            // Sent as it is (a FormData upload, say); the browser sets the
+            // Content-Type, multipart boundary included.
+            init.body = opts.body;
         }
 
         let response;
