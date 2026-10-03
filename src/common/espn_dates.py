@@ -30,14 +30,34 @@ Once a range has been rejected, later ranges skip straight to chunks for
 ``RANGE_RETRY_SECONDS`` instead of spending a doomed request first -- live
 scoreboards ask every 30 seconds. After that the range is tried again, so the
 workaround retires itself if ESPN reverts.
+
+ONE CACHE KEY PER SCOREBOARD
+----------------------------
+The same ESPN scoreboard used to be cached under a different key by every
+consumer: odds-ticker as ``scoreboard_data_{sport}_{league}_{date}``,
+``APIHelper`` as ``espn_{sport}_{league}_{date}``, the scoreboards as
+``{sport_key}_schedule_{window}`` -- so two plugins showing the same league
+fetched and stored it twice. :func:`espn_scoreboard_cache_key` is the one
+name for "this sport/league scoreboard for these dates", and
+:func:`get_espn_scoreboard` (or :func:`read_espn_scoreboard_cache` and
+:func:`store_espn_scoreboard_cache` around :func:`fetch_espn_scoreboard`)
+is the cache-through read every consumer can share. A read never returns an
+entry older than the reader's own ``max_age``, whoever wrote it and whatever
+ttl they stored with it. Old keys are passed as ``legacy_keys`` and read
+after the canonical one, so an upgrade does not refetch everything at once;
+they can go one release after the one that added this.
 """
 
+import contextvars
+import logging
+import math
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 
 try:
     from src.common.json_body import response_json
@@ -46,6 +66,26 @@ except ImportError:
     # json_body; the stdlib parse is what those cores always used.
     def response_json(response: Any) -> Any:
         return response.json()
+
+try:
+    # The core fetch service: counts, per-host budget, merging of identical
+    # requests. Same call, same result and errors as ``session.get``.
+    from src.common.fetch_service import fetch_get, get_fetch_service, pinned_caller
+    _COUNTS_FETCHES = True
+except ImportError:
+    # Bundled copies on cores without it call the session directly.
+    import contextlib
+
+    def fetch_get(session: Any, url: str, *, share_in_flight: bool = True,
+                  cache_max_age: Optional[float] = None, **kwargs: Any) -> Any:
+        return session.get(url, **kwargs)
+
+    def pinned_caller() -> Any:
+        return contextlib.nullcontext()
+
+    _COUNTS_FETCHES = False
+
+_logger = logging.getLogger(__name__)
 
 # Above this, ESPN returns a truncated list instead of an error. See module
 # docstring: 500 is the largest value measured to return complete data.
@@ -73,7 +113,22 @@ __all__ = [
     "merge_scoreboard_payloads",
     "fetch_espn_date_chunks",
     "fetch_espn_scoreboard",
+    "ESPN_SCOREBOARD_URL",
+    "espn_scoreboard_url",
+    "espn_scoreboard_cache_key",
+    "espn_scoreboard_cache_key_for_url",
+    "read_espn_scoreboard_cache",
+    "store_espn_scoreboard_cache",
+    "get_espn_scoreboard",
 ]
+
+#: The site-API scoreboard every sport and league shares.
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard"
+_ESPN_HOST_URL = "https://site.api.espn.com/"
+
+_PATH_PART = re.compile(r"^[a-z0-9][a-z0-9.\-]*$")
+_DATES = re.compile(r"^\d{4}(?:\d{2}(?:\d{2})?)?$|^\d{8}-\d{8}$")
+_SCOREBOARD_PATH = re.compile(r"/sports/([^/?#]+)/([^/?#]+)/scoreboard/?$")
 
 
 def clamp_espn_limit(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -111,6 +166,12 @@ def parse_espn_date_range(dates: Any) -> Optional[Tuple[date, date]]:
     if end < start:
         return None
     return start, end
+
+
+def _memo_kwargs(cache_max_age: Optional[float]) -> Dict[str, Any]:
+    """``cache_max_age`` for fetch_get, only when the caller gave one, so a
+    call that did not say is the call it always was."""
+    return {} if cache_max_age is None else {"cache_max_age": cache_max_age}
 
 
 def _ranges_known_rejected() -> bool:
@@ -188,6 +249,7 @@ def merge_scoreboard_payloads(payloads: List[Any]) -> Dict[str, Any]:
 
 def _fetch_one_chunk(
     session, url: str, params: Dict[str, Any], headers, timeout, logger, chunk: str,
+    cache_max_age: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """GET a single ``dates=`` chunk, or None when it failed.
 
@@ -195,11 +257,13 @@ def _fetch_one_chunk(
     logged and swallowed here rather than raised to the gather below.
     """
     try:
-        response = session.get(
+        response = fetch_get(
+            session,
             url,
             params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
             headers=headers,
             timeout=timeout,
+            **_memo_kwargs(cache_max_age),
         )
         response.raise_for_status()
         return cast(Optional[Dict[str, Any]], response_json(response))
@@ -211,7 +275,7 @@ def _fetch_one_chunk(
 
 def _fetch_chunks(
     session, url: str, params: Dict[str, Any], headers, timeout, logger,
-    chunks: List[str],
+    chunks: List[str], cache_max_age: Optional[float] = None,
 ) -> List[Optional[Dict[str, Any]]]:
     """Fetch every chunk, returning payloads positionally aligned with ``chunks``.
 
@@ -220,19 +284,29 @@ def _fetch_chunks(
     callers keep ``chunks`` order from the returned list -- but it does mean
     the session is shared across threads, which is why this only ever issues
     GETs and never touches session state.
+
+    Each chunk runs in a copy of the caller's context, with the caller pinned
+    into it, so the fetch service counts the chunks against the plugin that
+    asked for the range rather than against the core.
     """
     if not chunks:
         return []
     fetch = partial(
         _fetch_one_chunk, session, url, params, headers, timeout, logger,
+        cache_max_age=cache_max_age,
     )
     if len(chunks) == 1:
         return [fetch(chunks[0])]
     workers = min(ESPN_CHUNK_WORKERS, len(chunks))
+    with pinned_caller():
+        # One copy per chunk: a Context cannot be entered by two threads.
+        contexts = [contextvars.copy_context() for _ in chunks]
     with ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="espn-chunk",
     ) as pool:
-        return list(pool.map(fetch, chunks))
+        futures = [pool.submit(context.run, fetch, chunk)
+                   for context, chunk in zip(contexts, chunks)]
+        return [future.result() for future in futures]
 
 
 def fetch_espn_date_chunks(
@@ -242,6 +316,7 @@ def fetch_espn_date_chunks(
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 15,
     logger=None,
+    cache_max_age: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """Fetch a ``YYYYMMDD-YYYYMMDD`` window as month and day chunks.
 
@@ -273,7 +348,7 @@ def fetch_espn_date_chunks(
         )
 
     results = _fetch_chunks(
-        session, url, params, headers, timeout, logger, chunks,
+        session, url, params, headers, timeout, logger, chunks, cache_max_age,
     )
     attempted = len(chunks)
 
@@ -305,7 +380,7 @@ def fetch_espn_date_chunks(
         days = [day for index in sorted(capped) for day in capped[index]]
         attempted += len(days)
         by_day = dict(zip(days, _fetch_chunks(
-            session, url, params, headers, timeout, logger, days,
+            session, url, params, headers, timeout, logger, days, cache_max_age,
         )))
         for index, month_days in capped.items():
             slots[index] = [by_day.get(day) for day in month_days]
@@ -338,6 +413,7 @@ def fetch_espn_scoreboard(
     headers: Optional[Dict[str, str]] = None,
     timeout: int = 15,
     logger=None,
+    cache_max_age: Optional[float] = None,
 ) -> Dict[str, Any]:
     """GET an ESPN scoreboard, re-asking in month/day chunks if a range 400s.
 
@@ -347,6 +423,10 @@ def fetch_espn_scoreboard(
     and later ranges go straight to chunks for ``RANGE_RETRY_SECONDS``. A 400 on
     a non-range request, any other error, and a range whose every chunk fails
     all raise as before.
+
+    ``cache_max_age`` is the oldest response, in seconds, the caller takes
+    from the fetch service's short response cache (its own TTL; 0 always
+    asks ESPN). None leaves it to the service default.
     """
     params = clamp_espn_limit(params)
     is_range = parse_espn_date_range(params.get("dates")) is not None
@@ -355,7 +435,7 @@ def fetch_espn_scoreboard(
     if is_range and _ranges_known_rejected():
         data = fetch_espn_date_chunks(
             session, url, params=params, headers=headers,
-            timeout=timeout, logger=logger,
+            timeout=timeout, logger=logger, cache_max_age=cache_max_age,
         )
         if data is not None:
             return data
@@ -363,7 +443,8 @@ def fetch_espn_scoreboard(
         # real error to log, without spending the chunks a second time.
         chunks_tried = True
 
-    response = session.get(url, params=params, headers=headers, timeout=timeout)
+    response = fetch_get(session, url, params=params, headers=headers, timeout=timeout,
+                         **_memo_kwargs(cache_max_age))
     if is_range and response.status_code == 400 and not chunks_tried:
         _note_range_rejected()
         if logger:
@@ -374,9 +455,225 @@ def fetch_espn_scoreboard(
             )
         data = fetch_espn_date_chunks(
             session, url, params=params, headers=headers,
-            timeout=timeout, logger=logger,
+            timeout=timeout, logger=logger, cache_max_age=cache_max_age,
         )
         if data is not None:
             return data
     response.raise_for_status()
     return cast(Dict[str, Any], response_json(response))
+
+
+# --- one cache key per scoreboard --------------------------------------------------
+
+def espn_scoreboard_url(sport: str, league: str) -> str:
+    """The site-API scoreboard URL for an ESPN ``sport`` / ``league`` path."""
+    return ESPN_SCOREBOARD_URL.format(sport=_path_part(sport, "sport"),
+                                      league=_path_part(league, "league"))
+
+
+def _path_part(value: Any, what: str) -> str:
+    text = str(value or "").strip().lower()
+    if not _PATH_PART.match(text):
+        raise ValueError(f"not an ESPN {what} path segment: {value!r}")
+    return text
+
+
+def _day(value: Any) -> str:
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y%m%d")
+    text = str(value).strip()
+    if len(text) != 8 or not text.isdigit():
+        raise ValueError(f"not an ESPN day (YYYYMMDD): {value!r}")
+    return text
+
+
+def _dates_part(dates: Any) -> str:
+    """``dates`` as ESPN spells it, or ``current`` for no ``dates`` at all."""
+    if dates is None or dates == "":
+        return "current"
+    if isinstance(dates, (date, datetime)):
+        return _day(dates)
+    if isinstance(dates, (tuple, list)):
+        if len(dates) != 2:
+            raise ValueError(f"a date range is (start, end): {dates!r}")
+        start, end = _day(dates[0]), _day(dates[1])
+        return start if start == end else f"{start}-{end}"
+    text = str(dates).strip()
+    if isinstance(dates, bool) or not _DATES.match(text):
+        raise ValueError(
+            f"not an ESPN dates value (YYYY, YYYYMM, YYYYMMDD or "
+            f"YYYYMMDD-YYYYMMDD): {dates!r}")
+    return text
+
+
+def espn_scoreboard_cache_key(sport: str, league: str, dates: Any = None) -> str:
+    """The one cache key for an ESPN scoreboard, whoever caches it.
+
+    ``sport`` and ``league`` are ESPN's own path segments -- ``football`` /
+    ``college-football``, ``soccer`` / ``eng.1`` -- not a plugin's
+    ``sport_key``, so every plugin showing a league names it the same way.
+    ``dates`` is what the request sends as ``dates=``: ``"YYYYMMDD"``,
+    ``"YYYYMM"``, ``"YYYY"``, ``"YYYYMMDD-YYYYMMDD"``, a ``date``, or a
+    ``(start, end)`` pair of either; None is the undated "current"
+    scoreboard. Anything else raises ValueError rather than invent a key.
+
+    The key says nothing about ``limit``: a cached copy is meant to be a
+    whole one (the helpers here always ask for ``ESPN_MAX_LIMIT``).
+    """
+    return (f"espn_scoreboard_{_path_part(sport, 'sport')}_"
+            f"{_path_part(league, 'league')}_{_dates_part(dates)}")
+
+
+def espn_scoreboard_cache_key_for_url(url: str, dates: Any = None) -> Optional[str]:
+    """:func:`espn_scoreboard_cache_key` for a scoreboard URL, or None when
+    ``url`` is not ``.../sports/{sport}/{league}/scoreboard``."""
+    match = _SCOREBOARD_PATH.search(str(url or "").split("?", 1)[0])
+    if match is None:
+        return None
+    try:
+        return espn_scoreboard_cache_key(match.group(1), match.group(2), dates)
+    except ValueError:
+        return None
+
+
+def _note_cache_hit(legacy: bool, avoided_request: bool = True) -> None:
+    if not _COUNTS_FETCHES:
+        return
+    try:
+        get_fetch_service().note_cache_hit(
+            _ESPN_HOST_URL, legacy=legacy, avoided_request=avoided_request)
+    except Exception:  # noqa: BLE001 - counting never breaks a read
+        _logger.debug("could not count a scoreboard cache hit", exc_info=True)
+
+
+def _fresh_cached(cache_manager: Any, key: str, max_age: Optional[float],
+                  now: float) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+    """The data cached under ``key`` if it is at most ``max_age`` seconds
+    old, and its age (None when the cache does not say).
+
+    The age is the stored record's own timestamp, checked here: CacheManager
+    lets a ttl stored by the writer override the reader's max_age, and its
+    memory tier times an entry from when it was loaded, not written. A key
+    shared by readers with different TTLs can rely on neither.
+    """
+    reader = getattr(cache_manager, "get_cached_data", None)
+    limit = None if max_age is None else max(1, int(math.ceil(max_age)))
+    if not callable(reader):
+        # A cache without records (a test double, a plugin's own store).
+        value = cache_manager.get(key, max_age=limit)
+        return (value if isinstance(value, dict) else None), None
+    record = reader(key, max_age=limit, memory_ttl=limit)
+    if not isinstance(record, dict):
+        return None, None
+    if "data" not in record:
+        return record, None  # unwrapped; the cache already judged it by mtime
+    stamp = record.get("timestamp")
+    age: Optional[float] = None
+    if not isinstance(stamp, bool) and isinstance(stamp, (int, float)):
+        age = max(0.0, now - float(stamp))
+    if max_age is not None and (age is None or age > max_age):
+        return None, None
+    data = record["data"]
+    return (data if isinstance(data, dict) else None), age
+
+
+def read_espn_scoreboard_cache(
+    cache_manager: Any,
+    key: str,
+    max_age: Optional[float],
+    legacy_keys: Iterable[str] = (),
+    now: Optional[float] = None,
+    accept: Optional[Callable[[Dict[str, Any], Optional[float]], bool]] = None,
+) -> Optional[Dict[str, Any]]:
+    """The cached scoreboard under ``key``, or under the first of
+    ``legacy_keys`` that has one, if it is at most ``max_age`` seconds old.
+
+    None on a miss, a stale entry, ``max_age`` of 0 or less, no cache
+    manager, or any cache error -- a read never raises. ``max_age=None``
+    takes an entry of any age. ``accept(data, age_seconds)`` can turn down
+    an entry the age alone would allow (a payload holding a live game wants
+    a shorter limit); ``age_seconds`` is None when the cache cannot say. A
+    hit is counted in the fetch statistics (``cache_hits``;
+    ``legacy_cache_hits`` too for an old key).
+    """
+    if cache_manager is None:
+        return None
+    if max_age is not None and max_age <= 0:
+        return None
+    clock = time.time() if now is None else now
+    for index, candidate in enumerate([key, *legacy_keys]):
+        if not candidate:
+            continue
+        try:
+            data, age = _fresh_cached(cache_manager, candidate, max_age, clock)
+            if data is not None and accept is not None and not accept(data, age):
+                data = None
+        except Exception:  # noqa: BLE001 - a broken cache is a miss
+            _logger.debug("scoreboard cache read failed for %s", candidate, exc_info=True)
+            continue
+        if data is not None:
+            _note_cache_hit(legacy=index > 0)
+            return data
+    return None
+
+
+def store_espn_scoreboard_cache(cache_manager: Any, key: str, data: Any) -> None:
+    """Cache a fetched scoreboard under ``key``. Never raises.
+
+    No ttl is stored: each reader applies its own ``max_age`` (a live
+    reader 30 s, a schedule reader an hour), and a stored ttl would
+    override theirs in CacheManager.
+    """
+    if cache_manager is None or data is None:
+        return
+    try:
+        cache_manager.set(key, data)
+    except Exception:  # noqa: BLE001 - the caller still has its data
+        _logger.warning("Could not cache scoreboard %s", key, exc_info=True)
+
+
+def get_espn_scoreboard(
+    session: Any,
+    sport: str,
+    league: str,
+    dates: Any = None,
+    *,
+    cache_manager: Any = None,
+    max_age: Optional[float] = 300,
+    legacy_keys: Iterable[str] = (),
+    headers: Optional[Dict[str, str]] = None,
+    timeout: int = 15,
+    logger: Any = None,
+) -> Dict[str, Any]:
+    """An ESPN scoreboard through the shared cache, fetched on a miss.
+
+    Reads :func:`espn_scoreboard_cache_key` (then ``legacy_keys``) and
+    returns an entry at most ``max_age`` seconds old. Otherwise it fetches
+    with :func:`fetch_espn_scoreboard` -- ``limit=ESPN_MAX_LIMIT``, ranges
+    split as ESPN needs -- caches the result under the canonical key and
+    returns it. ``max_age=0`` always fetches (and still caches, for other
+    readers). Errors raise exactly as :func:`fetch_espn_scoreboard` does,
+    and nothing is cached then. ``session=None`` uses the fetch service's
+    pooled session for the ESPN host.
+    """
+    key = espn_scoreboard_cache_key(sport, league, dates)
+    cached = read_espn_scoreboard_cache(cache_manager, key, max_age, legacy_keys)
+    if cached is not None:
+        return cast(Dict[str, Any], cached)
+    params: Dict[str, Any] = {"limit": ESPN_MAX_LIMIT}
+    spelled = _dates_part(dates)
+    if spelled != "current":
+        params["dates"] = spelled
+    data = fetch_espn_scoreboard(
+        session,
+        espn_scoreboard_url(sport, league),
+        params=params,
+        headers=headers,
+        timeout=timeout,
+        logger=logger,
+        # The response cache must not hand back anything older than the
+        # cache read above would have accepted.
+        cache_max_age=None if max_age is None else max(0.0, float(max_age)),
+    )
+    store_espn_scoreboard_cache(cache_manager, key, data)
+    return data

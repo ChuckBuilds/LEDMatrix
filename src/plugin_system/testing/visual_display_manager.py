@@ -14,9 +14,7 @@ PIL Image canvas and draws text using the actual project fonts.
 MAINTENANCE WARNING: this class is a deliberate fork of
 src/display_manager.py so it can run without hardware. It mirrors
 these DisplayManager methods by name and behavior: _load_fonts,
-get_font_height, get_text_width, draw_text,
-draw_text_with_icons, draw_weather_icon (and the _draw_sun/_draw_cloud/
-_draw_rain/_draw_snow/_draw_storm family), format_date_with_ordinal,
+get_font_height, get_text_width, draw_text, format_date_with_ordinal,
 capture_mode, set_scrolling_state, is_currently_scrolling,
 process_deferred_updates, update_display, render_size, offscreen. A behavior
 change to any of those in DisplayManager must be mirrored here, or
@@ -26,13 +24,12 @@ BDF text is not mirrored: both classes load BDF faces and draw BDF glyphs
 through src/common/bdf_font.py, so those pixels cannot drift.
 """
 
-import math
 import os
 import time
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
 from src.common.bdf_font import draw_bdf_text, load_bdf_face
@@ -62,15 +59,6 @@ class VisualTestDisplayManager:
     but operates entirely in-memory with PIL — no hardware, no singleton,
     no emulator dependency.
     """
-
-    # Weather icon color constants (same as DisplayManager)
-    WEATHER_COLORS = {
-        'sun': (255, 200, 0),
-        'cloud': (200, 200, 200),
-        'rain': (0, 100, 255),
-        'snow': (220, 220, 255),
-        'storm': (255, 255, 0),
-    }
 
     def __init__(self, width: int = 128, height: int = 32):
         self._width = width
@@ -409,129 +397,6 @@ class VisualTestDisplayManager:
             if hasattr(font, 'size'):
                 return font.size
             return 8
-
-    # ------------------------------------------------------------------
-    # Weather drawing helpers
-    # ------------------------------------------------------------------
-
-    def draw_sun(self, x: int, y: int, size: int = 16):
-        """Draw a sun icon using yellow circles and lines."""
-        self._draw_sun(x, y, size)
-
-    def draw_cloud(self, x: int, y: int, size: int = 16, color: Tuple[int, int, int] = (200, 200, 200)):
-        """Draw a cloud icon."""
-        self._draw_cloud(x, y, size, color)
-
-    def draw_rain(self, x: int, y: int, size: int = 16):
-        """Draw rain icon with cloud and droplets."""
-        self._draw_rain(x, y, size)
-
-    def draw_snow(self, x: int, y: int, size: int = 16):
-        """Draw snow icon with cloud and snowflakes."""
-        self._draw_snow(x, y, size)
-
-    def _draw_sun(self, x: int, y: int, size: int) -> None:
-        """Draw a sun icon with rays (internal weather icon version)."""
-        center_x, center_y = x + size // 2, y + size // 2
-        radius = size // 4
-        ray_length = size // 3
-        self.draw.ellipse(
-            [center_x - radius, center_y - radius,
-             center_x + radius, center_y + radius],
-            fill=self.WEATHER_COLORS['sun'],
-        )
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            start_x = center_x + int((radius + 2) * math.cos(rad))
-            start_y = center_y + int((radius + 2) * math.sin(rad))
-            end_x = center_x + int((radius + ray_length) * math.cos(rad))
-            end_y = center_y + int((radius + ray_length) * math.sin(rad))
-            self.draw.line([start_x, start_y, end_x, end_y], fill=self.WEATHER_COLORS['sun'], width=2)
-
-    def _draw_cloud(self, x: int, y: int, size: int, color: Optional[Tuple[int, int, int]] = None) -> None:
-        """Draw a cloud using multiple circles (internal weather icon version)."""
-        cloud_color = color if color is not None else self.WEATHER_COLORS['cloud']
-        base_y = y + size // 2
-        circle_radius = size // 4
-        positions = [
-            (x + size // 3, base_y),
-            (x + size // 2, base_y - size // 6),
-            (x + 2 * size // 3, base_y),
-        ]
-        for cx, cy in positions:
-            self.draw.ellipse(
-                [cx - circle_radius, cy - circle_radius,
-                 cx + circle_radius, cy + circle_radius],
-                fill=cloud_color,
-            )
-
-    def _draw_rain(self, x: int, y: int, size: int) -> None:
-        """Draw rain drops falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        rain_color = self.WEATHER_COLORS['rain']
-        drop_size = size // 8
-        drops = [
-            (x + size // 4, y + 2 * size // 3),
-            (x + size // 2, y + 3 * size // 4),
-            (x + 3 * size // 4, y + 2 * size // 3),
-        ]
-        for dx, dy in drops:
-            self.draw.line([dx, dy, dx - drop_size // 2, dy + drop_size], fill=rain_color, width=2)
-
-    def _draw_snow(self, x: int, y: int, size: int) -> None:
-        """Draw snowflakes falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        snow_color = self.WEATHER_COLORS['snow']
-        flake_size = size // 6
-        flakes = [
-            (x + size // 4, y + 2 * size // 3),
-            (x + size // 2, y + 3 * size // 4),
-            (x + 3 * size // 4, y + 2 * size // 3),
-        ]
-        for fx, fy in flakes:
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle)
-                end_x = fx + int(flake_size * math.cos(rad))
-                end_y = fy + int(flake_size * math.sin(rad))
-                self.draw.line([fx, fy, end_x, end_y], fill=snow_color, width=1)
-
-    def _draw_storm(self, x: int, y: int, size: int) -> None:
-        """Draw a storm cloud with lightning bolt."""
-        self._draw_cloud(x, y, size)
-        bolt_color = self.WEATHER_COLORS['storm']
-        bolt_points = [
-            (x + size // 2, y + size // 2),
-            (x + 3 * size // 5, y + 2 * size // 3),
-            (x + 2 * size // 5, y + 2 * size // 3),
-            (x + size // 2, y + 5 * size // 6),
-        ]
-        self.draw.polygon(bolt_points, fill=bolt_color)
-
-    def draw_weather_icon(self, condition: str, x: int, y: int, size: int = 16) -> None:
-        """Draw a weather icon based on the condition."""
-        cond = condition.lower()
-        if cond in ('clear', 'sunny'):
-            self._draw_sun(x, y, size)
-        elif cond in ('clouds', 'cloudy', 'partly cloudy'):
-            self._draw_cloud(x, y, size)
-        elif cond in ('rain', 'drizzle', 'shower'):
-            self._draw_rain(x, y, size)
-        elif cond in ('snow', 'sleet', 'hail'):
-            self._draw_snow(x, y, size)
-        elif cond in ('thunderstorm', 'storm'):
-            self._draw_storm(x, y, size)
-        else:
-            self._draw_sun(x, y, size)
-
-    def draw_text_with_icons(self, text: str, icons: List[tuple] = None,
-                             x: int = None, y: int = None,
-                             color: tuple = (255, 255, 255)):
-        """Draw text with weather icons at specified positions."""
-        self.draw_text(text, x, y, color)
-        if icons:
-            for icon_type, icon_x, icon_y in icons:
-                self.draw_weather_icon(icon_type, icon_x, icon_y)
-        self.update_display()
 
     # ------------------------------------------------------------------
     # Scrolling state (no-op interface compat)

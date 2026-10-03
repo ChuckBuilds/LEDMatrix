@@ -1,0 +1,9 @@
+{
+  "screens": [
+    [0.0, "<vegas>", 30.008, "duration", 3751, null],
+    [30.008, "<vegas>", 30.007, "duration", 3751, null],
+    [60.015, "<vegas>", 30.008, "duration", 3751, null],
+    [90.023, "<vegas>", 9.977, "horizon", 1248, null]
+  ],
+  "events": []
+}

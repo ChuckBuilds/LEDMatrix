@@ -40,13 +40,7 @@ from pathlib import Path
 from PIL import ImageFont
 from src.common.bdf_font import load_bdf_face, read_bdf_native_size
 from src.common.font_layout import load_truetype, resolve_asset_path
-from src.common.permission_utils import (
-    ensure_directory_permissions,
-    get_assets_dir_mode,
-    get_config_dir_mode,
-)
-from typing import Dict, Tuple, Optional, Union, Any, List
-from src.deprecation import deprecated
+from typing import Dict, Tuple, Optional, Union, Any
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +87,7 @@ class FontManager:
         self.temp_font_dir = Path(tempfile.gettempdir()) / "ledmatrix_fonts"
         self.temp_font_dir.mkdir(exist_ok=True)
 
-        # Counters behind get_performance_stats().
+        # Font-load counters, kept up by get_font().
         self.performance_stats = {
             "cache_hits": 0,
             "cache_misses": 0,
@@ -109,12 +103,8 @@ class FontManager:
             "tom_thumb": "assets/fonts/tom-thumb.bdf"
         }
         
-        # Size tokens for convenience
-        self.size_tokens = {
-            "xs": 6, "sm": 8, "md": 10, "lg": 12, "xl": 14, "xxl": 16
-        }
-        
-        # Font overrides storage (for manual overrides)
+        # Per-element overrides read from config/font_overrides.json;
+        # resolve_font applies them.
         # Under the install root's config/ (which always exists), not the
         # cwd: the file itself may not exist yet, and resolve_asset_path
         # hands back a missing path unchanged.
@@ -186,26 +176,6 @@ class FontManager:
                 self.detected_fonts.pop(element_key, None)
         if removed:
             self.manager_fonts_version += 1
-
-    @deprecated("3.7.0")
-    def get_manager_fonts(self, manager_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Get registered fonts for a specific manager or all managers.
-        
-        Args:
-            manager_id: Optional manager ID, if None returns all
-            
-        Returns:
-            Dictionary of registered fonts
-        """
-        if manager_id:
-            return self.manager_fonts.get(manager_id, {})
-        return self.manager_fonts.copy()
-
-    @deprecated("3.7.0")
-    def get_detected_fonts(self) -> Dict[str, Dict[str, Any]]:
-        """Get all detected font usage across managers."""
-        return self.detected_fonts.copy()
 
     # ==================== Plugin Font Management ====================
 
@@ -433,51 +403,6 @@ class FontManager:
         search_dirs = [Path(resolve_asset_path(configured)), Path(resolve_asset_path("plugins"))]
         return resolve_plugin_dir(plugin_id, search_dirs, prefix=True)
 
-    @deprecated("3.7.0")
-    def unregister_plugin_fonts(self, plugin_id: str) -> bool:
-        """Unregister all fonts for a plugin."""
-        try:
-            if plugin_id in self.plugin_fonts:
-                # Remove from plugin catalogs
-                if plugin_id in self.plugin_font_catalogs:
-                    for family in self.plugin_font_catalogs[plugin_id]:
-                        namespaced_family = f"{plugin_id}::{family}"
-                        if namespaced_family in self.font_catalog:
-                            del self.font_catalog[namespaced_family]
-                    
-                    del self.plugin_font_catalogs[plugin_id]
-
-                # Remove plugin manifest
-                del self.plugin_fonts[plugin_id]
-
-                # Clear related cache entries
-                self._clear_plugin_font_cache(plugin_id)
-
-                logger.info(f"Unregistered fonts for plugin {plugin_id}")
-                return True
-
-            return False
-
-        except Exception as e:
-            logger.error(f"Error unregistering plugin fonts: {e}")
-            return False
-
-    def _clear_plugin_font_cache(self, plugin_id: str):
-        """Clear font cache entries for a specific plugin."""
-        keys_to_remove = [key for key in self.font_cache.keys() if key.startswith(f"{plugin_id}::")]
-        for key in keys_to_remove:
-            del self.font_cache[key]
-        if keys_to_remove:
-            # Font objects someone may hold were dropped; see cache_generation.
-            self.cache_generation += 1
-
-    @deprecated("3.7.0")
-    def get_plugin_fonts(self, plugin_id: str) -> List[str]:
-        """Get list of font families registered by a plugin."""
-        if plugin_id in self.plugin_font_catalogs:
-            return list(self.plugin_font_catalogs[plugin_id].keys())
-        return []
-
     # ==================== Font Resolution ====================
 
     def resolve_font(self, element_key: str, family: str, size_px: int, 
@@ -668,42 +593,6 @@ class FontManager:
             logger.error(f"Error getting font height: {e}", exc_info=True)
             return 12  # Default height
 
-    # ==================== Override Management ====================
-
-    @deprecated("3.7.0")
-    def set_override(self, element_key: str, family: str = None, size_px: int = None):
-        """Set font override for a specific element."""
-        if element_key not in self.font_overrides:
-            self.font_overrides[element_key] = {}
-
-        if family is not None:
-            self.font_overrides[element_key]["family"] = family
-        if size_px is not None:
-            self.font_overrides[element_key]["size_px"] = size_px
-
-        # Remove empty overrides
-        if not self.font_overrides[element_key]:
-            del self.font_overrides[element_key]
-        else:
-            self._save_overrides()
-
-        self.clear_cache()
-        logger.info(f"Font override set for {element_key}: {self.font_overrides.get(element_key, {})}")
-
-    @deprecated("3.7.0")
-    def remove_override(self, element_key: str):
-        """Remove font override for a specific element."""
-        if element_key in self.font_overrides:
-            del self.font_overrides[element_key]
-            self._save_overrides()
-            self.clear_cache()
-            logger.info(f"Font override removed for {element_key}")
-
-    @deprecated("3.7.0")
-    def get_overrides(self) -> Dict[str, Dict[str, str]]:
-        """Get current font overrides."""
-        return self.font_overrides.copy()
-
     # ==================== Font Discovery ====================
 
     @staticmethod
@@ -765,17 +654,6 @@ class FontManager:
             logger.warning(f"Could not load font overrides: {e}")
             self.font_overrides = {}
 
-    def _save_overrides(self):
-        """Save current font overrides to file."""
-        try:
-            font_overrides_path = Path(self.font_overrides_file)
-            ensure_directory_permissions(font_overrides_path.parent, get_config_dir_mode())
-            with open(self.font_overrides_file, 'w') as f:
-                json.dump(self.font_overrides, f, indent=2)
-            logger.info(f"Saved {len(self.font_overrides)} font overrides")
-        except Exception as e:
-            logger.error(f"Could not save font overrides: {e}")
-
     # ==================== Utility Methods ====================
 
     def clear_cache(self):
@@ -786,117 +664,3 @@ class FontManager:
         # without the bump they kept serving results for the dropped fonts.
         self.cache_generation += 1
         logger.info("Font cache cleared")
-
-    @deprecated("3.7.0", "read font_catalog")
-    def get_available_fonts(self) -> Dict[str, str]:
-        """Get dictionary of available font families and their paths."""
-        return self.font_catalog.copy()
-
-    @deprecated("3.7.0")
-    def get_size_tokens(self) -> Dict[str, int]:
-        """Get available size tokens."""
-        return self.size_tokens.copy()
-
-    @deprecated("3.7.0")
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get performance statistics."""
-        uptime = time.time() - self.performance_stats["start_time"]
-        return {
-            "uptime_seconds": uptime,
-            "cache_hits": self.performance_stats["cache_hits"],
-            "cache_misses": self.performance_stats["cache_misses"],
-            "cache_hit_rate": (
-                self.performance_stats["cache_hits"] / 
-                (self.performance_stats["cache_hits"] + self.performance_stats["cache_misses"])
-                if (self.performance_stats["cache_hits"] + self.performance_stats["cache_misses"]) > 0 else 0
-            ),
-            "total_fonts_cached": len(self.font_cache),
-            "total_metrics_cached": len(self.metrics_cache),
-            "failed_loads": self.performance_stats["failed_loads"],
-            "total_fonts_available": len(self.font_catalog),
-            "plugin_fonts": len(self.plugin_fonts),
-            "manager_fonts": len(self.manager_fonts),
-            "detected_fonts": len(self.detected_fonts)
-        }
-
-    @deprecated("3.7.0", "read font_catalog")
-    def get_font_catalog(self) -> Dict[str, str]:
-        """Get the current font catalog."""
-        return self.font_catalog.copy()
-
-    @deprecated("3.7.0")
-    def add_font(self, font_file_path: str, family_name: str) -> bool:
-        """Add ``font_file_path`` to the catalog as ``family_name``. The file
-        stays where it is; only assets/fonts is created if it is missing."""
-        try:
-            # Validate font file
-            if not os.path.exists(font_file_path):
-                logger.error(f"Font file not found: {font_file_path}")
-                return False
-
-            # Check if family name already exists
-            if family_name in self.font_catalog:
-                logger.warning(f"Font family '{family_name}' already exists")
-                return False
-
-            fonts_dir = Path(resolve_asset_path("assets/fonts"))
-            ensure_directory_permissions(fonts_dir, get_assets_dir_mode())
-
-            # Add to catalog
-            self.font_catalog[family_name] = font_file_path
-            self.clear_cache()
-            logger.info(f"Added font {family_name}: {font_file_path}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error adding font {family_name}: {e}")
-            return False
-
-    @deprecated("3.7.0")
-    def remove_font(self, family_name: str) -> bool:
-        """Remove a font from the catalog."""
-        try:
-            if family_name not in self.font_catalog:
-                logger.warning(f"Font family '{family_name}' not found")
-                return False
-
-            # Check if font is currently in use
-            in_use = False
-            for override in self.font_overrides.values():
-                if override.get("family") == family_name:
-                    in_use = True
-                    break
-
-            if in_use:
-                logger.error(f"Cannot remove font '{family_name}' - it is currently in use")
-                return False
-
-            del self.font_catalog[family_name]
-            self.clear_cache()
-            logger.info(f"Removed font {family_name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error removing font {family_name}: {e}")
-            return False
-
-    @deprecated("3.7.0")
-    def validate_font(self, font_path: str) -> Dict[str, Any]:
-        """Validate a font file."""
-        try:
-            if not os.path.exists(font_path):
-                return {"valid": False, "error": "Font file not found"}
-
-            if font_path.endswith('.bdf'):
-                # Try to load BDF font
-                freetype.Face(font_path)
-                return {"valid": True, "type": "bdf", "family": "unknown"}
-            elif font_path.endswith('.ttf'):
-                # Try to load TTF font
-                load_truetype(font_path, 12)
-                return {"valid": True, "type": "ttf", "family": "unknown"}
-            else:
-                return {"valid": False, "error": "Unsupported font format"}
-
-        except Exception as e:
-            return {"valid": False, "error": str(e)}

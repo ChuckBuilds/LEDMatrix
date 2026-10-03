@@ -37,7 +37,6 @@ from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
 from src.cache.cache_metrics import CacheMetrics
 from src.logging_config import get_logger
-from src.deprecation import deprecated
 
 # Canonical implementation lives in src.cache.disk_cache; re-exported here
 # because this module's docstring documents it and external code may import
@@ -408,122 +407,6 @@ class CacheManager:
         """Get the cache directory path."""
         return self.cache_dir
 
-    @deprecated("3.7.0")
-    def has_data_changed(self, data_type: str, new_data: Dict[str, Any]) -> bool:
-        """Check if data has changed from cached version."""
-        cached_data = self.load_cache(data_type)
-        if not cached_data:
-            return True
-
-        if data_type == 'weather':
-            return self._has_weather_changed(cached_data, new_data)
-        elif data_type == 'stocks':
-            return self._has_stocks_changed(cached_data, new_data)
-        elif data_type == 'stock_news':
-            return self._has_news_changed(cached_data, new_data)
-        elif data_type == 'nhl':
-            return self._has_nhl_changed(cached_data, new_data)
-        elif data_type == 'mlb':
-            return self._has_mlb_changed(cached_data, new_data)
-        
-        return True
-
-    def _has_weather_changed(self, cached: Dict[str, Any], new: Dict[str, Any]) -> bool:
-        """Check if weather data has changed."""
-        # Handle new cache structure where data is nested under 'data' key
-        if 'data' in cached:
-            cached = cached['data']
-        
-        # Handle case where cached data might be the weather data directly
-        if 'current' in cached:
-            # This is the new structure with 'current' and 'forecast' keys
-            current_weather = cached.get('current', {})
-            if current_weather and 'main' in current_weather and 'weather' in current_weather:
-                cached_temp = round(current_weather['main']['temp'])
-                cached_condition = current_weather['weather'][0]['main']
-                return (cached_temp != new.get('temp') or 
-                        cached_condition != new.get('condition'))
-        
-        # Handle old structure where temp and condition are directly accessible
-        return (cached.get('temp') != new.get('temp') or 
-                cached.get('condition') != new.get('condition'))
-
-    def _has_stocks_changed(self, cached: Dict[str, Any], new: Dict[str, Any]) -> bool:
-        """Check if stock data has changed."""
-        if not self._is_market_open():
-            return False
-        return cached.get('price') != new.get('price')
-
-    def _has_news_changed(self, cached: Dict[str, Any], new: Dict[str, Any]) -> bool:
-        """Check if news data has changed."""
-        # Handle both dictionary and list formats
-        if isinstance(new, list):
-            # If new data is a list, cached data should also be a list
-            if not isinstance(cached, list):
-                return True
-            # Compare lengths and content
-            if len(cached) != len(new):
-                return True
-            # Compare titles since they're unique enough for our purposes
-            cached_titles = set(item.get('title', '') for item in cached)
-            new_titles = set(item.get('title', '') for item in new)
-            return cached_titles != new_titles
-        else:
-            # Original dictionary format handling
-            cached_headlines = set(h.get('id') for h in cached.get('headlines', []))
-            new_headlines = set(h.get('id') for h in new.get('headlines', []))
-            return not cached_headlines.issuperset(new_headlines)
-
-    def _has_nhl_changed(self, cached: Dict[str, Any], new: Dict[str, Any]) -> bool:
-        """Check if NHL data has changed."""
-        return (cached.get('game_status') != new.get('game_status') or
-                cached.get('score') != new.get('score'))
-
-    def _has_mlb_changed(self, cached: Dict[str, Any], new: Dict[str, Any]) -> bool:
-        """Check if MLB game data has changed."""
-        if not cached or not new:
-            return True
-            
-        # Check if any games have changed status or score
-        for game_id, new_game in new.items():
-            cached_game = cached.get(game_id)
-            if not cached_game:
-                return True
-                
-            # Check for score changes
-            if (new_game['away_score'] != cached_game['away_score'] or 
-                new_game['home_score'] != cached_game['home_score']):
-                return True
-                
-            # Check for status changes
-            if new_game['status'] != cached_game['status']:
-                return True
-                
-            # For live games, check inning and count
-            if new_game['status'] == 'in':
-                if (new_game['inning'] != cached_game['inning'] or 
-                    new_game['inning_half'] != cached_game['inning_half'] or
-                    new_game['balls'] != cached_game['balls'] or 
-                    new_game['strikes'] != cached_game['strikes'] or
-                    new_game['bases_occupied'] != cached_game['bases_occupied']):
-                    return True
-                    
-        return False
-
-    def _is_market_open(self) -> bool:
-        """Check if the US stock market is currently open."""
-        return self._strategy_component.is_market_open()
-
-    @deprecated("3.7.0", "use set()")
-    def update_cache(self, data_type: str, data: Dict[str, Any]) -> bool:
-        """Update cache with new data."""
-        cache_data = {
-            # Header first; see DiskCache's stale check.
-            'timestamp': time.time(),
-            'data': data,
-        }
-        return self.save_cache(data_type, cache_data)
-
     def get(self, key: str, max_age: Optional[int] = 300,
             memory_ttl: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Get data from cache if it exists and is not stale.
@@ -564,42 +447,6 @@ class CacheManager:
         cache_data['data'] = data
         self.save_cache(key, cache_data)
 
-    @deprecated("3.7.0")
-    def setup_persistent_cache(self) -> bool:
-        """
-        Set up a persistent cache directory with proper permissions.
-        This should be run once with sudo to create the directory.
-        """
-        try:
-            # Try to create /var/cache/ledmatrix with proper permissions
-            from pathlib import Path
-            from src.common.permission_utils import (
-                ensure_directory_permissions,
-                get_cache_dir_mode
-            )
-            cache_dir = '/var/cache/ledmatrix'
-            cache_dir_path = Path(cache_dir)
-            ensure_directory_permissions(cache_dir_path, get_cache_dir_mode())
-            
-            # Set ownership to the real user (not root)
-            real_user = os.environ.get('SUDO_USER')
-            if real_user:
-                import pwd
-                try:
-                    uid = pwd.getpwnam(real_user).pw_uid
-                    gid = pwd.getpwnam(real_user).pw_gid
-                    os.chown(cache_dir, uid, gid)
-                    self.logger.info(f"Set ownership of {cache_dir} to {real_user}")
-                except (OSError, KeyError) as e:
-                    self.logger.warning(f"Could not set ownership for {cache_dir}: {e}", exc_info=True)
-            
-            self.logger.info(f"Successfully set up persistent cache directory: {cache_dir}")
-            return True
-            
-        except (OSError, IOError, PermissionError) as e:
-            self.logger.error(f"Failed to set up persistent cache directory {cache_dir}: {e}", exc_info=True)
-            return False
-    
     def cleanup_disk_cache(self, force: bool = False) -> Dict[str, Any]:
         """
         Clean up expired disk cache files based on retention policies.
@@ -776,14 +623,6 @@ class CacheManager:
         else:
             self.logger.info("Disk cache cleanup thread stopped successfully") 
 
-    @deprecated("3.7.0")
-    def get_sport_live_interval(self, sport_key: str) -> int:
-        """
-        Get the live_update_interval for a specific sport from config.
-        Falls back to default values if config is not available.
-        """
-        return self._strategy_component.get_sport_live_interval(sport_key)
-
     def get_cache_strategy(self, data_type: str, sport_key: Optional[str] = None) -> Dict[str, Any]:
         """
         Get cache strategy for different data types.
@@ -797,13 +636,6 @@ class CacheManager:
         This helps automatically select the right cache duration.
         """
         return self._strategy_component.get_data_type_from_key(key)
-
-    @deprecated("3.7.0")
-    def get_sport_key_from_cache_key(self, key: str) -> Optional[str]:
-        """
-        Extract sport key from cache key to determine appropriate live_update_interval.
-        """
-        return self._strategy_component.get_sport_key_from_cache_key(key)
 
     def get_cached_data_with_strategy(self, key: str, data_type: str = 'default') -> Optional[Dict[str, Any]]:
         """
@@ -838,58 +670,6 @@ class CacheManager:
         data_type = self.get_data_type_from_key(key)
         return self.get_cached_data_with_strategy(key, data_type)
 
-    @deprecated("3.7.0", "use get()")
-    def get_background_cached_data(self, key: str, sport_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """
-        Get data from background service cache with appropriate strategy.
-        This method is specifically designed for Recent/Upcoming managers
-        to use data cached by the background service.
-        
-        Args:
-            key: Cache key to retrieve
-            sport_key: Sport key for determining appropriate cache strategy
-            
-        Returns:
-            Cached data if available and fresh, None otherwise
-        """
-        # Determine the appropriate cache strategy
-        data_type = self.get_data_type_from_key(key)
-        strategy = self.get_cache_strategy(data_type, sport_key)
-        
-        # For Recent/Upcoming managers, we want to use the background service cache
-        # which should have longer TTLs than the individual manager caches
-        max_age = strategy['max_age']
-        memory_ttl = strategy.get('memory_ttl', max_age)
-        
-        # Get the cached data
-        cached_data = self.get_cached_data(key, max_age, memory_ttl)
-        
-        if cached_data:
-            # Record cache hit for performance monitoring
-            self.record_cache_hit('background')
-            # Unwrap if stored in { 'data': ..., 'timestamp': ... } format
-            if isinstance(cached_data, dict) and 'data' in cached_data:
-                return cached_data['data']
-            return cached_data
-        
-        # Record cache miss for performance monitoring
-        self.record_cache_miss('background')
-        return None
-
-    @deprecated("3.7.0", "use get()")
-    def is_background_data_available(self, key: str, sport_key: Optional[str] = None) -> bool:
-        """
-        Check if background service has fresh data available.
-        This helps Recent/Upcoming managers determine if they should
-        wait for background data or fetch immediately.
-        """
-        data_type = self.get_data_type_from_key(key)
-        strategy = self.get_cache_strategy(data_type, sport_key)
-        
-        # Check if we have data that's still fresh according to background service TTL
-        cached_data = self.get_cached_data(key, strategy['max_age'])
-        return cached_data is not None
-
     def generate_sport_cache_key(self, sport: str, date_str: Optional[str] = None) -> str:
         """
         Centralized cache key generation for sports data.
@@ -906,44 +686,9 @@ class CacheManager:
             date_str = datetime.now(pytz.utc).strftime('%Y%m%d')
         return f"{sport}_{date_str}"
 
-    @deprecated("3.7.0")
-    def record_cache_hit(self, cache_type: str = 'regular') -> None:
-        """Record a cache hit for performance monitoring."""
-        self._metrics_component.record_hit(cache_type)
-
-    @deprecated("3.7.0")
-    def record_cache_miss(self, cache_type: str = 'regular') -> None:
-        """Record a cache miss for performance monitoring."""
-        self._metrics_component.record_miss(cache_type)
-
-    @deprecated("3.7.0")
-    def record_fetch_time(self, duration: float) -> None:
-        """Record fetch operation duration for performance monitoring."""
-        self._metrics_component.record_fetch_time(duration)
-
-    @deprecated("3.7.0")
-    def get_cache_metrics(self) -> Dict[str, Any]:
-        """Get current cache performance metrics."""
-        return self._metrics_component.get_metrics()
-
-    @deprecated("3.7.0")
-    def log_cache_metrics(self) -> None:
-        """Log current cache performance metrics."""
-        self._metrics_component.log_metrics()
-    
-    @deprecated("3.7.0")
-    def get_memory_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about the memory cache.
-        
-        Returns:
-            Dictionary with memory cache statistics
-        """
-        return self._memory_cache_component.get_stats()
-    
     def log_memory_cache_stats(self) -> None:
         """Log current memory cache statistics."""
-        stats = self.get_memory_cache_stats()
+        stats = self._memory_cache_component.get_stats()
         self.logger.info(f"Memory Cache - Size: {stats['size']}/{stats['max_size']} "
                         f"({stats['usage_percent']:.1f}%), "
                         f"Last cleanup: {time.time() - stats['last_cleanup']:.1f}s ago")

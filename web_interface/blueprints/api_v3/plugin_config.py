@@ -452,40 +452,9 @@ def save_plugin_config():
                 status_code=500
             )
 
-        # If the plugin is loaded, notify it of the config change with merged config
-        try:
-            if api_v3.plugin_manager:
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance:
-                    # Reload merged config (includes secrets) and pass the plugin-specific section
-                    merged_config = api_v3.config_manager.load_config()
-                    plugin_full_config = _pkg._prepared_plugin_config(
-                        plugin_id, merged_config.get(plugin_id, {}))
-                    if hasattr(plugin_instance, 'on_config_change'):
-                        plugin_instance.on_config_change(plugin_full_config)
-
-                    # Update plugin state manager and call lifecycle methods based on enabled state
-                    # This ensures the plugin state is synchronized with the config
-                    enabled = plugin_full_config.get('enabled', plugin_instance.enabled)
-
-                    # Update state manager if available
-                    if api_v3.plugin_state_manager:
-                        api_v3.plugin_state_manager.set_plugin_enabled(plugin_id, enabled)
-
-                    # Call lifecycle methods to ensure plugin state matches config
-                    try:
-                        if enabled:
-                            if hasattr(plugin_instance, 'on_enable'):
-                                plugin_instance.on_enable()
-                        else:
-                            if hasattr(plugin_instance, 'on_disable'):
-                                plugin_instance.on_disable()
-                    except Exception as lifecycle_error:
-                        # Log the error but don't fail the save - config is already saved
-                        logger.warning("Lifecycle method error for %s: %s", plugin_id, lifecycle_error, exc_info=True)
-        except Exception as hook_err:
-            # Do not fail the save if hook fails; just log
-            logger.warning("on_config_change failed: %s", hook_err)
+        # The running plugin hears about this from the display process: its
+        # config watcher calls on_config_change with the prepared section, and
+        # loads or unloads the plugin if "enabled" changed.
 
         secret_count = len(secrets_config)
         message = f'Plugin {plugin_id} configuration saved successfully'
@@ -543,12 +512,7 @@ def _prepare_plugin_config_for_save(plugin_id, plugin_config, schema, schema_mgr
             current_config = api_v3.config_manager.load_config()
             if plugin_id in current_config and 'enabled' in current_config[plugin_id]:
                 plugin_config['enabled'] = current_config[plugin_id]['enabled']
-            elif api_v3.plugin_manager:
-                # Fallback to plugin instance if config doesn't have it
-                plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-                if plugin_instance:
-                    plugin_config['enabled'] = plugin_instance.enabled
-            # Final fallback: default to True if plugin is loaded (matches BasePlugin default)
+            # Fallback: default to True (matches BasePlugin default)
             if 'enabled' not in plugin_config:
                 plugin_config['enabled'] = True
         except Exception as e:
@@ -977,18 +941,8 @@ def reset_plugin_config():
     if default_secrets or not preserve_secrets:
         api_v3.config_manager.save_raw_file_content('secrets', current_secrets)
 
-    # Notify plugin of config change if loaded
-    try:
-        if api_v3.plugin_manager:
-            plugin_instance = api_v3.plugin_manager.get_plugin(plugin_id)
-            if plugin_instance:
-                merged_config = api_v3.config_manager.load_config()
-                plugin_full_config = _pkg._prepared_plugin_config(
-                    plugin_id, merged_config.get(plugin_id, {}))
-                if hasattr(plugin_instance, 'on_config_change'):
-                    plugin_instance.on_config_change(plugin_full_config)
-    except Exception as hook_err:
-        logger.warning("on_config_change failed: %s", hook_err)
+    # The display's config watcher passes the reset config to the running
+    # plugin (on_config_change); nothing to notify in this process.
 
     return jsonify({
         'status': 'success',

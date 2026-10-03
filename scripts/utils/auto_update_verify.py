@@ -14,12 +14,20 @@ the same reason: the rollback cannot depend on packages the update changed.
 The updater leaves data/auto_update_pending.json:
 
     {"status": "pending", "old_head": ..., "new_head": ...,
+     "old_ref": "main" | "" (detached) | absent (older updaters),
      "display_was_active": bool, "dependency_failures": [...], "created_at": ...}
 
 This moves its status to "verifying" and then to one of "success",
 "rolled_back" or "rollback_failed", with "reason" and "detail" saying why.
 The web interface reports that outcome and raises a banner for anything but
 success.
+
+"The display service is active" does not mean the panel is drawing: a render
+loop stuck inside a plugin leaves the service active and the panel frozen.
+Where the display writes a heartbeat (/run/ledmatrix, see
+src/display_watchdog.py), the display also has to keep it fresh, from the
+restarted process, to count as healthy. Where it never wrote one -- the code
+being updated predates it -- the check is what it always was.
 """
 import json
 import os
@@ -36,6 +44,14 @@ from pathlib import Path
 PENDING_NAME = 'auto_update_pending.json'
 REQUIREMENT_FILES = ('requirements.txt', 'web_interface/requirements.txt')
 WEB_HEALTH_URL = 'http://127.0.0.1:5000/api/v3/system/version'
+#: Written by the display's render loop every few seconds. A copy of
+#: src/display_watchdog.HEARTBEAT_PATH, not an import: this file runs as a
+#: copy made before the update and must not depend on the code it checks.
+HEARTBEAT_PATH = '/run/ledmatrix/display-heartbeat.json'
+#: How old the heartbeat may be. Well under STABLE_SECONDS: a display that
+#: draws its first frame and then freezes must go stale inside the window it
+#: has to stay healthy for, or the check would pass it.
+HEARTBEAT_FRESH_SECONDS = 30
 #: How long the services get to come up after a restart...
 HEALTH_TIMEOUT_SECONDS = 180
 #: ...and how long they must then stay up. Restart=on-failure makes a crash
@@ -113,16 +129,35 @@ def _short(sha):
     return (sha or 'unknown')[:7]
 
 
+def _read_heartbeat(path=HEARTBEAT_PATH):
+    """The display's heartbeat, or None when there is none (or it is unreadable)."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 class Verifier:
     def __init__(self, project_root, run=subprocess.run, sleep=time.sleep,
-                 clock=time.monotonic, web_responds=_web_responds, log=None):
+                 clock=time.monotonic, web_responds=_web_responds, log=None,
+                 read_heartbeat=_read_heartbeat):
         self.project_root = Path(project_root)
         self.pending_file = pending_path(project_root)
         self.run = run
         self.sleep = sleep
+        # Monotonic, and compared with the heartbeat's own monotonic stamp:
+        # CLOCK_MONOTONIC is one clock for every process on the machine.
         self.clock = clock
         self.web_responds = web_responds
         self.log = log or (lambda msg: print(f'[auto-update-verify] {msg}', flush=True))
+        self.read_heartbeat = read_heartbeat
+        #: Whether the display was writing a heartbeat before the update.
+        self.expect_heartbeat = False
+        #: When the display was last restarted; an older heartbeat is the
+        #: previous process's, not proof the new one draws.
+        self.display_restarted_at = None
 
     def _run(self, args, timeout=GIT_TIMEOUT_SECONDS):
         try:
@@ -154,18 +189,32 @@ class Verifier:
         ok = True
         # A display the user had stopped stays stopped.
         if display:
+            self.display_restarted_at = self.clock()
             ok = self.restart('ledmatrix') and ok
         return self.restart('ledmatrix-web') and ok
+
+    def display_drawing(self):
+        """True while the restarted display keeps its heartbeat fresh."""
+        data = self.read_heartbeat()
+        mono = data.get('mono') if data else None
+        if not isinstance(mono, (int, float)) or isinstance(mono, bool):
+            return False
+        if self.display_restarted_at is not None and mono < self.display_restarted_at:
+            return False  # still the process from before the restart
+        return self.clock() - mono <= HEARTBEAT_FRESH_SECONDS
 
     def wait_healthy(self, display):
         """None once the services are up and stay up, else what went wrong."""
         deadline = self.clock() + HEALTH_TIMEOUT_SECONDS + STABLE_SECONDS
         healthy_since = baseline = None
         web = disp = False
+        active = drawing = True
         count_known = True
         while self.clock() < deadline:
             web = self.web_responds()
-            disp = self.service_active('ledmatrix') if display else True
+            active = self.service_active('ledmatrix') if display else True
+            drawing = self.display_drawing() if (display and self.expect_heartbeat) else True
+            disp = active and drawing
             restarts = self.restart_count('ledmatrix') if display else None
             # Without a restart count a crash loop looks healthy between
             # attempts, so an unreadable count never counts as stable.
@@ -181,8 +230,11 @@ class Verifier:
         problems = []
         if not web:
             problems.append('the web interface did not respond')
-        if not disp:
+        if not active:
             problems.append('the display service did not stay running')
+        elif not drawing:
+            problems.append('the display service is running but its panel is not '
+                            'being drawn (no fresh heartbeat)')
         if web and disp and not count_known:
             problems.append("the display service's restart count could not be read")
         return '; '.join(problems) or 'the display service kept restarting'
@@ -225,6 +277,20 @@ class Verifier:
         if not old:
             return False, 'the commit to roll back to is unknown'
         requirements = self.changed_requirements(old, new) if new else list(REQUIREMENT_FILES)
+        # An update may have moved HEAD between main and a detached release
+        # tag (the stable/beta channels). Go back to where HEAD was -- the
+        # branch, or detached -- before resetting, or resetting would drag
+        # the wrong ref: main onto a release commit, or leave a device that
+        # was following main stuck on a detached one. No old_ref (an older
+        # updater wrote this file) means HEAD never moved between refs.
+        old_ref = pending.get('old_ref')
+        if old_ref is not None:
+            move = (['git', 'checkout', '--quiet', '--force', old_ref] if old_ref
+                    else ['git', 'checkout', '--quiet', '--force', '--detach', old])
+            result = self._run(move, timeout=GIT_RESET_TIMEOUT_SECONDS)
+            if result.returncode != 0:
+                return False, (f'"{" ".join(move)}" failed: '
+                               f'{(result.stderr or result.stdout or "").strip()}')
         # --hard: the updater refuses to run with local edits to tracked core
         # files (web_interface/auto_update.local_changes), so outside the
         # plugin folders the only thing this discards is the update. Edits
@@ -258,6 +324,10 @@ class Verifier:
         write_pending(self.pending_file, pending)
 
         display = bool(pending.get('display_was_active'))
+        # Read before anything restarts: the display still running is the
+        # pre-update code, and whether it writes a heartbeat decides whether
+        # the updated one must.
+        self.expect_heartbeat = display and self.read_heartbeat() is not None
         dependency_failures = pending.get('dependency_failures') or []
         if dependency_failures:
             # Never restart onto code whose packages did not install.

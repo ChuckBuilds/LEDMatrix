@@ -14,6 +14,7 @@ Complete API reference for plugin developers. This document describes all method
 - [Display Manager](#display-manager)
 - [Cache Manager](#cache-manager)
 - [Plugin Manager](#plugin-manager)
+- [Fetching data](#fetching-data)
 - [Deprecated APIs](#deprecated-apis)
 
 ---
@@ -149,15 +150,27 @@ Clean up resources when plugin is unloaded. Override to close connections, stop 
 
 #### `on_config_change(new_config: Dict[str, Any]) -> None`
 
-Called after plugin configuration is updated via web API.
+Called after the plugin's section of `config.json` changes -- a save in the
+web UI, say. Every lifecycle hook runs in the display process, which is the
+only process that runs plugins: the web interface writes `config.json`, and
+the display's config watcher calls this with the prepared section. See
+[ARCHITECTURE.md](ARCHITECTURE.md#web-and-display-processes-who-runs-plugins).
+
+In the display service it runs on the config watcher thread while holding
+the plugin's lock, so it never overlaps your `update()` or `display()`. If
+the plugin stays busy for more than 5 seconds, the change is applied later
+from the update thread: as soon as the plugin is free, and before its next
+`update()` at the latest.
 
 #### `on_enable() -> None`
 
-Called when plugin is enabled.
+Called when the display loads the plugin enabled: at startup, or when it is
+switched on in the web UI.
 
 #### `on_disable() -> None`
 
-Called when plugin is disabled.
+Called when the display unloads the plugin, e.g. when it is switched off in
+the web UI.
 
 #### `get_update_interval() -> Optional[float]`
 
@@ -296,9 +309,9 @@ the core then falls back to its own live-content check — so a plugin whose
 weight calculation is broken still gets `live_weight` for a game that really
 is live, rather than being demoted to 1.
 
-Only consulted when the user has set `vegas_scroll.live_in_ticker`. With the
-default (`false`) live content preempts Vegas entirely and there is no ticker
-to be weighted within. See
+Only consulted while `vegas_scroll.live_in_ticker` is on (the default since
+3.8.0). With it off live content preempts Vegas entirely and there is no
+ticker to be weighted within. See
 [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md#live-content-in-the-ticker).
 
 ### Vegas scroll hooks
@@ -308,6 +321,58 @@ rotating one at a time. Plugins control how their content appears via
 these hooks. See [ADVANCED_FEATURES.md](ADVANCED_FEATURES.md) for the user
 side of Vegas mode.
 
+#### Vegas participation
+
+Each plugin takes part in Vegas mode in one of three ways:
+
+| Participation | What Vegas does |
+|---|---|
+| `'scroll'` | The plugin's content (`get_vegas_content()`) scrolls by with everything else |
+| `'pause'` | The scroll stops when the plugin's turn comes round; its `display()` draws it full screen for `get_display_duration()` seconds, then the scroll resumes |
+| `'exclude'` | The plugin is left out of Vegas mode |
+
+Declare the plugin's default in `manifest.json`:
+
+```json
+{
+  "id": "my-alerts",
+  "vegas_participation": "pause"
+}
+```
+
+The user can override it per plugin with `vegas_participation` in that
+plugin's config section (it is one of the core-owned properties, see
+[PLUGIN_CONFIG_CORE_PROPERTIES.md](PLUGIN_CONFIG_CORE_PROPERTIES.md)).
+Vegas resolves it in this order:
+
+1. the user's `vegas_participation` config value;
+2. the plugin's `get_vegas_participation()` — the default implementation
+   reads the manifest's `vegas_participation`, then derives a value from
+   the legacy hooks below;
+3. derived from the legacy hooks: `get_vegas_display_mode()` returning
+   `VegasDisplayMode.STATIC` → `'pause'`; otherwise
+   `get_vegas_content_type()` returning `'none'` → `'exclude'`; everything
+   else → `'scroll'`.
+
+Step 3 is exactly what Vegas did before participation existed, so a plugin
+that declares nothing behaves as it always has. Manifest
+`vegas_participation` is new in core 3.8.0; older cores ignore it and use
+the legacy hooks.
+
+#### `get_vegas_participation() -> str`
+
+Returns `'scroll'`, `'pause'` or `'exclude'`. Override it only when the
+answer depends on state — pause only while an alert is live, exclude while
+there is nothing to show; for a fixed answer use the manifest. Vegas applies
+the user's config value before calling an override, so an override does not
+need to check it. A value that is not one of the three is ignored with a log
+line and the legacy hooks decide.
+
+```python
+def get_vegas_participation(self):
+    return 'pause' if self._alert_is_live() else 'scroll'
+```
+
 #### `get_vegas_content() -> Optional[PIL.Image | List[PIL.Image] | None]`
 
 Return content to inject into the scroll. Multi-item plugins (sports,
@@ -315,26 +380,113 @@ odds, news) should return a *list* of PIL Images so each item scrolls
 independently. Static plugins (clock, weather) can return a single image.
 Returning `None` falls back to capturing whatever `display()` produces.
 
-#### `get_vegas_content_type() -> str`
+#### `get_vegas_render_width() -> int`
 
-`'multi'`, `'static'`, or `'none'`. Affects how Vegas mode treats the
-plugin. Default `'static'`.
+The width Vegas wants this plugin's content to occupy, from the plugin's
+`vegas_width_pct` config value or the global
+`display.vegas_scroll.render_width_pct`. Vegas also narrows
+`display_manager` while it asks for content, so a plugin that sizes itself
+from `display_manager.width` does not need to read this.
 
-#### `get_vegas_display_mode() -> VegasDisplayMode`
+#### Live Vegas elements
 
-Returns one of `VegasDisplayMode.SCROLL`, `FIXED_SEGMENT`, or `STATIC`.
-Read from `config["vegas_mode"]` or override directly.
+*New in core 3.8.0.* Content from `get_vegas_content()` is baked into the
+ticker's strip when the plugin's turn is prefetched, so a score drawn then
+scrolls past with that score however many goals are scored while it crosses
+the panel. A plugin that returns **live elements** instead gets them updated
+in place: after its `update()` the ticker asks again, compares each element
+with what the strip holds, and swaps the changed ones in between two frames
+-- on screen included -- without anything next to them moving.
 
-#### `get_supported_vegas_modes() -> List[VegasDisplayMode]`
+```python
+try:
+    from src.plugin_system.vegas_elements import VegasElement
+except ImportError:          # core older than 3.8.0: the hook is never called
+    VegasElement = None
 
-The set of Vegas modes this plugin can render. Used by the UI to populate
-the mode selector for this plugin.
+class MyScoreboard(BasePlugin):
+    def get_vegas_elements(self):
+        if VegasElement is None:
+            return None
+        return [VegasElement(key=f"game:{g['id']}",
+                             image=self._card(g),           # cache by fingerprint
+                             version=self._fingerprint(g))  # changes iff pixels would
+                for g in self.games]
+```
 
-#### `get_vegas_segment_width() -> Optional[int]`
+`VegasElement(key, image, version=None, live=True, refresh_hz=0.0)`:
 
-For `FIXED_SEGMENT` plugins, the number of *panels* the segment
-occupies in the scroll (pixel width = panels × `single_panel_width`,
-from `display.hardware.cols`). `None` uses the default of 1 panel.
+| Field | Meaning |
+|---|---|
+| `key` | Names the element across redraws; unique in the list, stable for the same logical item (`"game:nfl:401547417"`, `"map"`). |
+| `image` | The element now, at the display's height. A live element's **width must not depend on its data**: a redraw at another width is never swapped in (it appears the next time the plugin comes round), because nothing on screen may move. |
+| `version` | Anything hashable that changes exactly when the pixels would. Handed back with the **same image object** as last time, it lets the ticker skip converting the element; a new image is always converted and compared by its pixels, so a redraw for new settings is never missed. `None` means "compare pixels". |
+| `live` | `False` places it as plain content (trimmed, never refreshed): separators, decoration. |
+| `refresh_hz` | For content that changes with **time** rather than data (an aircraft moving between position reports): the ticker calls `redraw_vegas_element()` about this often while the element is on or near the screen, capped by `vegas_scroll.live_max_hz` and at 1 Hz without the rebuilt rgbmatrix binding. |
+
+**`get_vegas_elements() -> Optional[List[VegasElement]]`** — called on the
+ticker's background thread under the plugin's lock (never while `update()`
+runs), on a canvas of its own and told its render width, exactly like
+`get_vegas_content()`. It is called after every `update()` while any of the
+plugin's elements is on or ahead of the screen, so it must be cheap when
+nothing changed (cache images by version), idempotent, and must not fetch.
+Return `None` to use `get_vegas_content()`, which a plugin must keep working
+for older cores and for the paths that do not ask for elements (the ticker's
+first strip, multi-display sync, the `live_refresh` switch).
+
+**`redraw_vegas_element(key, width, height, at) -> Optional[PIL.Image]`** —
+only for elements with `refresh_hz`. Called **without** the plugin's lock,
+possibly while `update()` runs, so read only state `update()` replaces in one
+assignment (an immutable snapshot), never state it mutates in place. `at` is
+the `time.monotonic()` the pixels are expected on the panel: draw the element
+as it should look then. Return exactly `width` x `height`, or `None` to skip
+the tick.
+
+**`notify_vegas_data_changed()`** — data that arrives outside `update()` (a
+background thread, a push callback) calls this so the ticker redraws without
+waiting for the next `update()`. Safe from any thread.
+
+Live elements are never trimmed to their ink: the ticker pads each with
+`content_padding` black columns either side, the margin trimming would have
+left. A single element wider than the plugin's width budget
+(`vegas_max_width_screens`, not counting that padding) is cropped like any
+other content and scrolls by as plain, no longer live. The user can turn them off per plugin with `vegas_live: false` (a
+core-owned property) or for the whole ticker with
+`display.vegas_scroll.live_refresh: false`; they are always off under
+multi-display sync.
+
+`scripts/check_plugin.py` checks the contract for any plugin that implements
+the hook (unique keys, height, width stable with no new data, redraw size,
+slow calls) and prints a `vegas elements` row; the checks are in
+`src/plugin_system/testing/vegas.py`. `test/fixtures/plugins/vegas-live-stub`
+is a small working example.
+
+#### Legacy: `get_vegas_content_type()` and `get_vegas_display_mode()`
+
+Superseded by participation, and still read to derive it when neither the
+user nor the manifest declares one (step 3 above). Only two answers ever
+mattered: `get_vegas_content_type()` returning `'none'`, and
+`get_vegas_display_mode()` returning `VegasDisplayMode.STATIC`.
+
+- `get_vegas_content_type()` returns `'multi'`, `'static'` or `'none'`
+  (default `'static'`).
+- `get_vegas_display_mode()` returns a `VegasDisplayMode` member (not a
+  string — the string `'static'` never paused anything). The default reads
+  the plugin's `vegas_mode` config value (`"scroll"`, `"fixed"` or
+  `"static"`), else maps content type `'multi'` to `SCROLL` and anything
+  else to `FIXED_SEGMENT`.
+
+`SCROLL` and `FIXED_SEGMENT` (and `vegas_mode` `"scroll"` and `"fixed"`)
+have always behaved identically: both scroll. The distinction is deprecated
+and goes away in 3.9.0 — see [Deprecated APIs](#deprecated-apis).
+
+#### Deprecated: `get_supported_vegas_modes()` and `get_vegas_segment_width()`
+
+Never read by core, and removed in 3.9.0: calling the `BasePlugin`
+implementation logs a deprecation warning. A plugin's own override keeps
+working for the plugin itself. `get_vegas_segment_width()` read the
+`vegas_panel_count` config value, which has never affected Vegas — a card's
+width comes from `get_vegas_content()` and `vegas_width_pct`.
 
 > The full source for `BasePlugin` lives in
 > `src/plugin_system/base_plugin.py`. If a method here disagrees with the
@@ -477,18 +629,6 @@ self.display_manager.update_display()
 
 This is the canonical way to render arbitrary images.
 
-### Weather Icons (deprecated)
-
-> Deprecated, removed in 3.7.0 — draw your own icons (the weather plugin
-> ships `WeatherIcons`). See [Deprecated APIs](#deprecated-apis).
-
-- `draw_weather_icon(condition, x, y, size=16)` — icon for a condition
-  string such as `"clear"`, `"clouds"`, `"rain"`, `"snow"`, `"storm"`
-- `draw_sun(x, y, size=16)`, `draw_cloud(x, y, size=16, color=(200, 200, 200))`,
-  `draw_rain(x, y, size=16)`, `draw_snow(x, y, size=16)`
-- `draw_text_with_icons(text, icons=None, x=None, y=None, color=(255, 255, 255))`
-  — text plus a list of `(icon_type, x, y)` icons; calls `update_display()`
-
 ### Scrolling State Management
 
 For plugins that implement scrolling content, use these methods to coordinate with the display system.
@@ -578,20 +718,6 @@ def update(self):
 Process any deferred updates if not currently scrolling. Called automatically by the display controller, but can be called manually if needed.
 
 **Note**: Plugins typically don't need to call this directly.
-
-#### `get_scrolling_stats() -> dict`
-
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
-
-Get current scrolling statistics for debugging.
-
-**Returns**: Dictionary with scrolling state information
-
-**Example**:
-```python
-stats = self.display_manager.get_scrolling_stats()
-self.logger.debug(f"Scrolling: {stats['is_scrolling']}, Deferred: {stats['deferred_count']}")
-```
 
 ### Available Fonts
 
@@ -722,27 +848,6 @@ Get data with automatic strategy detection from cache key.
 data = self.cache_manager.get_with_auto_strategy("nhl_live_scores")
 ```
 
-#### `get_background_cached_data(key: str, sport_key: Optional[str] = None) -> Optional[Dict[str, Any]]`
-
-> Deprecated, removed in 3.7.0 — use `get()`. See [Deprecated APIs](#deprecated-apis).
-
-Get background service cached data with sport-specific intervals.
-
-**Parameters**:
-- `key` (str): Cache key
-- `sport_key` (str, optional): Sport identifier (e.g., 'nhl', 'nba') for live interval lookup
-
-**Returns**: Cached data, or `None` if not found or stale
-
-**Example**:
-```python
-# Uses sport-specific live_update_interval from config
-games = self.cache_manager.get_background_cached_data(
-    "nhl_games",
-    sport_key="nhl"
-)
-```
-
 ### Strategy Methods
 
 #### `get_cache_strategy(data_type: str, sport_key: Optional[str] = None) -> Dict[str, Any]`
@@ -761,23 +866,6 @@ strategy = self.cache_manager.get_cache_strategy("sports_live", sport_key="nhl")
 max_age = strategy['max_age']  # Get configured max age
 ```
 
-#### `get_sport_live_interval(sport_key: str) -> int`
-
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
-
-Get the live_update_interval for a specific sport from config.
-
-**Parameters**:
-- `sport_key` (str): Sport identifier (e.g., 'nhl', 'nba')
-
-**Returns**: Live update interval in seconds
-
-**Example**:
-```python
-interval = self.cache_manager.get_sport_live_interval("nhl")
-# Returns configured live_update_interval for NHL
-```
-
 #### `get_data_type_from_key(key: str) -> str`
 
 Extract data type from cache key to determine appropriate cache strategy.
@@ -786,17 +874,6 @@ Extract data type from cache key to determine appropriate cache strategy.
 - `key` (str): Cache key
 
 **Returns**: Inferred data type string
-
-#### `get_sport_key_from_cache_key(key: str) -> Optional[str]`
-
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
-
-Extract sport key from cache key for sport-specific strategies.
-
-**Parameters**:
-- `key` (str): Cache key
-
-**Returns**: Sport identifier, or `None` if not found
 
 ### Utility Methods
 
@@ -835,30 +912,6 @@ for file_info in files:
     self.logger.info(f"Cache: {file_info['key']}, Age: {file_info['age_display']}")
 ```
 
-### Metrics Methods (deprecated)
-
-#### `get_cache_metrics() -> Dict[str, Any]`
-
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
-
-Get cache performance metrics.
-
-**Returns**: Dictionary with cache statistics (`total_requests`, `cache_hit_rate`, `background_hit_rate`, `api_calls_saved`, `average_fetch_time`, etc.)
-
-**Example**:
-```python
-metrics = self.cache_manager.get_cache_metrics()
-self.logger.info(f"Cache hit rate: {metrics['cache_hit_rate']:.2%}")
-```
-
-#### `get_memory_cache_stats() -> Dict[str, Any]`
-
-> Deprecated, removed in 3.7.0. See [Deprecated APIs](#deprecated-apis).
-
-Get memory cache statistics.
-
-**Returns**: Dictionary with memory cache stats (size, max_size, etc.)
-
 ---
 
 ## Plugin Manager
@@ -896,14 +949,6 @@ all_plugins = self.plugin_manager.get_all_plugins()
 for plugin_id, plugin in all_plugins.items():
     self.logger.info(f"Plugin {plugin_id} is loaded")
 ```
-
-#### `get_enabled_plugins() -> List[str]`
-
-> Deprecated, removed in 3.7.0 — check `enabled` on the instances in `plugin_manager.plugins`. See [Deprecated APIs](#deprecated-apis).
-
-Get list of enabled plugin IDs.
-
-**Returns**: List of plugin identifier strings
 
 #### `get_plugin_info(plugin_id: str) -> Optional[Dict[str, Any]]`
 
@@ -983,6 +1028,103 @@ weather = self.plugin_manager.plugins.get("weather")
 if weather is not None and weather.enabled:
     pass
 ```
+
+---
+
+## Fetching data
+
+Use the core helpers for HTTP rather than a `requests.Session` of your own:
+`APIHelper` (`from src.common import APIHelper`) for JSON APIs, and
+`fetch_espn_scoreboard()` (`src.common.espn_dates`) or
+`BackgroundDataService` for ESPN scoreboards. Since the release after 3.7.0
+these go through the core **fetch service** (`src/common/fetch_service.py`),
+so a plugin that uses them gets the following with no code change. Return
+values, exceptions and retries are what they were.
+
+- **Shared connections.** Core sessions with the same retry policy share one
+  connection pool per host, instead of one pool per helper.
+- **Merged requests.** Identical GETs in flight at the same time (same URL
+  and query, headers, timeout and retry policy) go to the network once, and
+  every caller gets its own copy of the response, or the same exception.
+- **Host budgets.** A host can have a token-bucket budget. A request past it
+  waits for a token, but never longer than `max_wait_seconds` (2 s by
+  default). Only ESPN hosts have one by default (20 requests a second, burst
+  200), which normal use never reaches.
+- **Conditional GET.** When a server sends `ETag` or `Last-Modified`, the
+  next identical request revalidates, and a `304 Not Modified` comes back to
+  your code as the original `200` with its body. ESPN currently sends
+  neither, so this does nothing there.
+- **Response cache.** A response whose server says `Cache-Control:
+  max-age=N` answers an identical GET for those N seconds without a
+  request (ESPN sends 1 to ~500 s). It never hands you a response older
+  than you accept: pass `cache_max_age=<your TTL>` to `fetch_get()` or
+  `fetch_espn_scoreboard()` (0 always asks the network); without it a
+  response is reused for at most 30 seconds.
+- **Counters.** Requests, merged requests, bytes, 304s, errors and time spent
+  waiting, and requests answered without the network (`memo_hits` from the
+  response cache, `cache_hits` from a shared scoreboard cache entry), are
+  counted per plugin and per host, and published for the web UI
+  at `GET /api/v3/plugins/fetch-stats` (see
+  [REST_API_REFERENCE.md](REST_API_REFERENCE.md#get-fetch-statistics)). A
+  request is counted against your plugin when it runs inside your
+  `update()`/`display()`, your constructor or `on_enable()`, or anywhere in
+  code under your plugin's directory, including threads you start.
+
+What is not covered yet: requests a plugin makes with its own `requests.get()`
+or `Session.get()` calls. They work as before but are invisible to the
+budgets and counters.
+
+### One cache key per ESPN scoreboard
+
+Cache an ESPN scoreboard under `espn_scoreboard_cache_key(sport, league,
+dates)` (`src.common.espn_dates`), not a key of your own, so every plugin
+showing that league shares one fetch and one cached copy. `sport` and
+`league` are ESPN's path segments (`football`, `college-football`), and
+`dates` is what you send as `dates=` (`"20261004"`, `"202610"`,
+`"20260925-20261016"`, a `date`, or `None` for the undated scoreboard).
+
+```python
+from src.common.espn_dates import get_espn_scoreboard
+
+data = get_espn_scoreboard(
+    self.session, "football", "nfl", "20261004",
+    cache_manager=self.cache_manager,
+    max_age=300,                       # your TTL: nothing older comes back
+    legacy_keys=["my_old_key_20261004"],  # read once while upgrading
+)
+```
+
+`get_espn_scoreboard` returns a cached copy at most `max_age` seconds old,
+whoever wrote it, and otherwise fetches with `fetch_espn_scoreboard`
+(`limit=500`, ranges split the way ESPN requires) and caches the result
+without a ttl, so each reader applies its own age limit. `max_age=0` always
+fetches but still leaves the copy for others. For a two-step read, use
+`read_espn_scoreboard_cache()` and `store_espn_scoreboard_cache()` around
+your own fetch. Scoreboards built on `SportsFetchMixin` get
+`_schedule_cache_key(datestring)` and `_cached_schedule(key, legacy_keys)`
+for their schedule windows. All of this is in the core release after 3.8.0.
+
+The settings live in `config.json` under `fetch_service`, read when the
+display starts and on a config reload:
+
+```json
+"fetch_service": {
+    "enabled": true,
+    "max_wait_seconds": 2,
+    "rate_limits": {
+        "*.espn.com": {"per_second": 20, "burst": 200},
+        "api.example.com": {"per_second": 1, "burst": 5}
+    }
+}
+```
+
+`rate_limits` keys are a host or a `*.domain` pattern (which also matches
+the bare domain); `"per_second": 0` removes a budget. `"enabled": false`
+turns the whole service into a plain `session.get()`. Two further switches,
+`"single_flight": false` and `"conditional_get": false`, turn off merging and
+revalidation. `"response_cache": {"enabled": false}` turns off the response
+cache; its `default_max_age` (30) is the limit for callers that pass no
+`cache_max_age`.
 
 ---
 
@@ -1070,10 +1212,19 @@ if weather is not None and weather.enabled:
 
 ## Deprecated APIs
 
-These still work in 3.6 but log a warning the first time they are called
-(`journalctl -u ledmatrix` shows which one), and are **removed in 3.7.0**.
-Nothing in core, the official plugins or the third-party plugins in the
-registry calls them.
+A deprecated method still works but logs a warning the first time it is
+called (`journalctl -u ledmatrix` shows which one), until the release that
+removes it. [DEPRECATIONS_3.8.md](DEPRECATIONS_3.8.md) is the usage scan
+behind each removal: which of the deprecated methods the official plugins,
+the registry's third-party plugins and core still call or override. Only
+methods that scan reports unused are removed; the rest stay until their
+callers migrate.
+
+### Removed in 3.8.0
+
+Deprecated in 3.5.0 with a warning on first call, and gone in 3.8.0:
+the scan found no caller in any official or third-party plugin. Calling one
+now raises `AttributeError`.
 
 | Object | Methods | Instead |
 |---|---|---|
@@ -1086,3 +1237,17 @@ registry calls them.
 | `font_manager` | `set_override`, `remove_override`, `get_overrides`, `add_font`, `remove_font`, `validate_font`, `get_size_tokens`, `get_performance_stats`, `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`, `unregister_plugin_fonts` | no replacement |
 | `plugin_manager` | `get_enabled_plugins` | check `enabled` on the entries in `plugin_manager.plugins` |
 
+### Removed in 3.9.0
+
+The Vegas APIs that described a fixed-width segment, which Vegas never
+implemented. Vegas participation (`'scroll'`, `'pause'`, `'exclude'`, see
+[Vegas scroll hooks](#vegas-scroll-hooks)) replaces them. Calling one of the
+methods, or setting `vegas_panel_count`, logs a warning once per process.
+No official plugin calls them; calendar, olympics and blackjack override
+`get_supported_vegas_modes()`, which keeps working for the plugin itself.
+
+| What | Instead |
+|---|---|
+| `BasePlugin.get_supported_vegas_modes()` | declare `vegas_participation` in the manifest |
+| `BasePlugin.get_vegas_segment_width()` and the `vegas_panel_count` config key | nothing: a card's width comes from `get_vegas_content()` and `vegas_width_pct` |
+| `VegasDisplayMode.SCROLL` vs `FIXED_SEGMENT` (`vegas_mode` `"scroll"` vs `"fixed"`) | `'scroll'` participation; the two always behaved the same |

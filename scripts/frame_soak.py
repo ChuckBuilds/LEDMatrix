@@ -9,7 +9,10 @@ reports the difference. Nothing is stopped, restarted or drawn.
     python3 scripts/frame_soak.py
 
     # the same with the web preview open (the preview's PNG encodes are one of
-    # the things that used to make the render loop miss refreshes)
+    # the things that used to make the render loop miss refreshes). An open
+    # preview is encoded at most once a second; through 3.8.0 it was up to
+    # five times, so a --preview run from before that change is not comparable
+    # with one from after it
     python3 scripts/frame_soak.py --preview
 
     # quick look at the totals since the service started
@@ -27,14 +30,24 @@ What the numbers mean
 late frames     frames that reached the panel one or more refreshes after they
                 were due -- the panel showed the previous frame again, which on
                 a moving strip is a visible hitch. This is the pass/fail number.
-freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers,
+freezes         gaps of 250ms+ inside a scroll: recomposes, plugin handovers
+                the display controller does not tag (see handover gaps),
                 blocking calls on the render thread. Reported, not failed on,
                 since some are handovers between plugins rather than faults.
+handover gaps   the same length of gap where the display controller had just
+                started a screen's turn (also the same mode's again): its
+                first display() drawing. Counted here instead of under
+                freezes. Stats from a service older than this count have no
+                such line, and their freezes include these, so do not
+                compare freeze counts across that change.
 blit            copying the frame into the matrix canvas (rgbmatrix SetImage).
                 Grows with width x height x pwm_bits.
 wait            blocked in SwapOnVSync, i.e. slack before the refresh.
 work            everything else between two frames: drawing, scrolling, and
                 waiting for the GIL.
+after work      frames presented straight after tagged render-thread work
+                (Vegas strip extensions, live-element patches), with their own
+                late rate. Shown only when something tagged its work.
 """
 from __future__ import annotations
 
@@ -55,7 +68,8 @@ from src.common.frame_timing import (  # noqa: E402
 )
 
 #: Touched by the web UI while someone has the preview open; a fresh marker
-#: puts the display service's snapshot writer at full rate. Same path as
+#: puts the display service's snapshot writer at the viewer rate
+#: (snapshot_policy.VIEWER_INTERVAL). Same path as
 #: DisplayManager._viewer_marker_path.
 VIEWER_MARKER = "/tmp/led_matrix_preview_viewer"  # nosec B108 - fixed path shared with the service
 
@@ -126,6 +140,56 @@ def _edge(index: int, bucket_ms: float):
     return round((index + 1) * bucket_ms, 2)
 
 
+def op_rows(totals: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Per kind of noted render-thread work: how often its frame was late.
+
+    A kind's frames are the ones presented straight after that work ran (see
+    "Operations" in src/common/frame_timing.py). Stats from a recorder that
+    predates the counters have none, and give an empty table.
+    """
+    frames = totals.get("op_frames") or {}
+    late = totals.get("late_op_frames") or {}
+    freezes = totals.get("op_freezes") or {}
+    moved = totals.get("op_bytes") or {}
+    rows = {}
+    for kind in sorted(set(frames) | set(freezes)):
+        count = frames.get(kind, 0)
+        if not count and not freezes.get(kind, 0):
+            continue
+        rows[kind] = {
+            "frames": count,
+            "late": late.get(kind, 0),
+            "late_pct": (round(100.0 * late.get(kind, 0) / count, 3)
+                         if count else None),
+            "freezes": freezes.get(kind, 0),
+            "bytes": moved.get(kind, 0),
+        }
+    return rows
+
+
+def gc_window(before: Dict[str, Any], after: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Garbage collection over the run, or None from a service without the
+    monitor. The counters are cumulative since the service started, so they
+    are differenced like the totals; the longest is since the start."""
+    ga = after.get("gc")
+    if not ga:
+        return None
+    gb = before.get("gc") or {}
+    def minus(key):
+        return [a - b for a, b in zip(ga.get(key, []),
+                                      gb.get(key) or [0] * len(ga.get(key, [])))]
+    seconds = minus("seconds")
+    return {
+        "collections": minus("collections"),
+        "ms": [round(x * 1000.0, 1) for x in seconds],
+        "long_pauses": ga.get("long_pauses", 0) - gb.get("long_pauses", 0),
+        "long_ms": round((ga.get("long_seconds", 0.0)
+                          - gb.get("long_seconds", 0.0)) * 1000.0, 1),
+        "threshold_ms": ga.get("threshold_ms"),
+        "max_ms_since_start": ga.get("max_ms"),
+    }
+
+
 def build_report(before, after, preview: bool) -> Dict[str, Any]:
     delta = diff(before, after)
     totals = delta["totals"]
@@ -155,10 +219,15 @@ def build_report(before, after, preview: bool) -> Dict[str, Any]:
         "freezes": totals["freezes"],
         "freezes_per_hour": round(totals["freezes"] / hours, 1) if hours else None,
         "freeze_seconds": round(totals["freeze_seconds"], 2),
+        # None from a service that predates the count: its handovers are
+        # among the freezes above.
+        "handover_freezes": totals.get("handover_freezes"),
         "worst_interval_ms": (round(totals["worst_interval_ms"], 1)
                               if totals["worst_interval_ms"] else None),
         "timing_ms": {name: percentiles(h, bucket_ms)
                       for name, h in delta["histograms"].items()},
+        "ops": op_rows(totals),
+        "gc": gc_window(before, after),
     }
     # The rate the panel held while rendering: the typical frame's interval
     # per refresh held. A few percent under the idle rate is normal (the Pi is
@@ -209,6 +278,16 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
     if report["freezes"]:
         print("                   by length: " + ", ".join(
             f"{k}: {v}" for k, v in report["freeze_by"].items()))
+    if report.get("handover_freezes") is not None:
+        print(f"Handover gaps      {report['handover_freezes']}"
+              "  >=250ms before a new screen's first frame; not in the freezes")
+    gc_stats = report.get("gc")
+    if gc_stats:
+        counts, ms = gc_stats["collections"], gc_stats["ms"]
+        print(f"Garbage collection gen0/1/2 {counts[0]}/{counts[1]}/{counts[2]}"
+              f" ({ms[0]}/{ms[1]}/{ms[2]} ms)  >={gc_stats['threshold_ms']:g}ms: "
+              f"{gc_stats['long_pauses']} ({gc_stats['long_ms']} ms)"
+              f"  longest since start {gc_stats['max_ms_since_start']} ms")
     print()
     print(f"{'ms':<18}{'p50':>8}{'p95':>8}{'p99':>8}{'max':>8}")
     for name in ("blit", "wait", "work", "interval_per_hold"):
@@ -216,6 +295,17 @@ def print_report(report: Dict[str, Any], limit: float) -> None:
         print(f"{name:<18}" + "".join(f"{str(row.get(k, '-')):>8}"
                                         for k in ("p50", "p95", "p99", "max")))
     print()
+    ops = report.get("ops") or {}
+    if ops:
+        # Frames presented straight after render-thread work of each kind. A
+        # late rate well above the overall one points at that work.
+        print(f"{'after work':<18}{'frames':>8}{'late':>8}{'late %':>8}"
+              f"{'freezes':>9}{'MB moved':>10}")
+        for kind, row in ops.items():
+            pct = "-" if row["late_pct"] is None else f"{row['late_pct']:g}"
+            print(f"{kind:<18}{row['frames']:>8}{row['late']:>8}{pct:>8}"
+                  f"{row['freezes']:>9}{row['bytes'] / 1e6:>10.2f}")
+        print()
     if report["late_pct"] is None:
         print("RESULT  nothing scrolled - no verdict")
     elif not locked(report, limit):

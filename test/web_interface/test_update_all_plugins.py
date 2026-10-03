@@ -41,9 +41,8 @@ def store(tmp_path):
     sm.get_plugin_info.return_value = None
     sm.update_plugin.return_value = True
     with patch.object(api_v3, 'plugin_store_manager', sm, create=True), \
-         patch.object(api_v3, 'plugin_manager', None, create=True), \
+         patch.object(api_v3, 'plugin_catalog', None, create=True), \
          patch.object(api_v3, 'schema_manager', None, create=True), \
-         patch.object(api_v3, 'plugin_state_manager', None, create=True), \
          patch.object(api_v3, 'operation_history', None, create=True):
         yield sm
 

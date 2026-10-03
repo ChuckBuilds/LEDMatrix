@@ -28,11 +28,14 @@ sys.path.insert(0, str(project_root))
 
 from flask import Flask
 
+from test._api_v3_test_helpers import mock_plugin_catalog
+
 
 _API_V3_MOCKED_ATTRS = (
-    'config_manager', 'plugin_manager', 'plugin_store_manager',
-    'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+    'config_manager', 'plugin_catalog', 'plugin_store_manager',
+    'saved_repositories_manager', 'schema_manager',
     'operation_queue', 'operation_history', 'cache_manager',
+    'health_tracker', 'resource_monitor',
 )
 
 
@@ -58,12 +61,9 @@ def _make_client():
     api_v3.config_manager = MagicMock()
     api_v3.config_manager.get_raw_file_content.return_value = {}
     api_v3.config_manager.secrets_path = "/tmp/nonexistent_secrets.json"
-    api_v3.plugin_manager = MagicMock()
-    api_v3.plugin_manager.plugins = {}
-    api_v3.plugin_manager.plugins_dir = "/tmp"
+    api_v3.plugin_catalog = mock_plugin_catalog()
+    api_v3.plugin_catalog.plugins_dir = "/tmp"
     api_v3.plugin_store_manager = MagicMock()
-    api_v3.plugin_state_manager = MagicMock()
-    api_v3.plugin_state_manager.get_all_states.return_value = {}
     api_v3.saved_repositories_manager = MagicMock()
     api_v3.schema_manager = MagicMock()
     api_v3.operation_queue = None  # force the direct (non-queue) path
@@ -202,22 +202,20 @@ class TestTransactionalUninstall(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.api_v3.plugin_store_manager.uninstall_plugin.assert_called_once_with('thing')
 
-    def test_file_removal_failure_reloads_previously_loaded_plugin(self):
-        """Regression: rollback must restore BOTH config AND runtime state.
+    def test_file_removal_failure_rolls_back_config_only(self):
+        """The web process has no running plugin to unload or reload.
 
-        If the plugin was loaded at runtime before the uninstall
-        request, and file removal fails after unload has already
-        succeeded, the rollback must call ``load_plugin`` so the user
-        doesn't end up in a state where the files exist and the config
-        exists but the plugin is no longer loaded.
+        The display runs the plugin, and unloads it when the removed config
+        section reaches its config watcher. A failed file removal restores
+        that section, so the display sees no change at all; there is nothing
+        in this process to put back. (The catalog mock has no
+        unload_plugin/load_plugin: calling either fails with a different
+        message than the one asserted.)
         """
-        # Plugin is currently loaded.
-        self.api_v3.plugin_manager.plugins = {'thing': MagicMock()}
         self.api_v3.config_manager.get_raw_file_content.return_value = {
             'thing': {'enabled': True}
         }
         self.api_v3.config_manager.cleanup_plugin_config.return_value = None
-        self.api_v3.plugin_manager.unload_plugin.return_value = None
         self.api_v3.plugin_store_manager.uninstall_plugin.return_value = False
 
         response = self.client.post(
@@ -227,11 +225,10 @@ class TestTransactionalUninstall(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 500)
-        # Unload did happen (it's part of the uninstall sequence)...
-        self.api_v3.plugin_manager.unload_plugin.assert_called_once_with('thing')
-        # ...and because file removal failed, the rollback must have
-        # called load_plugin to restore runtime state.
-        self.api_v3.plugin_manager.load_plugin.assert_called_once_with('thing')
+        self.assertIn('Failed to uninstall plugin thing', response.get_json()['message'])
+        calls = self.api_v3.config_manager.save_raw_file_content.call_args_list
+        self.assertTrue(any(c.args[0] == 'main' for c in calls),
+                        "main config was not restored after the removal failed")
 
     def test_snapshot_survives_config_read_error(self):
         """Regression: if get_raw_file_content raises an expected error
@@ -283,33 +280,6 @@ class TestTransactionalUninstall(unittest.TestCase):
         # exception bubbled up before we got that far.
         self.api_v3.plugin_store_manager.uninstall_plugin.assert_not_called()
 
-    def test_unload_failure_restores_config_and_does_not_call_uninstall(self):
-        """If unload_plugin itself raises, config must be restored and
-        uninstall_plugin must NOT be called."""
-        self.api_v3.plugin_manager.plugins = {'thing': MagicMock()}
-        self.api_v3.config_manager.get_raw_file_content.return_value = {
-            'thing': {'enabled': True}
-        }
-        self.api_v3.config_manager.cleanup_plugin_config.return_value = None
-        self.api_v3.plugin_manager.unload_plugin.side_effect = RuntimeError("unload boom")
-
-        response = self.client.post(
-            '/api/v3/plugins/uninstall',
-            data=json.dumps({'plugin_id': 'thing'}),
-            content_type='application/json',
-        )
-
-        self.assertEqual(response.status_code, 500)
-        self.api_v3.plugin_store_manager.uninstall_plugin.assert_not_called()
-        # Config should have been restored.
-        calls = self.api_v3.config_manager.save_raw_file_content.call_args_list
-        self.assertTrue(
-            any(c.args[0] == 'main' for c in calls),
-            "main config was not restored after unload_plugin raised",
-        )
-        # load_plugin must NOT have been called — unload didn't succeed,
-        # so runtime state is still what it was.
-        self.api_v3.plugin_manager.load_plugin.assert_not_called()
 
 
 class TestReconcileEndpointPayload(unittest.TestCase):
@@ -402,7 +372,7 @@ class TestNonPluginIdsAreRefused(unittest.TestCase):
         self.client, self.mod, _cleanup = _make_client()
         self.addCleanup(_cleanup)
         self.api_v3 = self.mod.api_v3
-        self.api_v3.plugin_manager.plugin_manifests = {'thing': {'id': 'thing'}}
+        self.api_v3.plugin_catalog.plugin_manifests = {'thing': {'id': 'thing'}}
 
     def _post(self, url, body):
         return self.client.post(url, data=json.dumps(body),
@@ -427,7 +397,7 @@ class TestNonPluginIdsAreRefused(unittest.TestCase):
             'gone-plugin', remove_secrets=True)
 
     def test_secrets_only_core_key_is_allowed_when_a_plugin_has_that_id(self):
-        self.api_v3.plugin_manager.plugin_manifests = {'youtube': {'id': 'youtube'}}
+        self.api_v3.plugin_catalog.plugin_manifests = {'youtube': {'id': 'youtube'}}
         self.api_v3.plugin_store_manager.uninstall_plugin.return_value = True
         response = self._post('/api/v3/plugins/uninstall', {'plugin_id': 'youtube'})
 

@@ -102,6 +102,7 @@ import requests
 from PIL import Image, ImageDraw
 from src.common import sports_card as _card
 from src.common.font_layout import load_truetype, resolve_asset_path
+from src.common.text_helper import OUTLINE_SQUARE, draw_text_outlined
 
 logger = logging.getLogger(__name__)
 
@@ -851,19 +852,12 @@ class SportsCoreSharedMixin:
         elif fill is None:
             fill = self._font_color(font)
         draw.fontmode = "1"
-        x, y = position
-        for dx, dy in [
-            (-1, -1),
-            (-1, 0),
-            (-1, 1),
-            (0, -1),
-            (0, 1),
-            (1, -1),
-            (1, 0),
-            (1, 1),
-        ]:
-            draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-        draw.text((x, y), text, font=font, fill=fill)
+        # The eight-neighbour outline, then the text on top. Rasterized once
+        # and stamped nine times rather than drawn nine times; the pixels are
+        # the same (draw_text_outlined falls back to the nine draws wherever
+        # that is not proven).
+        draw_text_outlined(draw, position, text, font, fill, outline_color,
+                           OUTLINE_SQUARE)
 
     def _should_log(self, warning_type: str, cooldown: int = 60) -> bool:
         """True at most once per ``cooldown`` seconds, for rate-limiting a
@@ -1347,6 +1341,55 @@ class SportsLiveSharedMixin:
                 or current <= now - _KICKOFF_GRACE_SECONDS
                 or candidate < current):
             self._next_scheduled_start_ts = candidate
+
+    #: How long a game that finished live is still reported by
+    #: finished_games_snapshot(): long enough for the recent-games list, which
+    #: refreshes about hourly, to take it over well before most slates would.
+    FINISHED_GAME_TTL = 900.0
+
+    def _record_finished_game(self, details: Dict) -> None:
+        """Remember a game that was live and has just gone final (or looks over).
+
+        A finished game leaves ``live_games`` at the next poll, and the recent
+        list that will show it refreshes about hourly, so in between nothing
+        holds the game's final score -- and a live Vegas card for it would keep
+        its last live score. Call this wherever a poll drops a game as final
+        or over. Only a game this manager had as live is taken; one already
+        held takes the newer details (a game dropped by an "is it over"
+        heuristic, then marked final by the feed) but keeps its expiry, so a
+        feed that lists finals all day cannot keep one here all day.
+        """
+        game_id = details.get("id") if isinstance(details, dict) else None
+        if not game_id:
+            return
+        finished = self.__dict__.setdefault("_finished_games", {})
+        held = finished.get(game_id)
+        if held is not None:
+            finished[game_id] = (held[0], dict(details))
+            return
+        if not any(g.get("id") == game_id for g in getattr(self, "live_games", ()) or ()):
+            return
+        finished[game_id] = (time.monotonic(), dict(details))
+
+    def finished_games_snapshot(self) -> List[Dict]:
+        """Games that went final here within FINISHED_GAME_TTL, newest data first.
+
+        Copies, safe to decorate. The caller dedupes them against its other
+        lists (src/common/sports_vegas.dedupe_games keeps the liveliest copy,
+        and a final beats nothing but a live one).
+        """
+        finished = self.__dict__.get("_finished_games")
+        if not finished:
+            return []
+        now = time.monotonic()
+        # A copy first: a manager finishing its update in the background (off
+        # the plugin's lock) may record a game while the ticker reads these.
+        held = list(finished.items())
+        for game_id, (seen, _game) in held:
+            if now - seen > self.FINISHED_GAME_TTL:
+                finished.pop(game_id, None)
+        return [dict(game) for _id, (seen, game) in held
+                if now - seen <= self.FINISHED_GAME_TTL]
 
     def _note_live_fetch(self, found_live: bool) -> None:
         """Record whether a look for live games found any."""

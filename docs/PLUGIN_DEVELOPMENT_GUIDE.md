@@ -519,15 +519,12 @@ When developing plugins, you'll need to use the APIs provided by the LEDMatrix s
 - `draw_text()` - Text rendering. For images, paste directly onto
   `display_manager.image` (a PIL Image) and call `update_display()`;
   there is no `draw_image()` helper method.
-- `draw_weather_icon()`, `draw_sun()`, `draw_cloud()` - Weather icons
-  (deprecated, removed in 3.7.0 — draw your own icons)
 - `get_text_width()`, `get_font_height()` - Text utilities
 - `set_scrolling_state()`, `defer_update()` - Scrolling state management
 
 **Cache Manager** (`self.cache_manager`):
 - `get()`, `set()`, `delete()` - Basic caching
 - `get_cached_data_with_strategy()` - Advanced caching with strategies
-- `get_background_cached_data()` - deprecated, removed in 3.7.0 — use `get()`
 
 **Plugin Manager** (`self.plugin_manager`):
 - `get_plugin()`, `get_all_plugins()` - Access other plugins
@@ -535,7 +532,7 @@ When developing plugins, you'll need to use the APIs provided by the LEDMatrix s
 
 See [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md) for complete
 documentation, and its [Deprecated APIs](PLUGIN_API_REFERENCE.md#deprecated-apis)
-table for everything removed in 3.7.0.
+table for everything removed in 3.8.0.
 
 ## 3rd Party Plugin Development
 

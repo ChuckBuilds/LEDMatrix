@@ -519,7 +519,7 @@
                 let html = `<div class="space-y-2">
                     <div class="flex items-center gap-2">
                         <i class="fas fa-code-branch text-gray-400"></i>
-                        <span class="font-mono text-gray-800">${escHtml(d.branch || 'unknown')}</span>
+                        <span class="font-mono text-gray-800">${escHtml(d.detached ? (d.version || 'detached') : (d.branch || 'unknown'))}</span>
                         ${dirtyBadge}
                     </div>`;
 
@@ -534,7 +534,14 @@
                     </div>`;
                 }
 
-                if (d.upstream) {
+                if (d.detached && d.current_release) {
+                    // The stable update channel sits on release tags, with no branch.
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>On release ${escHtml(d.current_release)}, not a branch (stable update channel). Pull Latest follows the update channel set on the General tab.</p>`;
+                } else if (d.detached) {
+                    // Detached but not on a release: say what the channel does
+                    // with it, in the General tab's words.
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>Not on a branch or a release. ${escHtml(d.channel_message || '')} Pull Latest follows the update channel set on the General tab.</p>`;
+                } else if (d.upstream) {
                     html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-link mr-1"></i>tracking <span class="font-mono">${escHtml(d.upstream)}</span></p>`;
                 } else if (d.can_pull) {
                     html += `<p class="text-xs text-blue-700 mt-1"><i class="fas fa-info-circle mr-1"></i>No upstream set; Pull Latest will use <span class="font-mono">origin/${escHtml(d.branch || '')}</span> and set it.</p>`;
@@ -1059,6 +1066,16 @@
                 ${field('mqtt-topic', 'Command topic', c.mqtt_topic)}
                 ${field('mqtt-client-id', 'Client ID', c.mqtt_client_id)}
                 ${field('mqtt-api-base', 'LEDMatrix API base', c.ledmatrix_api_base)}
+                <label class="block">
+                    <span class="text-xs font-medium text-gray-700">LEDMatrix API token</span>
+                    <input id="mqtt-api-token" type="password" value="" autocomplete="off"
+                           placeholder="${data.api_token_set ? 'unchanged — leave blank to keep' : 'none set'}"
+                           class="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md">
+                    <span class="text-xs text-gray-500">
+                        Only when web login is on and the bridge runs on another machine (General &gt; Security).
+                        ${data.api_token_set ? '<button type="button" id="mqtt-clear-api-token" class="text-red-600 hover:underline ml-1">Clear it</button>' : ''}
+                    </span>
+                </label>
                 ${field('mqtt-timeout', 'Request timeout (s)', c.request_timeout, 'number', 'min="1" max="300"')}
                 ${field('mqtt-duration', 'On-demand duration (s, blank = default)', c.on_demand_duration, 'number', 'min="1" max="86400"')}
                 <label class="block">
@@ -1113,6 +1130,8 @@
 
         const clearBtn = document.getElementById('mqtt-clear-password');
         if (clearBtn) clearBtn.addEventListener('click', () => clearMqttPassword());
+        const clearTokenBtn = document.getElementById('mqtt-clear-api-token');
+        if (clearTokenBtn) clearTokenBtn.addEventListener('click', () => clearMqttApiToken());
     }
 
     window.loadMqttBridge = function() {
@@ -1145,6 +1164,8 @@
         // Only send a password when one was typed; blank means "leave it alone".
         const pw = val('mqtt-password');
         if (pw) body.mqtt_password = pw;
+        const apiToken = val('mqtt-api-token');
+        if (apiToken) body.ledmatrix_api_token = apiToken;
         return body;
     }
 
@@ -1175,6 +1196,21 @@
         .then(r => r.json())
         .then(d => {
             showResult('result-mqtt-save', d.status === 'success', d.message || 'Password cleared');
+            loadMqttBridge();
+        })
+        .catch(err => showResult('result-mqtt-save', false, 'Request failed: ' + err.message));
+    }
+
+    function clearMqttApiToken() {
+        if (!confirm('Remove the stored LEDMatrix API token from the bridge settings?')) return;
+        fetch(MQTT_BRIDGE_URL + '/config', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({clear_api_token: true})
+        })
+        .then(r => r.json())
+        .then(d => {
+            showResult('result-mqtt-save', d.status === 'success', d.message || 'Token cleared');
             loadMqttBridge();
         })
         .catch(err => showResult('result-mqtt-save', false, 'Request failed: ' + err.message));

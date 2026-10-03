@@ -54,9 +54,7 @@ class _ConfigManager:
 
 def _reconciler(config, plugins_dir, secrets_path=None):
     return StateReconciliation(
-        state_manager=Mock(),
         config_manager=_ConfigManager(config, secrets_path),
-        plugin_manager=Mock(),
         plugins_dir=plugins_dir,
     )
 
@@ -92,9 +90,8 @@ class TestSecretsKeysAreNotPlugins:
         assert "odds-ticker" in r._get_config_state()
 
     def test_config_manager_without_secrets_path_is_survivable(self, tmp_path):
-        r = StateReconciliation(state_manager=Mock(),
-                                config_manager=Mock(spec=["load_config", "save_config"]),
-                                plugin_manager=Mock(), plugins_dir=tmp_path)
+        r = StateReconciliation(config_manager=Mock(spec=["load_config", "save_config"]),
+                                plugins_dir=tmp_path)
         r.config_manager.load_config.return_value = {"odds-ticker": {"enabled": True}}
         assert "odds-ticker" in r._get_config_state()
 

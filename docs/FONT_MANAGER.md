@@ -13,10 +13,9 @@
 BDF fonts in `assets/fonts/`, registers fonts that plugins ship, and records
 which plugin uses which font so the web UI can show it.
 
-Several methods are deprecated and will be removed in LEDMatrix 3.7.0; they
-log a warning on first call. They are listed in
-[Deprecated methods](#deprecated-methods) below, and the full set is pinned in
-[`test/test_deprecation.py`](../test/test_deprecation.py).
+Several methods were removed in LEDMatrix 3.8.0 after a release of
+deprecation warnings; [Removed methods](#removed-methods) below lists them
+with what to use instead.
 
 ## Getting the FontManager
 
@@ -128,8 +127,8 @@ font = self.font_manager.resolve_font(
 
 `resolve_font()` still honours `config/font_overrides.json` (a map of
 element key to `family` and/or `size_px`), which is read once at start-up.
-The methods that edit it — `set_override()`, `remove_override()`,
-`get_overrides()` — are deprecated, and there is no web UI or REST endpoint
+The methods that edited it — `set_override()`, `remove_override()`,
+`get_overrides()` — were removed in 3.8.0, and there is no web UI or REST endpoint
 for overrides (the override editor and `/api/v3/fonts/overrides` were
 removed). To let users choose a font, add a field to your plugin's config
 schema.
@@ -207,9 +206,10 @@ Current methods:
 | `clear_cache()` | Drop cached fonts and metrics |
 | `font_catalog` (attribute) | Family name → file path |
 
-### Deprecated methods
+### Removed methods
 
-Removed in 3.7.0. Each logs a warning on first call.
+Removed in 3.8.0, after logging a deprecation warning on first call since
+3.5.0.
 
 | Method | Use instead |
 |---|---|

@@ -12,7 +12,9 @@
  *       orderInputId: 'vegas_plugin_order_value', // hidden input, JSON array of ids
  *       excludedInputId: 'vegas_excluded_plugins_value', // optional: adds an
  *           // include-checkbox per row; unchecked ids collect here (JSON array)
- *       showVegasModeBadge: true                  // optional: Scroll/Fixed/Static badge
+ *       showVegasModeBadge: true,                 // optional: Scroll/Pause/Excluded badge
+ *       signal: ctx.signal                        // optional: AbortSignal that cancels
+ *           // the plugin-list request (a page module's ctx.signal)
  *   });
  *
  * The container re-renders from /api/v3/plugins/installed each init; the
@@ -21,10 +23,14 @@
 (function() {
     'use strict';
 
+    // Keyed by Vegas participation ('scroll' | 'pause' | 'exclude'); 'fixed'
+    // and 'static' are the legacy vegas_mode values, for an older API.
     const MODE_LABELS = new Map([
-        ['scroll', { label: 'Scroll', icon: 'fa-scroll', color: 'text-blue-600' }],
-        ['fixed',  { label: 'Fixed',  icon: 'fa-square', color: 'text-green-600' }],
-        ['static', { label: 'Static', icon: 'fa-pause',  color: 'text-orange-600' }]
+        ['scroll',  { label: 'Scroll',   icon: 'fa-scroll', color: 'text-blue-600' }],
+        ['pause',   { label: 'Pause',    icon: 'fa-pause',  color: 'text-orange-600' }],
+        ['exclude', { label: 'Excluded', icon: 'fa-ban',    color: 'text-gray-500' }],
+        ['fixed',   { label: 'Scroll',   icon: 'fa-scroll', color: 'text-blue-600' }],
+        ['static',  { label: 'Pause',    icon: 'fa-pause',  color: 'text-orange-600' }]
     ]);
 
     function init(options) {
@@ -93,7 +99,7 @@
             });
         }
 
-        fetch('/api/v3/plugins/installed')
+        fetch('/api/v3/plugins/installed', { signal: options.signal })
             .then(response => response.json())
             .then(data => {
                 const allPlugins = (data.data && data.data.plugins) || data.plugins || [];
@@ -165,11 +171,11 @@
                     }
 
                     if (options.showVegasModeBadge) {
-                        const vegasMode = plugin.vegas_mode || plugin.vegas_content_type || 'fixed';
-                        const modeInfo = MODE_LABELS.get(vegasMode) || MODE_LABELS.get('fixed');
+                        const vegasMode = plugin.vegas_participation || plugin.vegas_mode || 'scroll';
+                        const modeInfo = MODE_LABELS.get(vegasMode) || MODE_LABELS.get('scroll');
                         const badge = document.createElement('span');
                         badge.className = `text-xs ${modeInfo.color} ml-2`;
-                        badge.title = `Vegas display mode: ${modeInfo.label}`;
+                        badge.title = `Vegas participation: ${modeInfo.label}`;
                         const badgeIcon = document.createElement('i');
                         badgeIcon.className = `fas ${modeInfo.icon} mr-1`;
                         badge.appendChild(badgeIcon);
@@ -212,6 +218,8 @@
                 syncInputs();
             })
             .catch(error => {
+                // The page was swapped away (options.signal): nothing to draw.
+                if (error && error.name === 'AbortError') return;
                 console.error('Error fetching plugins:', error);
                 const err = document.createElement('p');
                 err.className = 'text-sm text-red-500';

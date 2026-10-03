@@ -21,12 +21,30 @@ from flask import Flask
 # Every manager attribute the blueprint reads. Anything missing here keeps
 # whatever a previously-run test left on the singleton.
 API_V3_MANAGER_ATTRS = (
-    'config_manager', 'plugin_manager', 'plugin_store_manager',
-    'plugin_state_manager', 'saved_repositories_manager', 'schema_manager',
+    'config_manager', 'plugin_catalog', 'plugin_store_manager',
+    'saved_repositories_manager', 'schema_manager',
     'operation_queue', 'operation_history', 'cache_manager',
+    'health_tracker', 'resource_monitor',
 )
 
 _SENTINEL = object()
+
+
+def mock_plugin_catalog():
+    """A MagicMock shaped like PluginCatalog, and only like it.
+
+    ``spec`` makes anything a PluginCatalog lacks raise AttributeError --
+    ``get_plugin``, ``load_plugin``, ``plugins`` -- so a route that reached
+    for a plugin instance in the web process fails the test that drives it
+    instead of quietly calling a mock. The instance attributes the spec
+    cannot see are set explicitly.
+    """
+    from src.plugin_system.plugin_catalog import PluginCatalog
+    catalog = MagicMock(spec=PluginCatalog)
+    for name in ('plugins_dir', 'config_manager', 'schema_manager',
+                 'plugin_manifests', 'plugin_directories'):
+        setattr(catalog, name, MagicMock())
+    return catalog
 
 
 def build_app(blueprint):
@@ -52,7 +70,8 @@ def api_v3_module():
         for name in API_V3_MANAGER_ATTRS
     }
     for name in API_V3_MANAGER_ATTRS:
-        setattr(module.api_v3, name, MagicMock())
+        setattr(module.api_v3, name,
+                mock_plugin_catalog() if name == 'plugin_catalog' else MagicMock())
     # Default to the direct path; queue tests opt in explicitly.
     module.api_v3.operation_queue = None
 

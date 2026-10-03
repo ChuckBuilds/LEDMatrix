@@ -21,9 +21,13 @@ const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
               'unit/test_style_editor_layout_leaf_columns.js',
               'unit/test_style_editor_layout_leaf_collision.js',
               'unit/test_update_all.js', 'unit/test_inline_handler_escaping.js',
-              'unit/test_plugin_action_delegation.js', 'unit/test_file_upload_widget.js'];
+              'unit/test_plugin_action_delegation.js', 'unit/test_file_upload_widget.js',
+              'unit/test_store_registry_fields.js', 'unit/test_restart_banner.js',
+              'unit/test_page_registry.js', 'unit/test_core_modules.js'];
 const DOM = ['dom/test_installed_dom.js', 'dom/test_store_dom.js', 'dom/test_no_double_fetch.js',
-             'dom/test_tools_sections.js'];
+             'dom/test_tools_sections.js', 'dom/test_cache_page.js',
+             'dom/test_durations_page.js', 'dom/test_operation_history_page.js',
+             'dom/test_raw_json_page.js', 'dom/test_backup_restore_page.js'];
 
 function reachable(url) {
   return new Promise(res => {

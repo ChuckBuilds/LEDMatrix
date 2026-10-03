@@ -52,16 +52,15 @@ import threading
 import time
 from collections import OrderedDict, deque
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-import math
 import zlib
 import freetype
 
 from src.common import snapshot_policy
-from src.common.frame_timing import FrameTimingRecorder
+from src import display_watchdog
+from src.common.frame_timing import FrameTimingRecorder, install_gc_monitor
 
 if TYPE_CHECKING:
     from src.common.render_gate import RenderGate
-from src.deprecation import deprecated
 from src.logging_config import get_logger
 from src.common.permission_utils import (
     ensure_directory_permissions,
@@ -80,6 +79,15 @@ _CALENDAR_FONT_PX = 7
 #: Seconds between repeats of update_display()'s error log. It runs every
 #: frame, so a fault that persists would otherwise log ~100 lines a second.
 _UPDATE_ERROR_LOG_INTERVAL = 60.0
+
+#: zlib level for the preview snapshot PNG. The fastest level: each file is
+#: read by the web UI and soon replaced by the next, so encode time (paid on
+#: the render thread for a static screen) matters more than its size.
+#: Lossless at any level. Against Pillow's default (6), on a desktop with
+#: Pillow 12.3, a text-dense 512x64 frame encoded in about half the time,
+#: into 12 KB instead of 7 KB; sparser frames saved less time (10-20%) and
+#: stayed under 2 KB.
+_SNAPSHOT_PNG_COMPRESS_LEVEL = 1
 
 
 def _bdf_native_size(face) -> int:
@@ -224,6 +232,11 @@ def _per_thread_canvas_attr(name: str) -> property:
 
 
 
+#: A held frame is only split when its blit takes less than this share of a
+#: refresh: the second blit has to land before the next vsync.
+_SPLIT_BLIT_FRACTION = 0.5
+
+
 class DisplayManager:
     """
     Singleton hardware abstraction layer for the RGB LED matrix.
@@ -292,8 +305,8 @@ class DisplayManager:
         self._TEXT_WIDTH_CACHE_MAX = 1024
         # Snapshot mirror for web preview + health check (service writes, web
         # reads). Cadence/skip decisions live in src/common/snapshot_policy.py:
-        # full rate only while the web SSE broadcaster keeps the viewer marker
-        # fresh; unchanged frames are never re-encoded, only mtime-touched.
+        # the viewer rate only while the web SSE broadcaster keeps the viewer
+        # marker fresh; unchanged frames are never re-encoded, only mtime-touched.
         self._snapshot_path = "/tmp/led_matrix_preview.png"  # nosec B108 - fixed path intentional; web UI reads same path
         self._viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - touched by web SSE broadcaster
         self._last_snapshot_ts = 0.0
@@ -340,6 +353,10 @@ class DisplayManager:
         # advances a whole pixel every Nth refresh instead of every one.
         # See src/common/scroll_config.py and scripts/scroll_speeds.py.
         self._frame_hold = 1
+        # True while a static screen draws its first frame after a scroll,
+        # whose state is left set until then: those frames go out without
+        # scan-order compensation. See end_scroll_for_static_screen().
+        self._static_handover = False
 
         # A src.common.render_gate.RenderGate while Vegas runs with
         # vegas_scroll.prefetch_gate on: opened around each swap so the
@@ -348,7 +365,8 @@ class DisplayManager:
 
         # Timing of every presented frame, whoever drew it, for
         # scripts/frame_soak.py. See src/common/frame_timing.py.
-        self.frame_timing = FrameTimingRecorder(info=self._frame_timing_info())
+        self.frame_timing = FrameTimingRecorder(
+            info=self._frame_timing_info(), gc_monitor=install_gc_monitor())
         self.frame_timing.scrolling_now = self._scrolling_now
 
         self._scrolling_state = {
@@ -914,8 +932,7 @@ class DisplayManager:
         ``display.dirty_tracking: false`` if a redraw issue is ever suspected.
 
         Serialized via ``_update_lock``: plugins can call this directly from
-        background threads (e.g. sports base classes push an immediate
-        "live" refresh from inside update()), so without a lock two callers
+        background threads of their own, so without a lock two callers
         could both pass the digest check before either writes it back,
         double-pushing a frame, or interleave the offscreen/current canvas
         swap below. The lock is scoped to this method, so callers never
@@ -928,6 +945,9 @@ class DisplayManager:
                 # the fallback branch, so captured content never reaches the
                 # web preview either.
                 return
+            # The render loop's watchdog arms on the first frame to reach
+            # the panel (or the emulator/fallback path standing in for it).
+            display_watchdog.note_frame()
             with self._update_lock:
                 if self.matrix is None:
                     # Fallback mode - no actual hardware to update
@@ -936,16 +956,32 @@ class DisplayManager:
                     self._write_snapshot_if_due()
                     return
 
+                # Asked once per frame and the answer reused below: the call
+                # has side effects (it expires a stale scroll and drops its
+                # frame hold), so asking again further down could disagree
+                # with what this frame was already treated as. Asked first,
+                # so the dirty check, the scan-order segments, the pacing gate,
+                # the swaps and frame timing all see one answer and the frame
+                # hold it leaves.
+                scrolling = self.is_currently_scrolling()
                 digest = None
                 frame_checksum = None
-                if self._dirty_tracking_enabled:
+                # No digest mid-scroll. The skip it feeds is never taken while
+                # scrolling (see below), so all it bought there was the
+                # snapshot's changed-frame check -- a tobytes() plus adler32
+                # over the whole framebuffer every frame (~0.17ms at 256x64
+                # on a Pi 4, twice that at 512x64) for a decision acted on at
+                # most once a second. _write_snapshot_if_due hashes for
+                # itself when a write or touch is actually due. The cost: the
+                # first static frame after a scroll is always pushed, once.
+                if self._dirty_tracking_enabled and not scrolling:
                     try:
                         brightness = getattr(self.matrix, 'brightness', None)
                     except AttributeError:
                         brightness = None
                     frame_checksum = zlib.adler32(self.image.tobytes())
                     digest = (frame_checksum, brightness)
-                    if digest == self._last_pushed_digest and not self.is_currently_scrolling():
+                    if digest == self._last_pushed_digest:
                         # Nothing changed since the last push — the panel is
                         # already showing exactly this frame.
                         #
@@ -970,27 +1006,35 @@ class DisplayManager:
                 # mode the logical screen is first tiled across the full chain.
                 blit_started = time.perf_counter()
                 if self._double_sided is not None:
-                    self.offscreen_canvas.SetImage(self._composite_double_sided())
+                    segments = [(self._composite_double_sided(), self._frame_hold)]
                 else:
-                    self.offscreen_canvas.SetImage(self._scan_compensated(self.image))
-                blit_done = time.perf_counter()
-
-                # Swap buffers immediately. framerate_fraction holds the frame
-                # for N refreshes; SwapOnVSync blocks for all of them, which is
-                # what paces the render loop to the chosen frame rate.
+                    segments = self._scan_segments(self.image, scrolling)
                 gate = self.render_gate
+                blit_time = swap_time = 0.0
+                # Usually one segment: the frame, held for _frame_hold
+                # refreshes. SwapOnVSync blocks for all of them, which is what
+                # paces the render loop to the chosen frame rate. Scan-order
+                # compensation on a held frame splits it, so the lagging rows
+                # change one refresh after the rest.
                 if gate is not None:
                     gate.before_swap(self._frame_hold)
-                self.matrix.SwapOnVSync(self.offscreen_canvas, self._frame_hold)
+                for index, (shown, hold) in enumerate(segments):
+                    if index:
+                        blit_started = time.perf_counter()
+                    self.offscreen_canvas.SetImage(shown)
+                    blit_done = time.perf_counter()
+                    blit_time += blit_done - blit_started
+                    self.matrix.SwapOnVSync(self.offscreen_canvas, hold)
+                    swap_time += time.perf_counter() - blit_done
+                    # Swap our canvas references
+                    self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
                 if gate is not None:
                     gate.after_swap(self._frame_hold)
                 presented_at = time.perf_counter()
+                self._last_blit_seconds = blit_time / len(segments)
                 self.frame_timing.record(
-                    blit_done - blit_started, presented_at - blit_done,
-                    self._frame_hold, self.is_currently_scrolling(), presented_at)
-
-                # Swap our canvas references
-                self.offscreen_canvas, self.current_canvas = self.current_canvas, self.offscreen_canvas
+                    blit_time, swap_time,
+                    self._frame_hold, scrolling, presented_at)
 
                 self._last_pushed_digest = digest
 
@@ -1037,23 +1081,48 @@ class DisplayManager:
             ", ".join(f"rows {top}-{bottom - 1} show {lag} refresh(es) behind"
                       for top, bottom, lag in bands))
 
-    def _scan_compensated(self, image: Image.Image) -> Image.Image:
-        """The frame to present, with lagging rows taken from earlier frames.
+    def _scan_segments(self, image: Image.Image,
+                       scrolling: Optional[bool] = None
+                       ) -> List[Tuple[Image.Image, int]]:
+        """What to present for this frame: ``[(image, refreshes), ...]``.
 
-        Only mid-scroll at one frame per refresh: that is when consecutive
-        frames are consecutive refreshes. At a longer hold, or on a static
-        screen, the history is dropped and the frame goes out as it is.
+        Mid-scroll with compensation on, lagging rows are taken from earlier
+        refreshes (see src/scan_order.py). At one refresh per frame that is one
+        image. A frame held longer is split at the refresh where the lagging
+        rows catch up, so those rows step a refresh after the rest. The split
+        needs a second blit inside the refresh that follows the first swap, so
+        it is skipped when a blit is too slow to fit. A static screen goes out
+        as it is, and drops the history. So does a static screen's first frame
+        after a scroll, while the scroll state is still set (see
+        end_scroll_for_static_screen): one segment, held for the scroll's
+        hold, with no rows from the scroller's frames.
+
+        ``scrolling`` is the caller's is_currently_scrolling() answer for this
+        frame. update_display() asks once, before calling this, so the frame
+        hold read here is the one that answer left (an expired scroll's hold
+        is already dropped). None asks here.
         """
+        hold = self._frame_hold
         bands = getattr(self, '_scan_lag_bands', None)
-        if not bands:
-            return image
-        if self._frame_hold != 1 or not self.is_currently_scrolling():
-            self._scan_history.clear()
-            return image
-        presented = scan_order.compose(image, self._scan_history, bands)
+        if (not bands
+                or not (scrolling if scrolling is not None
+                        else self.is_currently_scrolling())
+                or self._static_handover):
+            if bands:
+                self._scan_history.clear()
+            return [(image, hold)]
+        if hold > 1:
+            blit = getattr(self, '_last_blit_seconds', 0.0)
+            if blit > _SPLIT_BLIT_FRACTION / max(1.0, self.refresh_hz):
+                self._scan_history.clear()
+                return [(image, hold)]
+        segments = [
+            (scan_order.compose(image, self._scan_history, bands, backs), count)
+            for backs, count in scan_order.refresh_plan(bands, hold)
+        ]
         # A copy: plugins draw into the same image object frame after frame.
         self._scan_history.appendleft(image.copy())
-        return presented
+        return segments
 
     def clear(self):
         """Clear the display completely."""
@@ -1320,203 +1389,6 @@ class DisplayManager:
         except Exception as e:
             logger.error(f"Error drawing text: {e}", exc_info=True)
 
-    @deprecated("3.7.0")
-    def draw_sun(self, x: int, y: int, size: int = 16):
-        """Draw a sun icon using yellow circles and lines."""
-        center = (x + size//2, y + size//2)
-        radius = size//3
-        
-        # Draw the center circle
-        self.draw.ellipse([center[0]-radius, center[1]-radius, 
-                          center[0]+radius, center[1]+radius], 
-                         fill=(255, 255, 0))  # Yellow
-        
-        # Draw the rays
-        ray_length = size//4
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            start_x = center[0] + (radius * math.cos(rad))
-            start_y = center[1] + (radius * math.sin(rad))
-            end_x = center[0] + ((radius + ray_length) * math.cos(rad))
-            end_y = center[1] + ((radius + ray_length) * math.sin(rad))
-            self.draw.line([start_x, start_y, end_x, end_y], fill=(255, 255, 0), width=2)
-
-    @deprecated("3.7.0")
-    def draw_cloud(self, x: int, y: int, size: int = 16, color=(200, 200, 200)):
-        """Draw a cloud icon."""
-        # Draw multiple circles to form a cloud shape
-        self.draw.ellipse([x+size//4, y+size//3, x+size//4+size//2, y+size//3+size//2], fill=color)
-        self.draw.ellipse([x+size//2, y+size//3, x+size//2+size//2, y+size//3+size//2], fill=color)
-        self.draw.ellipse([x+size//3, y+size//6, x+size//3+size//2, y+size//6+size//2], fill=color)
-
-    @deprecated("3.7.0")
-    def draw_rain(self, x: int, y: int, size: int = 16):
-        """Draw rain icon with cloud and droplets."""
-        # Draw cloud
-        self.draw_cloud(x, y, size)
-        
-        # Draw rain drops
-        drop_color = (0, 0, 255)  # Blue
-        drop_size = size//6
-        for i in range(3):
-            drop_x = x + size//4 + (i * size//3)
-            drop_y = y + size//2
-            self.draw.line([drop_x, drop_y, drop_x, drop_y+drop_size], 
-                          fill=drop_color, width=2)
-
-    @deprecated("3.7.0")
-    def draw_snow(self, x: int, y: int, size: int = 16):
-        """Draw snow icon with cloud and snowflakes."""
-        # Draw cloud
-        self.draw_cloud(x, y, size)
-        
-        # Draw snowflakes
-        snow_color = (200, 200, 255)  # Light blue
-        for i in range(3):
-            center_x = x + size//4 + (i * size//3)
-            center_y = y + size//2 + size//4
-            # Draw a small star shape
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle)
-                end_x = center_x + (size//8 * math.cos(rad))
-                end_y = center_y + (size//8 * math.sin(rad))
-                self.draw.line([center_x, center_y, end_x, end_y], 
-                             fill=snow_color, width=1)
-
-    # Weather icon color constants
-    WEATHER_COLORS = {
-        'sun': (255, 200, 0),    # Bright yellow
-        'cloud': (200, 200, 200), # Light gray
-        'rain': (0, 100, 255),    # Light blue
-        'snow': (220, 220, 255),  # Ice blue
-        'storm': (255, 255, 0)    # Lightning yellow
-    }
-
-    def _draw_sun(self, x: int, y: int, size: int) -> None:
-        """Draw a sun icon with rays."""
-        center_x, center_y = x + size//2, y + size//2
-        radius = size//4
-        ray_length = size//3
-        
-        # Draw the main sun circle
-        self.draw.ellipse([center_x - radius, center_y - radius, 
-                          center_x + radius, center_y + radius], 
-                         fill=self.WEATHER_COLORS['sun'])
-        
-        # Draw sun rays
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            start_x = center_x + int((radius + 2) * math.cos(rad))
-            start_y = center_y + int((radius + 2) * math.sin(rad))
-            end_x = center_x + int((radius + ray_length) * math.cos(rad))
-            end_y = center_y + int((radius + ray_length) * math.sin(rad))
-            self.draw.line([start_x, start_y, end_x, end_y], 
-                         fill=self.WEATHER_COLORS['sun'], width=2)
-
-    def _draw_cloud(self, x: int, y: int, size: int) -> None:
-        """Draw a cloud using multiple circles."""
-        cloud_color = self.WEATHER_COLORS['cloud']
-        base_y = y + size//2
-        
-        # Draw main cloud body (3 overlapping circles)
-        circle_radius = size//4
-        positions = [
-            (x + size//3, base_y),           # Left circle
-            (x + size//2, base_y - size//6), # Top circle
-            (x + 2*size//3, base_y)          # Right circle
-        ]
-        
-        for cx, cy in positions:
-            self.draw.ellipse([cx - circle_radius, cy - circle_radius,
-                             cx + circle_radius, cy + circle_radius],
-                            fill=cloud_color)
-
-    def _draw_rain(self, x: int, y: int, size: int) -> None:
-        """Draw rain drops falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        rain_color = self.WEATHER_COLORS['rain']
-        
-        # Draw rain drops at an angle
-        drop_size = size//8
-        drops = [
-            (x + size//4, y + 2*size//3),
-            (x + size//2, y + 3*size//4),
-            (x + 3*size//4, y + 2*size//3)
-        ]
-        
-        for dx, dy in drops:
-            # Draw angled rain drops
-            self.draw.line([dx, dy, dx - drop_size//2, dy + drop_size],
-                         fill=rain_color, width=2)
-
-    def _draw_snow(self, x: int, y: int, size: int) -> None:
-        """Draw snowflakes falling from a cloud."""
-        self._draw_cloud(x, y, size)
-        snow_color = self.WEATHER_COLORS['snow']
-        
-        # Draw snowflakes
-        flake_size = size//6
-        flakes = [
-            (x + size//4, y + 2*size//3),
-            (x + size//2, y + 3*size//4),
-            (x + 3*size//4, y + 2*size//3)
-        ]
-        
-        for fx, fy in flakes:
-            # Draw a snowflake (six-pointed star)
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle)
-                end_x = fx + int(flake_size * math.cos(rad))
-                end_y = fy + int(flake_size * math.sin(rad))
-                self.draw.line([fx, fy, end_x, end_y],
-                             fill=snow_color, width=1)
-
-    def _draw_storm(self, x: int, y: int, size: int) -> None:
-        """Draw a storm cloud with lightning bolt."""
-        self._draw_cloud(x, y, size)
-        
-        # Draw lightning bolt
-        bolt_color = self.WEATHER_COLORS['storm']
-        bolt_points = [
-            (x + size//2, y + size//2),          # Top
-            (x + 3*size//5, y + 2*size//3),      # Middle right
-            (x + 2*size//5, y + 2*size//3),      # Middle left
-            (x + size//2, y + 5*size//6)         # Bottom
-        ]
-        self.draw.polygon(bolt_points, fill=bolt_color)
-
-    @deprecated("3.7.0")
-    def draw_weather_icon(self, condition: str, x: int, y: int, size: int = 16) -> None:
-        """Draw a weather icon based on the condition."""
-        if condition.lower() in ['clear', 'sunny']:
-            self._draw_sun(x, y, size)
-        elif condition.lower() in ['clouds', 'cloudy', 'partly cloudy']:
-            self._draw_cloud(x, y, size)
-        elif condition.lower() in ['rain', 'drizzle', 'shower']:
-            self._draw_rain(x, y, size)
-        elif condition.lower() in ['snow', 'sleet', 'hail']:
-            self._draw_snow(x, y, size)
-        elif condition.lower() in ['thunderstorm', 'storm']:
-            self._draw_storm(x, y, size)
-        else:
-            self._draw_sun(x, y, size)
-        # Note: No update_display() here - let the caller handle the update
-
-    @deprecated("3.7.0")
-    def draw_text_with_icons(self, text: str, icons: List[tuple] = None, x: int = None, y: int = None, 
-                            color: tuple = (255, 255, 255)):
-        """Draw text with weather icons at specified positions."""
-        # Draw the text
-        self.draw_text(text, x, y, color)
-        
-        # Draw any icons
-        if icons:
-            for icon_type, icon_x, icon_y in icons:
-                self.draw_weather_icon(icon_type, icon_x, icon_y)
-        
-        # Update the display once after everything is drawn
-        self.update_display()
-
     def cleanup(self):
         """Clean up resources."""
         if hasattr(self, '_snapshot_cond'):
@@ -1695,6 +1567,9 @@ class DisplayManager:
             # A plugin captured for Vegas calls this from its own display();
             # it must not change the live scroll's state or frame hold.
             return
+        # A scroll starting or ending also ends a static screen's handover;
+        # see end_scroll_for_static_screen.
+        self._static_handover = False
         current_time = time.time()
         # Scrolling callers set this every frame; log transitions only.
         changed = self._scrolling_state['is_scrolling'] != is_scrolling
@@ -1706,6 +1581,47 @@ class DisplayManager:
             self._frame_hold = 1
         if changed:
             logger.debug("Scrolling state set to: %s", is_scrolling)
+
+    def end_scroll_for_static_screen(self) -> None:
+        """Ready the panel for a static screen's first frame after a scroll.
+
+        The display controller calls this just before it dispatches the first
+        frame of a screen that runs its 1 Hz loop, and
+        ``set_scrolling_state(False)`` once that dispatch returns. Nothing
+        else ends a scroll at a handover: the state belongs to the screen
+        before, and would only expire 2 s after its last frame.
+
+        Until then, the frames that dispatch presents go out as drawn, not
+        scan-order composed: each as one segment, held for the scroll's hold.
+        With the state still "scrolling", ``_scan_segments`` would take their
+        lagging rows from the frame before: for the first, the scroller's last
+        frame -- the bottom half of the old ticker under the new screen on a
+        96x48 panel. At hold 1 that frame stays up for a whole second; at a
+        longer hold its first refresh flashes the old rows. For a second frame
+        in the same call, the rows would come from the first, shown for as long
+        as the first's would be. Dirty tracking does not keep such a frame up
+        past the screen's next redraw: a frame pushed while the scroll state
+        is set leaves it no digest to match, so that redraw is pushed.
+
+        The rest of that scroll is left on purpose, until the controller ends
+        it:
+
+        * the scroll state, so the gap from the scroller's last frame to this
+          screen's first is still timed by the frame-timing recorder and
+          watched by the stall watchdog, which is where a slow first
+          ``display()`` shows up;
+        * its frame hold. On a frame that stays up for a second it only moves
+          the swap to the scroll's next hold boundary, and it is the pacing
+          that gap is due at: judged at hold 1, a handover that kept the
+          scroller's own schedule would count as frames late.
+
+        The next ``set_scrolling_state()`` call, whoever makes it, ends this.
+        One attribute store, so no lock: ``update_display`` reads it once per
+        frame, under its own, and the history is dropped there.
+        """
+        if self._writes_suppressed():
+            return  # a thread drawing off-screen cannot end the live scroll
+        self._static_handover = True
 
     def is_currently_scrolling(self) -> bool:
         """Check if the display is currently in a scrolling state."""
@@ -1828,18 +1744,6 @@ class DisplayManager:
         if removed_count > 0:
             logger.debug(f"Cleaned up {removed_count} expired deferred updates")
 
-    @deprecated("3.7.0")
-    def get_scrolling_stats(self) -> dict:
-        """Get current scrolling statistics for debugging."""
-        return {
-            'is_scrolling': self._scrolling_state['is_scrolling'],
-            'last_activity': self._scrolling_state['last_scroll_activity'],
-            'deferred_count': len(self._scrolling_state['deferred_updates']),
-            'inactivity_threshold': self._scrolling_state['scroll_inactivity_threshold'],
-            'max_deferred_updates': self._scrolling_state['max_deferred_updates'],
-            'deferred_update_ttl': self._scrolling_state['deferred_update_ttl']
-        }
-
     def _viewer_is_fresh(self, now: float) -> bool:
         """True when a browser preview is watching (marker file touched by
         the web SSE broadcaster). The marker is stat'd at most once per
@@ -1861,11 +1765,14 @@ class DisplayManager:
 
         Args:
             frame_checksum: adler32 of the current frame, when the caller has
-                already computed one. Dirty tracking checksums every frame a
-                few lines above the call site, and re-deriving it here meant a
-                second tobytes() plus a second pass over the whole framebuffer
-                on every single frame — ~0.17ms per frame of the two combined
-                at 256x64, paid 100 times a second to reach the same number.
+                already computed one. Dirty tracking checksums every static
+                frame a few lines above the call site, and re-deriving it here
+                meant a second tobytes() plus a second pass over the whole
+                framebuffer on every single frame — ~0.17ms per frame of the
+                two combined at 256x64, paid 100 times a second to reach the
+                same number. None (mid-scroll, dirty tracking off, no
+                hardware): the frame is hashed here, and only when the policy
+                could act on it.
         """
         try:
             now = time.time()
@@ -1876,11 +1783,29 @@ class DisplayManager:
                 self._last_snapshot_ts = 0.0
             self._viewer_was_fresh = viewer_fresh
 
-            digest = (frame_checksum if frame_checksum is not None
-                      else zlib.adler32(self.image.tobytes()))
-            action = snapshot_policy.decide(
-                now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
-                viewer_fresh, digest != self._last_snapshot_digest)
+            if frame_checksum is not None:
+                digest = frame_checksum
+                action = snapshot_policy.decide(
+                    now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                    viewer_fresh, digest != self._last_snapshot_digest)
+            else:
+                # Ask as if the frame had changed before paying to find out.
+                # decide() is monotone in frame_changed -- a SKIP for a
+                # changed frame is a SKIP for an unchanged one too (its touch
+                # branch ignores frame_changed) -- so returning here gives the
+                # same answer the hash would have, and on most frames the hash
+                # is never taken. test_snapshot_policy.py holds decide() to it.
+                action = snapshot_policy.decide(
+                    now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
+                    viewer_fresh, True)
+                if action is snapshot_policy.SnapshotAction.SKIP:
+                    return
+                digest = zlib.adler32(self.image.tobytes())
+                if digest == self._last_snapshot_digest:
+                    # Unchanged after all: the decision an unchanged frame gets.
+                    action = snapshot_policy.decide(
+                        now, self._last_snapshot_ts,
+                        self._last_snapshot_touch_ts, viewer_fresh, False)
             if action is snapshot_policy.SnapshotAction.SKIP:
                 return
             if (action is snapshot_policy.SnapshotAction.TOUCH
@@ -1958,7 +1883,8 @@ class DisplayManager:
             prefix=f".{snapshot_path_obj.name}.", suffix=".tmp")
         try:
             with os.fdopen(_fd, "wb") as _f:
-                image.save(_f, format='PNG')
+                image.save(_f, format='PNG',
+                           compress_level=_SNAPSHOT_PNG_COMPRESS_LEVEL)
             os.chmod(tmp_path, 0o644)
             os.replace(tmp_path, self._snapshot_path)
         except Exception:
@@ -1969,7 +1895,8 @@ class DisplayManager:
             except OSError:
                 pass
             # Fallback to direct save if replace not supported
-            image.save(self._snapshot_path, format='PNG')
+            image.save(self._snapshot_path, format='PNG',
+                       compress_level=_SNAPSHOT_PNG_COMPRESS_LEVEL)
         # Set proper file permissions after saving
         try:
             ensure_file_permissions(snapshot_path_obj, get_assets_file_mode())

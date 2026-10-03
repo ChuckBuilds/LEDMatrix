@@ -27,6 +27,7 @@ Rules for the package:
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
 | [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | 3.6.0 |
+| [`fetch_service`](#fetch_service) | Pooled, merged, budgeted and counted HTTP for core fetch paths | No, core-internal (reached through `api_helper` and `espn_dates`) | n/a |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
 | [`frame_timing`](#frame_timing) | Timing of every presented frame, stall watchdog | No, core-internal | n/a |
 | [`json_body`](#json_body) | Parse a response body as JSON, with orjson if installed | Optional (large payloads) | 3.5.0 |
@@ -40,11 +41,16 @@ Rules for the package:
 | [`sports_card`](#sports_card) | Scoreboard card settings, colours, fonts, dates | Yes (scoreboards) | 3.3.0 |
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
+| [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
+| [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
+| [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
+| [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
+| [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
 | [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
@@ -103,7 +109,9 @@ and truncates results when `limit` is above 500. `fetch_espn_scoreboard()`
 splits a range into month and day requests ESPN accepts and merges the
 results; `espn_date_chunks()`, `fetch_espn_date_chunks()`,
 `clamp_espn_limit()` and `merge_scoreboard_payloads()` are the pieces.
-Scoreboard plugins also bundle a copy for older cores.
+Every request goes through [`fetch_service`](#fetch_service), the chunks
+counted against the plugin that asked. Scoreboard plugins also bundle a copy
+for older cores.
 
 ### favorite_team_check
 
@@ -115,6 +123,23 @@ league, on a daemon thread, and logs a bad code with the nearest real one, or
 says the league has nothing on yet; `reset()` re-arms it after a config edit.
 Diagnostics only: every failure is swallowed. Scoreboard plugins also bundle
 a copy for older cores.
+
+### fetch_service
+
+[`fetch_service.py`](fetch_service.py). Core-internal for now. Every core
+fetch path -- `APIHelper.get`/`post`, `espn_dates` (so every scoreboard's
+ESPN scoreboard fetch and `SportsFetchMixin`), `BackgroundDataService` and
+`BaseOddsManager` -- calls `fetch_get(session, url, ...)` instead of
+`session.get(url, ...)`. Same arguments, return value and exceptions; on top
+it shares one connection pool per host per retry policy
+(`share_connection_pool`), merges identical GETs in flight, applies per-host
+token buckets (`fetch_service.rate_limits` in config.json; ESPN gets 20/s,
+burst 200), revalidates with server-sent `ETag`/`Last-Modified` and counts
+requests per plugin and per host. The display publishes the counters
+(`FetchStatsPublisher`) for `GET /api/v3/plugins/fetch-stats`. Which plugin
+made a request comes from `plugin_scope()`, set by the plugin executor, or
+else from the plugin directory on the stack. See
+[docs/PLUGIN_API_REFERENCE.md](../../docs/PLUGIN_API_REFERENCE.md#fetching-data).
 
 ### font_layout
 
@@ -206,7 +231,8 @@ rather than the `set_*` methods. Vegas mode reads a plugin's
 [`snapshot_policy.py`](snapshot_policy.py). Core-internal. `decide()`
 tells `DisplayManager` whether to write `/tmp/led_matrix_preview.png`, only
 touch its mtime, or skip, based on whether a browser is watching the preview.
-The web health check reads the file's age.
+The web health check reads the file's age, and the web preview stream checks
+its mtime every `VIEWER_POLL_INTERVAL`.
 
 ### sports_card
 
@@ -238,6 +264,16 @@ The colour helpers are free functions (`logo_palette()`, `lift_color()`,
 `mix_color()`, ...). Deciding *when* to celebrate stays in the plugin, which
 builds the celebration dict the docstring describes.
 
+### sports_display_rules
+
+[`sports_display_rules.py`](sports_display_rules.py). Two `SportsCore`
+mixins: `SportsCardOptionsMixin` (`_card_option()`, which never lets the
+upcoming scorebug lose both its date and time, and `_recent_date_text()`;
+list it before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
+(`_filtered_or_all()`, the no-favourites quality filter that fails open, and
+`_effective_live_duration()`, the shorter dwell for a non-favourite live
+game).
+
 ### sports_fetch
 
 [`sports_fetch.py`](sports_fetch.py). `SportsFetchMixin`: the `SportsCore`
@@ -245,6 +281,13 @@ methods that decide which requests a scoreboard makes --
 `_fetch_season_directly()` (a season, in chunks ESPN accepts),
 `_background_fetches_espn_ranges()`, `_needs_previous_day()` (the live
 lookback) and `_wants_live_odds()` (odds only for games near the screen).
+
+### sports_font_path
+
+[`sports_font_path.py`](sports_font_path.py). `resolve_font_path(path)`: the
+path as given when it exists (relative to the cwd), else
+`font_layout.resolve_asset_path(path)`. What the scoreboards'
+`_resolve_font_path` copies return on a core that ships it.
 
 ### sports_game_renderer
 
@@ -263,6 +306,25 @@ what differs.
 `_odds_color` and `_upcoming_date_and_time_text` under their existing names.
 Nothing in core uses it.
 
+### sports_live_scroll
+
+[`sports_live_scroll.py`](sports_live_scroll.py). `SportsLiveScrollMixin`:
+keeps a live scroll strip current. It fingerprints the live games (the clock
+and the display pipeline's own keys excluded, via the host's
+`LIVE_VOLATILE_FIELDS`), rebuilds when they change, rate-limited by what a
+rebuild costs, and `_preserving_scroll_position()` keeps the marquee where
+it was. Pairs with `SportsPluginHostMixin`, whose `_dispatch_switch_refresh()`
+it uses.
+
+### sports_plugin_host
+
+[`sports_plugin_host.py`](sports_plugin_host.py). `SportsPluginHostMixin`:
+helpers of a scoreboard's `BasePlugin` subclass. `get_vegas_priority_weight()`
+(more Vegas slots while a favourite plays, found across every plugin's data
+shape), `_dispatch_switch_refresh()` (a manager refresh on a daemon thread, so
+`display()` never waits on the network), `get_vegas_content_type()` and small
+dynamic-duration helpers. List it before `BasePlugin`.
+
 ### sports_scroll
 
 [`sports_scroll.py`](sports_scroll.py). `SportsScrollDisplay` and
@@ -270,6 +332,10 @@ Nothing in core uses it.
 scoreboards share (Vegas items, dynamic duration, frame loop), paced through
 `scroll_config`. Subclasses supply `prepare_scroll_content()` and set
 `SCROLL_LEAGUE_KEYS`; see the module docstring for an example.
+`prepare_and_display()` rewinds a recent or upcoming strip whose games,
+rankings, config, panel size and date are unchanged instead of calling
+`prepare_scroll_content()` again, with one display per slate (game type and
+leagues).
 
 ### sports_shared
 
@@ -279,6 +345,17 @@ that were identical in every scoreboard (game selection and rotation,
 fonts, colours, dates, the switch-mode upcoming card). The docstring lists
 the attributes the host class must have and the three methods deliberately
 left out.
+
+### sports_vegas
+
+[`sports_vegas.py`](sports_vegas.py). What a scoreboard needs for live Vegas
+cards (one element per game, swapped in place while it scrolls):
+`game_key()`, `game_fingerprint()`, `dedupe_games()`, `VegasCardCache` (draws
+a card only when its fingerprint changes), `StickyOdds` (keeps a card's odds
+through a live poll that left them out), and `finished_games()` /
+`with_finished_games()` (a game that just went final keeps its card, showing
+FINAL). `SportsScrollDisplay.build_vegas_elements()` in `sports_scroll` puts
+them together; a scoreboard not built on it (UFC) uses them directly.
 
 ### sports_timezone
 
@@ -307,6 +384,19 @@ Created by `DisplayController`; works with any plugin.
 `load_fonts()`, `draw_text_with_outline()`, `get_text_width()`,
 `get_text_dimensions()`, `center_text()`, `wrap_text()`,
 `draw_multiline_text()`, `create_text_image()`.
+
+`draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0, 0),
+offsets=OUTLINE_SQUARE)` (Unreleased) draws the text in `outline_color` at
+each offset, then in `fill` on top: the same pixels as one `draw.text` per
+offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
+eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the
+four-sided one. Fractional coordinates (a whole-pixel float such as `52.0`
+is fine), multiline text, fonts other than a plain `FreeTypeFont`, image modes
+other than RGB, RGBA and L, and a subclassed or replaced `draw.text` take
+the `draw.text` loop unchanged. `TextHelper.draw_text_with_outline()` and
+the scoreboards' `SportsCoreSharedMixin._draw_text_with_outline()` use it.
+A plugin that also runs on older cores should guard the import and keep its
+own loop as the fallback.
 
 ## Logging
 

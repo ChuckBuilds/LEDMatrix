@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Callable
 from threading import Thread
 import logging
 
+from src.common.fetch_service import plugin_scope
 from src.exceptions import PluginError
 from src.logging_config import get_logger
 from src.error_aggregator import record_error
@@ -19,8 +20,25 @@ class PluginTimeoutError(Exception):
     """Raised when a plugin operation times out."""
 
 
+class PluginBusyError(PluginTimeoutError):
+    """A plugin's lock stayed held past its bound.
+
+    Not raised; recorded. The lock is held by the plugin's own display(),
+    update(), on_config_change() or a Vegas content render -- slow, or hung
+    -- so the caller skipped the plugin rather than wait on it. Report-only:
+    it is kept as the plugin's state error info and counted as a busy skip in
+    health, never as a failure, so it cannot open the circuit breaker.
+    """
+
+
 class PluginExecutor:
     """Handles plugin execution with timeout and error isolation."""
+
+    #: A display() call at least this long is logged and counted as slow.
+    #: A frame is milliseconds; two seconds is a plugin doing I/O in display().
+    SLOW_DISPLAY_SECONDS = 2.0
+    #: An update() call at least this long is logged as slow.
+    SLOW_UPDATE_SECONDS = 5.0
     
     def __init__(
         self,
@@ -41,7 +59,8 @@ class PluginExecutor:
         self,
         operation: Callable[[], Any],
         timeout: Optional[float] = None,
-        plugin_id: Optional[str] = None
+        plugin_id: Optional[str] = None,
+        thread_name: Optional[str] = None
     ) -> Any:
         """
         Execute a plugin operation with timeout.
@@ -50,6 +69,8 @@ class PluginExecutor:
             operation: Function to execute
             timeout: Timeout in seconds (None = use default)
             plugin_id: Optional plugin ID for logging
+            thread_name: Name for the thread the operation runs on (None
+                keeps Python's default). Stack dumps list threads by name.
             
         Returns:
             Result of operation
@@ -66,13 +87,16 @@ class PluginExecutor:
         
         def target():
             try:
-                result_container['value'] = operation()
+                # Fetches made by the operation (and by threads the core
+                # starts from it) are counted against this plugin.
+                with plugin_scope(plugin_id):
+                    result_container['value'] = operation()
                 result_container['completed'] = True
             except Exception as e:
                 result_container['exception'] = e
                 result_container['completed'] = True
         
-        thread = Thread(target=target, daemon=True)
+        thread = Thread(target=target, daemon=True, name=thread_name)
         thread.start()
         thread.join(timeout=timeout)
         
@@ -117,15 +141,15 @@ class PluginExecutor:
             True if update succeeded, False otherwise
         """
         try:
-            start_time = time.time()
+            start_time = time.monotonic()
             self.execute_with_timeout(
                 lambda: plugin.update(),
                 timeout=timeout,
                 plugin_id=plugin_id
             )
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
             
-            if duration > 5.0:  # Warn if update takes more than 5 seconds
+            if duration > self.SLOW_UPDATE_SECONDS:
                 self.logger.warning(
                     "Plugin %s update() took %.2fs (consider optimizing)",
                     plugin_id,
@@ -156,7 +180,8 @@ class PluginExecutor:
         force_clear: bool = False,
         display_mode: Optional[str] = None,
         timeout: Optional[float] = None,
-        accepts_display_mode: Optional[bool] = None
+        accepts_display_mode: Optional[bool] = None,
+        raise_errors: bool = False
     ) -> bool:
         """
         Execute plugin display() method with error handling.
@@ -170,12 +195,21 @@ class PluginExecutor:
             accepts_display_mode: Whether plugin.display() takes a
                 display_mode keyword. Pass it when the caller already knows;
                 None falls back to inspecting the callable.
+            raise_errors: Re-raise the PluginError wrapping an exception
+                display() raised, instead of returning False. False alone
+                cannot tell "no content" from "raised", and a caller that
+                feeds the circuit breaker needs that difference. The error
+                is still logged and recorded first. A timeout still returns
+                False either way.
             
         Returns:
             True if display succeeded, False otherwise
+
+        Raises:
+            PluginError: Only with ``raise_errors``, when display() raised.
         """
         try:
-            start_time = time.time()
+            start_time = time.monotonic()
             
             # Does display() take a display_mode keyword? The caller usually
             # knows and caches the answer, so prefer what it passed.
@@ -192,23 +226,29 @@ class PluginExecutor:
                     'display_mode' in inspect.signature(plugin.display).parameters)
             has_display_mode = accepts_display_mode
             
+            # Named for the plugin: this thread presents a screen's first
+            # frame, so the frame-timing stall watchdog's stack dumps name it.
+            thread_name = f"display-{plugin_id}"
+
             # Capture the return value from the plugin's display() method
             if has_display_mode and display_mode:
                 result = self.execute_with_timeout(
                     lambda: plugin.display(display_mode=display_mode, force_clear=force_clear),
                     timeout=timeout,
-                    plugin_id=plugin_id
+                    plugin_id=plugin_id,
+                    thread_name=thread_name
                 )
             else:
                 result = self.execute_with_timeout(
                     lambda: plugin.display(force_clear=force_clear),
                     timeout=timeout,
-                    plugin_id=plugin_id
+                    plugin_id=plugin_id,
+                    thread_name=thread_name
                 )
             
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
             
-            if duration > 2.0:  # Warn if display takes more than 2 seconds
+            if duration > self.SLOW_DISPLAY_SECONDS:
                 self.logger.warning(
                     "Plugin %s display() took %.2fs (consider optimizing)",
                     plugin_id,
@@ -228,6 +268,8 @@ class PluginExecutor:
             return False
         except PluginError:
             # Already logged and recorded in execute_with_timeout
+            if raise_errors:
+                raise
             return False
         except Exception as e:
             self.logger.error(

@@ -132,8 +132,8 @@ class TestServePluginStatic:
             candidate = plugins / plugin_id
             return str(candidate) if candidate.exists() else None
 
-        api_v3_module.api_v3.plugin_manager = MagicMock()
-        api_v3_module.api_v3.plugin_manager.get_plugin_directory = get_plugin_directory
+        api_v3_module.api_v3.plugin_catalog = MagicMock()
+        api_v3_module.api_v3.plugin_catalog.get_plugin_directory = get_plugin_directory
         return plugins
 
     def test_a_real_plugin_file_is_still_served(
@@ -397,10 +397,13 @@ class TestPluginActionDirectory:
     '../elsewhere' ran a script from any directory holding a manifest.
     """
 
-    @pytest.fixture
-    def tree(self, tmp_path):
+    @pytest.fixture(params=["catalog", "manager"])
+    def tree(self, request, tmp_path):
+        """The web process resolves through PluginCatalog; the display
+        through PluginManager. Both apply the same rules."""
         import threading
 
+        from src.plugin_system.plugin_catalog import PluginCatalog
         from src.plugin_system.plugin_manager import PluginManager
 
         plugins = tmp_path / "plugin-repos"
@@ -415,6 +418,8 @@ class TestPluginActionDirectory:
         (outside / "s.py").write_text(
             "open(%r, 'w').write('ran')\n" % str(marker), encoding="utf-8"
         )
+        if request.param == "catalog":
+            return PluginCatalog(plugins), plugins, marker
         manager = MagicMock()
         manager.plugins_dir = plugins
         manager._discovery_lock = threading.Lock()
@@ -446,7 +451,7 @@ class TestPluginActionDirectory:
         self, api_v3_client, api_v3_module, tree
     ):
         manager, _, marker = tree
-        api_v3_module.api_v3.plugin_manager = manager
+        api_v3_module.api_v3.plugin_catalog = manager
         response = api_v3_client.post(
             "/api/v3/plugins/action",
             json={"plugin_id": "../elsewhere", "action_id": "go", "params": {}},
@@ -457,7 +462,7 @@ class TestPluginActionDirectory:
     def test_the_fallback_without_a_plugin_manager_is_guarded_too(
         self, api_v3_client, api_v3_module
     ):
-        api_v3_module.api_v3.plugin_manager = None
+        api_v3_module.api_v3.plugin_catalog = None
         response = api_v3_client.post(
             "/api/v3/plugins/action",
             json={"plugin_id": "../elsewhere", "action_id": "go", "params": {}},

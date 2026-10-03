@@ -13,7 +13,10 @@ from enum import Enum
 from typing import Dict, Any, Optional, List
 import os
 import sys
+from src.deprecation import deprecated, warn_deprecated
 from src.logging_config import get_logger
+# Re-exported: a plugin may import it from here beside VegasDisplayMode.
+from src.plugin_system.vegas_elements import VegasElement  # noqa: F401
 
 
 _shared_fallback_font_manager: Optional[Any] = None
@@ -65,25 +68,176 @@ def _fallback_font_manager() -> Any:
 
 class VegasDisplayMode(Enum):
     """
-    Display mode for Vegas scroll integration.
+    Legacy display mode for Vegas scroll integration.
 
-    Determines how a plugin's content behaves within the continuous scroll:
+    Superseded by :meth:`BasePlugin.get_vegas_participation`. Vegas still
+    reads a plugin's :meth:`BasePlugin.get_vegas_display_mode` to derive its
+    participation when nothing declares one, and only STATIC matters there:
 
-    - SCROLL: Content scrolls continuously within the stream.
-      Best for multi-item plugins like sports scores, odds tickers, news feeds.
-      Plugin provides multiple frames via get_vegas_content().
-
-    - FIXED_SEGMENT: Content is a fixed-width block that scrolls BY with
-      the rest of the content. Best for static info like clock, weather.
-      Plugin provides a single image sized to vegas_panel_count panels.
-
-    - STATIC: Scroll pauses, plugin displays for its duration, then scroll
-      resumes. Best for important alerts or detailed views that need attention.
-      Plugin uses standard display() method during the pause.
+    - STATIC: the scroll pauses for the plugin's turn and its display() draws
+      it full screen -- participation ``'pause'``.
+    - SCROLL and FIXED_SEGMENT: the plugin's content joins the scroll --
+      participation ``'scroll'``. Vegas has never told the two apart: a card's
+      width comes from get_vegas_content() and ``vegas_width_pct``, not from
+      the mode. The distinction is deprecated and goes away in LEDMatrix 3.9.0.
     """
     SCROLL = "scroll"
     FIXED_SEGMENT = "fixed"
     STATIC = "static"
+
+
+#: How a plugin takes part in Vegas mode (BasePlugin.get_vegas_participation):
+#:
+#: - ``'scroll'``: its content joins the scrolling strip.
+#: - ``'pause'``: the scroll stops when the plugin's turn comes round, and its
+#:   display() draws it full screen for its display duration.
+#: - ``'exclude'``: it is left out of Vegas mode.
+VEGAS_PARTICIPATION_VALUES = ('scroll', 'pause', 'exclude')
+
+#: The release that removes get_supported_vegas_modes(),
+#: get_vegas_segment_width(), the ``vegas_panel_count`` setting and the
+#: SCROLL / FIXED_SEGMENT distinction. The two @deprecated markers below
+#: spell it as a literal, because tools that read markers statically (the
+#: deprecation tests, the plugin API usage scan) cannot follow a name.
+VEGAS_LEGACY_REMOVAL = "3.9.0"
+
+_vegas_logger = get_logger(__name__)
+_vegas_warned: set = set()
+
+
+def _vegas_warn_once(key: Any, message: str, *args: Any) -> None:
+    """Log a warning about a plugin's Vegas settings once per process.
+
+    Participation is resolved at every rotation refresh, so a bad value would
+    otherwise log on every one of them.
+    """
+    if key in _vegas_warned:
+        return
+    _vegas_warned.add(key)
+    _vegas_logger.warning(message, *args)
+
+
+def vegas_participation_value(value: Any) -> Optional[str]:
+    """``value`` as one of VEGAS_PARTICIPATION_VALUES, or None if it is not one.
+
+    Case and surrounding whitespace are ignored; anything that is not a string
+    (None, a MagicMock standing in for a plugin in a test) is not a value.
+    """
+    if isinstance(value, str):
+        value = value.strip().lower()
+        if value in VEGAS_PARTICIPATION_VALUES:
+            return value
+    return None
+
+
+def configured_vegas_participation(plugin_id: str, config: Any) -> Optional[str]:
+    """The user's ``vegas_participation`` setting in a plugin's config, if valid.
+
+    An unset or empty value is no setting. Anything else that is not a
+    participation is logged once and ignored, so the plugin keeps its own.
+    """
+    if not isinstance(config, dict):
+        return None
+    raw = config.get('vegas_participation')
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    value = vegas_participation_value(raw)
+    if value is None:
+        _vegas_warn_once(
+            ('config', plugin_id, repr(raw)),
+            "[%s] Invalid vegas_participation %r, expected one of %s; ignoring it",
+            plugin_id, raw, ', '.join(VEGAS_PARTICIPATION_VALUES))
+    return value
+
+
+def legacy_vegas_participation(plugin: Any) -> str:
+    """The participation a plugin's pre-3.8 Vegas hooks describe.
+
+    Exactly what Vegas decided from them before participation existed:
+
+    1. get_vegas_display_mode() returning ``VegasDisplayMode.STATIC`` pauses,
+       whatever the content type -- a STATIC plugin whose content type is
+       ``'none'`` was still kept in the rotation to pause it.
+    2. Otherwise get_vegas_content_type() returning ``'none'`` excludes.
+    3. Everything else scrolls. SCROLL and FIXED_SEGMENT were never told
+       apart, and neither were content types ``'multi'``, ``'static'`` or any
+       other string.
+
+    Only the enum member counts as STATIC (a plugin returning the string
+    ``'static'`` never paused), and a hook that raises or is missing counts as
+    not STATIC and as content type ``'static'``.
+    """
+    display_mode = None
+    get_mode = getattr(plugin, 'get_vegas_display_mode', None)
+    if get_mode is not None:
+        try:
+            display_mode = get_mode()
+        except Exception:
+            _vegas_logger.debug("get_vegas_display_mode() failed on %s; not pausing",
+                                type(plugin).__name__, exc_info=True)
+    if display_mode == VegasDisplayMode.STATIC:
+        return 'pause'
+
+    content_type = 'static'
+    get_type = getattr(plugin, 'get_vegas_content_type', None)
+    if get_type is not None:
+        try:
+            content_type = get_type()
+        except Exception:
+            _vegas_logger.debug("get_vegas_content_type() failed on %s; treating as 'static'",
+                                type(plugin).__name__, exc_info=True)
+    if content_type == 'none':
+        return 'exclude'
+    return 'scroll'
+
+
+def resolve_vegas_participation(plugin: Any, plugin_id: Optional[str] = None) -> str:
+    """How Vegas mode treats ``plugin``: ``'scroll'``, ``'pause'`` or ``'exclude'``.
+
+    What the core calls, rather than the plugin's own
+    get_vegas_participation(), so the user's setting wins even over a plugin
+    that overrides that method, and so a plugin that is not a BasePlugin (or a
+    test double) still gets the legacy derivation:
+
+    1. the user's ``vegas_participation`` in the plugin's config;
+    2. the plugin's get_vegas_participation(), when it returns a valid value
+       (BasePlugin's reads the manifest's ``vegas_participation``, then
+       derives one from the legacy hooks);
+    3. legacy_vegas_participation().
+
+    Also where the deprecated ``vegas_panel_count`` setting is reported, once
+    per plugin. Never raises.
+    """
+    pid = plugin_id or getattr(plugin, 'plugin_id', None) or type(plugin).__name__
+    config = getattr(plugin, 'config', None)
+    if isinstance(config, dict) and 'vegas_panel_count' in config:
+        warn_deprecated(
+            f"The vegas_panel_count setting (plugin '{pid}')", VEGAS_LEGACY_REMOVAL,
+            "it has no effect -- use vegas_width_pct to size the plugin's card",
+            once_key=f"vegas_panel_count:{pid}")
+
+    configured = configured_vegas_participation(pid, config)
+    if configured is not None:
+        return configured
+
+    getter = getattr(plugin, 'get_vegas_participation', None)
+    if callable(getter):
+        try:
+            declared = getter()
+        except Exception:
+            _vegas_logger.exception("[%s] get_vegas_participation() failed; "
+                                    "using its legacy Vegas hooks", pid)
+            declared = None
+        value = vegas_participation_value(declared)
+        if value is not None:
+            return value
+        if isinstance(declared, str):
+            _vegas_warn_once(
+                ('declared', pid, declared),
+                "[%s] get_vegas_participation() returned %r, expected one of %s; "
+                "using its legacy Vegas hooks",
+                pid, declared, ', '.join(VEGAS_PARTICIPATION_VALUES))
+    return legacy_vegas_participation(plugin)
 
 
 class BasePlugin(ABC):
@@ -834,41 +988,179 @@ class BasePlugin(ABC):
         """
         return None
 
+    def get_vegas_elements(self) -> Optional[List[Any]]:
+        """
+        Vegas content as live elements: named, fixed-width pieces the ticker
+        can swap in place while they are on screen.
+
+        get_vegas_content() hands the ticker pictures, and a picture already
+        in the scrolling strip keeps what it showed when it was drawn. Return
+        a list of ``VegasElement`` (src/plugin_system/vegas_elements.py)
+        instead and the ticker records where each one is; after your update()
+        it calls this again, compares each element's ``version`` (or pixels)
+        with what the strip holds, and swaps the changed ones in between two
+        frames -- a score changes on a card already crossing the panel, and
+        nothing next to it moves.
+
+        The contract:
+
+        - Called only on the ticker's background thread, under this plugin's
+          lock (never while update() runs), on a canvas of its own and told
+          its width (get_vegas_render_width()), like get_vegas_content().
+        - Called often -- after every update() while any of your elements is
+          on or ahead of the screen -- so it must be cheap when nothing
+          changed (cache images by version), idempotent, and must not fetch.
+        - A live element's width must not depend on its data: a redraw at a
+          different width is not swapped in (it shows the next time the
+          plugin comes round).
+        - Keys must be unique in the list and stable for the same logical
+          item.
+
+        Return None (the default) to use get_vegas_content(). A core older
+        than 3.8.0 never calls this, so keep get_vegas_content() working and
+        floor ``ledmatrix_min_version`` at 3.8.0 only if you rely on it.
+
+        Example (scoreboard)::
+
+            def get_vegas_elements(self):
+                return [VegasElement(key=f"game:{g['id']}",
+                                     image=self._card_for(g),   # cached by fingerprint
+                                     version=self._fingerprint(g))
+                        for g in self.games]
+
+        Returns:
+            A list of VegasElement, or None.
+        """
+        return None
+
+    def redraw_vegas_element(self, key: str, width: int, height: int,
+                             at: float) -> Optional[Any]:
+        """
+        Redraw one live element for a moment in time, without the plugin lock.
+
+        Only for elements returned with ``refresh_hz > 0``: content that
+        changes with time rather than with data, such as an aircraft moving
+        between position reports. The ticker calls it up to that often while
+        the element is on or near the screen.
+
+        - Called WITHOUT this plugin's lock, possibly while update() runs, so
+          read only state that update() replaces in a single assignment (an
+          immutable snapshot), never state it mutates in place.
+        - ``at`` is the time.monotonic() at which the pixels are expected to
+          reach the panel; draw the element as it should look then.
+        - Return an image of exactly ``width`` x ``height``, or None to skip
+          this tick.
+
+        Returns:
+            PIL Image of exactly (width, height), or None.
+        """
+        return None
+
+    def notify_vegas_data_changed(self) -> None:
+        """
+        Tell the Vegas ticker this plugin's data changed outside update().
+
+        The ticker redraws a plugin's live elements when its update()
+        completes. Data that lands some other way -- a background thread, a
+        push callback -- calls this so the change reaches the screen without
+        waiting for the next update(). Cheap and safe from any thread.
+        """
+        notify = getattr(getattr(self, 'plugin_manager', None),
+                         'notify_data_changed', None)
+        if callable(notify):
+            notify(self.plugin_id)
+
+    def get_vegas_participation(self) -> str:
+        """
+        How this plugin takes part in Vegas mode: ``'scroll'``, ``'pause'`` or
+        ``'exclude'``.
+
+        - ``'scroll'``: the plugin's content (get_vegas_content()) joins the
+          scrolling strip.
+        - ``'pause'``: the scroll stops when the plugin's turn comes round, and
+          its display() draws it full screen for get_display_duration().
+        - ``'exclude'``: the plugin is left out of Vegas mode.
+
+        Resolved in this order:
+
+        1. the user's ``vegas_participation`` setting in this plugin's config
+           (the web UI's per-plugin override);
+        2. ``vegas_participation`` in the plugin's manifest.json -- the way a
+           plugin declares its own default;
+        3. derived from the legacy hooks, so a plugin written before this
+           method existed keeps the behaviour it had: get_vegas_display_mode()
+           returning ``VegasDisplayMode.STATIC`` pauses, otherwise
+           get_vegas_content_type() returning ``'none'`` excludes, and
+           everything else scrolls.
+
+        Declare a fixed participation in the manifest rather than overriding
+        this. Override it only when the answer depends on state -- pause only
+        while an alert is live, exclude while there is nothing to show. Vegas
+        applies the user's setting before calling an override, so an override
+        need not check it.
+
+        Returns:
+            One of VEGAS_PARTICIPATION_VALUES.
+
+        Example:
+            def get_vegas_participation(self):
+                return 'pause' if self._alert_is_live() else 'scroll'
+        """
+        configured = configured_vegas_participation(self.plugin_id, self.config)
+        if configured is not None:
+            return configured
+        manifest_default = self._manifest_vegas_participation()
+        if manifest_default is not None:
+            return manifest_default
+        return legacy_vegas_participation(self)
+
+    def _manifest_vegas_participation(self) -> Optional[str]:
+        """``vegas_participation`` from this plugin's manifest, if valid."""
+        manifests = getattr(self.plugin_manager, 'plugin_manifests', None)
+        manifest = manifests.get(self.plugin_id) if isinstance(manifests, dict) else None
+        if not isinstance(manifest, dict) or manifest.get('vegas_participation') is None:
+            return None
+        raw = manifest['vegas_participation']
+        value = vegas_participation_value(raw)
+        if value is None:
+            _vegas_warn_once(
+                ('manifest', self.plugin_id, repr(raw)),
+                "[%s] manifest vegas_participation %r is not one of %s; ignoring it",
+                self.plugin_id, raw, ', '.join(VEGAS_PARTICIPATION_VALUES))
+        return value
+
     def get_vegas_content_type(self) -> str:
         """
-        Indicate the type of content this plugin provides for Vegas scroll.
+        Legacy: the type of content this plugin provides for Vegas scroll.
 
-        Override this to specify how Vegas mode should treat this plugin's content.
+        Superseded by get_vegas_participation(). Vegas reads it only to derive
+        a participation when neither the user nor the manifest declares one,
+        and only ``'none'`` matters there: it excludes the plugin (unless
+        get_vegas_display_mode() says STATIC). Every other value scrolls.
 
         Returns:
             'multi' - Plugin has multiple scrollable items (sports, odds, news)
             'static' - Plugin is a static block (clock, weather, music)
             'none' - Plugin should not appear in Vegas scroll mode
-
-        Example:
-            def get_vegas_content_type(self):
-                return 'multi'  # We have multiple games to scroll
         """
         return 'static'
 
     def get_vegas_display_mode(self) -> VegasDisplayMode:
         """
-        Get the display mode for Vegas scroll integration.
+        Legacy: the display mode for Vegas scroll integration.
 
-        This method determines how the plugin's content behaves within Vegas mode:
-        - SCROLL: Content scrolls continuously (multi-item plugins)
-        - FIXED_SEGMENT: Fixed block that scrolls by (clock, weather)
-        - STATIC: Pause scroll to display (alerts, detailed views)
+        Superseded by get_vegas_participation(). Vegas reads it only to derive
+        a participation when neither the user nor the manifest declares one,
+        and only STATIC matters there: it pauses the scroll for the plugin's
+        turn. SCROLL and FIXED_SEGMENT both scroll -- Vegas has never told them
+        apart, and the distinction is deprecated (removed in 3.9.0).
 
-        Override to change default behavior. By default, reads from config
-        or maps legacy get_vegas_content_type() for backward compatibility.
+        Reads the plugin's ``vegas_mode`` config value, else maps
+        get_vegas_content_type() ('multi' to SCROLL, anything else to
+        FIXED_SEGMENT).
 
         Returns:
             VegasDisplayMode enum value
-
-        Example:
-            def get_vegas_display_mode(self):
-                return VegasDisplayMode.SCROLL
         """
         # Check for explicit config setting first
         config_mode = self.config.get("vegas_mode")
@@ -888,13 +1180,16 @@ class BasePlugin(ABC):
             return VegasDisplayMode.SCROLL
         return VegasDisplayMode.FIXED_SEGMENT
 
+    @deprecated("3.9.0",
+                "nothing reads it -- declare vegas_participation in the manifest instead")
     def get_supported_vegas_modes(self) -> List[VegasDisplayMode]:
         """
-        Return list of Vegas display modes this plugin supports.
+        Deprecated: the Vegas display modes this plugin supports.
 
-        Not currently consulted by core: neither Vegas mode nor the web UI
-        calls it. It is kept, and plugins override it, as the declared set of
-        modes a future mode picker would offer.
+        Never consulted by core -- neither Vegas mode nor the web UI calls it
+        -- and removed in LEDMatrix 3.9.0. A plugin's own override keeps
+        working for the plugin itself; calling this base implementation logs a
+        deprecation warning.
 
         By default:
         - 'multi' content type plugins support SCROLL and FIXED_SEGMENT
@@ -903,11 +1198,6 @@ class BasePlugin(ABC):
 
         Returns:
             List of VegasDisplayMode values this plugin can use
-
-        Example:
-            def get_supported_vegas_modes(self):
-                # This plugin only makes sense as a scrolling ticker
-                return [VegasDisplayMode.SCROLL]
         """
         content_type = self.get_vegas_content_type()
 
@@ -918,30 +1208,21 @@ class BasePlugin(ABC):
         else:  # 'static'
             return [VegasDisplayMode.FIXED_SEGMENT, VegasDisplayMode.STATIC]
 
+    @deprecated("3.9.0",
+                "nothing reads it -- Vegas sizes a card from vegas_width_pct "
+                "(see get_vegas_render_width())")
     def get_vegas_segment_width(self) -> Optional[int]:
         """
-        Get the preferred width for this plugin in Vegas FIXED_SEGMENT mode.
+        Deprecated: the number of panels this plugin wanted as a FIXED_SEGMENT.
 
-        Not currently consulted by core: Vegas mode sizes a card from the
-        ``vegas_width_pct`` / ``vegas_scroll.render_width_pct`` settings
-        (see get_vegas_render_width()). Kept because plugins override it.
-
-        Returns the number of panels this plugin should occupy when displayed
-        as a fixed segment. The actual pixel width is calculated as:
-            width = panels * single_panel_width
-
-        Where single_panel_width comes from display.hardware.cols in config.
-
-        Override to provide dynamic sizing based on content.
-        Returns None to use the default (1 panel).
+        Never consulted by core: Vegas sizes a card from the
+        ``vegas_width_pct`` / ``vegas_scroll.render_width_pct`` settings (see
+        get_vegas_render_width()). Removed, with the ``vegas_panel_count``
+        setting it reads, in LEDMatrix 3.9.0.
 
         Returns:
-            Number of panels, or None for default (1 panel)
-
-        Example:
-            def get_vegas_segment_width(self):
-                # Clock needs 2 panels to show time clearly
-                return 2
+            ``vegas_panel_count`` from config when it is a positive integer,
+            else None
         """
         raw_value = self.config.get("vegas_panel_count", None)
         if raw_value is None:

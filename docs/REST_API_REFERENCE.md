@@ -18,6 +18,39 @@ top level instead of under `data` (install-from-url, registry-from-url, the
 auth endpoints, upload endpoints, `system/git-info`, `system/check-update`),
 the entry below says so.
 
+**Cross-site requests are refused.** A `POST`, `PUT`, `PATCH` or `DELETE`
+carrying an `Origin` header (or, without one, a `Referer`) that is not the
+host the request was sent to gets `403` with `"error_code":
+"CROSS_SITE_REQUEST"`; so does `Origin: null`. This stops other websites from
+driving the Pi through a LAN user's browser. Scripts, curl, Home Assistant and
+the MQTT bridge send neither header and are unaffected. A browser page on
+another origin (a dashboard you host elsewhere, say) can no longer call the
+API; call it server-side instead. Behind a reverse proxy, pass the original
+`Host` through, port included (nginx: `proxy_set_header Host $http_host;`;
+`$host` drops the port) -- `X-Forwarded-Host` is not read.
+
+**Authentication (optional, off by default).** With no web password set,
+nothing below needs credentials. Once one is set (General > Security, or
+[`POST /auth/password`](#web-login-and-api-tokens)), every route needs a login
+session or an API token:
+
+```bash
+curl -H "Authorization: Bearer lmx_..." http://your-pi-ip:5000/api/v3/display/current
+```
+
+Without either, an API route answers `401` with
+`{"status": "error", "error_code": "AUTH_REQUIRED", "message": ...}`, a
+`WWW-Authenticate: Bearer realm="LEDMatrix"` header and the login page's URL
+in `X-LEDMatrix-Login`; an unknown or revoked token gets `"error_code":
+"INVALID_TOKEN"`. Browser page loads are redirected to `/login` instead, and
+HTMX requests get `401` with `HX-Redirect: /login?...`. Never asked for
+credentials: requests from the Pi itself (loopback, with no `X-Forwarded-For`,
+`X-Real-IP`, `Forwarded` or `X-Forwarded-Host` header), `/static/*`, the
+captive-portal probe URLs, `/login`, `/api/v3/health` (status only, see
+[Health Check](#health-check)), and -- only while the Pi is in access-point
+mode -- `/setup`, `GET /wifi/status`, `GET /wifi/scan` and
+`POST /wifi/connect`.
+
 ## Table of Contents
 
 - [Configuration](#configuration)
@@ -35,6 +68,7 @@ the entry below says so.
 - [Health and Status](#health-and-status)
 - [Schedule (dim/power)](#schedule-dimpower)
 - [Integrations](#integrations)
+- [Web login and API tokens](#web-login-and-api-tokens)
 - [Plugin-specific endpoints](#plugin-specific-endpoints)
 - [Starlark Apps](#starlark-apps)
 
@@ -120,9 +154,24 @@ there an unchecked checkbox — which the browser omits — is saved as
 ```json
 {
   "status": "success",
-  "message": "Configuration saved successfully"
+  "message": "Configuration saved successfully",
+  "restart_required": true
 }
 ```
+
+`restart_required` is always true here: display hardware, rotation,
+durations and general settings take effect when the display restarts, and
+the web UI shows its restart banner on the flag. (Plugin sections saved
+through this route reach the running plugin live, like
+`POST /plugins/config`.)
+
+A saved `brightness` is the exception: it reaches the panel without a
+restart. The route also sends it to the running display over the control
+socket (`brightness.set`), which puts it on the panel at once, and the
+response adds `"brightness_transport": "socket"`. Otherwise it is
+`"config"`, with `brightness_socket_error` giving the reason, and the
+display's config watcher applies the saved value within a few seconds, as
+before.
 
 Invalid values (e.g. an out-of-range `target_fps`, a hardware option the
 Raspberry Pi 5 driver cannot use) are rejected with `400` and nothing is
@@ -213,7 +262,10 @@ times `07:00`-`23:00`. At least one day must be enabled.
 
 Retrieve `config/config_secrets.json` with every set value replaced by eight
 bullet characters (`"••••••••"`). Empty values and `YOUR_*` placeholders
-are returned as-is, so a client can tell "set" from "not set".
+are returned as-is, so a client can tell "set" from "not set". The
+`web_auth` section (the web login's password hash, API-token hashes and
+cookie key) is left out entirely; [Get Main Configuration](#get-main-configuration)
+leaves it out too.
 
 **Response**:
 ```json
@@ -238,7 +290,8 @@ Replace `config/config.json` with the JSON body (advanced use only).
 Save the secrets file (advanced use only). Masked values (`"••••••••"`)
 and blank strings in the body are dropped, and the rest is merged onto the
 stored secrets, so posting back the GET response unchanged changes nothing.
-A secret cannot be cleared by blanking it here.
+A secret cannot be cleared by blanking it here. A `web_auth` key in the body
+is ignored; the stored login settings are kept.
 
 ---
 
@@ -402,12 +455,23 @@ Request a specific plugin to display on-demand.
     "mode": "nfl_live",
     "duration": 45,
     "pinned": true,
-    "service": { "active": true, "returncode": 0, "stdout": "", "stderr": "" }
+    "service": { "active": true, "returncode": 0, "stdout": "", "stderr": "" },
+    "transport": "socket"
   }
 }
 ```
 
 `service` is `null` when `start_service` is false.
+
+`transport` says how the request reached the display: `"socket"` means the
+display's control socket acknowledged it (it is queued for the render thread,
+which wakes for it and applies it within a frame; see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
+written to the cache mailbox the display polls, as before the socket existed.
+With `"mailbox"`, `socket_error` gives the reason the socket was not used
+(`no_socket` when the display is stopped or predates the socket, `timeout`,
+`refused`, `busy`, ...). Either way the request is applied the same way;
+`request_id` is the same id in both.
 
 ### Stop On-Demand Display
 
@@ -431,10 +495,13 @@ Stop the current on-demand display.
   "status": "success",
   "data": {
     "request_id": "uuid-here",
-    "service": null
+    "service": null,
+    "transport": "socket"
   }
 }
 ```
+
+`transport` and `socket_error` are as for start.
 
 ---
 
@@ -465,20 +532,70 @@ List all installed plugins with their status and metadata.
         "enabled": true,
         "verified": true,
         "loaded": true,
-        "state": "loaded",
+        "state": "enabled",
         "error_info": null,
+        "loaded_version": "1.2.3",
+        "loaded_at": 1790000000.0,
         "last_updated": "2025-01-15T10:30:00Z",
         "last_commit": "abc1234",
         "last_commit_message": "feat: Add live game updates",
         "branch": "main",
         "web_ui_actions": [],
         "vegas_mode": null,
-        "vegas_content_type": null
+        "vegas_content_type": null,
+        "vegas_participation": "scroll",
+        "vegas_participation_source": "manifest"
       }
-    ]
+    ],
+    "runtime": {
+      "status": "live",
+      "published_at": 1790000030.0,
+      "age_seconds": 12.4,
+      "stale_after": 180.0,
+      "heartbeat_age_seconds": 2.1
+    }
   }
 }
 ```
+
+Metadata comes from each plugin's files on disk; `enabled` is the plugin's
+`enabled` flag in `config.json` (missing means disabled, as the display
+reads it). `vegas_mode` is the plugin's configured `vegas_mode`, or `null`.
+
+`loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` come from
+the runtime snapshot the display publishes (the web process runs no plugin
+code). `state` is the display's lifecycle state (`loaded` while loading,
+`enabled`, `disabled`, `error`, `unloaded`); `error_info` is `null` or
+`{"type", "message", "at", "recoverable"}`, with the message redacted and at
+most 200 characters (the full error is at `/errors/*`). `loaded_version` is
+the version the display loaded, which differs from `version` after an update
+until the display restarts. A plugin a live snapshot does not list is
+`loaded: false`, `state: "unloaded"`.
+
+`runtime.status` says whether to believe them: `live` (fresh snapshot from
+a running display), `stalled` (fresh snapshot, but the same process's
+render-loop heartbeat is 60 s or older -- the render loop is hung, as
+[`/health`](#health-check)'s `display_loop: stalled` says), `stale` (not refreshed
+within `stale_after` seconds, or the process that wrote it no longer exists:
+the display is hung or died), `stopped` (the display shut down) or `unknown`
+(nothing published yet). Unless it is `live`, every one of those fields is
+`null`. `heartbeat_age_seconds` is the heartbeat's age when it was taken into
+account, `null` otherwise (no heartbeat, as on the dev server, or one from
+another process). Health and metrics are at [`/plugins/health`](#get-plugin-health)
+and `/plugins/metrics`.
+
+`vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
+`"pause"` or `"exclude"` (see
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md#vegas-participation)),
+and `vegas_participation_source` says where it came from. The web reads it
+the way the display resolves it, as far as files can tell: the user's own
+`vegas_participation` setting (`"config"`), else the manifest's declared
+`vegas_participation` (`"manifest"`). Past those the display derives it from
+the plugin's code -- a `get_vegas_participation()` override or the legacy
+Vegas hooks -- which the web process never runs, so `vegas_participation`
+is `null` and the source is `"runtime"`. A plugin that overrides
+`get_vegas_participation()` decides at run time and can differ from its
+manifest's declaration. `vegas_content_type` is always `null`.
 
 ### Get Plugin Configuration
 
@@ -639,7 +756,19 @@ Install a plugin from the plugin store.
 ```
 
 When the operation queue is unavailable the install runs synchronously and
-the response has only a `message`.
+the response has only a `message` and the restart fields below.
+
+The finished operation's `result` (from `/plugins/operation/<operation_id>`)
+carries `restart_required`: true when the plugin is already enabled in
+`config.json`, because the running display does not load newly installed
+files by itself; `restart_message` then holds the restart banner's wording.
+A plugin that is not enabled needs no restart: enabling it loads it.
+
+A plugin whose registry entry (or downloaded manifest) needs a newer
+LEDMatrix is refused: the synchronous install answers `409` with a message
+such as `Failed to install plugin x: X requires LEDMatrix 3.8.0 or newer…`,
+and a queued one fails with that message. Nothing already installed is
+changed.
 
 ### Uninstall Plugin
 
@@ -664,6 +793,11 @@ Remove an installed plugin.
 }
 ```
 
+The finished operation's `result` carries `restart_required`. Removing the
+plugin's config (the default) lets the display unload it by itself, so it is
+false; with `preserve_config: true` an enabled plugin keeps running until
+the display restarts, and it is true.
+
 ### Update Plugin
 
 **POST** `/api/v3/plugins/update`
@@ -684,10 +818,41 @@ Update a plugin to the latest version. Runs synchronously.
   "message": "Plugin football-scoreboard updated ...",
   "data": {
     "last_updated": "2025-01-15T10:30:00Z",
-    "commit": "abc1234..."
-  }
+    "commit": "abc1234...",
+    "update_status": "updated"
+  },
+  "restart_required": true,
+  "restart_message": "Plugin updated — restart the display to run the new version"
 }
 ```
+
+`update_status` is `updated`, `up_to_date` or `local_only`.
+
+When the plugin changed and is enabled, the route asks the running display
+to reload it over the control socket (`plugin.reload`, see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)). Once the new code is
+running, the answer is:
+
+```json
+{
+  "status": "success",
+  "message": "Plugin football-scoreboard updated to version 2.1.0; the display is running the new version",
+  "restart_required": false,
+  "reloaded": true,
+  "reloaded_version": "2.1.0"
+}
+```
+
+If the display could not reload it, `restart_required` is true (the running
+display keeps the code it loaded until it restarts) and `reload_error` says
+why: `no_socket` (the display is stopped or predates the socket),
+`unknown_command` (a display older than this command), `not_loaded`,
+`failed` (the new version did not load; it is out of the rotation),
+`pending` (not done within 10 s; it will still be reloaded), or another
+transport reason.
+
+An update this core cannot run answers `409` with `Plugin update refused:`
+and the reason; the installed version is left as it was.
 
 ### Install Plugin from URL
 
@@ -717,9 +882,12 @@ Install a plugin directly from a GitHub repository URL. Runs synchronously.
   "message": "Plugin my-plugin installed successfully",
   "plugin_id": "my-plugin",
   "name": "My Plugin",
-  "branch": "main"
+  "branch": "main",
+  "restart_required": false
 }
 ```
+
+`restart_required` follows the same rule as `/plugins/install`.
 
 ### Load Registry from URL
 
@@ -848,6 +1016,76 @@ Metrics for one plugin; `data` has the same fields as one entry above.
 
 Reset metrics for a plugin.
 
+### Get Fetch Statistics
+
+**GET** `/api/v3/plugins/fetch-stats`
+
+Network requests made through the core fetch service
+(`src/common/fetch_service.py`), per plugin and per host, cumulative since
+the display started. Read-only. The display publishes the counters at most
+once a minute when they change (every 10 minutes otherwise), so they can be
+up to a minute old. Requests a plugin makes with its own `requests` calls,
+outside `APIHelper`, `espn_dates`, `BackgroundDataService` and
+`BaseOddsManager`, are not counted yet.
+
+`data.status` is `live`, `stale` (no publish for longer than
+`stale_after`), `stopped` (the display exited; the last counters are kept)
+or `unknown` (nothing published; `data.data` is `null`).
+
+**Response**:
+```json
+{
+  "status": "success",
+  "data": {
+    "status": "live",
+    "age_seconds": 12.4,
+    "data": {
+      "schema": 1,
+      "running": true,
+      "published_at": 1790000000.0,
+      "stale_after": 720.0,
+      "since": 1789990000.0,
+      "totals": {"requests": 412, "merged": 3, "not_modified": 0,
+                 "errors": 1, "http_errors": 2, "retries": 0,
+                 "throttled": 0, "overruns": 0, "bytes": 18234011,
+                 "wait_seconds": 0.0, "memo_hits": 21, "cache_hits": 40,
+                 "legacy_cache_hits": 2},
+      "plugins": {
+        "football-scoreboard": {"requests": 240, "merged": 2, "bytes": 9120330,
+                                "hosts": {"site.api.espn.com": 180,
+                                          "sports.core.api.espn.com": 62},
+                                "...": "the other counters, as in totals"}
+      },
+      "hosts": {
+        "site.api.espn.com": {"requests": 301, "...": "as in totals"}
+      },
+      "validators": {"entries": 0, "bytes": 0},
+      "response_cache": {"entries": 3, "bytes": 412004},
+      "config": {"enabled": true, "single_flight": true,
+                 "conditional_get": true, "max_wait_seconds": 2.0,
+                 "rate_limits": {"*.espn.com": {"per_second": 20.0, "burst": 200.0}},
+                 "response_cache": true, "default_max_age": 30.0}
+    }
+  }
+}
+```
+
+`requests` counts round trips sent (retries inside the HTTP adapter are in
+`retries`), `merged` requests answered by an identical one already in
+flight, `not_modified` 304s served from the stored body, `errors` transport
+failures and `http_errors` responses with status 400 or above. `bytes` is the
+decoded body size. `core` is everything no plugin made.
+
+Three counters are requests that never reached the network: `memo_hits`
+were answered from the short response cache (a response still inside the
+`Cache-Control: max-age` its server gave it), and `cache_hits` were
+scoreboard fetches answered from a shared ESPN scoreboard cache entry
+(`espn_scoreboard_cache_key`). `legacy_cache_hits` counts reads served from a
+key that predates the shared one; it should fall to zero within a day of an
+upgrade. A plugin's `hosts` counts are requests plus merged requests,
+`memo_hits` and `cache_hits`: everything it asked for.
+`response_cache` is the size of the response cache now.
+
 ### Get/Set Plugin Limits
 
 **GET** `/api/v3/plugins/limits/<plugin_id>`
@@ -892,8 +1130,11 @@ copy, not the display service's in-memory state.
 
 **GET** `/api/v3/plugins/state`
 
-Get the state manager's record for every plugin, keyed by plugin id. Pass
-`?plugin_id=<id>` for one plugin (`data` is then that record).
+Every plugin that is installed or configured, keyed by plugin id: desired
+state from `config.json` and the plugins directory, observed state from the
+display's runtime snapshot. Built per request; there is no state file.
+Pass `?plugin_id=<id>` for one plugin (`data` is then that record; 404 if
+it is neither installed nor configured).
 
 **Response**:
 ```json
@@ -902,23 +1143,41 @@ Get the state manager's record for every plugin, keyed by plugin id. Pass
   "data": {
     "football-scoreboard": {
       "plugin_id": "football-scoreboard",
-      "status": "loaded",
+      "status": "enabled",
+      "installed": true,
+      "in_config": true,
       "enabled": true,
       "version": "1.2.3",
+      "loaded": true,
+      "state": "enabled",
+      "error_info": null,
+      "loaded_version": "1.2.3",
+      "loaded_at": 1790000000.0,
       "installed_at": "2025-01-15T10:30:00",
-      "last_updated": "2025-01-15T10:30:00",
-      "config_version": 1,
-      "metadata": {}
+      "last_updated": "2025-01-15T10:30:00"
     }
-  }
+  },
+  "runtime": {"status": "live", "published_at": 1790000030.0, "age_seconds": 12.4, "stale_after": 180.0, "heartbeat_age_seconds": 2.1}
 }
 ```
+
+`status` is `enabled` / `disabled` for an installed plugin, `unknown` for
+one that is configured but not installed, and `error` when the display
+reports its state as `error`. `installed_at` and `last_updated` are the
+newest successful install, and install or update, in the operation history
+(`null` when it has none). The runtime fields follow the same rule as
+[`/plugins/installed`](#get-installed-plugins): `null` unless
+`runtime.status` is `live`.
 
 ### Reconcile Plugin State
 
 **POST** `/api/v3/plugins/state/reconcile`
 
-Reconcile plugin state across config, disk and the state manager.
+Reconcile desired state (`config.json` plus the plugins on disk) with the
+display's runtime snapshot. Desired-state gaps are fixed (a plugin on disk
+with no config section is added disabled); observed-state gaps -- enabled
+but not loaded, loaded at an older version than is installed -- are
+reported with `fix_action: "no_action"`.
 
 **Request Body** (optional):
 ```json
@@ -1189,12 +1448,21 @@ searches.
         "version": "1.2.3",
         "branch": "main",
         "default_branch": "main",
-        "plugin_path": "plugins/football-scoreboard"
+        "plugin_path": "plugins/football-scoreboard",
+        "commit": "843588025a81197056f8d96779ccb2be19337ab8",
+        "ledmatrix_min_version": "3.7.0",
+        "aliases": [],
+        "incompatible_reason": null
       }
     ]
   }
 }
 ```
+
+`commit` (the monorepo commit that introduced `version`),
+`ledmatrix_min_version` and `aliases` come from the registry entry and are
+`null` / `[]` when an older registry lacks them. `incompatible_reason` is the
+message an install would be refused with on this core, or `null`.
 
 ### Get GitHub Status
 
@@ -1336,19 +1604,58 @@ Get LEDMatrix repository version.
 
 **GET** `/api/v3/system/check-update`
 
-Whether `origin/main` has commits the checkout lacks. Cached briefly.
-Fields at the top level (no envelope):
+Whether newer code is available on this device's update channel. On
+`stable` that is a newer release tag than the checkout (`target_version`
+names it); on `beta`, and on `stable` while it waits on a branch for a
+release that contains the current commit, it is commits on `origin/main`
+the checkout lacks. A detached checkout newer than the newest release is
+never offered an update: Update Code leaves it where it is until a release
+includes it, and `channel_message` says so in the General tab's words.
+Cached briefly. Fields at the top level (no envelope):
 
 ```json
 {
   "update_available": true,
   "remote_sha": "abc123...",
-  "commits_behind": 3
+  "commits_behind": 3,
+  "target_version": "v3.8.0",
+  "channel": "stable",
+  "configured_channel": "stable",
+  "waiting": false,
+  "newest_release": "v3.8.0",
+  "current_release": null,
+  "channel_message": "Stable: release v3.8.0 is available."
 }
 ```
 
 When git cannot run the check, the response also carries
 `"check_failed": true` and an `error` explaining why.
+
+### Update Channel
+
+**GET** `/api/v3/system/update-channel`
+
+The update channel and what the next Update Code or weekly update would do
+(in `data`): `configured` (`"stable"`, `"beta"` or `null` for a config from
+before channels), `channel` (the one in effect), `waiting` (stable, but the
+device is newer than the newest release, so it follows `main` for now),
+`action` (`none`, `checkout_tag`, `pull` or `switch_to_beta`),
+`newest_release`, `current_release`, `branch` (`""` when on a release tag),
+`message`. Reads local refs; `?fetch=1` fetches from origin first.
+
+**POST** `/api/v3/system/update-channel`
+
+```json
+{
+  "channel": "beta"
+}
+```
+
+Saves `auto_update.channel`. The next update applies it; switching to
+`stable` never installs an older version than the one running, and the
+`message` says when the device keeps following `main` until a newer release.
+400 for anything but `stable` or `beta`. The General tab form also accepts
+`auto_update_channel` on `POST /api/v3/config/main`.
 
 ### Automatic Update Status
 
@@ -1375,7 +1682,9 @@ Hide the current automatic-update alert until a new one replaces it.
 
 Branch, dirty state, recent commits and remote for the Tools tab. Fields at
 the top level: `branch`, `dirty`, `status`, `recent_commits`, `remote_url`
-(credentials scrubbed), `upstream`, `can_pull`.
+(credentials scrubbed), `upstream`, `can_pull`, and for the update channel
+`detached`, `version` (`git describe`), `current_release` (the release tag
+HEAD is exactly on, else `null`) and `channel_message` (detached only).
 
 ### Git Branches
 
@@ -1388,7 +1697,10 @@ Fetches `origin` and lists branches to switch to: `current`, `upstream`,
 
 **POST** `/api/v3/system/action`
 
-Execute system-level actions. JSON or form data.
+Execute system-level actions. Send JSON (`Content-Type: application/json`).
+A form-encoded or `text/plain` body is accepted only with an `HX-Request`
+header (HTMX sends it; a cross-site HTML form cannot) and is otherwise
+refused with `415`.
 
 **Request Body**:
 ```json
@@ -1949,6 +2261,18 @@ Health of the web interface, display service, config file, plugin system and
 display snapshot. `data.status` is `healthy` or `degraded`, with
 `data.services` and `data.checks`.
 
+`data.checks.display_loop` is the display's render-loop heartbeat: `running`
+(with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
+frozen even if the service is active; the status turns `degraded`), or
+`not_reported` when the display writes none (not started yet, the dev server,
+Windows), which does not affect the status.
+
+Open even when the web login is on, for uptime monitors; a caller that is not
+logged in (and has no token) then gets only `{"status": "success", "data":
+{"status": "healthy" | "degraded"}}`. A stalled render loop still shows there
+as `degraded`; the `checks` detail is only for logged-in callers, tokens and
+requests from the Pi itself.
+
 ### Hardware Status
 
 **GET** `/api/v3/hardware/status`
@@ -2014,17 +2338,97 @@ enabled.
 
 Home Assistant MQTT bridge service state and settings: `data.service`,
 `data.config_exists`, `data.config_path`, `data.config` (password
-omitted), `data.password_set`, `data.env_override_prefix`.
+omitted), `data.password_set`, `data.api_token_set`, `data.env_override_prefix`.
 
 **PUT** `/api/v3/integrations/mqtt-bridge/config`
 
 Write `integrations/mqtt_bridge/bridge_config.json`. Only the keys you send
 change. The password is write-only: omit `mqtt_password` to keep it, send a
-value to replace it, or send `"clear_password": true`. A password with
+value to replace it, or send `"clear_password": true`. The web-login API token
+the bridge sends (`ledmatrix_api_token`, needed only when login is on and the
+bridge runs on another machine) is write-only the same way, cleared with
+`"clear_api_token": true`. A password with
 `mqtt_tls` off is refused unless `allow_insecure_mqtt` is true. Returns
-`data.password_set` and `data.restart_required` (the bridge must be
-restarted to pick up changes). See
+`data.password_set`, `data.api_token_set` and `data.restart_required` (the
+bridge must be restarted to pick up changes). See
 [integrations/mqtt_bridge/README.md](../integrations/mqtt_bridge/README.md).
+
+---
+
+## Web login and API tokens
+
+The optional password and API tokens (`web_auth` in
+`config/config_secrets.json`, `web_interface/auth.py`). No route here returns
+the password hash, a token hash or the cookie key. A request authenticated by
+an API token gets `403` `TOKEN_NOT_ALLOWED` from every route in this section:
+tokens are for integrations, not for changing who can log in. Wrong current
+passwords (`403` `WRONG_PASSWORD`) count against the same per-address limit as
+the login page: 5 a minute, 30 an hour, then `429`.
+
+Lost password: run `sudo python3 scripts/reset_web_password.py` on the Pi.
+
+### Login status
+
+**GET** `/api/v3/auth/status`
+
+```json
+{
+  "status": "success",
+  "data": {
+    "enabled": true,
+    "signed_in": true,
+    "access": "session",
+    "min_password_length": 8,
+    "tokens": [
+      {"id": "3f9c1a2b4d5e6f70", "name": "Home Assistant", "prefix": "lmx_Ab3d",
+       "created_at": "2026-09-29T20:14:03+00:00"}
+    ]
+  }
+}
+```
+
+`access` is how this request got in: `open` (login off), `session`,
+`localhost`, `ap-setup` or `token`.
+
+### Set or change the password
+
+**POST** `/api/v3/auth/password`
+
+Body: `{"new_password": "...", "current_password": "..."}`.
+`current_password` is required once login is on. At least 8 characters, no
+leading or trailing space (`400` `WEAK_PASSWORD`). Setting the first password
+turns login on. Every existing login session ends; the caller's own browser
+is signed in again with the answer.
+
+### Turn login off
+
+**POST** `/api/v3/auth/disable`
+
+Body: `{"current_password": "..."}`. Removes the password; API tokens are
+kept (and are needed again if login is turned back on).
+
+### API tokens
+
+**GET** `/api/v3/auth/tokens` — `data.tokens`, as in the status answer.
+
+**POST** `/api/v3/auth/tokens` — body `{"name": "Home Assistant"}` (1-60
+characters). Answers `201` with `data.token`, the token itself (`lmx_` plus 43
+characters), and `data.record`. **The token is never shown again**; only its
+SHA-256 is stored. At most 50 tokens.
+
+**DELETE** `/api/v3/auth/tokens/<id>` — revoke; it stops working on the next
+request. `404` for an unknown id.
+
+Send a token as `Authorization: Bearer <token>`.
+
+### Login page
+
+`GET /login` shows the login form (and redirects home when login is off or
+this browser is already signed in); `POST /login` with a form field `password`
+(and optional `next`, a path on this server) signs in and redirects to `next`,
+or answers `401` with the form again. `POST /logout` ends the session. Both
+are outside `/api/v3` and go through the cross-site check like every other
+`POST`.
 
 ---
 

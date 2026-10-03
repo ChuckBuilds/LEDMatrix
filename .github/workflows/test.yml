@@ -124,6 +124,25 @@ jobs:
           REQUIRE_DOM: "1"
         run: node test/js/run_all.js
 
+  css-build:
+    name: Tailwind CSS is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # Downloads the pinned standalone Tailwind CLI (SHA-256 checked; no
+      # Node), rebuilds static/v3/tailwind.css and plugin-frame.css from the
+      # templates and JS, and fails if the committed files differ. Fix a
+      # failure by running `python3 scripts/build_css.py` and committing.
+      - name: Check the committed CSS matches a fresh build
+        run: python scripts/build_css.py --check
+
   type-check:
     name: Type check (mypy ratchet)
     runs-on: ubuntu-latest
@@ -151,3 +170,39 @@ jobs:
       # them, or if a listed file is missing. See CONTRIBUTING.md.
       - name: Run mypy on the ratchet list
         run: python scripts/check_types.py
+
+  sports-drift-report:
+    name: Sports drift report (report only)
+    runs-on: ubuntu-latest
+    # A progress measure for docs/SPORTS_UNIFICATION.md, never a gate: the
+    # monorepo's own check_sports_drift.py is the gate. The step summary shows
+    # how many bodies each scoreboard method family still has.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Check out ledmatrix-plugins (main)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ChuckBuilds/ledmatrix-plugins
+          path: ledmatrix-plugins
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      # Stdlib only; exits 0 whatever it finds.
+      - name: Report method-family drift across the nine scoreboards
+        run: |
+          python scripts/sports_drift_report.py --plugins ledmatrix-plugins \
+            --markdown --json sports-drift.json >> "$GITHUB_STEP_SUMMARY"
+          python scripts/sports_drift_report.py --plugins ledmatrix-plugins
+
+      - name: Upload the full report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sports-drift-report
+          path: sports-drift.json

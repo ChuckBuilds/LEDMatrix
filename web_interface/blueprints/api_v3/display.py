@@ -4,12 +4,14 @@ Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
 so their endpoint names are unchanged by living here.
 """
 from web_interface.blueprints.api_v3 import (
+    _QUIET_SOCKET_REASONS, _REPORTABLE_SOCKET_REASONS,  # noqa: F401 - tests read them here
     _coerce_to_bool, _ensure_display_service_running,
-    _get_display_service_status, _stop_display_service, api_v3,
+    _get_display_service_status, _socket_reason_code, _stop_display_service, api_v3,
     jsonify, logger, request, uuid,
 )
 from web_interface import display_preview
 import web_interface.blueprints.api_v3 as _pkg
+from src.ipc import client as control_client
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
@@ -27,6 +29,44 @@ def _cache_manager():
         from src.cache_manager import CacheManager
         cache = api_v3.cache_manager = CacheManager()
     return cache
+
+
+
+
+def _deliver_on_demand(payload):
+    """Hand an on-demand request to the display: control socket, else mailbox.
+
+    The socket (src/ipc) answers with an acknowledgement as soon as the
+    display has the command queued for its render thread. Any failure -- no
+    socket (the display is stopped or predates it), a timeout, a refusal --
+    writes the file mailbox instead, exactly as before the socket existed;
+    the display reads it within ON_DEMAND_POLL_INTERVAL. Both carry the same
+    request_id, so a request that reached the display both ways (a reply
+    that timed out after the command was queued) is still processed once.
+
+    Returns ``(transport, socket_error)``: ``'socket'`` and None, or
+    ``'mailbox'`` and the socket failure's reason code.
+    """
+    try:
+        if payload['action'] == 'start':
+            control_client.on_demand_start(
+                payload['request_id'], payload.get('plugin_id'), payload.get('mode'),
+                payload.get('duration'), bool(payload.get('pinned', False)))
+        else:
+            control_client.on_demand_stop(payload['request_id'])
+        return 'socket', None
+    except control_client.ControlError as e:
+        reason = _socket_reason_code(e.reason)
+        if reason in _QUIET_SOCKET_REASONS:
+            logger.debug("On-demand %s via the mailbox: %s", payload['action'], e)
+        else:
+            logger.warning("Control socket did not take on-demand %s (%s); "
+                           "using the mailbox", payload['action'], e)
+    except Exception:  # never let the socket path break the route
+        logger.exception("Control socket client failed; using the mailbox")
+        reason = 'internal'
+    _cache_manager().set('display_on_demand_request', payload)
+    return 'mailbox', reason
 
 
 @api_v3.route('/display/current', methods=['GET'])
@@ -77,19 +117,19 @@ def get_display_modes():
             for the duration -- so they are reported with enabled: false
             rather than omitted.
     """
-    if not api_v3.plugin_manager:
-        return jsonify({'status': 'error', 'message': 'Plugin manager not initialized'}), 500
+    if not api_v3.plugin_catalog:
+        return jsonify({'status': 'error', 'message': 'Plugin catalog not initialized'}), 500
 
     # Discovery is lazy and normally triggered by whichever endpoint runs
     # first, which is a person opening the dashboard. A caller that never
     # visits it would otherwise see an empty list.
-    api_v3.plugin_manager.discover_plugins()
+    api_v3.plugin_catalog.discover_plugins()
 
     include_disabled = request.args.get('include_disabled') in ('1', 'true', 'True')
     full_config = api_v3.config_manager.load_config() if api_v3.config_manager else {}
 
     modes = []
-    for plugin_id, manifest in sorted(api_v3.plugin_manager.plugin_manifests.items()):
+    for plugin_id, manifest in sorted(api_v3.plugin_catalog.plugin_manifests.items()):
         # A hand-edited or migrated config.json can hold a non-dict under a
         # plugin id; DisplayController._reconcile guards the same shape, so
         # it happens in practice. Without this, .get() raises AttributeError,
@@ -107,7 +147,7 @@ def get_display_modes():
         if not enabled and not include_disabled:
             continue
         plugin_name = (manifest or {}).get('name') or plugin_id
-        plugin_modes = api_v3.plugin_manager.get_plugin_display_modes(plugin_id) or [plugin_id]
+        plugin_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id) or [plugin_id]
         for mode in plugin_modes:
             # A single-mode plugin's mode is the plugin, so its own name is
             # the readable label. Multi-mode plugins have no per-mode name
@@ -162,21 +202,21 @@ def start_on_demand_display():
     resolved_plugin = plugin_id
     resolved_mode = mode
 
-    if api_v3.plugin_manager:
+    if api_v3.plugin_catalog:
         if resolved_plugin and resolved_plugin not in _pkg._discovered_plugin_manifests(resolved_plugin):
             return jsonify({'status': 'error', 'message': f'Plugin {resolved_plugin} not found'}), 404
 
         if resolved_plugin and not resolved_mode:
-            modes = api_v3.plugin_manager.get_plugin_display_modes(resolved_plugin)
+            modes = api_v3.plugin_catalog.get_plugin_display_modes(resolved_plugin)
             resolved_mode = modes[0] if modes else resolved_plugin
         elif resolved_mode and not resolved_plugin:
             _pkg._discovered_plugin_manifests()
-            resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+            resolved_plugin = api_v3.plugin_catalog.find_plugin_for_mode(resolved_mode)
             if not resolved_plugin:
                 # Not among what was discovered: the plugin that declares
                 # it may have been installed since. Scan once more.
                 _pkg._discovered_plugin_manifests(rescan=True)
-                resolved_plugin = api_v3.plugin_manager.find_plugin_for_mode(resolved_mode)
+                resolved_plugin = api_v3.plugin_catalog.find_plugin_for_mode(resolved_mode)
             if not resolved_plugin:
                 return jsonify({'status': 'error', 'message': f'Mode {resolved_mode} not found'}), 404
 
@@ -192,10 +232,11 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
-    # Post the request to the mailbox the display process polls
-    # (DisplayController._poll_on_demand_requests). Written before any
-    # service start, so a freshly started display finds it on its first poll.
-    cache = _cache_manager()
+    # Deliver the request over the control socket, or post it to the
+    # mailbox the display process polls (DisplayController.
+    # _poll_on_demand_requests). Done before any service start: a stopped
+    # display has no socket, so the request lands in the mailbox, where a
+    # freshly started display finds it on its first poll.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
@@ -206,7 +247,7 @@ def start_on_demand_display():
         'pinned': pinned,
         'timestamp': _pkg.time.time()
     }
-    cache.set('display_on_demand_request', request_payload)
+    transport, socket_error = _deliver_on_demand(request_payload)
 
     service_status = _get_display_service_status()
 
@@ -246,8 +287,11 @@ def start_on_demand_display():
         'mode': resolved_mode,
         'duration': duration,
         'pinned': pinned,
-        'service': service_result
+        'service': service_result,
+        'transport': transport,
     }
+    if socket_error:
+        response_data['socket_error'] = socket_error
     return jsonify({'status': 'success', 'data': response_data})
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -256,29 +300,29 @@ def stop_on_demand_display():
     # _coerce_to_bool: bool("false") is True, which stopped the service.
     stop_service = _coerce_to_bool(data.get('stop_service', False))
 
-    # The running display reads the stop from the mailbox within
-    # ON_DEMAND_POLL_INTERVAL and resumes normal rotation in place
-    # (_clear_on_demand); nothing is restarted.
-    cache = _cache_manager()
+    # The running display takes the stop over the control socket, or reads
+    # it from the mailbox within ON_DEMAND_POLL_INTERVAL, and resumes normal
+    # rotation in place (_clear_on_demand); nothing is restarted.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
         'action': 'stop',
         'timestamp': _pkg.time.time()
     }
-    cache.set('display_on_demand_request', request_payload)
+    transport, socket_error = _deliver_on_demand(request_payload)
 
     service_result = None
     if stop_service:
         service_result = _stop_display_service()
 
-    return jsonify({
-        'status': 'success',
-        'data': {
-            'request_id': request_id,
-            'service': service_result
-        }
-    })
+    response_data = {
+        'request_id': request_id,
+        'service': service_result,
+        'transport': transport,
+    }
+    if socket_error:
+        response_data['socket_error'] = socket_error
+    return jsonify({'status': 'success', 'data': response_data})
 @api_v3.route('/display/current-status', methods=['GET'])
 def get_current_display_status():
     """Return the display mode/plugin currently intended to be shown.

@@ -8,6 +8,10 @@ This directory contains systemd service unit files for LEDMatrix services.
   - Runs the display controller (`run.py`)
   - Starts automatically on boot
   - Runs as root for hardware access
+  - Restarted by systemd's watchdog (`WatchdogSec=120`) when its render loop
+    stops checking in, e.g. stuck inside a plugin; the loop writes a heartbeat
+    to `/run/ledmatrix/display-heartbeat.json` (`RuntimeDirectory=`) that the
+    web interface's health check reads. See `src/display_watchdog.py`
 
 - **`ledmatrix-web.service`** - Web interface service
   - Runs the web interface conditionally based on config

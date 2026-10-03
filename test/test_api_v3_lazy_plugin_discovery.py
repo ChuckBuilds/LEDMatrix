@@ -16,7 +16,7 @@ callers (the Home Assistant MQTT bridge, scripts) saw it after every restart.
 undiscovered plugin section skipped secret separation and wrote its API key
 into config.json in plain text.
 
-A real PluginManager over a temporary plugins directory, so "empty until
+A real PluginCatalog over a temporary plugins directory, so "empty until
 discovered" is the real behaviour rather than a mock's.
 """
 
@@ -30,7 +30,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config_manager import ConfigManager  # noqa: E402
-from src.plugin_system.plugin_manager import PluginManager  # noqa: E402
+from src.plugin_system.plugin_catalog import PluginCatalog  # noqa: E402
 from src.plugin_system.schema_manager import SchemaManager  # noqa: E402
 from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401,E402
 
@@ -69,10 +69,10 @@ def plugins_dir(tmp_path):
 @pytest.fixture
 def fresh_web_process(api_v3_module, plugins_dir):
     """The web process right after a restart: nothing discovered yet."""
-    manager = PluginManager(plugins_dir=str(plugins_dir))
-    assert not manager.plugin_manifests
-    api_v3_module.api_v3.plugin_manager = manager
-    return manager
+    catalog = PluginCatalog(plugins_dir=plugins_dir)
+    assert not catalog.plugin_manifests
+    api_v3_module.api_v3.plugin_catalog = catalog
+    return catalog
 
 
 @pytest.fixture

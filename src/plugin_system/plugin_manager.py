@@ -16,12 +16,15 @@ import time
 import threading
 import types
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Any, Tuple, Union
 import logging
+from src import display_watchdog
 from src.exceptions import PluginError, ConfigError
 from src.logging_config import get_logger
 from src.plugin_system.plugin_loader import PluginLoader
-from src.plugin_system.plugin_executor import PluginExecutor
+from src.plugin_system.plugin_executor import (
+    PluginBusyError, PluginExecutor, PluginTimeoutError,
+)
 from src.plugin_system.plugin_state import PluginStateManager, PluginState
 from src.plugin_system.schema_manager import (
     CORE_VEGAS_TUNING_KEYS, SchemaManager, normalize_legacy_booleans,
@@ -29,11 +32,21 @@ from src.plugin_system.schema_manager import (
 from src.plugin_system.plugin_dirs import (
     ManifestStatus, PluginDirectoryIndex, resolve_plugin_dir,
 )
-from src.deprecation import deprecated
+from src.common.fetch_service import plugin_scope, register_plugin_directory
 from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
 )
+
+
+class _DeferredConfigChange(NamedTuple):
+    """Update-queue item: apply the config change parked for ``plugin_id``.
+
+    Queued by apply_config_change() when the plugin's lock was busy; the
+    change itself waits in ``PluginManager._deferred_config_changes`` so only
+    the latest one is ever applied.
+    """
+    plugin_id: str
 
 
 class PluginManager:
@@ -56,6 +69,27 @@ class PluginManager:
     # How long unload_plugin() waits for an in-flight update() to finish
     # before tearing the instance down anyway.
     UNLOAD_LOCK_TIMEOUT = 5.0
+
+    # How long unload_detached_plugin() (a live reload, off the render thread)
+    # waits for the old instance's lock. Longer than UNLOAD_LOCK_TIMEOUT
+    # because nothing is blocked by the wait, and a Vegas content build of the
+    # old instance can hold the lock for several seconds (5.9 s seen on
+    # ledpi). Past it the reload is refused rather than tearing down an
+    # instance a Vegas call may still be running in.
+    DETACHED_UNLOAD_LOCK_TIMEOUT = 30.0
+
+    # How long the update worker and apply_config_change() wait for a
+    # plugin's lock -- the same bound unload already uses for the same lock.
+    # A display() frame holds it for milliseconds, so this only runs out when
+    # the holder is hung or pathologically slow. The worker then skips that
+    # plugin (recorded as a hang, so repeats open its circuit breaker)
+    # instead of stalling every other plugin's update behind it.
+    PLUGIN_LOCK_TIMEOUT = UNLOAD_LOCK_TIMEOUT
+
+    # Minimum seconds between repeats of the same hang/slow-call warning for
+    # one plugin. A hung plugin is re-detected every interval; a slow
+    # display() can be re-detected every frame.
+    HANG_LOG_INTERVAL = 60.0
     
     def __init__(self, plugins_dir: str = "plugins", 
                  config_manager: Optional[Any] = None, 
@@ -122,7 +156,37 @@ class PluginManager:
         # post-timeout window.
         # Kill switch: plugin_system.synchronous_updates: true restores the
         # inline path.
-        self._update_queue: "queue.Queue[Optional[Tuple[str, float]]]" = queue.Queue()
+        #
+        # Which thread runs each plugin hook, and what it holds:
+        #   __init__, on_enable   the loading thread (main thread at startup,
+        #                         the render thread on a live enable, a
+        #                         plugin-reload thread for a control socket
+        #                         reload).
+        #   update()              plugin-update-worker, under the plugin lock,
+        #                         via PluginExecutor (whose daemon thread runs
+        #                         the call; if it outlives the executor's
+        #                         timeout it keeps the lock until it returns).
+        #                         Exceptions: the startup pass
+        #                         (DisplayController._run_initial_updates, main
+        #                         thread, before the display loop starts) and
+        #                         the synchronous_updates kill switch (render
+        #                         thread) run it without the lock.
+        #   display()             the render thread, under a try-lock: a busy
+        #                         lock skips the frame. The first frame of a
+        #                         screen goes through PluginExecutor. Vegas
+        #                         mode's adapter and coordinator take the lock
+        #                         with a bounded wait.
+        #   on_config_change()    ConfigService's watcher thread, under the
+        #                         plugin lock via apply_config_change(); if the
+        #                         lock stays busy it is deferred to the update
+        #                         worker, which applies it under the lock.
+        #   cleanup(), on_disable()  whoever calls unload_plugin() (or, for a
+        #                         reload, unload_detached_plugin() on its
+        #                         plugin-reload thread), under the lock with
+        #                         UNLOAD_LOCK_TIMEOUT.
+        # No wait on a plugin lock is unbounded, so one hung plugin can only
+        # cost the worker PLUGIN_LOCK_TIMEOUT per attempt.
+        self._update_queue: "queue.Queue[Union[None, Tuple[str, float], _DeferredConfigChange]]" = queue.Queue()
         self._pending_updates: set = set()
         self._pending_lock = threading.Lock()
         # Serializes the "is this plugin eligible?" -> "claim it (RUNNING)"
@@ -145,6 +209,17 @@ class PluginManager:
         # run_scheduled_updates_with_changes().
         self._completed_updates: set = set()
         self._completed_updates_lock = threading.Lock()
+        # Called with a plugin id the moment its data may have changed: its
+        # update() completed, or it called notify_vegas_data_changed(). See
+        # add_update_listener(). A tuple, replaced rather than mutated, so the
+        # worker can iterate it without a lock.
+        self._update_listeners: Tuple[Callable[[str], None], ...] = ()
+        # Config changes that found the plugin's lock busy, latest per plugin,
+        # with the instance they were meant for. See apply_config_change().
+        self._deferred_config_changes: Dict[str, Tuple[Any, Dict[str, Any]]] = {}
+        self._deferred_config_lock = threading.Lock()
+        # key -> (monotonic time last logged, repeats suppressed since)
+        self._rate_limited_warnings: Dict[str, Tuple[float, int]] = {}
         self._synchronous_updates = False
         if self.config_manager is not None:
             try:
@@ -297,6 +372,19 @@ class PluginManager:
         return plugin_ids
 
     def load_plugin(self, plugin_id: str, force_enabled: bool = False) -> bool:
+        """Load a plugin by ID; see _load_plugin.
+
+        Loading can install the plugin's dependencies with pip -- minutes,
+        not seconds. When that happens on the display's render thread (a
+        plugin enabled from the web UI, or loaded for on-demand), its
+        systemd watchdog gets a longer limit for the duration. Start-up
+        loads, on a thread pool, are covered by the start-up allowance.
+        """
+        with display_watchdog.extended(display_watchdog.PLUGIN_LOAD_ALLOWANCE_SECONDS,
+                                       f'loading plugin {plugin_id}'):
+            return self._load_plugin(plugin_id, force_enabled)
+
+    def _load_plugin(self, plugin_id: str, force_enabled: bool = False) -> bool:
         """
         Load a plugin by ID.
         
@@ -348,6 +436,11 @@ class PluginManager:
             # Update mapping if found via search
             if plugin_id not in self.plugin_directories:
                 self.plugin_directories[plugin_id] = plugin_dir
+
+            # Code under this directory is this plugin's: the fetch service
+            # counts a request against it even from a thread the plugin
+            # started itself (src/common/fetch_service.py, caller identity).
+            register_plugin_directory(plugin_id, plugin_dir)
             
             # Get plugin config
             if self.config_manager:
@@ -387,18 +480,20 @@ class PluginManager:
                 config = dict(config)
                 config['enabled'] = True
             
-            # Use PluginLoader to load plugin
-            plugin_instance, _module = self.plugin_loader.load_plugin(
-                plugin_id=plugin_id,
-                manifest=manifest,
-                plugin_dir=plugin_dir,
-                config=config,
-                display_manager=self.display_manager,
-                cache_manager=self.cache_manager,
-                plugin_manager=self,
-                install_deps=True,
-                plugins_dir=self.plugins_dir,
-            )
+            # Use PluginLoader to load plugin. Fetches the constructor makes
+            # count against the plugin.
+            with plugin_scope(plugin_id):
+                plugin_instance, _module = self.plugin_loader.load_plugin(
+                    plugin_id=plugin_id,
+                    manifest=manifest,
+                    plugin_dir=plugin_dir,
+                    config=config,
+                    display_manager=self.display_manager,
+                    cache_manager=self.cache_manager,
+                    plugin_manager=self,
+                    install_deps=True,
+                    plugins_dir=self.plugins_dir,
+                )
             
             # Register plugin-shipped fonts with the FontManager (if any).
             # Plugin manifests can declare a "fonts" block that ships custom
@@ -452,7 +547,8 @@ class PluginManager:
                 # Call on_enable if plugin is enabled
                 if hasattr(plugin_instance, 'on_enable'):
                     try:
-                        plugin_instance.on_enable()
+                        with plugin_scope(plugin_id):
+                            plugin_instance.on_enable()
                     except Exception:
                         # Undo the registration above before the outer
                         # handler marks it ERROR: left in self.plugins, the
@@ -465,7 +561,13 @@ class PluginManager:
                         raise
             else:
                 self.state_manager.set_state(plugin_id, PluginState.DISABLED)
-            
+
+            # The version this instance runs, for the runtime snapshot the
+            # web UI reads: the manifest on disk can move on after an update.
+            version = manifest.get('version')
+            self.state_manager.record_loaded(
+                plugin_id, version if isinstance(version, str) else None)
+
             self.logger.info("Loaded plugin: %s", plugin_id)
             
             return True
@@ -512,7 +614,8 @@ class PluginManager:
     #: prefix rule would silently stop validating it.
     #:
     #: Read by: ``vegas_mode/plugin_adapter.py`` (``vegas_width_pct``,
-    #: ``vegas_overflow``) and ``base_plugin.py`` (``vegas_max_width_screens``).
+    #: ``vegas_overflow``, ``vegas_live``) and ``base_plugin.py``
+    #: (``vegas_max_width_screens``, ``vegas_participation``).
     #:
     #: The list itself lives with the other core-owned per-plugin properties in
     #: ``schema_manager.CORE_PLUGIN_PROPERTIES``, which the web save path also
@@ -661,14 +764,57 @@ class PluginManager:
             if lock_acquired:
                 lock.release()
 
-    def _unload_plugin_locked(self, plugin_id: str) -> bool:
-        """Body of unload_plugin(); caller holds (or gave up on) the plugin lock."""
-        if plugin_id not in self.plugins:  # unloaded while we waited
+    def detach_plugin(self, plugin_id: str) -> Optional[Any]:
+        """Take a loaded plugin out of ``plugins`` without tearing it down.
+
+        The first half of a reload that must not block its caller, the render
+        thread (DisplayController._start_plugin_reload). Every new call into a
+        plugin starts by looking it up in ``plugins``: the update scheduler,
+        the update worker (which looks again under the plugin's lock) and
+        Vegas's fetches. So once detached, nothing new reaches the instance.
+        Work already running on it under its lock -- an update(), or a Vegas
+        content render that can take seconds -- carries on;
+        unload_detached_plugin() waits for it, on another thread.
+
+        Returns the instance, or None when the plugin was not loaded.
+        """
+        return self.plugins.pop(plugin_id, None)
+
+    def unload_detached_plugin(self, plugin_id: str, plugin: Any) -> bool:
+        """Tear down an instance taken out by detach_plugin(): unload_plugin()
+        for an instance that is no longer in ``plugins``.
+
+        Waits for the plugin's lock, bounded by DETACHED_UNLOAD_LOCK_TIMEOUT,
+        so it belongs off the render thread. Call it before loading the plugin
+        again: it drops the plugin's modules and lifecycle state along with the
+        instance. Unlike unload_plugin() it never tears down without the lock:
+        a call that took the lock before the detach (a Vegas content build)
+        may still be running in this instance. Returns False then, and the
+        caller must not load the plugin again over it.
+        """
+        lock = self.get_plugin_lock(plugin_id)
+        if not lock.acquire(timeout=self.DETACHED_UNLOAD_LOCK_TIMEOUT):
+            self.logger.warning(
+                "Plugin %s still busy after %.1fs; not unloading it while in use",
+                plugin_id, self.DETACHED_UNLOAD_LOCK_TIMEOUT)
+            return False
+        try:
+            return self._unload_plugin_locked(plugin_id, plugin)
+        finally:
+            lock.release()
+
+    def _unload_plugin_locked(self, plugin_id: str, detached: Optional[Any] = None) -> bool:
+        """Body of unload_plugin(); caller holds (or gave up on) the plugin lock.
+
+        ``detached`` is an instance already taken out of ``plugins``
+        (detach_plugin); without it, the loaded instance is unloaded.
+        """
+        if detached is None and plugin_id not in self.plugins:  # unloaded while we waited
             self.logger.warning("Plugin %s not loaded", plugin_id)
             return False
 
         try:
-            plugin = self.plugins[plugin_id]
+            plugin = self.plugins[plugin_id] if detached is None else detached
             
             # Call cleanup if available
             if hasattr(plugin, 'cleanup'):
@@ -684,8 +830,11 @@ class PluginManager:
                 except Exception as e:
                     self.logger.warning("Error during plugin on_disable: %s", e)
             
-            # Remove from active plugins
-            del self.plugins[plugin_id]
+            # Remove from active plugins (a detached one already is)
+            if detached is None:
+                del self.plugins[plugin_id]
+            with self._deferred_config_lock:
+                self._deferred_config_changes.pop(plugin_id, None)
             with self._plugin_last_update_lock:
                 self.plugin_last_update.pop(plugin_id, None)
             self._update_interval_cache.pop(plugin_id, None)
@@ -714,6 +863,9 @@ class PluginManager:
         except Exception as e:
             self.logger.error("Error unloading plugin %s: %s", plugin_id, e, exc_info=True)
             self.state_manager.set_state(plugin_id, PluginState.ERROR, error=e)
+            if plugin_id not in self.plugins:
+                # Failed after the instance was dropped: it is not loaded.
+                self.state_manager.record_unloaded(plugin_id)
             return False
     
     def reload_plugin(self, plugin_id: str) -> bool:
@@ -784,16 +936,6 @@ class PluginManager:
             Dict of plugin_id: plugin_instance
         """
         return self.plugins.copy()
-    
-    @deprecated("3.7.0", "check each plugin's enabled flag in plugins")
-    def get_enabled_plugins(self) -> List[str]:
-        """
-        Get list of enabled plugin IDs.
-        
-        Returns:
-            List of plugin IDs that are currently enabled
-        """
-        return [pid for pid, plugin in self.plugins.items() if plugin.enabled]
     
     def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -1022,6 +1164,8 @@ class PluginManager:
         self,
         plugin_id: str,
         exc: Optional[Exception] = None,
+        log: bool = True,
+        count_failure: bool = True,
     ) -> None:
         """Apply the standard failure-recovery path for a plugin update.
 
@@ -1035,6 +1179,11 @@ class PluginManager:
             exc: The exception that caused the failure, if any.  When None a
                  synthetic ExecutionFailure exception is constructed from the
                  timeout/executor-error path.
+            log: Log the generic failure line. Callers that already logged
+                 something more specific (rate-limited) pass False.
+            count_failure: Record the failure in plugin health, where it
+                 counts toward the circuit breaker. A busy skip passes False:
+                 it records itself as a busy skip, reporting only.
         """
         failure_time = time.time()
         if exc is not None:
@@ -1050,12 +1199,90 @@ class PluginManager:
             'timestamp': failure_time,
             'recoverable': True,
         }
-        self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
+        if log:
+            self.logger.warning("Plugin %s update() failed; will retry after interval", plugin_id)
         with self._plugin_last_update_lock:
             self.plugin_last_update[plugin_id] = failure_time
         self.state_manager.set_state_with_error(plugin_id, PluginState.ENABLED, error_info)
-        if self.health_tracker:
+        if count_failure and self.health_tracker:
             self.health_tracker.record_failure(plugin_id, err)
+
+    def _warn_rate_limited(self, key: str, message: str, *args: Any) -> None:
+        """Log a warning at most once per HANG_LOG_INTERVAL for ``key``.
+
+        Repeats in between are counted and the count is appended to the next
+        one that is logged, so the journal shows the problem continuing
+        without a line per frame or per scheduler tick.
+        """
+        # setdefault: tests build bare managers with PluginManager.__new__.
+        seen = self.__dict__.setdefault('_rate_limited_warnings', {})
+        now = time.monotonic()
+        last, suppressed = seen.get(key, (None, 0))
+        if last is not None and now - last < self.HANG_LOG_INTERVAL:
+            seen[key] = (last, suppressed + 1)
+            return
+        seen[key] = (now, 0)
+        if suppressed:
+            message += " (%d more since the last warning)"
+            args = args + (suppressed,)
+        self.logger.warning(message, *args)
+
+    def _record_hang(self, plugin_id: str, operation: str, seconds: float,
+                     err: Exception) -> None:
+        """Record a hang in plugin health: a failure to the circuit breaker.
+
+        PluginHealthTracker.record_hang also counts the hang separately. Never
+        raises: this runs on the update worker and the render thread.
+        """
+        tracker = self.health_tracker
+        if tracker is None:
+            return
+        try:
+            tracker.record_hang(plugin_id, operation, seconds, err)
+        except Exception as e:  # pylint: disable=broad-except
+            self.logger.debug("Could not record hang for %s: %s", plugin_id, e)
+
+    def note_display_duration(self, plugin_id: str, seconds: float) -> None:
+        """Account for one display() call that took ``seconds``.
+
+        Called by the render loop for every frame, so the common case is one
+        comparison. At or above PluginExecutor.SLOW_DISPLAY_SECONDS the call
+        is logged (rate-limited) and counted as slow in plugin health; at or
+        above the executor's timeout -- the limit the first frame of a screen
+        is already held to -- it is recorded as a hang, which the circuit
+        breaker counts as a failure.
+        """
+        if seconds < PluginExecutor.SLOW_DISPLAY_SECONDS:
+            return
+        if seconds >= self.plugin_executor.default_timeout:
+            self.record_display_hang(plugin_id, seconds)
+            return
+        self._warn_rate_limited(
+            "slow-display:" + plugin_id,
+            "Plugin %s display() took %.2fs; a frame should take milliseconds "
+            "(is it fetching or loading files in display()?)", plugin_id, seconds)
+        tracker = self.health_tracker
+        record_slow = getattr(tracker, 'record_slow_call', None) if tracker is not None else None
+        if callable(record_slow):
+            try:
+                record_slow(plugin_id, 'display', seconds)
+            except Exception as e:  # pylint: disable=broad-except
+                self.logger.debug("Could not record slow display for %s: %s", plugin_id, e)
+
+    def record_display_hang(self, plugin_id: str, seconds: float) -> None:
+        """Record a display() call that ran ``seconds``, past its limit.
+
+        Either it has since returned (note_display_duration) or it is still
+        running on the executor's lingering thread, holding the plugin's lock
+        (the render loop's first-frame dispatch).
+        """
+        self._warn_rate_limited(
+            "hung-display:" + plugin_id,
+            "Plugin %s display() ran for at least %.1fs (limit %.0fs); recorded "
+            "as a hang -- repeated hangs open its circuit breaker",
+            plugin_id, seconds, self.plugin_executor.default_timeout)
+        self._record_hang(plugin_id, 'display', seconds, PluginTimeoutError(
+            f"Plugin {plugin_id} display() ran for at least {seconds:.1f}s"))
 
     def run_scheduled_updates(self, current_time: Optional[float] = None) -> None:
         """
@@ -1090,6 +1317,9 @@ class PluginManager:
                 # Kill-switch path: the original inline execution
                 # (blocks the caller until update() completes/times out)
                 self._execute_update_now(plugin_id, plugin_instance, current_time)
+                # Up to the executor's 30s each, one after another on the
+                # render thread: check in with its watchdog between them.
+                display_watchdog.beat()
             else:
                 self._enqueue_update(plugin_id, current_time)
 
@@ -1142,11 +1372,13 @@ class PluginManager:
         self.state_manager.set_state(plugin_id, PluginState.ENABLED)
 
     def get_plugin_lock(self, plugin_id: str) -> threading.Lock:
-        """Per-plugin lock keeping update() and display() mutually exclusive.
+        """Per-plugin lock keeping update(), display() and on_config_change()
+        mutually exclusive.
 
         The update worker holds it for the duration of a plugin's update();
         the display side acquires it non-blocking and skips that frame's
-        display() call when the plugin is mid-update.
+        display() call when the plugin is mid-update. Every other waiter uses
+        a bounded acquire (see the thread notes in __init__).
         """
         with self._plugin_locks_guard:
             lock = self._plugin_locks.get(plugin_id)
@@ -1212,14 +1444,28 @@ class PluginManager:
         real update() call genuinely finishes (see _execute_update_now),
         which can be after this dispatch returns if PluginExecutor's own
         timeout elapses first.
+
+        The lock wait is bounded by PLUGIN_LOCK_TIMEOUT. Whatever holds it
+        past that -- a hung display() on the render thread, a lingering
+        executor thread, or a long but healthy Vegas content render -- costs
+        this worker that long once per attempt, and the plugin's update is
+        skipped and reported as a busy skip (_skip_busy_update), which never
+        counts toward the circuit breaker; the other plugins' queued updates
+        carry on.
         """
         while True:
             item = self._update_queue.get()
             if item is None:  # shutdown sentinel
                 return
+            if isinstance(item, _DeferredConfigChange):
+                self._apply_deferred_config_change(item.plugin_id)
+                continue
             plugin_id, scheduled_time = item
             lock = self.get_plugin_lock(plugin_id)
-            lock.acquire()
+            wait_start = time.monotonic()
+            if not lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT):
+                self._skip_busy_update(plugin_id, time.monotonic() - wait_start)
+                continue
             plugin_instance = self.plugins.get(plugin_id)
             if plugin_instance is None:  # unloaded while queued; its
                 # lifecycle state was already cleared by unload_plugin —
@@ -1228,6 +1474,9 @@ class PluginManager:
                 with self._pending_lock:
                     self._pending_updates.discard(plugin_id)
                 continue
+            # A config change that found the lock busy goes in first, so
+            # this update() runs against the settings the user saved.
+            self._apply_deferred_config_locked(plugin_id, plugin_instance)
             try:
                 self._execute_update_now(plugin_id, plugin_instance,
                                          scheduled_time, lock=lock)
@@ -1237,6 +1486,142 @@ class PluginManager:
                 # raising; this is a last-resort log only.
                 self.logger.exception("update worker: unexpected error for %s",
                                       plugin_id)
+
+    def _skip_busy_update(self, plugin_id: str, waited: float) -> None:
+        """Give up on a queued update whose plugin lock stayed held.
+
+        Same bookkeeping as a failed update() -- pending slot dropped before
+        the state returns to ENABLED with PluginBusyError error info,
+        last-update stamped so the retry waits a full interval -- but
+        report-only in health: counted as a busy skip (``busy_skip_count`` /
+        ``last_busy_skip``), never as a failure or a hang. The lock holder
+        may be perfectly healthy: Vegas prefetch holds a plugin's lock for its
+        whole content render, which on a slow Pi can outlast
+        PLUGIN_LOCK_TIMEOUT, and counting that would pull a healthy plugin
+        from rotation. Real hangs -- display() or update() past the executor
+        timeout -- are recorded where they are measured and still open the
+        breaker.
+        """
+        with self._pending_lock:
+            self._pending_updates.discard(plugin_id)
+        if plugin_id not in self.plugins:
+            # Unloaded while we waited: its lifecycle state is already
+            # cleared; recording anything would resurrect it as ENABLED.
+            return
+        self._warn_rate_limited(
+            "busy-update:" + plugin_id,
+            "Plugin %s update skipped: its lock was still held after %.1fs "
+            "(a display(), Vegas render or update() of it is still running); "
+            "retrying next interval, not counted as a failure", plugin_id, waited)
+        self._record_update_failure(
+            plugin_id,
+            exc=PluginBusyError(
+                f"Plugin {plugin_id} busy: its lock was held for over {waited:.1f}s "
+                "by a slow or hung display()/update(); update skipped"),
+            log=False,
+            count_failure=False)
+        tracker = self.health_tracker
+        record_busy = getattr(tracker, 'record_busy_skip', None) if tracker is not None else None
+        if callable(record_busy):
+            try:
+                record_busy(plugin_id, 'update lock wait', waited)
+            except Exception as e:  # pylint: disable=broad-except
+                self.logger.debug("Could not record busy skip for %s: %s", plugin_id, e)
+
+    def apply_config_change(self, plugin_id: str, new_config: Dict[str, Any],
+                            plugin_instance: Optional[Any] = None) -> bool:
+        """Call ``on_config_change(new_config)`` without racing update()/display().
+
+        Runs on the calling thread -- ConfigService's watcher, for the display
+        service -- holding the plugin's lock, waited on for at most
+        PLUGIN_LOCK_TIMEOUT. If the lock is still busy (an update() mid-fetch
+        can outlast that) the change is parked and handed to the update
+        worker, which applies it under the same lock once it is free, and at
+        the latest just before the plugin's next update(). A later change for
+        the same plugin replaces a parked one.
+
+        Exceptions from on_config_change propagate on the immediate path,
+        as they did when the caller invoked it directly.
+
+        Args:
+            plugin_id: Plugin identifier.
+            new_config: The prepared config to hand the plugin.
+            plugin_instance: The instance to notify; defaults to the loaded one.
+
+        Returns:
+            True if on_config_change ran now, False if it was deferred or there
+            is no loaded plugin to notify.
+        """
+        if plugin_instance is None:
+            plugin_instance = self.plugins.get(plugin_id)
+        if plugin_instance is None or not hasattr(plugin_instance, 'on_config_change'):
+            return False
+        lock = self.get_plugin_lock(plugin_id)
+        if lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT):
+            try:
+                with self._deferred_config_lock:
+                    # This change supersedes any older one still parked.
+                    self._deferred_config_changes.pop(plugin_id, None)
+                plugin_instance.on_config_change(new_config)
+            finally:
+                lock.release()
+            return True
+
+        with self._deferred_config_lock:
+            self._deferred_config_changes[plugin_id] = (plugin_instance, new_config)
+        self._warn_rate_limited(
+            "busy-config:" + plugin_id,
+            "Plugin %s is busy (lock held for over %.1fs); its config change "
+            "will be applied by the update worker once it is free",
+            plugin_id, self.PLUGIN_LOCK_TIMEOUT)
+        try:
+            self._ensure_update_worker()
+            self._update_queue.put(_DeferredConfigChange(plugin_id))
+        except Exception as exc:  # pylint: disable=broad-except
+            # No worker (thread start refused): still parked, so the next
+            # update() of this plugin applies it.
+            self.logger.error(
+                "Could not queue the config change for plugin %s (%s: %s); it "
+                "will be applied before its next update()",
+                plugin_id, type(exc).__name__, exc)
+        return False
+
+    def _apply_deferred_config_change(self, plugin_id: str) -> None:
+        """Worker side of a parked config change: take the lock, apply it."""
+        with self._deferred_config_lock:
+            if plugin_id not in self._deferred_config_changes:
+                return  # applied or superseded meanwhile
+        lock = self.get_plugin_lock(plugin_id)
+        wait_start = time.monotonic()
+        if not lock.acquire(timeout=self.PLUGIN_LOCK_TIMEOUT):
+            self._warn_rate_limited(
+                "busy-config:" + plugin_id,
+                "Plugin %s still busy after %.1fs; its config change stays "
+                "parked until its next update()",
+                plugin_id, time.monotonic() - wait_start)
+            return
+        try:
+            self._apply_deferred_config_locked(plugin_id, self.plugins.get(plugin_id))
+        finally:
+            lock.release()
+
+    def _apply_deferred_config_locked(self, plugin_id: str,
+                                      current_instance: Optional[Any]) -> None:
+        """Apply the parked config change for plugin_id; caller holds its lock."""
+        with self._deferred_config_lock:
+            entry = self._deferred_config_changes.pop(plugin_id, None)
+        if entry is None:
+            return
+        instance, new_config = entry
+        if current_instance is None or instance is not current_instance:
+            # Unloaded, or reloaded as a new instance built from the current
+            # config: nothing left to tell.
+            return
+        try:
+            instance.on_config_change(new_config)
+            self.logger.info("Applied deferred config change for plugin %s", plugin_id)
+        except Exception:  # pylint: disable=broad-except
+            self.logger.exception("Error in plugin %s config change handler", plugin_id)
 
     def stop_update_worker(self, timeout: float = 5.0) -> None:
         """Signal the worker to exit (used by cleanup; thread is a daemon)."""
@@ -1348,14 +1733,29 @@ class PluginManager:
             else:
                 _finish(True)
 
+        started = time.monotonic()
         try:
-            self.plugin_executor.execute_update(
+            success = self.plugin_executor.execute_update(
                 types.SimpleNamespace(update=_target_update), plugin_id)
         except Exception as exc:  # pragma: no cover - defensive; execute_update
             # catches everything internally, but guarantee _finish still
             # runs (releasing the lock) if something unexpected slips through.
             self.logger.exception("Unexpected error dispatching update for %s: %s", plugin_id, exc)
             _finish(False, exc=exc)
+            return
+        if not success and not finished['done']:
+            # The executor stopped waiting but update() is still running: it
+            # keeps the lock and the RUNNING state until it returns (then
+            # _finish records the outcome). Say so now, rather than leave the
+            # plugin silently stuck; record_success on a late return clears it.
+            elapsed = time.monotonic() - started
+            self._warn_rate_limited(
+                "hung-update:" + plugin_id,
+                "Plugin %s update() still running after %.1fs; it keeps its "
+                "lock until it returns, and is not rescheduled until then",
+                plugin_id, elapsed)
+            self._record_hang(plugin_id, 'update', elapsed, PluginTimeoutError(
+                f"Plugin {plugin_id} update() still running after {elapsed:.1f}s"))
 
     def run_scheduled_updates_with_changes(self, current_time: Optional[float] = None) -> List[str]:
         """
@@ -1382,9 +1782,53 @@ class PluginManager:
         return self.drain_completed_updates()
 
     def _note_update_completed(self, plugin_id: str) -> None:
-        """Record that a plugin's update() finished, for the next poll."""
+        """Record that a plugin's update() finished, for the next poll.
+
+        Also tells the update listeners at once, so Vegas live elements are
+        redrawn the moment new data lands instead of at the next ~4s poll.
+        This runs while the plugin's lock is still held (see _finish), which
+        is what makes the listeners' contract strict.
+        """
         with self._completed_updates_lock:
             self._completed_updates.add(plugin_id)
+        self._fire_update_listeners(plugin_id)
+
+    def add_update_listener(self, listener: Callable[[str], None]) -> None:
+        """Call ``listener(plugin_id)`` whenever a plugin's data may have changed.
+
+        That is: its update() completed successfully, or it called
+        notify_vegas_data_changed(). The listener runs on the thread that
+        noticed -- the update worker, with the plugin's lock still held, or
+        the plugin's own thread -- so it must return at once and take no lock
+        a plugin could hold: record the id and hand off (a dict store, a
+        queue put). An exception from it is logged and does not reach the
+        plugin. Adding the same listener twice has no effect.
+        """
+        # __dict__.get: tests build bare managers with PluginManager.__new__.
+        listeners = self.__dict__.get('_update_listeners', ())
+        if listener not in listeners:
+            self._update_listeners = listeners + (listener,)
+
+    def remove_update_listener(self, listener: Callable[[str], None]) -> None:
+        """Stop calling a listener added with add_update_listener()."""
+        self._update_listeners = tuple(
+            fn for fn in self.__dict__.get('_update_listeners', ()) if fn != listener)
+
+    def notify_data_changed(self, plugin_id: str) -> None:
+        """A plugin's data changed outside update(); tell the update listeners.
+
+        BasePlugin.notify_vegas_data_changed() lands here.
+        """
+        self._fire_update_listeners(plugin_id)
+
+    def _fire_update_listeners(self, plugin_id: str) -> None:
+        for listener in self.__dict__.get('_update_listeners', ()):
+            try:
+                listener(plugin_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._warn_rate_limited(
+                    "update-listener",
+                    "An update listener failed for plugin %s: %r", plugin_id, exc)
 
     def drain_completed_updates(self) -> List[str]:
         """Return and clear the plugin ids whose update() has since finished."""

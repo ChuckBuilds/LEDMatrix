@@ -1,0 +1,17 @@
+{
+  "screens": [
+    [0.0, "clock", 15.0, "duration", 15, false],
+    [15.0, "weather_now", 20.0, "duration", 20, true],
+    [35.0, "weather_forecast", 20.0, "duration", 20, true],
+    [55.0, "ticker", 10.008, "duration", 1252, true],
+    [65.008, "legacy", 5.0, "duration", 5, true],
+    [70.008, "clock", 15.0, "duration", 15, true],
+    [85.008, "weather_now", 20.0, "duration", 20, true],
+    [105.008, "weather_forecast", 20.0, "duration", 20, true],
+    [125.008, "ticker", 10.008, "duration", 1252, true],
+    [135.016, "legacy", 5.0, "duration", 5, true],
+    [140.016, "clock", 15.0, "duration", 15, true],
+    [155.016, "weather_now", 4.984, "horizon", 5, true]
+  ],
+  "events": []
+}

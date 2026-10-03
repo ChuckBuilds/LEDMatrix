@@ -73,6 +73,10 @@ Sample ladder for a 100 Hz panel:
  100.0 px/s  (1px every 1 refresh  = 100.0 fps, smooth)
 ```
 
+The Vegas **Scroll Speed** slider in the web UI shows the same thing live: a
+line under it says what your speed will run as on this panel, and links to the
+nearest smooth speeds.
+
 ### How a slow speed stays crisp
 
 `SwapOnVSync(canvas, framerate_fraction)` holds each frame for N panel
@@ -331,17 +335,24 @@ python3 scripts/frame_soak.py --json a.json   # keep the report to compare later
 It runs as any user next to the display service and stops nothing. It needs
 something to *scroll* during the run: a live game holding a static scoreboard
 on screen gives no verdict. `--preview` keeps the web preview's viewer marker
-fresh, which puts the preview's PNG encoding at full rate -- run it as the web
-service's user.
+fresh, which puts the preview's PNG encoding at the viewer rate, as an open
+preview does -- run it as the web service's user. That rate is at most one
+frame a second. Through 3.8.0 it was up to five, so a `--preview` soak taken
+before that change is not comparable with one taken after it (the hdpi
+results below are from before it): take both sides of an A/B pair on
+the same side of it.
 
 | line | what it tells you |
 |---|---|
 | **Late frames** | Frames presented one or more refreshes after they were due: the panel showed the previous frame again, a visible hitch. **The pass/fail number**, 0.1% by default (`--max-late-pct`). Only intervals between two scrolling frames count, and a frame held for `frame_hold` refreshes is due `frame_hold` refreshes after the last. |
-| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers, blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. A gap still counts when the display's scroll state went missing for one frame across it, as long as scrolling resumes within 1 s: both of that frame's intervals count. Two static frames in a row end the scroll. (The state expires after 2 s without scroll activity, and plugins can clear it from their own `display()`.) The late and early rates are over frames judged against a known refresh period, which the recorder adopts once two windows in a row agree on it. |
+| **Freezes** | Gaps of 250 ms or more inside a scroll: recomposes, plugin handovers the display controller does not tag (see *Handover gaps*), blocking calls on the render thread. Reported but not failed on, because some are handovers between plugins rather than faults. A gap still counts when the display's scroll state went missing for one frame across it, as long as scrolling resumes within 1 s: both of that frame's intervals count. Two static frames in a row end the scroll. (The state expires after 2 s without scroll activity, and plugins can clear it from their own `display()`.) The late and early rates are over frames judged against a known refresh period, which the recorder adopts once two windows in a row agree on it. Handovers to a static screen no longer show up here: the display controller ends the scroll state after a static screen's first frame, where it used to linger for 2 s and turn the 1 Hz loop's second frame into a ~1 s "freeze" (17 of 31 `Render stall over` lines on ledpi, 2026-09-15 to 10-01). **Freeze counts from before and after that change are not comparable.** |
+| **Handover gaps** | Gaps of 250 ms or more from a scroll's last frame to the next screen's first: the next plugin drawing, not a scroll stalling. The display controller tags that first frame `handover`, and these gaps are counted here instead of under Freezes (`handover_freezes` in the stats; the `handover` row under *after work* counts the same ones in its freezes column). Every turn's first frame is tagged, also when the rotation comes back to the same mode (a one-mode rotation, a pinned on-demand mode, live priority holding a screen), so a scroller rebuilding its content at the start of a turn is counted here; measure work on that rebuild with this line, not Freezes. Missing from stats written by an older service, whose freezes include them. |
 | **blit** | Copying the frame into the matrix canvas (`SetImage`). It grows with width × height × `pwm_bits`: ~5.5 ms at 512×64 with 8 bits on a Pi 4. It is the biggest fixed cost, and it sets the refresh rates a rig can hold one pixel per refresh at. |
 | **wait** | Time blocked in `SwapOnVSync`, i.e. the slack left in each refresh. A p50 near zero means the rig has no headroom and anything extra lands a frame late. |
 | **work** | Everything else between two frames: drawing, scrolling, and waiting for the GIL. A wide gap between its p50 and p99 is another thread getting in the way. |
+| **Garbage collection** | Python's cyclic collector stops every thread while it runs. Collections per generation in the run and the time they took, how many took 20 ms or more, and the longest since the service started. A long one tags the next frame `gc` (see *after work*), and a `Render stall` dump says when one ran inside the stall. Diagnostic only: nothing tunes the collector. Missing from stats written by an older service. |
 | **Binding** | `STOCK` means the rgbmatrix binding holds the GIL through the vsync wait, which starves every other thread. See *Rebuilding the binding*. |
+| **after work** | Frames presented straight after tagged render-thread work, with their own late rate: `extend` and `compose` (Vegas building its strip), `patch` (live elements, once they land), `handover` (a new screen's first frame), `gc` (a garbage collection of 20 ms or more ran since the frame before). A kind whose late rate sits well above the overall one is the work making frames late. Shown only when something tagged its work. |
 
 The refresh rate is estimated from the frames themselves (swaps that block on
 vsync can only land on refresh boundaries). Cross-check it with
@@ -355,10 +366,13 @@ A/B two of them. A live-API workload drifts over time.
 The soak says how often; the service's log says why. A scroll that presents no
 frame for 250 ms logs `Render stall:` with the stack of the render thread and
 the top of every other thread's, and whether the whole interpreter was blocked
-(C code holding the GIL) rather than one thread. To see what is behind the
-shorter hitches, run the service with `LEDMATRIX_STALL_WATCHDOG_MS=30`, which
-dumps at three refreshes late instead: its extra polling costs a little GIL
-time of its own, so do that on a diagnostic run, not a soak you are grading.
+(C code holding the GIL) rather than one thread. A stall while the next
+screen's first `display()` is still drawing says `in a handover gap` instead of
+`mid-scroll`; that call runs on a thread named `display-<plugin id>`. To see
+what is behind the shorter hitches, run the service with
+`LEDMATRIX_STALL_WATCHDOG_MS=30`, which dumps at three refreshes late instead:
+its extra polling costs a little GIL time of its own, so do that on a
+diagnostic run, not a soak you are grading.
 `LEDMATRIX_STALL_WATCHDOG=0` turns it off.
 
 ### Results: hdpi, 2026-09-24
@@ -405,6 +419,10 @@ sudo python3 scripts/render_bench.py --seconds 600   # the shipping gate
 sudo python3 scripts/render_bench.py --speed 50      # a held (frame_hold 2) speed
 sudo python3 scripts/render_bench.py --busy 2        # with threads imitating plugin updates
 sudo python3 scripts/render_bench.py --json /tmp/pi4-512x64.json
+
+# render-thread strip work, each tagged so the report gives it a late rate:
+sudo python3 scripts/render_bench.py --patch-bytes 101376 --patch-every 25  # a live map patch
+sudo python3 scripts/render_bench.py --strip-screens 30 --extend-every-screens 6  # Vegas extensions
 
 sudo systemctl start ledmatrix
 ```
@@ -468,6 +486,8 @@ refreshes" comes from.
 | `duplicate` | frames that advanced no pixels. A crisp fixed-step scroll should show none; any at all means the loop is presenting faster than the strip is moving. |
 | `blank` | frames with no visible slice to draw: the helper had no content. Should be zero. |
 | `restarts` | how many times the strip was scrolled through end to end. Informational: the bench restarts the strip where a plugin would hand over to the next one. |
+| `patches` | `--patch-bytes N --patch-every K`: N bytes of columns written into the strip in place every K frames, on screen or (`--patch-where ahead`) just past it -- what a live element update costs the render thread. Their frames are the `patch` row under *after work*. |
+| `extensions` | `--extend-every-screens N`: a block appended and the scrolled-past columns trimmed every N screens, as continuous Vegas does. The cost is a copy of the whole strip, so size it like Vegas's with `--strip-screens` (8,000-20,000px). Their frames are the `extend` row. |
 
 `--json` writes the full report plus the panel geometry, the solved speed and
 these counters, so two rigs (or one rig before and after a change) can be
@@ -510,18 +530,42 @@ On the 2×128×64 chain above, which refreshes at about 130 Hz flat out
 
 ### What the display does about it
 
-At one pixel per refresh, the fastest crisp speed, the step is exactly one
-refresh's worth of motion, so it can be cancelled: show one half of the panel
+The step is the motion of one refresh, so it can be cancelled: show one half of the panel
 a refresh behind the other -- the half whose row at the seam lights at the
 start of each refresh. The two rows either side of the seam then show the same
 moment again. What is left is a
 lean of one pixel per half from top to bottom, continuous across the panel,
 which reads as nothing where the step read as a tear. `DisplayManager` does
-this while something scrolls at one frame per refresh
+this while something scrolls
 (`display.scan_order_compensation`, `"auto"` by default, `"off"` to disable;
 the geometry is in `src/scan_order.py`). The lagging rows come from the
 previous frame the display presented, so it works for Vegas and every plugin
 ticker without knowing how they scroll.
+
+A frame held for several refreshes (any crisp speed below the panel's full
+refresh rate, e.g. 60 px/s at 120 Hz) is presented as two swaps instead of one:
+the lagging half shows the previous frame for the first refresh and the new one
+for the rest, so it steps one refresh after the rest rather than one frame.
+That costs a second blit inside the refresh after the first swap, so it is
+skipped when a blit takes more than half a refresh.
+
+A plugin screen that runs the 1 Hz loop after a scroll is not composed: the
+display controller calls `DisplayManager.end_scroll_for_static_screen()` before
+its first `display()`, so the frames that call presents go out as drawn, in one
+swap each, instead of with the lagging half taken from the scroller's last
+frame.
+
+The controller's own screens -- the blank shown when the schedule turns the
+panel off, and the WiFi status message -- end the scroll state before they are
+drawn, so they go out as drawn and are timed as static frames, not as freezes
+of the old scroll. A scroller that resumes after a WiFi notice sets the state
+again on its next frame.
+
+One screen that follows a scroll is still composed while the scroll state lasts
+(it expires 2 s after the scroller's last frame): a screen that runs the
+high-FPS loop without scrolling (an older `static-image`, which is forced into
+it). Its first frame takes its lagging half from the scroller's last frame, for
+one refresh after a held scroll and otherwise until its next frame.
 
 Checked on hdpi (4×128×64 on one chain, rotated 180, 2026-09-24) before it was
 written: `scan_mode: 1` (interlaced) made the step vanish but turned moving
@@ -530,9 +574,6 @@ frame. With the compensation the step is gone at 90 px/s.
 
 It is left off where the row order is unknown or the maths does not hold:
 
-- **Slower speeds**, where each frame is held for two or more refreshes. The
-  offset there is half a pixel or less, and cancelling it would need a lag of
-  a fraction of a frame.
 - **Other layouts:** pixel mappers other than a 0 or 180 degree rotation
   (U-mapper, 90/270), non-zero `multiplexing`, interlaced `scan_mode`, and a
   canvas remapped to another height (double-sided mode).

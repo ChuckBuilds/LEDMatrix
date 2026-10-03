@@ -1,0 +1,21 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 20.0, "duration", 20, true],
+    [40.0, "sports_recent", 10.0, "live", 11, true],
+    [50.0, "sports_live", 20.0, "duration", 20, true],
+    [70.0, "sports_live", 20.0, "duration", 20, false],
+    [90.0, "sports_live", 20.0, "live-ended", 20, false],
+    [110.0, "sports_recent", 20.0, "duration", 20, true],
+    [130.0, "sports_live", 0.0, "empty", 1, true],
+    [130.0, "clock", 20.0, "duration", 20, true],
+    [150.0, "weather", 20.0, "duration", 20, true],
+    [170.0, "sports_recent", 20.0, "duration", 20, true],
+    [190.0, "sports_live", 0.0, "empty", 1, true],
+    [190.0, "clock", 10.0, "horizon", 10, true]
+  ],
+  "events": [
+    [50.0, "live", "sports_live"],
+    [110.0, "live-ended", "sports_recent"]
+  ]
+}

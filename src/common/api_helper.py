@@ -10,11 +10,16 @@ import logging
 import time
 from datetime import datetime
 from types import MappingProxyType
-from src.common.espn_dates import ESPN_MAX_LIMIT
+from src.common.espn_dates import (
+    ESPN_MAX_LIMIT,
+    espn_scoreboard_cache_key,
+    read_espn_scoreboard_cache,
+    store_espn_scoreboard_cache,
+)
+from src.common.fetch_service import fetch_get, fetch_post, share_connection_pool
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 if TYPE_CHECKING:
@@ -45,7 +50,11 @@ class APIHelper:
 
     - Requests go through one ``requests.Session`` that retries GET, HEAD
       and OPTIONS on 429 and 5xx with exponential backoff, and sends
-      :data:`DEFAULT_HTTP_HEADERS`.
+      :data:`DEFAULT_HTTP_HEADERS`. Its connection pool is shared with every
+      other helper using the same retry policy, and requests go through the
+      core fetch service (``src/common/fetch_service.py``): identical GETs in
+      flight are merged, hosts with a budget are paced, and requests are
+      counted per plugin. Return values and errors are unchanged.
     - Consecutive requests from one helper are spaced at least
       ``set_rate_limit()`` seconds apart (1 second by default). A cache hit
       does not count.
@@ -81,9 +90,10 @@ class APIHelper:
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET", "HEAD", "OPTIONS"]
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
+        # The shared adapter for this retry policy: the same retries as a
+        # private HTTPAdapter(max_retries=retry_strategy), with the connection
+        # pool shared by every helper (fetch_service).
+        share_connection_pool(self.session, retry_strategy)
         
         self.session.headers.update({**DEFAULT_HTTP_HEADERS, 'Connection': 'keep-alive'})
         
@@ -112,6 +122,14 @@ class APIHelper:
         Returns:
             Response data as dictionary or None if request fails
         """
+        return self._get(url, params, headers, timeout, cache_key, cache_ttl,
+                         cache_ttl if cache_key else None)
+
+    def _get(self, url: str, params: Optional[Dict], headers: Optional[Dict],
+             timeout: Optional[int], cache_key: Optional[str], cache_ttl: int,
+             cache_max_age: Optional[float]) -> Optional[Dict]:
+        """:meth:`get`, saying how old a response the fetch service's short
+        response cache may hand back (``cache_max_age``, the caller's TTL)."""
         if cache_key and self.cache_manager:
             cached = self._get_from_cache(cache_key, cache_ttl)
             if cached is not None:
@@ -128,11 +146,13 @@ class APIHelper:
                 request_headers.update(headers)
             
             # Make request
-            response = self.session.get(
+            response = fetch_get(
+                self.session,
                 url, 
                 params=params,
                 headers=request_headers,
-                timeout=timeout or self.default_timeout
+                timeout=timeout or self.default_timeout,
+                cache_max_age=cache_max_age,
             )
             response.raise_for_status()
             
@@ -161,22 +181,23 @@ class APIHelper:
             sport: Sport name (e.g., 'basketball', 'football')
             league: League name (e.g., 'nba', 'nfl')
             date: Date in YYYYMMDD format (defaults to today)
-            cache_key: Cache key for response
-            cache_ttl: Cache time-to-live in seconds
-            
+            cache_key: Cache key for response. By default the canonical
+                ``espn_scoreboard_cache_key(sport, league, date)``, shared
+                with every other consumer of this scoreboard, with the key
+                this used before (``espn_{sport}_{league}_{date}``) read as a
+                fallback for one release. An explicit key works as before.
+            cache_ttl: Cache time-to-live in seconds. A shared entry is
+                returned only while it is at most this old.
+
         Returns:
             ESPN API response data or None if request fails
         """
         if date is None:
             date = datetime.now().strftime('%Y%m%d')
-        
+
         # Build URL
         url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard"
-        
-        # Build cache key if not provided
-        if cache_key is None:
-            cache_key = f"espn_{sport}_{league}_{date}"
-        
+
         # Set parameters
         # limit above 500 makes ESPN truncate instead of erroring: college
         # football came back with 25 of 68 games. See src/common/espn_dates.py.
@@ -184,8 +205,26 @@ class APIHelper:
             'dates': date,
             'limit': ESPN_MAX_LIMIT
         }
-        
-        return self.get(url, params=params, cache_key=cache_key, cache_ttl=cache_ttl)
+
+        if cache_key is not None:
+            return self.get(url, params=params, cache_key=cache_key, cache_ttl=cache_ttl)
+
+        legacy_key = f"espn_{sport}_{league}_{date}"
+        try:
+            shared_key = espn_scoreboard_cache_key(sport, league, date)
+        except ValueError:
+            # Not a path or date the canonical key covers: the old key.
+            return self.get(url, params=params, cache_key=legacy_key, cache_ttl=cache_ttl)
+        if self.cache_manager:
+            cached = read_espn_scoreboard_cache(
+                self.cache_manager, shared_key, cache_ttl, legacy_keys=(legacy_key,))
+            if cached is not None:
+                self.logger.debug(f"Using cached response for {shared_key}")
+                return cast(Dict[Any, Any], cached)
+        data = self._get(url, params, None, None, None, cache_ttl, cache_ttl)
+        if data is not None and self.cache_manager:
+            store_espn_scoreboard_cache(self.cache_manager, shared_key, data)
+        return data
     
     def fetch_espn_standings(self, sport: str, league: str,
                             cache_key: Optional[str] = None,
@@ -255,7 +294,8 @@ class APIHelper:
             if headers:
                 request_headers.update(headers)
             
-            response = self.session.post(
+            response = fetch_post(
+                self.session,
                 url,
                 data=data,
                 json=json_data,

@@ -1,0 +1,22 @@
+{
+  "screens": [
+    [0.0, "clock", 10.0, "duration", 10, false],
+    [10.0, "empty", 0.0, "empty", 1, true],
+    [10.0, "ghost", 0.0, "no-plugin", 0, null],
+    [10.0, "flaky", 12.0, "display-false", 2, true],
+    [22.0, "clock", 10.0, "duration", 10, true],
+    [32.0, "empty", 0.0, "empty", 1, true],
+    [32.0, "ghost", 0.0, "no-plugin", 0, null],
+    [32.0, "flaky", 12.0, "display-false", 2, true],
+    [44.0, "clock", 10.0, "duration", 10, true],
+    [54.0, "empty", 0.0, "empty", 1, true],
+    [54.0, "ghost", 0.0, "no-plugin", 0, null],
+    [54.0, "flaky", 12.0, "display-false", 2, true],
+    [66.0, "clock", 10.0, "duration", 10, true],
+    [76.0, "empty", 0.0, "empty", 1, true],
+    [76.0, "ghost", 0.0, "no-plugin", 0, null],
+    [76.0, "flaky", 12.0, "display-false", 2, true],
+    [88.0, "clock", 2.0, "horizon", 2, true]
+  ],
+  "events": []
+}

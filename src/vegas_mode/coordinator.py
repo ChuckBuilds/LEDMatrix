@@ -5,10 +5,12 @@ Main orchestrator for Vegas-style continuous scroll mode. Coordinates between
 StreamManager, RenderPipeline, and the display system to provide smooth
 continuous scrolling of all enabled plugin content.
 
-Supports three display modes per plugin:
-- SCROLL: Content scrolls continuously within the stream
-- FIXED_SEGMENT: Fixed block that scrolls by with other content
-- STATIC: Scroll pauses, plugin displays for its duration, then resumes
+Each plugin takes part in one of three ways (its Vegas participation, see
+BasePlugin.get_vegas_participation):
+- 'scroll': its content scrolls by within the stream
+- 'pause': the scroll pauses, the plugin displays for its duration, then
+  the scroll resumes
+- 'exclude': left out
 """
 
 import logging
@@ -18,8 +20,10 @@ import time
 import threading
 from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
 
+from src import display_watchdog
 from src.common import render_gate
 from src.vegas_mode.config import VegasModeConfig
+from src.vegas_mode.elements import LiveEpochs
 from src.vegas_mode.plugin_adapter import PluginAdapter
 from src.vegas_mode.stream_manager import StreamManager
 from src.vegas_mode.render_pipeline import RenderPipeline
@@ -83,6 +87,9 @@ class VegasModeCoordinator:
 
     # Class-level so coordinators built without __init__ (tests) have it.
     _last_live_check: float = float('-inf')
+    #: Whether live elements are on for this run (see _apply_live_state).
+    live_active: bool = False
+    _live_reason: Optional[str] = None
     # Set only while Vegas has changed the GIL switch interval; read with getattr.
     _saved_switch_interval: Optional[float]
 
@@ -121,6 +128,12 @@ class VegasModeCoordinator:
             self.stream_manager
         )
 
+        # Live elements: one data epoch per plugin, shared with the adapter,
+        # which stamps every element it draws with it. Moved on by the plugin
+        # manager's update listener while Vegas runs. See _apply_live_state.
+        self.live_epochs = LiveEpochs()
+        self.plugin_adapter.live_epochs = self.live_epochs
+
         # State management
         self._is_active = False
         self._is_paused = False
@@ -139,6 +152,8 @@ class VegasModeCoordinator:
         # Interrupt checker for yielding control back to display controller
         self._interrupt_check: Optional[Callable[[], bool]] = None
         self._interrupt_check_interval: int = 10  # Check every N frames
+        # Checked every frame; True runs the interrupt check at once.
+        self._interrupt_urgent: Optional[Callable[[], bool]] = None
 
         # Plugin update callback — fired from a background thread inside the loop
         # so the main loop's _tick_plugin_updates() finds nothing due when Vegas
@@ -213,7 +228,8 @@ class VegasModeCoordinator:
     def set_interrupt_checker(
         self,
         checker: Callable[[], bool],
-        check_interval: int = 10
+        check_interval: int = 10,
+        urgent: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Set the callback for checking if Vegas should yield control.
@@ -224,9 +240,25 @@ class VegasModeCoordinator:
         Args:
             checker: Callable that returns True if Vegas should yield
             check_interval: Check every N frames (default 10)
+            urgent: A cheap per-frame test; when it is True the checker
+                runs at this frame instead of waiting for the interval (the
+                display controller passes "a control socket command is
+                queued", so a command waits one frame, not ten)
         """
         self._interrupt_check = checker
         self._interrupt_check_interval = max(1, check_interval)
+        self._interrupt_urgent = urgent
+
+    def _interrupt_is_urgent(self) -> bool:
+        """The per-frame test set with ``urgent``; never raises."""
+        urgent = getattr(self, '_interrupt_urgent', None)
+        if urgent is None:
+            return False
+        try:
+            return bool(urgent())  # pylint: disable=not-callable
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Urgent interrupt test failed", exc_info=True)
+            return False
 
     def set_update_callback(self, callback: Callable[[], None]) -> None:
         """
@@ -290,6 +322,9 @@ class VegasModeCoordinator:
             self._fps_was_degraded = False
             self._apply_switch_interval()
             self._install_render_gate()
+            # Before the first background fetch below, which is the first
+            # that may ask a plugin for live elements.
+            self._apply_live_state()
 
         # Line up the next group immediately, so the first extension is already
         # warm rather than stalling the scroll to fetch it.
@@ -316,6 +351,7 @@ class VegasModeCoordinator:
 
         self._restore_switch_interval()
         self._remove_render_gate()
+        self._set_live(False, None)
 
         # Cleanup components
         self.render_pipeline.reset()
@@ -340,6 +376,62 @@ class VegasModeCoordinator:
         if saved is not None:
             sys.setswitchinterval(saved)
             self._saved_switch_interval = None
+
+    # -- live elements ------------------------------------------------------
+
+    def _live_blocker(self) -> Optional[str]:
+        """Why live elements must stay off for this run, or None if they may run."""
+        cfg = self.vegas_config
+        if not getattr(cfg, 'live_refresh', False):
+            return "switched off (vegas_scroll.live_refresh)"
+        if getattr(self.render_pipeline, 'sync_manager', None) is not None:
+            # The follower mirrors whole strips only; a patch would not reach it.
+            return "multi-display sync is configured"
+        if not cfg.continuous_scroll:
+            return "swap mode (vegas_scroll.continuous_scroll is off)"
+        if not cfg.offscreen_prefetch:
+            return "vegas_scroll.offscreen_prefetch is off"
+        if not hasattr(self.display_manager, 'offscreen'):
+            return "the display manager has no off-screen canvas"
+        return None
+
+    def _apply_live_state(self) -> None:
+        """Switch live elements on or off for this run, as the config allows."""
+        blocker = self._live_blocker()
+        self._set_live(blocker is None, blocker)
+
+    def _set_live(self, active: bool, reason: Optional[str]) -> None:
+        was, self.live_active = self.live_active, active
+        # getattr: tests build coordinators without every component.
+        adapter = getattr(self, 'plugin_adapter', None)
+        if adapter is not None:
+            adapter.live_elements_enabled = active
+        pipeline = getattr(self, 'render_pipeline', None)
+        if pipeline is not None and hasattr(pipeline, 'set_live'):
+            pipeline.set_live(active)
+        plugin_manager = getattr(self, 'plugin_manager', None)
+        add = getattr(plugin_manager, 'add_update_listener', None)
+        remove = getattr(plugin_manager, 'remove_update_listener', None)
+        if active and callable(add):
+            add(self._on_plugin_data_changed)
+        elif not active and callable(remove):
+            remove(self._on_plugin_data_changed)
+        if active != was or (reason is not None and reason != self._live_reason):
+            if active:
+                logger.info("Vegas live elements on")
+            elif reason is not None:
+                logger.info("Vegas live elements off: %s", reason)
+        self._live_reason = reason
+
+    def _on_plugin_data_changed(self, plugin_id: str) -> None:
+        """Update listener: a plugin's data may have changed.
+
+        Runs on the update worker with the plugin's lock held, so it only
+        moves the plugin's epoch on and wakes the live-element worker, which
+        redraws once the lock is free.
+        """
+        self.live_epochs.bump(plugin_id)
+        self.render_pipeline.notify_live_data(plugin_id)
 
     def _install_render_gate(self) -> None:
         """Gate the prefetch thread on the render thread's swaps; see VegasModeConfig."""
@@ -435,6 +527,12 @@ class VegasModeCoordinator:
             # rendering whatever it was first built from — last night's live
             # game still shown as live the next morning.
             self.render_pipeline.refresh_updated_plugins()
+
+            # Copy any live-element redraws the worker has finished into the
+            # strip, between this frame and the last. A deque check when there
+            # are none.
+            if self.live_active:
+                self.render_pipeline.apply_live_patches()
 
             # Extend the strip before the scroll can reach its end, so the next
             # group arrives from the right and motion never stops. No cycle
@@ -540,6 +638,9 @@ class VegasModeCoordinator:
             # the whole budget -- the render loop stalls for the size of the
             # correction. A forward jump inflates p99 and worst-frame instead.
             frame_started = time.monotonic()
+            # An iteration runs for minutes (max_cycle_duration) without
+            # returning to the display controller's loop.
+            display_watchdog.beat()
 
             # Check for STATIC mode plugin that should pause scroll
             static_plugin = self._check_static_plugin_trigger()
@@ -627,7 +728,8 @@ class VegasModeCoordinator:
                 frame_times.clear()
 
             if (self._interrupt_check and
-                    frame_count % self._interrupt_check_interval == 0):
+                    (frame_count % self._interrupt_check_interval == 0
+                     or self._interrupt_is_urgent())):
                 try:
                     if self._interrupt_check():
                         logger.debug(
@@ -644,7 +746,12 @@ class VegasModeCoordinator:
             # main loop's _tick_plugin_updates() finds all intervals already
             # satisfied on return, so the inter-iteration gap is <1 ms and the
             # display never shows a frozen frame between iterations.
-            _UPDATE_TICK_FRAMES = max(1, int(self.render_pipeline.target_fps * 4))  # every 4 s regardless of FPS
+            # Every 4 s, or every 1 s while the strip holds live elements:
+            # plugins are only scheduled on this tick, so its period is added
+            # to how late a live update can be.
+            tick_seconds = (1.0 if self.live_active
+                            and self.render_pipeline.has_live_records() else 4.0)
+            _UPDATE_TICK_FRAMES = max(1, int(self.render_pipeline.target_fps * tick_seconds))
             if (self._update_callback and
                     frame_count % _UPDATE_TICK_FRAMES == 0 and
                     not self._update_tick_running):
@@ -768,6 +875,8 @@ class VegasModeCoordinator:
             # Cached segments were trimmed under the old settings, so drop them
             # or a changed trim/padding value would not visibly take effect.
             self.plugin_adapter.invalidate_cache()
+            if self._is_active:
+                self._apply_live_state()
 
             # Force refresh of stream manager to pick up plugin_order/buffer changes
             self.stream_manager._last_refresh = 0
@@ -921,6 +1030,7 @@ class VegasModeCoordinator:
 
                 # Sleep in small increments to remain responsive
                 time.sleep(0.1)
+                display_watchdog.beat()
 
             logger.info(
                 "Static pause completed for %s after %.1fs",

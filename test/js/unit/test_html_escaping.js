@@ -105,18 +105,15 @@ const ESCAPERS = [
    'static/v3/js/widgets/slider.js', 'function escapeAttr(text) {', 'escapeAttr', false],
   ['display.html (escapeAttr)',
    'templates/v3/partials/display.html', 'function escapeAttr(text) {', 'escapeAttr', false],
-  ['backup_restore.html (escapeHtml)',
-   'templates/v3/partials/backup_restore.html', 'function escapeHtml(value) {', 'escapeHtml', false],
-  ['operation_history.html (escapeHtml)',
-   'templates/v3/partials/operation_history.html', 'function escapeHtml(text) {', 'escapeHtml', false],
   ['tools.html (escHtml)',
    'templates/v3/partials/tools.html', 'function escHtml(s) {', 'escHtml', false],
   ['tools.html (phEscape)',
    'templates/v3/partials/tools.html', 'function phEscape(s) {', 'phEscape', false],
   ['logs.html (escapeHtml)',
    'templates/v3/partials/logs.html', 'function escapeHtml(text) {', 'escapeHtml', false],
-  ['cache.html (escapeHtml)',
-   'templates/v3/partials/cache.html', 'function escapeHtml(text) {', 'escapeHtml', false],
+  // cache.html, backup_restore.html and operation_history.html have no
+  // script any more: their js/pages/ modules draw server data with
+  // textContent, and each page's suite in test/js/dom/ checks a hostile value.
 ];
 
 // The breakout payload: closes a double-quoted attribute and opens an event

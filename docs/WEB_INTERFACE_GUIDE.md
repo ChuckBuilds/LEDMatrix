@@ -78,7 +78,9 @@ The Overview tab provides at-a-glance information and quick actions:
 - **Start Display** / **Stop Display** — control the display service
 - **Restart Display Service** — apply configuration changes
 - **Restart Web Service** — restart the web UI itself
-- **Update Code** — `git pull` the latest version (stashes local changes)
+- **Update Code** — update to the newest version on the update channel (the
+  newest release on Stable, the newest code on `main` on Beta; stashes local
+  changes). The channel is set on the General tab.
 - **Reboot System** / **Shutdown System** — confirm-gated power controls
 
 **Display Preview:**
@@ -90,6 +92,11 @@ The Overview tab provides at-a-glance information and quick actions:
 
 Configure basic system settings:
 
+- **Automatic Updates** — weekly updates with a health check and rollback
+- **Update Channel** — **Stable** (default) installs releases; **Beta**
+  installs the newest code on `main` before it is released. Switching to
+  Stable never installs an older version: a device ahead of the newest
+  release keeps following `main` until a release includes it
 - **Timezone** — used by all time/date displays
 - **Location** — city/state/country for weather and other location-aware
   plugins
@@ -129,6 +136,34 @@ Configure basic system settings:
 
 Click **Save** to write changes to `config/config.json`. Most changes
 require a display service restart from **Overview**.
+
+Below the settings, the **Security** section (its own buttons, not the Save
+button) controls the optional login:
+
+- **Web interface password** — off by default. Setting one turns login on:
+  browsers on your network then see a login page, and stay logged in for 30
+  days (across restarts). The browser you set it from stays logged in.
+  Changing the password logs every other browser out. **Turn login off**
+  needs the current password. A **Log out** button appears in the header
+  while you are logged in. Five wrong passwords in a minute (or 30 in an
+  hour) from one address make it wait.
+- **API tokens** — for Home Assistant, scripts, or the MQTT bridge on another
+  machine. Give it a name, click **Create token**, and copy the token right
+  away: it is shown once. Revoke it here when it is no longer needed.
+- Never asked for a password: a browser on the Pi itself, and the Wi-Fi setup
+  page while the Pi is in access-point mode (so you can always get it back on
+  a network).
+
+**Forgot the password?** SSH into the Pi and run:
+
+```bash
+sudo python3 ~/LEDMatrix/scripts/reset_web_password.py
+```
+
+(use the folder LEDMatrix is installed in). Login is off again right away,
+no restart needed, and you can set a new password. API tokens are kept; add
+`--revoke-tokens` to delete them too. Alternatively, open
+`http://localhost:5000` in a browser on the Pi itself.
 
 ### Display Tab
 
@@ -346,6 +381,14 @@ The API blueprint (`web_interface/blueprints/api_v3/`) is registered at
 - `POST /api/v3/plugins/install` — Install a plugin from the store
 - `POST /api/v3/plugins/install-from-url` — Install a plugin from a GitHub URL
 
+If the optional login is on, send an API token (General > Security):
+
+```bash
+curl -H "Authorization: Bearer lmx_..." http://your-pi-ip:5000/api/v3/display/current
+```
+
+Scripts running on the Pi itself need no token.
+
 **Note:** See [REST_API_REFERENCE.md](REST_API_REFERENCE.md) for complete API documentation.
 
 ---
@@ -408,9 +451,27 @@ The API blueprint (`web_interface/blueprints/api_v3/`) is registered at
 ## Security Considerations
 
 **Network Access:**
-- The interface is accessible to anyone on your local network
-- No authentication is currently implemented
-- Recommended for trusted networks only
+- By default the interface is accessible to anyone on your local network
+- An optional password (General > Security) makes every page and API call
+  need a login or an API token; see [General Tab](#general-tab). Requests
+  from the Pi itself and the Wi-Fi setup flow in access-point mode stay open,
+  and `/api/v3/health` answers only its overall status without a login
+- The interface speaks plain HTTP, so the password and tokens cross your
+  network unencrypted: still recommended for trusted networks only
+- Behind a reverse proxy **on the Pi**, make it send `X-Forwarded-For`
+  (nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`).
+  Without it every proxied request looks like it comes from the Pi itself,
+  which is never asked to log in
+
+**Other websites:**
+- A web page you open elsewhere could otherwise make your browser send
+  commands to the Pi (reboot, update, config changes). The interface refuses
+  any change request whose `Origin`/`Referer` header names a different site
+  (403 `CROSS_SITE_REQUEST`), so use the interface from its own address.
+- Scripts, curl, Home Assistant and the MQTT bridge send no such header and
+  keep working. Behind a reverse proxy, forward the original `Host` header
+  with its port (nginx: `proxy_set_header Host $http_host;` -- `$host`
+  drops the port).
 
 **Best Practices:**
 1. Run on a private network (not exposed to internet)
@@ -428,7 +489,9 @@ The web interface uses modern web technologies:
 
 - **Backend:** Flask with Blueprint-based modular design
 - **Frontend:** HTMX for dynamic content, Alpine.js for reactive components
-- **Styling:** Tailwind CSS for responsive design
+- **Styling:** Tailwind CSS utilities, generated at development time and
+  committed (the Pi never builds CSS; see
+  [`web_interface/README.md`](../web_interface/README.md#styling-tailwind-css))
 - **Real-Time:** Server-Sent Events (SSE) for live updates
 
 ### File Locations

@@ -229,7 +229,7 @@ def display_page(monkeypatch):
         config_manager.get_config_path.return_value = 'config/config.json'
         config_manager.get_secrets_path.return_value = 'config/config_secrets.json'
         monkeypatch.setattr(pv.pages_v3, 'config_manager', config_manager, raising=False)
-        monkeypatch.setattr(pv.pages_v3, 'plugin_manager', MagicMock(plugins={}), raising=False)
+        monkeypatch.setattr(pv.pages_v3, 'plugin_catalog', MagicMock(), raising=False)
         app.register_blueprint(pv.pages_v3, url_prefix='/v3')
         response = app.test_client().get('/v3/partials/display')
         assert response.status_code == 200

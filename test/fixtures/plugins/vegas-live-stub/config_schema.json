@@ -1,0 +1,39 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable the stub (test fixture only)."
+        },
+        "cards": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "default": 6,
+            "description": "How many keyed cards to return."
+        },
+        "card_width": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512,
+            "default": 0,
+            "description": "Card width in px; 0 sizes cards from the render width."
+        },
+        "map_hz": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 30,
+            "default": 4,
+            "description": "refresh_hz of the full-width animated element; 0 leaves it out."
+        },
+        "dot_speed": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 200,
+            "default": 20,
+            "description": "How fast the animated element's dot moves, in px per second."
+        }
+    }
+}

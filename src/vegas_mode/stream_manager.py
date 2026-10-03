@@ -5,23 +5,26 @@ Manages plugin content streaming with look-ahead buffering. Maintains a queue
 of plugin content that's ready to be rendered, prefetching 1-2 plugins ahead
 of the current scroll position.
 
-Supports three display modes:
-- SCROLL: Continuous scrolling content
-- FIXED_SEGMENT: Fixed block that scrolls by
-- STATIC: Pause scroll to display (marked for coordinator handling)
+Each plugin takes part in one of three ways (its Vegas participation, see
+BasePlugin.get_vegas_participation):
+- 'scroll': its content joins the strip
+- 'pause': the scroll pauses for its turn (a STATIC segment, marked for the
+  coordinator)
+- 'exclude': left out of the rotation
 """
 
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING, cast
+from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
 
+from src import display_watchdog
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.plugin_adapter import PluginAdapter
-from src.plugin_system.base_plugin import VegasDisplayMode
+from src.plugin_system.base_plugin import VegasDisplayMode, resolve_vegas_participation
 
 if TYPE_CHECKING:
     from src.plugin_system.plugin_manager import PluginManager
@@ -34,11 +37,12 @@ class ContentSegment:
     """One plugin's content for a cycle.
 
     A STATIC segment carries no images: it marks where the coordinator pauses
-    the scroll to show the plugin full-screen.
+    the scroll to show a plugin whose participation is ``'pause'``. Every
+    other segment is SCROLL.
     """
     plugin_id: str
     images: List[Image.Image]
-    display_mode: VegasDisplayMode = field(default=VegasDisplayMode.FIXED_SEGMENT)
+    display_mode: VegasDisplayMode = field(default=VegasDisplayMode.SCROLL)
 
 
 class StreamManager:
@@ -329,31 +333,23 @@ class StreamManager:
         loaded = 0
 
         if hasattr(self.plugin_manager, 'plugins'):
-            loaded = len(self.plugin_manager.plugins)
-            for plugin_id, plugin in self.plugin_manager.plugins.items():
+            # A snapshot: a plugin reload adds and removes entries on its
+            # own thread (DisplayController._start_plugin_reload).
+            plugins = list(self.plugin_manager.plugins.items())
+            loaded = len(plugins)
+            for plugin_id, plugin in plugins:
                 if not getattr(plugin, 'enabled', False):
                     logger.debug("[%s] Vegas: skipped (not enabled)", plugin_id)
                     continue
 
-                # Content type 'none' is left out, except for STATIC plugins,
-                # which pause the scroll rather than contributing to it.
-                content_type = self.plugin_adapter.get_content_type(plugin, plugin_id)
-                display_mode = VegasDisplayMode.FIXED_SEGMENT
-                try:
-                    display_mode = plugin.get_vegas_display_mode()
-                except Exception:
-                    # Plugin error should not abort refresh; use default mode
-                    logger.exception(
-                        "[%s] (%s) get_vegas_display_mode() failed, using default",
-                        plugin_id, plugin.__class__.__name__
-                    )
-
-                included = (content_type != 'none'
-                            or display_mode == VegasDisplayMode.STATIC)
+                # 'pause' plugins stay in the rotation: they pause the scroll
+                # for their turn rather than contributing to it.
+                participation = resolve_vegas_participation(plugin, plugin_id)
+                included = participation != 'exclude'
                 logger.debug(
-                    "[%s] Vegas: %s (content_type=%s, display_mode=%s)",
+                    "[%s] Vegas: %s (participation=%s)",
                     plugin_id, "included" if included else "excluded",
-                    content_type, display_mode.value
+                    participation
                 )
                 if included:
                     available_plugins.append(plugin_id)
@@ -570,6 +566,9 @@ class StreamManager:
         Returns:
             ContentSegment or None if fetch failed
         """
+        # Composing a cycle fetches plugin after plugin on the render thread
+        # (on the prefetch thread this is ignored), so check in between.
+        display_watchdog.beat()
         try:
             if not hasattr(self.plugin_manager, 'plugins'):
                 logger.warning("[%s] plugin_manager has no plugins attribute", plugin_id)
@@ -580,23 +579,13 @@ class StreamManager:
                 logger.warning("[%s] Plugin not found in plugin_manager.plugins", plugin_id)
                 return None
 
-            display_mode = VegasDisplayMode.FIXED_SEGMENT
-            try:
-                display_mode = plugin.get_vegas_display_mode()
-            except (AttributeError, TypeError) as e:
-                logger.debug(
-                    "[%s] get_vegas_display_mode() not available: %s (using FIXED_SEGMENT)",
-                    plugin_id, e
-                )
-
-            # For STATIC mode, we create a placeholder segment
-            # The actual content will be displayed by coordinator during pause
-            if display_mode == VegasDisplayMode.STATIC:
-                # Create minimal placeholder - coordinator handles actual display
+            # A 'pause' plugin gets a placeholder segment; the coordinator
+            # draws it with display() when the scroll reaches its turn.
+            if resolve_vegas_participation(plugin, plugin_id) == 'pause':
                 segment = ContentSegment(
                     plugin_id=plugin_id,
                     images=[],  # No images needed for static pause
-                    display_mode=display_mode
+                    display_mode=VegasDisplayMode.STATIC
                 )
                 self.stats['segments_fetched'] += 1
                 logger.debug(
@@ -605,7 +594,6 @@ class StreamManager:
                 )
                 return segment
 
-            # Get content via adapter for SCROLL/FIXED_SEGMENT modes
             images = self.plugin_adapter.get_content(plugin, plugin_id)
             if not images:
                 # The adapter already warns when every content path failed;
@@ -619,13 +607,13 @@ class StreamManager:
             segment = ContentSegment(
                 plugin_id=plugin_id,
                 images=images,
-                display_mode=display_mode
+                display_mode=VegasDisplayMode.SCROLL
             )
 
             self.stats['segments_fetched'] += 1
             logger.debug(
-                "[%s] Segment: %d image(s), %dpx, mode=%s",
-                plugin_id, len(images), total_width, display_mode.value
+                "[%s] Segment: %d image(s), %dpx",
+                plugin_id, len(images), total_width
             )
             return segment
 
@@ -693,16 +681,16 @@ class StreamManager:
         return layout
 
     def is_static_plugin(self, plugin_id: str) -> bool:
-        """Whether a loaded plugin asks Vegas to pause for it (STATIC mode)."""
+        """Whether a loaded plugin asks Vegas to pause for it (participation 'pause').
+
+        Only 'pause' is acted on here. A plugin whose participation has turned
+        to 'exclude' since the rotation was built is still fetched this cycle,
+        as it always was; the next refresh drops it.
+        """
         plugin = getattr(self.plugin_manager, 'plugins', {}).get(plugin_id)
         if plugin is None:
             return False
-        try:
-            return cast(bool, plugin.get_vegas_display_mode() == VegasDisplayMode.STATIC)
-        except Exception:
-            logger.debug("[%s] get_vegas_display_mode() failed; treating as not STATIC",
-                         plugin_id, exc_info=True)
-            return False
+        return resolve_vegas_participation(plugin, plugin_id) == 'pause'
 
     def take_next_group(
         self, count: Optional[int] = None, offscreen_only: bool = False
@@ -732,6 +720,20 @@ class StreamManager:
             A STATIC plugin is also returned with an empty list, unfetched: it
             pauses the scroll instead of adding to it (see is_static_plugin).
         """
+        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+        for plugin_id in self.plan_next_group(count):
+            member = self.fetch_group_member(plugin_id, offscreen_only=offscreen_only)
+            if member is not None:
+                group.append(member)
+        return group
+
+    def plan_next_group(self, count: Optional[int] = None) -> List[str]:
+        """Which plugins the next group holds, advancing the rotation past them.
+
+        The first half of take_next_group(). The live-element worker fetches
+        a group one plugin at a time (fetch_group_member) so it can fit more
+        urgent redraws between them.
+        """
         if count is None:
             count = self.config.plugins_per_cycle
 
@@ -745,37 +747,38 @@ class StreamManager:
             for _ in range(min(max(1, count), total)):
                 ids.append(self._ordered_plugins[self._prefetch_index])
                 self._prefetch_index = (self._prefetch_index + 1) % total
+        return ids
 
-        plugins = getattr(self.plugin_manager, 'plugins', {})
-        group: List[Tuple[str, Optional[List[Image.Image]]]] = []
+    def fetch_group_member(
+        self, plugin_id: str, offscreen_only: bool = False
+    ) -> Optional[Tuple[str, Optional[List[Image.Image]]]]:
+        """One plugin's entry in a group, as take_next_group() describes it.
+
+        None when the plugin is gone or its fetch raised: it is left out of
+        the group.
+        """
+        plugin = getattr(self.plugin_manager, 'plugins', {}).get(plugin_id)
+        if not plugin:
+            return None
+        if self.is_static_plugin(plugin_id):
+            # A STATIC plugin pauses the scroll rather than scrolling by, so it
+            # contributes no columns. It keeps its place in the group (empty)
+            # so the pipeline can mark where its turn falls.
+            return (plugin_id, [])
+        try:
+            images = self.plugin_adapter.get_content(
+                plugin, plugin_id, offscreen_only=offscreen_only)
+        except Exception:
+            logger.exception("[%s] ERROR fetching content", plugin_id)
+            self.stats['fetch_errors'] += 1
+            return None
+        if images:
+            self.stats['segments_fetched'] += 1
+            return (plugin_id, images)
         # Only the old contract hands anything back to the render thread.
         defer_empty = offscreen_only and not getattr(
             self.config, 'offscreen_prefetch', True)
-
-        for plugin_id in ids:
-            plugin = plugins.get(plugin_id)
-            if not plugin:
-                continue
-            if self.is_static_plugin(plugin_id):
-                # A STATIC plugin pauses the scroll rather than scrolling by,
-                # so it contributes no columns. It keeps its place in the
-                # group (empty) so the pipeline can mark where its turn falls.
-                group.append((plugin_id, []))
-                continue
-            try:
-                images = self.plugin_adapter.get_content(
-                    plugin, plugin_id, offscreen_only=offscreen_only)
-            except Exception:
-                logger.exception("[%s] ERROR fetching content", plugin_id)
-                self.stats['fetch_errors'] += 1
-                continue
-            if images:
-                self.stats['segments_fetched'] += 1
-                group.append((plugin_id, images))
-            else:
-                group.append((plugin_id, None if defer_empty else []))
-
-        return group
+        return (plugin_id, None if defer_empty else [])
 
     def advance_cycle(self) -> None:
         """

@@ -200,12 +200,21 @@ def api_plugin_defaults(plugin_id):
     return jsonify({'defaults': defaults})
 
 
+#: /api/render "vegas" values: the plugin's block of the Vegas strip, built
+#: from its live elements (falling back to its Vegas content, as the ticker
+#: does) or from its ordinary Vegas content only.
+VEGAS_VIEWS = ('live', 'plain')
+
+
 def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, height,
-                 skip_update):
+                 skip_update, vegas=None):
     """Render one plugin at one size. Returns the /api/render response dict.
 
     A fresh plugin instance per call, mirroring the safety harness, so sizes
-    never share state.
+    never share state. With ``vegas`` set ('live' or 'plain') the image is the
+    plugin's block of the Vegas strip instead of its display(), laid out by
+    the ticker's own code (src/plugin_system/testing/vegas.py), and the
+    response lists where each live element sits in it.
     """
     from src.plugin_system.testing import VisualTestDisplayManager, MockCacheManager, MockPluginManager
     from src.plugin_system.plugin_loader import PluginLoader
@@ -243,6 +252,10 @@ def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, heig
             logger.warning("update() raised for plugin %s", plugin_id, exc_info=True)
             warnings.append(f"update() raised: {type(e).__name__} — see server log")
 
+    if vegas:
+        return _vegas_response(plugin_id, plugin_instance, display_manager, vegas,
+                               start_time, errors, warnings)
+
     # Run display()
     try:
         plugin_instance.display(force_clear=True)
@@ -259,6 +272,40 @@ def _render_once(plugin_id, plugin_dir, manifest, config, mock_data, width, heig
         'render_time_ms': render_time_ms,
         'errors': errors,
         'warnings': warnings,
+    }
+
+
+def _vegas_response(plugin_id, plugin_instance, display_manager, vegas, start_time,
+                    errors, warnings):
+    """The /api/render response for the Vegas strip view."""
+    import base64
+    import io
+
+    from src.plugin_system.testing.vegas import render_vegas_strip
+
+    block, layout = None, []
+    try:
+        block, layout = render_vegas_strip(plugin_instance, plugin_id, display_manager,
+                                           live=(vegas == 'live'))
+    except Exception as e:
+        logger.warning("Vegas render raised for plugin %s", plugin_id, exc_info=True)
+        errors.append(f"Vegas render raised: {type(e).__name__} — see server log")
+    if block is None:
+        if not errors:
+            errors.append("The plugin has no Vegas content")
+        block = display_manager.image
+    elif vegas == 'live' and not layout:
+        warnings.append("No live elements: this is the plugin's ordinary Vegas content")
+    buffer = io.BytesIO()
+    block.convert('RGB').save(buffer, format='PNG')
+    return {
+        'image': 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii'),
+        'width': block.width,
+        'height': block.height,
+        'render_time_ms': round((time.time() - start_time) * 1000, 1),
+        'errors': errors,
+        'warnings': warnings,
+        'live_elements': [{'key': key, 'x': x, 'width': width} for x, key, width in layout],
     }
 
 
@@ -333,6 +380,10 @@ def api_render():
     if not (MIN_HEIGHT <= height <= MAX_HEIGHT):
         return jsonify({'error': f'height must be between {MIN_HEIGHT} and {MAX_HEIGHT}'}), 400
 
+    vegas = data.get('vegas') or None
+    if vegas is not None and vegas not in VEGAS_VIEWS:
+        return jsonify({'error': f'vegas must be one of {", ".join(VEGAS_VIEWS)}'}), 400
+
     try:
         plugin_dir, manifest, config, mock_data, skip_update = _parse_render_request(data)
     except LookupError:
@@ -345,7 +396,7 @@ def api_render():
 
     try:
         result = _render_once(data['plugin_id'], plugin_dir, manifest, config,
-                              mock_data, width, height, skip_update)
+                              mock_data, width, height, skip_update, vegas=vegas)
     except Exception:
         app.logger.exception('plugin load failed during render')
         return jsonify({'error': 'Failed to load plugin; see server log'}), 500

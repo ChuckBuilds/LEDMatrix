@@ -1,7 +1,8 @@
 {
     "web_display_autostart": true,
     "auto_update": {
-        "enabled": false
+        "enabled": false,
+        "channel": "stable"
     },
     "schedule": {
         "enabled": false,
@@ -133,7 +134,7 @@
         "plugin_rotation_order": [],
         "use_short_date_format": true,
         "vegas_scroll": {
-            "live_in_ticker": false,
+            "live_in_ticker": true,
             "live_weight": 3,
             "favorite_live_weight": 5,
             "enabled": false,
@@ -172,6 +173,16 @@
     },
     "plugin_system": {
         "plugins_directory": "plugin-repos"
+    },
+    "fetch_service": {
+        "enabled": true,
+        "max_wait_seconds": 2,
+        "rate_limits": {
+            "*.espn.com": {
+                "per_second": 20,
+                "burst": 200
+            }
+        }
     },
     "web-ui-info": {
         "enabled": true,

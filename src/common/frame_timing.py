@@ -19,8 +19,9 @@ Only intervals between two consecutive *scrolling* frames count: a static
 screen that changes once a second has no timing to get wrong, and the first
 frame of a scroll has no predecessor worth measuring against.
 
-"Scrolling" is DisplayManager's scroll state when the frame is presented, and
-that state can go missing in the middle of a scroll. It expires after 2s
+"Scrolling" is the scroll state ``DisplayManager.update_display`` acted on for
+the frame, sampled once before the blit and swap, and that state can go missing
+in the middle of a scroll. It expires after 2s
 without scroll activity, which a long enough stall outlasts, and any thread can
 clear it: plugins call ``set_scrolling_state(False)`` from their own
 ``display()``, and Vegas captures some of those on the render thread between
@@ -38,12 +39,20 @@ after the one before it. One that arrives a whole refresh or more after that is
 a visible hitch. ``missed_refreshes`` sums how many refreshes late.
 
 An interval of ``FREEZE_SECONDS`` or more is a **freeze** instead -- a
-recompose, a plugin handover, a blocking call on the render thread. Those are
-counted separately, both because they are a different fault and because
-folding a single 400ms handover into the late count as "40 missed refreshes"
-would drown the jitter the late count exists to measure. ``freeze_by`` splits
-them by length. Intervals of ``GAP_SECONDS`` or more are ignored as not being
-frames of one scroll at all.
+recompose, a plugin handover nobody tagged (see below), a blocking call on the
+render thread. Those are counted separately, both because they are a different
+fault and because folding a single 400ms handover into the late count as "40
+missed refreshes" would drown the jitter the late count exists to measure.
+``freeze_by`` splits them by length. Intervals of ``GAP_SECONDS`` or more are
+ignored as not being frames of one scroll at all.
+
+One kind of freeze is not a scroll stalling at all: the gap from one screen's
+last frame to the next screen's first, while the next screen draws. The
+display controller tags that frame ``handover`` (see "Operations") at the
+start of every turn, the same mode's again included, and a tagged freeze is
+counted in ``handover_freezes`` instead of ``freezes`` and ``freeze_by``.
+Stats written before that field existed have handovers among their freezes,
+so freeze counts from before and after it are not comparable.
 
 A frame that arrives a whole refresh or more *early* means the swap did not
 wait for the panel: the emulator, the fallback display, or a hold that was not
@@ -66,6 +75,35 @@ faster than the panel (every frame early) or sits at half its rate (every
 frame late), both of which look self-consistent to an estimate taken from
 their own intervals.
 
+Operations
+----------
+The late count says how often, not which work did it. Render-thread work that
+happens between two frames -- extending the Vegas strip, patching a live
+element into it -- calls :meth:`FrameTimingRecorder.note_op` first, and the
+next presented frame carries the tag: the interval that frame ends is the one
+the work landed in. ``op_frames`` counts timed frames per kind,
+``late_op_frames`` the late ones among them, ``op_freezes`` those that were a
+freeze instead, and ``op_bytes`` what the work moved. A kind whose late rate
+sits well above the overall one is the work to look at.
+
+``handover`` (:data:`HANDOVER_OP`) is noted off the render thread: the display
+controller notes it just before it starts a screen's first ``display()``,
+which presents from a thread of its own, and drops the note again with
+:meth:`FrameTimingRecorder.drop_op` once that call returns, so a first
+``display()`` that drew nothing cannot leave the tag for an unrelated frame.
+
+Garbage collection
+------------------
+
+Python's cyclic collector stops every thread while it runs. :class:`GcMonitor`
+times each collection from ``gc.callbacks``; the display manager installs one
+per process. A collection of ``GC_PAUSE_SECONDS`` or more tags the next
+presented frame ``gc`` (:data:`GC_OP`), so it shows in ``op_frames``,
+``late_op_frames`` and ``op_freezes`` like noted work, and the snapshot carries
+a ``gc`` block of cumulative counters: collections and seconds per generation,
+the longest, and the long ones. A stall dump says when a long collection ran
+inside the stall. Diagnostic only: nothing tunes or freezes the collector.
+
 Stall watchdog
 --------------
 Counting a freeze says that it happened, not why. ``StallWatchdog`` watches the
@@ -84,6 +122,7 @@ three times per threshold, so keep it to diagnostic runs, not soaks.
 from __future__ import annotations
 
 import copy
+import gc
 import json
 import logging
 import os
@@ -122,6 +161,16 @@ RESUME_SECONDS = 1.0
 FREEZE_BUCKETS = ((0.5, "<0.5s"), (1.0, "0.5-1s"), (2.0, "1-2s"),
                   (float("inf"), "2s+"))
 
+#: The op the display controller notes before a screen's first frame. A
+#: freeze it ends is a handover, counted apart from the freezes; see
+#: "What is counted".
+HANDOVER_OP = "handover"
+
+#: The op a garbage collection of ``GC_PAUSE_SECONDS`` or more tags the next
+#: frame with; see "Garbage collection".
+GC_OP = "gc"
+GC_PAUSE_SECONDS = 0.020
+
 #: A window may lower the refresh-period estimate by at most this fraction.
 MAX_REFRESH_DROP = 0.2
 
@@ -153,9 +202,92 @@ def default_stats_path() -> str:
     return os.path.join(base, STATS_FILENAME)
 
 
+class GcMonitor:
+    """Times every garbage collection, from ``gc.callbacks``.
+
+    Python's cyclic collector stops every thread for as long as a collection
+    takes, and a full one over a large heap (a season of game dicts) can take
+    longer than a frame. Nothing measured that, so a stall it caused looked
+    like any other. The callback runs inside the collection, with the GIL
+    held, and collections never overlap, so these plain counters need no
+    lock: the render thread and the stats writer only read them.
+
+    Install it once per process with :func:`install_gc_monitor`.
+    """
+
+    def __init__(self, threshold: float = GC_PAUSE_SECONDS):
+        self.threshold = threshold
+        self._started: Optional[float] = None
+        #: Per generation (0, 1, 2), since the monitor was installed.
+        self.collections = [0, 0, 0]
+        self.seconds = [0.0, 0.0, 0.0]
+        self.max_seconds = 0.0
+        #: Collections of ``threshold`` or more, and their total length. The
+        #: recorder compares ``long_pauses`` with the count it last saw to tag
+        #: the next frame.
+        self.long_pauses = 0
+        self.long_seconds = 0.0
+        #: ``time.perf_counter()`` at the end of the last long collection,
+        #: and its length, for the stall watchdog.
+        self.last_long: Optional[Tuple[float, float]] = None
+
+    def __call__(self, phase: str, info: Dict[str, Any]) -> None:
+        now = time.perf_counter()
+        if phase == "start":
+            self._started = now
+            return
+        started, self._started = self._started, None
+        if started is None:
+            return
+        took = now - started
+        generation = min(max(int(info.get("generation", 0)), 0), 2)
+        self.collections[generation] += 1
+        self.seconds[generation] += took
+        if took > self.max_seconds:
+            self.max_seconds = took
+        if took >= self.threshold:
+            self.long_seconds += took
+            self.last_long = (now, took)
+            self.long_pauses += 1
+
+    def snapshot(self) -> Dict[str, Any]:
+        """Cumulative counters for the stats file (all since installation)."""
+        return {
+            "threshold_ms": round(self.threshold * 1000.0, 3),
+            "collections": list(self.collections),
+            "seconds": [round(x, 6) for x in self.seconds],
+            "max_ms": round(self.max_seconds * 1000.0, 3),
+            "long_pauses": self.long_pauses,
+            "long_seconds": round(self.long_seconds, 6),
+        }
+
+
+_gc_monitor: Optional[GcMonitor] = None
+_gc_monitor_lock = threading.Lock()
+
+
+def install_gc_monitor() -> GcMonitor:
+    """The process's GcMonitor, installed in ``gc.callbacks`` on first call."""
+    global _gc_monitor
+    with _gc_monitor_lock:
+        if _gc_monitor is None:
+            _gc_monitor = GcMonitor()
+            gc.callbacks.append(_gc_monitor)
+        return _gc_monitor
+
+
+#: One presented frame's interval: (interval, blit, wait, hold, ops), where
+#: ops is the work noted before it (kind -> bytes) or None.
+_Frame = Tuple[float, float, float, int, Optional[Dict[str, int]]]
+
+
 def _bucket(seconds: float) -> int:
     index = int(seconds * 1000.0 / BUCKET_MS)
     return min(max(index, 0), BUCKET_COUNT - 1)
+
+
+def _bump(counter: Dict[str, int], key: str, by: int = 1) -> None:
+    counter[key] = counter.get(key, 0) + by
 
 
 def binding_releases_gil() -> Optional[bool]:
@@ -239,23 +371,31 @@ class FrameTimingRecorder:
         flush_interval: float = FLUSH_INTERVAL,
         info: Optional[Dict[str, Any]] = None,
         refresh_hz: Optional[float] = None,
+        gc_monitor: Optional[GcMonitor] = None,
     ):
         """
         :param refresh_hz: the panel's rate, measured independently (see the
             module docstring). Omit it to estimate from the frames alone, as
             the display service does.
+        :param gc_monitor: tags frames after a long garbage collection and
+            adds its counters to the stats (see "Garbage collection"). The
+            display manager passes the process's :func:`install_gc_monitor`.
         """
         self.path = path or default_stats_path()
         self.flush_interval = flush_interval
         self.info = dict(info or {})
 
         # Render-thread state.
-        self._pending: List[Tuple[float, float, float, int]] = []
+        self._pending: List[_Frame] = []
         self._static_frames = 0
         self._previous: Optional[Tuple[float, bool, int]] = None
         # The interval ended by a static frame that followed a scrolling one,
         # until the next frame shows whether the scroll went on.
-        self._unsure: Optional[Tuple[float, float, float, int]] = None
+        self._unsure: Optional[_Frame] = None
+        # Work noted since the last frame (kind -> bytes), for the next one.
+        self._ops: Optional[Dict[str, int]] = None
+        self.gc_monitor = gc_monitor
+        self._gc_seen = gc_monitor.long_pauses if gc_monitor is not None else 0
         self._last_flush: Optional[float] = None
         self._queue: "queue.SimpleQueue" = queue.SimpleQueue()
         self._worker: Optional[threading.Thread] = None
@@ -280,7 +420,16 @@ class FrameTimingRecorder:
             "freezes": 0,
             "freeze_seconds": 0.0,
             "freeze_by": {label: 0 for _, label in FREEZE_BUCKETS},
+            # Freezes that ended a screen handover rather than stalled a
+            # scroll: in neither of the two above. Additive; see "What is
+            # counted".
+            "handover_freezes": 0,
             "worst_interval_ms": 0.0,
+            # Per kind of noted render-thread work; see "Operations".
+            "op_frames": {},
+            "late_op_frames": {},
+            "op_freezes": {},
+            "op_bytes": {},
         }
         self.histograms: Dict[str, Dict[int, int]] = {
             "blit": {}, "wait": {}, "work": {}, "interval_per_hold": {},
@@ -305,6 +454,37 @@ class FrameTimingRecorder:
 
     # -- render thread ------------------------------------------------------
 
+    def note_op(self, kind: str, nbytes: int = 0) -> None:
+        """Tag the next presented frame with work done before it.
+
+        Render thread only, like :meth:`record`, which consumes the tag: the
+        interval the next frame ends is the one this work landed in. Several
+        notes before one frame accumulate, per kind. See "Operations" (and
+        :data:`HANDOVER_OP`, the one note made from another thread).
+
+        :param kind: a short name for the work, e.g. ``"extend"``, ``"patch"``.
+        :param nbytes: how much the work moved, summed into ``op_bytes``.
+        """
+        ops = self._ops
+        if ops is None:
+            ops = self._ops = {}
+        ops[kind] = ops.get(kind, 0) + int(nbytes)
+
+    def drop_op(self, kind: str) -> None:
+        """Forget a note of ``kind`` that no frame has carried yet.
+
+        For work that may present nothing: the display controller notes a
+        handover before a screen's first ``display()`` and drops it once that
+        returns. When the call drew a frame, the frame already took the tag
+        and this does nothing; when it drew nothing (no content), the tag
+        would otherwise land on whatever frame came next -- seconds or minutes
+        later, and nothing to do with the handover. Other kinds noted for the
+        same frame are kept.
+        """
+        ops = self._ops
+        if ops is not None:
+            ops.pop(kind, None)
+
     def record(self, blit: float, wait: float, hold: int, scrolling: bool,
                presented_at: float) -> None:
         """One frame reached the panel.
@@ -312,12 +492,24 @@ class FrameTimingRecorder:
         :param blit: seconds spent copying the frame into the canvas.
         :param wait: seconds SwapOnVSync blocked.
         :param hold: the refreshes this frame was held for.
-        :param scrolling: whether a scroll was running when it was presented.
+        :param scrolling: whether a scroll was running for this frame: the
+            scroll state ``update_display`` acted on, sampled once before the
+            blit and swap.
         :param presented_at: ``time.perf_counter()`` when the swap returned.
         """
         previous = self._previous
         self._previous = (presented_at, scrolling, hold)
         self.last_frame = (presented_at, scrolling, threading.get_ident())
+        ops, self._ops = self._ops, None
+        monitor = self.gc_monitor
+        if monitor is not None and monitor.long_pauses != self._gc_seen:
+            # A long collection ran since the last frame: the interval this
+            # frame ends is the one it landed in. Read here rather than
+            # noted, since note_op is the render thread's and a collection
+            # runs on whichever thread triggered it.
+            self._gc_seen = monitor.long_pauses
+            ops = dict(ops) if ops else {}
+            ops[GC_OP] = ops.get(GC_OP, 0)
         if not scrolling:
             self._static_frames += 1
             # The scroll ended, or its state went missing for this frame: the
@@ -325,7 +517,8 @@ class FrameTimingRecorder:
             # state, so the interval is due at the scroll's own.
             self._unsure = None
             if previous is not None and previous[1]:
-                self._unsure = (presented_at - previous[0], blit, wait, previous[2])
+                self._unsure = (presented_at - previous[0], blit, wait,
+                                previous[2], ops)
         elif self.watchdog is None and self.scrolling_now is not None \
                 and os.environ.get("LEDMATRIX_STALL_WATCHDOG", "1") != "0":
             self.watchdog = StallWatchdog(self, **watchdog_settings())
@@ -335,14 +528,14 @@ class FrameTimingRecorder:
             unsure, self._unsure = self._unsure, None
             if previous[1]:
                 if interval < GAP_SECONDS:
-                    self._pending.append((interval, blit, wait, hold))
+                    self._pending.append((interval, blit, wait, hold, ops))
             elif unsure is not None and interval < RESUME_SECONDS:
                 # One static frame between two scrolling ones: the scroll never
                 # stopped, only its state did. Both intervals were motion.
                 self._static_frames -= 1
                 if unsure[0] < GAP_SECONDS:
                     self._pending.append(unsure)
-                self._pending.append((interval, blit, wait, hold))
+                self._pending.append((interval, blit, wait, hold, ops))
 
         if self._last_flush is None:
             self._last_flush = presented_at
@@ -382,15 +575,17 @@ class FrameTimingRecorder:
             except Exception:  # never let telemetry take anything down
                 logger.debug("Frame timing flush failed", exc_info=True)
 
-    def aggregate(self, batch: List[Tuple[float, float, float, int]],
-                  static: int) -> None:
-        """Fold one window of frames into the running totals."""
+    def aggregate(self, batch: List[_Frame], static: int) -> None:
+        """Fold one window of frames into the running totals.
+
+        Each frame is ``(interval, blit, wait, hold, ops)``; ``ops`` (the work
+        noted before it, or None) may be left off.
+        """
         totals = self.totals
         totals["static_frames"] += static
 
-        per_hold = sorted(interval / max(1, hold)
-                          for interval, _, _, hold in batch
-                          if interval < FREEZE_SECONDS)
+        per_hold = sorted(frame[0] / max(1, frame[3]) for frame in batch
+                          if frame[0] < FREEZE_SECONDS)
         if len(per_hold) >= MIN_FRAMES_FOR_REFRESH:
             estimate = per_hold[len(per_hold) // 10]
             current = self.refresh_period
@@ -412,10 +607,23 @@ class FrameTimingRecorder:
         period = self.refresh_period
 
         histograms = self.histograms
-        for interval, blit, wait, hold in batch:
+        for frame in batch:
+            interval, blit, wait, hold = frame[:4]
+            ops = frame[4] if len(frame) > 4 else None
             totals["worst_interval_ms"] = max(totals["worst_interval_ms"],
                                               interval * 1000.0)
+            if ops:
+                for kind, nbytes in ops.items():
+                    _bump(totals["op_bytes"], kind, nbytes)
             if interval >= FREEZE_SECONDS:
+                for kind in ops or ():
+                    _bump(totals["op_freezes"], kind)
+                if ops and HANDOVER_OP in ops:
+                    # The next screen drawing its first frame, not a scroll
+                    # that stalled: counted apart, so the freezes keep
+                    # meaning the second. See "What is counted".
+                    totals["handover_freezes"] += 1
+                    continue
                 totals["freezes"] += 1
                 totals["freeze_seconds"] += interval
                 label = next(name for limit, name in FREEZE_BUCKETS
@@ -432,6 +640,10 @@ class FrameTimingRecorder:
             if period:
                 totals["timed_frames"] += 1
                 missed = round(interval / period) - hold
+                for kind in ops or ():
+                    _bump(totals["op_frames"], kind)
+                    if missed >= 1:
+                        _bump(totals["late_op_frames"], kind)
                 if missed >= 1:
                     totals["late_frames"] += 1
                     totals["missed_refreshes"] += missed
@@ -460,6 +672,9 @@ class FrameTimingRecorder:
             "binding_releases_gil": self._binding_gil,
             "info": info,
             "totals": copy.deepcopy(self.totals),
+            # Additive: absent from older files and when no monitor is set.
+            **({"gc": self.gc_monitor.snapshot()}
+               if self.gc_monitor is not None else {}),
             # JSON keys are strings; readers convert back.
             "histograms": {name: {str(k): v for k, v in sorted(h.items())}
                            for name, h in self.histograms.items()},
@@ -590,14 +805,28 @@ class StallWatchdog:
         return stall_from, dumped
 
     def describe(self, ident: int, age: float, late: float) -> str:
-        """The stack dump: the stalled thread in full, the rest in brief."""
+        """The stack dump: the stalled thread in full, the rest in brief.
+
+        A stall while a ``handover`` note is still waiting for its frame is
+        the next screen's first ``display()`` taking its time, not a scroll
+        that stopped, and is labelled a handover gap.
+        """
         names = {t.ident: t.name for t in threading.enumerate()}
         frames = sys._current_frames()
+        pending = getattr(self.recorder, "_ops", None)
+        where = ("in a handover gap" if pending and HANDOVER_OP in pending
+                 else "mid-scroll")
+        monitor = getattr(self.recorder, "gc_monitor", None)
+        last_long = getattr(monitor, "last_long", None)
+        gc_note = ""
+        if last_long is not None and time.perf_counter() - last_long[0] <= age:
+            gc_note = (f"; a {last_long[1] * 1000.0:.0f}ms garbage collection "
+                       "ran inside it")
         lines = [
-            f"Render stall: no frame for {age * 1000.0:.0f}ms mid-scroll "
+            f"Render stall: no frame for {age * 1000.0:.0f}ms {where} "
             f"(watchdog woke {late * 1000.0:.0f}ms late"
             + ("; the interpreter itself was blocked" if late >= age / 2 else "")
-            + ")",
+            + gc_note + ")",
             f"-- {names.get(ident, ident)} (presents frames):",
         ]
         stalled = frames.get(ident)

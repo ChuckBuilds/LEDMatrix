@@ -150,16 +150,6 @@ class TestCacheLifecycle:
         fm.clear_cache()
         assert fm.cache_generation == gen_before + 1
 
-    def test_clearing_a_plugins_cached_fonts_bumps_generation(self, fm):
-        fm.font_cache["demo::tiny_8"] = object()
-        gen_before = fm.cache_generation
-        fm._clear_plugin_font_cache("demo")
-        assert "demo::tiny_8" not in fm.font_cache
-        assert fm.cache_generation == gen_before + 1
-        # Nothing to drop, nothing to rebuild.
-        fm._clear_plugin_font_cache("demo")
-        assert fm.cache_generation == gen_before + 1
-
 
 class TestPluginFonts:
     """plugin:// sources resolve against the plugin's own directory, which

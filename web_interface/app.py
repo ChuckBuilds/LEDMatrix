@@ -1,6 +1,7 @@
 from flask import Flask, request, redirect, url_for, jsonify, Response, send_from_directory
 import json
 import logging
+import mimetypes
 import os
 import queue
 import re
@@ -32,14 +33,14 @@ from src.web_interface.error_handler import describe_exception
 from src.common.path_safety import (
     resolve_under, safe_path_component, safe_relative_parts,
 )
+from src.common import snapshot_policy
 from werkzeug.exceptions import HTTPException
 from src.exceptions import ConfigError
-from src.plugin_system.plugin_manager import PluginManager
+from src.plugin_system.plugin_catalog import PluginCatalog
 from src.plugin_system.store_manager import PluginStoreManager
 from src.plugin_system.saved_repositories import SavedRepositoriesManager
 from src.plugin_system.schema_manager import SchemaManager
 from src.plugin_system.operation_queue import PluginOperationQueue
-from src.plugin_system.state_manager import PluginStateManager
 from src.plugin_system.operation_history import OperationHistory
 
 _JOURNALCTL = shutil.which('journalctl')
@@ -50,15 +51,34 @@ _VCGENCMD = shutil.which('vcgencmd')
 from web_interface import display_preview
 from web_interface.system_metrics import collect_system_metrics
 
+# Static files get their Content-Type from the mimetypes table, which reads the
+# host's own files (/etc/mime.types, the Windows registry). Browsers refuse to
+# run a <script type="module"> served as anything but JavaScript (the
+# static/v3/js/core and js/pages modules), and X-Content-Type-Options: nosniff
+# below makes them strict about classic scripts too. Pin it rather than trust
+# whatever the host says.
+mimetypes.add_type('text/javascript', '.js')
+mimetypes.add_type('text/javascript', '.mjs')
+
 # Create Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 config_manager = ConfigManager()
 
-# No CSRF protection: the UI is meant for the local network, where anyone who
-# can forge a request can also send it directly, and neither the HTMX forms
-# nor the fetch() calls carry a token. Exposing the UI beyond the LAN needs
-# CSRF tokens added to both first.
+# Cross-site request forgery: the UI has no login, and being "only on the LAN"
+# does not keep other websites out. Any page a LAN user opens can make their
+# browser POST to this server -- a plain HTML form is not blocked by CORS -- so
+# a hostile site could reboot the Pi, pull code or rewrite the config through
+# the user's browser. web_interface/origin_guard.py (registered below) refuses
+# POST/PUT/PATCH/DELETE whose Origin (or, failing that, Referer) is not this
+# server's own host; requests with neither header (curl, Home Assistant, the
+# MQTT bridge) are not from a browser and pass. There are no CSRF tokens:
+# neither the HTMX forms nor the fetch() calls carry one. Anyone who can reach
+# the port directly can still use the API unless the optional login is on:
+# web_interface/auth.py (registered below the captive-portal redirect) adds a
+# password and API tokens. It is off until a password is set in General >
+# Security, and even then leaves requests from the Pi itself and the Wi-Fi
+# setup flow in access-point mode open.
 
 # Initialize rate limiting (prevent accidental abuse, not security)
 try:
@@ -107,12 +127,6 @@ else:
     # If relative, resolve relative to the project root
     plugins_dir = project_root / plugins_dir_name
 
-plugin_manager = PluginManager(
-    plugins_dir=str(plugins_dir),
-    config_manager=config_manager,
-    display_manager=None,  # Not needed for web interface
-    cache_manager=None     # Not needed for web interface
-)
 plugin_store_manager = PluginStoreManager(plugins_dir=str(plugins_dir))
 # A core `git pull` update (or any checkout) restores built-in plugins
 # committed under plugin-repos/, even ones the user uninstalled. Re-remove any
@@ -139,16 +153,25 @@ schema_manager = SchemaManager(
     config_manager=config_manager
 )
 
+# The web process reads plugins as files and never runs them: no plugin module
+# is imported, no plugin class instantiated, no lifecycle hook called here.
+# Only the display process (src/display_controller.py) does that. Config
+# saves reach the running plugins through the display's config watcher; what
+# the display knows at run time (health, metrics, errors, current mode) it
+# publishes to the shared cache. See docs/ARCHITECTURE.md.
+plugin_catalog = PluginCatalog(
+    plugins_dir=plugins_dir,
+    config_manager=config_manager,
+    schema_manager=schema_manager,
+)
+
 # Initialize operation queue for plugin operations
 operation_queue = PluginOperationQueue(max_history=500)
 
-# Initialize plugin state manager
-# Use lazy_load=True to defer file loading until first use (improves startup time)
-plugin_state_manager = PluginStateManager(
-    state_file=str(project_root / "data" / "plugin_state.json"),
-    auto_save=True,
-    lazy_load=True
-)
+# No plugin state file: data/plugin_state.json is retired. Desired state is
+# config.json plus the plugins on disk, observed state is the runtime
+# snapshot the display publishes (src/plugin_system/plugin_runtime.py). An
+# existing file is left where it is, unread; see docs/ARCHITECTURE.md.
 
 # Initialize operation history
 # Use lazy_load=True to defer file loading until first use (improves startup time)
@@ -159,7 +182,7 @@ operation_history = OperationHistory(
 )
 
 # Plugin discovery is deferred until first API request that needs it
-# This improves startup time - endpoints will call discover_plugins() when needed
+# This improves startup time - endpoints call plugin_catalog.discover_plugins() when needed
 
 # Register blueprints
 from web_interface.blueprints.pages_v3 import pages_v3
@@ -167,34 +190,35 @@ from web_interface.blueprints.api_v3 import api_v3
 
 # Initialize managers in blueprints
 pages_v3.config_manager = config_manager
-pages_v3.plugin_manager = plugin_manager
+pages_v3.plugin_catalog = plugin_catalog
 pages_v3.plugin_store_manager = plugin_store_manager
 pages_v3.saved_repositories_manager = saved_repositories_manager
 pages_v3.schema_manager = schema_manager
 
 api_v3.config_manager = config_manager
-api_v3.plugin_manager = plugin_manager
+api_v3.plugin_catalog = plugin_catalog
 api_v3.plugin_store_manager = plugin_store_manager
 api_v3.saved_repositories_manager = saved_repositories_manager
 api_v3.schema_manager = schema_manager
 api_v3.operation_queue = operation_queue
-api_v3.plugin_state_manager = plugin_state_manager
 api_v3.operation_history = operation_history
 # Initialize cache manager for API endpoints
 from src.cache_manager import CacheManager
 api_v3.cache_manager = CacheManager()
 
-# Wire plugin health/metrics for the web process. The display service records
-# health and execution-time metrics to the shared on-disk cache; giving the web
-# process its own tracker/monitor backed by that same cache lets the health API
-# routes (/api/v3/plugins/health, /plugins/metrics) read that persisted data.
+# Plugin health and metrics as the display publishes them. The display service
+# records health and execution-time metrics to the shared on-disk cache; a
+# tracker/monitor backed by that same cache lets the health API routes
+# (/api/v3/plugins/health, /plugins/metrics) read what it wrote.
 # Guarded so any init failure degrades to "not available" rather than breaking
 # the web server.
+api_v3.health_tracker = None
+api_v3.resource_monitor = None
 try:
     from src.plugin_system.plugin_health import PluginHealthTracker
     from src.plugin_system.resource_monitor import PluginResourceMonitor
-    plugin_manager.health_tracker = PluginHealthTracker(api_v3.cache_manager)
-    plugin_manager.resource_monitor = PluginResourceMonitor(api_v3.cache_manager)
+    api_v3.health_tracker = PluginHealthTracker(api_v3.cache_manager)
+    api_v3.resource_monitor = PluginResourceMonitor(api_v3.cache_manager)
 except Exception as _hm_err:  # pragma: no cover - defensive startup guard
     logging.getLogger(__name__).warning(
         "Could not enable plugin health/metrics for web UI: %s", _hm_err
@@ -402,6 +426,11 @@ def success_txt():
 from web_interface import request_logging
 request_logging.init_app(app)
 
+# Refuse state-changing requests sent by another website's page (see the
+# cross-site note near the top of this file).
+from web_interface import origin_guard
+origin_guard.init_app(app)
+
 # Global error handlers
 @app.errorhandler(404)
 def not_found_error(error):
@@ -492,6 +521,8 @@ def captive_portal_redirect():
         '/connecttest.txt',  # Windows detection
         '/success.txt',  # Firefox detection
         '/favicon.ico',  # Favicon
+        '/login',  # Optional web login (web_interface/auth.py)
+        '/logout',
     ]
 
     for allowed_path in allowed_paths:
@@ -500,6 +531,13 @@ def captive_portal_redirect():
 
     # Redirect to lightweight captive portal setup page (not the full UI)
     return redirect(url_for('pages_v3.captive_setup'), code=302)
+
+# Optional login (off until a password is set in General > Security). After
+# the captive-portal redirect, so in AP mode an unknown path still lands on
+# /setup rather than on the login page; the setup flow itself stays open.
+from web_interface import auth as web_auth
+web_auth.init_app(app, config_manager, limiter=limiter,
+                  is_ap_mode_active=is_ap_mode_active)
 
 # Append a content-version query param (file mtime) to every static URL so the
 # long-lived `immutable` cache (see add_security_headers below) is actually safe:
@@ -591,6 +629,13 @@ def _apply_gzip(response, compressed):
     return response
 
 
+def _is_unversioned_static_script():
+    """A /static/ .js or .mjs request with no ``v`` (content version) parameter."""
+    return (request.path.startswith('/static/')
+            and request.path.endswith(('.js', '.mjs'))
+            and 'v' not in request.args)
+
+
 # Add security headers and caching to all responses
 @app.after_request
 def add_security_headers(response):
@@ -602,7 +647,14 @@ def add_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
     # Add caching headers for static assets
-    if request.path.startswith(_VERSIONED_ASSET_PREFIXES):
+    if _is_unversioned_static_script():
+        # A script requested without the ?v= content version. ES modules
+        # (static/v3/js/core, js/pages) import each other by plain relative
+        # URL, which url_for never sees, so a year-long immutable copy would
+        # keep running the old module after an update. Let the browser keep
+        # it but revalidate (a 304 when unchanged).
+        response.headers['Cache-Control'] = 'no-cache'
+    elif request.path.startswith(_VERSIONED_ASSET_PREFIXES):
         # Cache static assets for 1 year (with versioning via query params)
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
         response.headers['Expires'] = (datetime.now() + timedelta(days=365)).strftime('%a, %d %b %Y %H:%M:%S GMT')
@@ -746,12 +798,19 @@ def display_preview_generator():
     """Generate display preview updates from snapshot file"""
     snapshot_path = display_preview.SNAPSHOT_PATH
     # Viewer marker: this generator only runs while the broadcaster has
-    # subscribers (it exits with no clients), so touching the marker each
-    # loop tells the DISPLAY service a browser is actually watching — it
-    # only pays for full-rate PNG snapshot encodes while this stays fresh
+    # subscribers (it exits with no clients), so touching the marker tells
+    # the DISPLAY service a browser is actually watching — it only pays for
+    # viewer-rate PNG snapshot encodes while this stays fresh
     # (see src/common/snapshot_policy.py).
     viewer_marker_path = "/tmp/led_matrix_preview_viewer"  # nosec B108 - fixed path matches display_manager
     last_modified = None
+    # While there is a snapshot, its mtime is checked every
+    # VIEWER_POLL_INTERVAL, so a new frame goes out soon after it lands
+    # rather than up to a second later. The rest keeps its old once-a-second
+    # pace: the marker touch (the display counts it fresh for
+    # VIEWER_MARKER_FRESH_SEC), and passes with no snapshot or an error,
+    # each of which sends a message.
+    last_marker_touch = None
 
     def _touch_viewer_marker():
         try:
@@ -770,10 +829,15 @@ def display_preview_generator():
         width, height = logical_size({})
     
     while True:
+        delay = 1.0
         try:
-            _touch_viewer_marker()
+            now = time.monotonic()
+            if last_marker_touch is None or now - last_marker_touch >= 1.0:
+                _touch_viewer_marker()
+                last_marker_touch = now
             # Check if snapshot file exists and has been modified
             if os.path.exists(snapshot_path):
+                delay = snapshot_policy.VIEWER_POLL_INTERVAL
                 current_modified = os.path.getmtime(snapshot_path)
                 
                 # Only read if file is new or has been updated
@@ -791,10 +855,11 @@ def display_preview_generator():
                 yield display_preview.preview_payload(width, height, None)
                 
         except Exception:
+            delay = 1.0
             app.logger.error("SSE generator error", exc_info=True)
             yield {'error': 'An error occurred; see server logs'}
         
-        time.sleep(1.0)  # the snapshot is re-read only when its mtime changes
+        time.sleep(delay)  # the snapshot is re-read only when its mtime changes
 
 # Logs generator for SSE
 def logs_generator():
@@ -901,10 +966,14 @@ def stream_logs():
 # Each SSE stream is one long-lived request, so only a (re)connect counts
 # against a limit. The streams get their own 200 per minute, tighter than the
 # 1000 per minute default, which bounds a client stuck reconnecting.
+# flask-limiter enforces a decorated limit in the wrapper limit() returns, and
+# marks the original function exempt from the default, so the wrapper has to
+# replace the registered view: discarding it leaves the streams unlimited.
 if limiter:
-    limiter.limit("200 per minute")(stream_stats)
-    limiter.limit("200 per minute")(stream_display)
-    limiter.limit("200 per minute")(stream_logs)
+    for _endpoint in ('stream_stats', 'stream_display', 'stream_logs'):
+        app.view_functions[_endpoint] = limiter.limit("200 per minute")(
+            app.view_functions[_endpoint]
+        )
 
 @app.route('/favicon.ico')
 def favicon():
@@ -929,18 +998,18 @@ def _run_startup_reconciliation() -> None:
 
     try:
         from src.plugin_system.state_reconciliation import StateReconciliation
+        from src.plugin_system.plugin_runtime import read_plugin_runtime
         reconciler = StateReconciliation(
-            state_manager=plugin_state_manager,
             config_manager=config_manager,
-            plugin_manager=plugin_manager,
             plugins_dir=plugins_dir,
-            store_manager=plugin_store_manager
+            store_manager=plugin_store_manager,
+            runtime_source=lambda: read_plugin_runtime(api_v3.cache_manager),
         )
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
             _logger.info("[Reconciliation] %s", result.message)
         if result.inconsistencies_fixed:
-            plugin_manager.discover_plugins()
+            plugin_catalog.discover_plugins()
         if not result.reconciliation_successful:
             _logger.warning(
                 "[Reconciliation] Finished with %d unresolved issue(s); "
@@ -1015,7 +1084,7 @@ def start_auto_update_scheduler():
         config_manager=config_manager,
         core_update=perform_core_update,
         store_manager=plugin_store_manager,
-        plugin_manager=plugin_manager,
+        plugin_catalog=plugin_catalog,
         schema_manager=schema_manager,
         operation_history=operation_history,
     )

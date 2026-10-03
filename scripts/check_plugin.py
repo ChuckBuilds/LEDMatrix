@@ -72,6 +72,7 @@ from src.plugin_system.testing.harness import (  # noqa: E402
 from src.plugin_system.testing.sizes import (  # noqa: E402
     parse_size_token, resolve_test_sizes, safe_mode_filename, size_label,
 )
+from src.plugin_system.testing.vegas import check_plugin_vegas_elements  # noqa: E402
 
 logger = get_logger("[Check Plugin]")
 
@@ -193,6 +194,24 @@ def check_one(plugin_id: str, search_dirs: List[str], sizes, mock_data: Dict,
 
         all_run_results.extend(results)
 
+    # Live Vegas elements, for a plugin that has them: checked once, at the
+    # first size, with the base config.
+    width, height = effective_sizes[0]
+    try:
+        vegas = check_plugin_vegas_elements(
+            plugin_id, plugin_dir, full_config, effective_mock_data, width, height,
+            run_update=effective_run_update)
+    except Exception as exc:  # noqa: BLE001 - one plugin must not end an --all run
+        all_run_results.append(RenderResult(
+            plugin_id, width, height, "vegas elements",
+            error=f"the element check itself failed: {exc!r}"))
+        return all_run_results
+    if vegas.implemented:
+        all_run_results.append(RenderResult(
+            plugin_id, width, height, "vegas elements",
+            error="; ".join(vegas.errors) or None,
+            notes=[f"{vegas.elements} element(s), {vegas.live} live"] + vegas.warnings))
+
     return all_run_results
 
 
@@ -236,6 +255,8 @@ def print_report(all_results: Dict[str, List[RenderResult]]) -> bool:
                               f" controller skips the mode")
                 else:
                     status, detail = "FAIL", ""
+            if r.notes:
+                detail += f" ({'; '.join(r.notes)})"
             print(f"  [{status}] {r.size_label:>7}  {r.mode}{detail}")
     print()
     return everything_ok
