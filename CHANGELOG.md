@@ -62,6 +62,29 @@ accepts both, but the store flags the old spelling as deprecated
   pull it always had. It used to fast-forward a detached release checkout to
   `main`'s tip.
 
+### Web UI: four more tabs are ES-module pages (stage 2)
+
+- Rotation, Operation History, Config Editor and Backup & Restore follow the
+  Cache tab (#703): each partial's inline `<script>` is now
+  `static/v3/js/pages/<name>.js` (`durations`, `operation-history`,
+  `raw-json`, `backup-restore`), started once per swap-in by the page
+  registry and stopped on swap-out. None of the four partials has an inline
+  script or `onclick` any more. Buttons carry `data-action` and use one
+  delegated listener. Server data is drawn with `textContent`.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `formatJson`, `manualValidateJson`,
+  `validateJSON`, `saveMainConfig`, `saveSecretsConfig`, `exportBackup`,
+  `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`.
+- Reads are cancelled when a tab is swapped away. Writes (save, delete,
+  export, restore) are not, and their result is still reported.
+- `core/api.js` accepts a raw `body` (a `FormData` upload).
+  `PluginOrderList.init()` accepts a `signal` for its plugin-list request.
+- Small fixes on the way: the Config Editor's "Invalid JSON" line no longer
+  puts the parser's message into `innerHTML`, and Operation History's
+  "Showing x to y of z" now resets when nothing matches.
+- New DOM suites `test/js/dom/test_{durations,operation_history,raw_json,backup_restore}_page.js`.
+  `test/web_interface/test_es_modules.py` pins the converted pages and the aliases.
+
 ### Garbage-collection pauses in the frame stats
 
 - The display now times every Python garbage collection
@@ -139,6 +162,50 @@ policies are unchanged.
   `GET /api/v3/plugins/fetch-stats`.
 - `fetch_service` is a core config section (`src/core_config_keys.py`).
 
+### Shared fetch service (stage 2: one scoreboard cache key, a max-age response cache)
+
+- **One cache key per ESPN scoreboard.** `espn_scoreboard_cache_key(sport,
+  league, dates)` in `src/common/espn_dates.py` names a scoreboard by ESPN's
+  own path (`football`/`nfl`) and its `dates=` value, so every consumer of
+  the same scoreboard shares one cached copy. Before, odds-ticker cached it as
+  `scoreboard_data_{sport}_{league}_{date}`, `APIHelper` as
+  `espn_{sport}_{league}_{date}` and the scoreboards as
+  `{sport_key}_schedule_{window}`.
+- **Cache-through helpers.** `get_espn_scoreboard()` returns a cached copy at
+  most `max_age` seconds old and otherwise fetches with
+  `fetch_espn_scoreboard` and caches the result; `read_espn_scoreboard_cache()`
+  and `store_espn_scoreboard_cache()` are the two halves (the read takes an
+  `accept(data, age)` predicate, e.g. a shorter limit for a payload holding a
+  live game). A read checks the
+  record's own timestamp, so a writer's stored ttl can no longer make a
+  reader take data older than its own TTL; the shared entry stores no ttl.
+  Old keys are passed as `legacy_keys` and read after the canonical one for
+  one release, so an upgrade does not refetch every league at once.
+- **Core callers use the key.** `APIHelper.fetch_espn_scoreboard` caches
+  under it by default (an explicit `cache_key` still works as before; the old
+  default key is read as a fallback). `SportsFetchMixin` gains
+  `_schedule_cache_key()` and `_cached_schedule()` for the scoreboards'
+  schedule windows (the same read as before, with the old key as fallback,
+  and a miss deletes the previous day's copy of a sliding window), and
+  `_fetch_season_directly(cache_key=None)` uses the canonical key. The
+  scoreboards and odds-ticker move to it in a plugins release that requires
+  this core.
+- **Response cache.** A `200` with `Cache-Control: max-age=N` (minus `Age`)
+  answers an identical GET for N seconds without a request; ESPN sends no
+  validators, only max-age (1 to ~500 s, measured 2026-10-02). A caller says
+  how old a response it accepts with `fetch_get(..., cache_max_age=)` /
+  `fetch_espn_scoreboard(..., cache_max_age=)`; one that does not say gets at
+  most 30 s (`fetch_service.response_cache.default_max_age`).
+  `BaseOddsManager.get_odds` passes its update interval, `APIHelper.get` its
+  `cache_ttl`, and `get_espn_scoreboard` its `max_age`. `no-store`,
+  `no-cache`, `private`, `Vary: *` and `Set-Cookie` responses are never kept.
+  Bounded: 64 entries, 6 MB, 2 MB each; never longer than 10 minutes.
+- **Counters.** `memo_hits` (answered by the response cache), `cache_hits`
+  (scoreboard fetches answered by a shared cache entry) and
+  `legacy_cache_hits` (reads from a pre-stage-2 key), per plugin and per
+  host, and the response cache's size, in `GET /api/v3/plugins/fetch-stats`.
+- No new module; every change is additive to existing signatures.
+
 ### Control socket (stage 2: wake-ups, brightness, plugin reload)
 
 - **Socket commands land at once.** Stage 1's socket was no faster than the
@@ -184,6 +251,9 @@ policies are unchanged.
   this release: plugins reach it through `APIHelper` and `espn_dates`, and
   should not import it directly until a plugin-facing API ships (stage 3), so
   it sets no `ledmatrix_min_version` floor.
+- `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
+  Core-internal: plugins have no reason to import it, so it sets no
+  `ledmatrix_min_version` floor.
 
 ### Tooling
 
@@ -201,9 +271,36 @@ policies are unchanged.
   (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
   `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
   identical before and after the move.
+- Display loop stage 2: an Arbiter decides who gets the panel. Each pass,
+  `run()` gathers a small snapshot (the schedule, the on-demand flag, the
+  sync follower, the pending WiFi notice) and calls
+  `Arbiter.decide(state, inputs, now)` in `src/display_arbiter.py`, a pure
+  function, which returns a `ScreenPlan`. It decides the scheduled-off
+  blank, the follower frame and the WiFi notice; on-demand, live priority,
+  Vegas and the rotation return a `LEGACY` plan and run the existing code.
+  The WiFi notice's mid-screen rule (`wifi_notice_preempts`) moves there
+  too. No behaviour change: the golden traces regenerate byte-identical.
+  `test/test_display_arbiter.py` tests `decide()` with a table of all 16
+  combinations of its inputs.
 
 ### Fixes
 
+- A plugin reload after a store update (`plugin.reload`, #720) no longer
+  freezes the panel during Vegas. On ledpi a football reload froze it for
+  3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
+  render thread, and its unload waited for the plugin's lock. The strip's
+  prefetch thread held that lock while it rebuilt the old instance's Vegas
+  content. The render thread now only takes the plugin out of the rotation
+  and out of the plugin manager (`PluginManager.detach_plugin`). A
+  `plugin-reload-<id>` thread waits for the lock, tears the old instance
+  down and loads the new one, and the new instance joins the rotation
+  between two frames. In a test with a 3.0 s render holding the lock, the
+  longest gap between frames went from 3017 ms to 9 ms. The reply still
+  reports the real outcome, the modes keep their places in the rotation,
+  and Vegas fetches the plugin again. While it reloads, an on-demand request
+  for the plugin is refused (`plugin-reloading`), and a config reconcile
+  neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
+  out a reload for the lock skips the old instance.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
@@ -250,6 +347,22 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- `/api/v3/plugins/installed` no longer reports the display's plugins as
+  `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
+  snapshot is written from its own thread, which kept going while the render
+  loop was hung. The web interface now also reads the render loop's
+  heartbeat: a fresh snapshot whose process's heartbeat is 60 s or older is
+  `data.runtime.status: "stalled"`, with the per-plugin fields null, and
+  `data.runtime` gains `heartbeat_age_seconds`. A snapshot from a process
+  that no longer exists, as after a watchdog kill (systemd removes the
+  heartbeat when the service stops), is `stale` at once instead of `live`
+  for up to 180 s. No new files or writes: both checks are on the reading
+  side.
+- `/api/v3/display/current-status` reflects a wake from scheduled-off, a
+  schedule-off blank, or an on-demand session starting or ending at once,
+  even when the mode name stays the same. The display republished its
+  current state only on a mode change or every 30 s, so `is_display_active`
+  and `on_demand_active` could be up to 30 s out of date.
 
 ### Scrolling
 

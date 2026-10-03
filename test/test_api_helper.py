@@ -205,27 +205,52 @@ class TestCacheLifetimeWithRealCacheManager:
 
 class TestEspnHelpers:
     @freeze_time('2026-08-07')
-    def test_fetch_espn_scoreboard_url_params_and_cache_key(self, helper):
-        helper.get = Mock(return_value={'ok': 1})
+    def test_fetch_espn_scoreboard_url_params_and_cache_key(self, helper, cache):
+        # The canonical key (fetch service stage 2), shared with every other
+        # consumer of the scoreboard; the old key is only read as a fallback.
+        cache.get_cached_data.return_value = None
+        helper._get = Mock(return_value={'ok': 1})
 
         result = helper.fetch_espn_scoreboard('football', 'nfl')
 
         assert result == {'ok': 1}
-        helper.get.assert_called_once_with(
+        helper._get.assert_called_once_with(
             'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
-            params={'dates': '20260807', 'limit': ESPN_MAX_LIMIT},
-            cache_key='espn_football_nfl_20260807',
-            cache_ttl=300,
+            {'dates': '20260807', 'limit': ESPN_MAX_LIMIT},
+            None, None, None, 300, 300,
         )
+        read = [c.args[0] for c in cache.get_cached_data.call_args_list]
+        assert read == ['espn_scoreboard_football_nfl_20260807', 'espn_football_nfl_20260807']
+        cache.set.assert_called_once_with('espn_scoreboard_football_nfl_20260807', {'ok': 1})
 
-    def test_fetch_espn_scoreboard_explicit_date(self, helper):
-        helper.get = Mock(return_value=None)
+    def test_fetch_espn_scoreboard_explicit_date(self, helper, cache):
+        cache.get_cached_data.return_value = None
+        helper._get = Mock(return_value=None)
 
         helper.fetch_espn_scoreboard('basketball', 'nba', date='20250115')
 
-        kwargs = helper.get.call_args.kwargs
-        assert kwargs['params'] == {'dates': '20250115', 'limit': ESPN_MAX_LIMIT}
-        assert kwargs['cache_key'] == 'espn_basketball_nba_20250115'
+        args = helper._get.call_args.args
+        assert args[1] == {'dates': '20250115', 'limit': ESPN_MAX_LIMIT}
+        cache.set.assert_not_called()  # a failed fetch caches nothing
+
+    def test_fetch_espn_scoreboard_an_explicit_key_works_as_before(self, helper):
+        helper.get = Mock(return_value={'ok': 1})
+
+        helper.fetch_espn_scoreboard('basketball', 'nba', date='20250115', cache_key='mine')
+
+        assert helper.get.call_args.kwargs['cache_key'] == 'mine'
+
+    def test_fetch_espn_scoreboard_reads_the_old_key_after_an_upgrade(self, helper, cache):
+        import time as _time
+
+        records = {'espn_basketball_nba_20250115': {
+            'timestamp': _time.time() - 10, 'ttl': 300, 'data': {'events': ['old']}}}
+        cache.get_cached_data.side_effect = lambda key, **kw: records.get(key)
+        helper._get = Mock()
+
+        assert helper.fetch_espn_scoreboard('basketball', 'nba', date='20250115') == {
+            'events': ['old']}
+        helper._get.assert_not_called()
 
     def test_fetch_espn_standings_url_and_cache_key(self, helper):
         helper.get = Mock(return_value={'ok': 1})

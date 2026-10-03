@@ -47,6 +47,7 @@ src/config_service.py
 src/core_config_keys.py
 src/deprecation.py
 src/device_location.py
+src/display_arbiter.py
 src/display_geometry.py
 src/dynamic_team_resolver.py
 src/exceptions.py

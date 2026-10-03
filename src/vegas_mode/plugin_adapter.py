@@ -183,8 +183,26 @@ class PluginAdapter:
                     "round", plugin_id, self.PLUGIN_LOCK_TIMEOUT
                 )
                 return None
+            if not self._still_loaded(plugin, plugin_id):
+                return None
             return self._fetch_content(plugin, plugin_id, restricted=False,
                                        keyed=keyed)
+
+    def _still_loaded(self, plugin: 'BasePlugin', plugin_id: str) -> bool:
+        """Whether ``plugin`` is still the loaded instance of ``plugin_id``.
+
+        Checked once the plugin's lock is held: a reload or a disable can
+        take the instance out and tear it down while this fetch waited for
+        the lock (PluginManager.detach_plugin), and a torn-down instance is
+        not asked for content. True when the manager keeps no ``plugins``
+        mapping to ask.
+        """
+        plugins = getattr(self.plugin_manager, 'plugins', None)
+        if not isinstance(plugins, dict) or plugins.get(plugin_id) is plugin:
+            return True
+        logger.debug("[%s] Unloaded or reloaded while waiting for its lock; "
+                     "skipping the old instance", plugin_id)
+        return False
 
     def is_live_capable(self, plugin: 'BasePlugin', plugin_id: str) -> bool:
         """Whether to ask this plugin for live elements rather than pictures.
@@ -922,6 +940,8 @@ class PluginAdapter:
                 return None
             epochs = self.live_epochs
             epoch = epochs.get(plugin_id) if epochs is not None else 0
+            if not self._still_loaded(plugin, plugin_id):
+                return epoch, {}
             render_width = self.resolve_render_width(plugin, plugin_id)
             plugin._vegas_render_width = render_width
             try:
