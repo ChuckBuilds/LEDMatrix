@@ -330,6 +330,9 @@ class DisplayController:
         # Monotonic stamp of the last _service_pending_changes pass; same
         # "None means never" convention as _last_on_demand_poll.
         self._last_pending_service: Optional[float] = None
+        # Monotonic stamp of the last scheduled-update pass; see
+        # _tick_plugin_updates_if_due. Same "None means never" convention.
+        self._last_plugin_update_tick: Optional[float] = None
         # The control socket (src/ipc), started by run(). None when it is not
         # served (Windows, LEDMATRIX_CONTROL_SOCKET=off, a bind failure);
         # the file mailbox works either way.
@@ -1096,10 +1099,37 @@ class DisplayController:
                 except Exception:  # pylint: disable=broad-except
                     logger.exception("Error marking plugin %s updated for Vegas", plugin_id)
 
+    #: Shortest gap between scheduled-update passes from the frame loops and
+    #: the dwell sleep. The pass (PluginManager.run_scheduled_updates) copies
+    #: the plugin dict and takes several locks per plugin to find, almost
+    #: always, that nothing is due: about 95 us with 20 plugins on a Pi, or
+    #: 1.2% of the render thread at 125 frames a second. No interval is
+    #: shorter than PluginManager.MIN_DYNAMIC_UPDATE_INTERVAL (5 s), and the
+    #: 1 Hz frame loop already ticks once a second, so a quarter second late
+    #: is not noticed.
+    PLUGIN_UPDATE_TICK_INTERVAL = 0.25
+
+    #: Class-level default for controllers built without __init__ (tests).
+    _last_plugin_update_tick: Optional[float] = None
+
+    def _tick_plugin_updates_if_due(self) -> None:
+        """_tick_plugin_updates, at most once per PLUGIN_UPDATE_TICK_INTERVAL.
+
+        For the per-frame callers. The top of each loop pass calls
+        _tick_plugin_updates itself, unthrottled, because that is where a
+        plugin just loaded, reloaded or enabled for on-demand gets its first
+        update, and it must not wait out the floor.
+        """
+        last = self._last_plugin_update_tick
+        if last is not None and time.monotonic() - last < self.PLUGIN_UPDATE_TICK_INTERVAL:
+            return
+        self._tick_plugin_updates()
+
     def _tick_plugin_updates(self):
         """Run any plugin updates that are due."""
         if not self.plugin_manager:
             return
+        self._last_plugin_update_tick = time.monotonic()
         try:
             self.plugin_manager.run_scheduled_updates()
         except Exception:  # pylint: disable=broad-except
@@ -1267,7 +1297,7 @@ class DisplayController:
             # A dwell can be a minute long (sixty seconds while scheduled
             # off); the watchdog must hear from this thread throughout.
             display_watchdog.watchdog.beat()
-            self._tick_plugin_updates()
+            self._tick_plugin_updates_if_due()
             self._service_pending_changes()
             self._check_live_takeover()
             if (self.current_display_mode != mode
@@ -2905,7 +2935,10 @@ class DisplayController:
 
         self._follower_local_x = local_x
 
-        if rp and rp.scroll_helper.cached_image is not None:
+        # has_strip(), not cached_image: every follower frame asks, and
+        # reading a strip the follower's own rebuild deferred would build
+        # and keep a second copy of it as a PIL image.
+        if rp and rp.scroll_helper.has_strip():
             # Hold last frame until TCP image arrives after cycle reset
             if not self._follower_pending_new_image and local_x >= width:
                 rp.scroll_helper.scroll_position = (
@@ -3595,6 +3628,8 @@ class DisplayController:
                     self._release_on_demand_plugins()
                     if not self.available_modes:
                         continue  # it was all there was; idle as above
+                # Unthrottled, unlike the frame loops: a plugin loaded,
+                # reloaded or enabled for on-demand above is due at once.
                 self._tick_plugin_updates()
                 
                 # Clean up expired WiFi status messages
@@ -3857,7 +3892,7 @@ class DisplayController:
                             # Multi-display sync: send follower frame after each render
                             self._send_follower_frame(manager_to_display)
 
-                            self._tick_plugin_updates()
+                            self._tick_plugin_updates_if_due()
                             # Throttled: one clock compare between passes.
                             self._service_pending_changes()
                             self._check_live_takeover()
@@ -3916,7 +3951,7 @@ class DisplayController:
                                             "breaking early", active_mode,
                                             self.current_display_mode)
                                 break
-                            self._tick_plugin_updates()
+                            self._tick_plugin_updates_if_due()
 
                             elapsed = time.time() - start_time
                             if elapsed >= target_duration:

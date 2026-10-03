@@ -19,6 +19,39 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Plugin update tick: a few times a second, not every frame
+
+- The frame loops and the dwell sleep ran
+  `PluginManager.run_scheduled_updates()` after every frame, about 125 times
+  a second on a scroller. Each pass copies the plugin dict and takes several
+  locks per plugin, almost always to find nothing due: about 100 us with 20
+  plugins on a Pi 4, 1.2% of the render thread. They now call
+  `DisplayController._tick_plugin_updates_if_due()`, which runs the pass at
+  most every `PLUGIN_UPDATE_TICK_INTERVAL` (0.25 s), so a 4 s scroll runs 16
+  passes instead of 500. No update interval is shorter than 5 s
+  (`MIN_DYNAMIC_UPDATE_INTERVAL`), and the 1 Hz frame loop already ticked
+  once a second, so an update starts at most a quarter second later.
+- The top of each loop pass still runs it unthrottled, so a plugin just
+  loaded, reloaded or enabled for on-demand is updated at once. Vegas's own
+  update thread (`_tick_plugin_updates_for_vegas`) is unchanged.
+  `test/test_plugin_update_tick_throttle.py` covers both, on the real
+  `run()` through the golden-trace harness.
+
+### Strip checks no longer build the PIL image
+
+- `SportsScrollDisplay.display_scroll_frame` (every frame) and
+  `has_cached_content`, and the sync follower's per-frame check of the Vegas
+  strip, asked whether there was a strip by reading
+  `ScrollHelper.cached_image`. After the helper deferred the image (an
+  append, trim or patch), that read built it from `cached_array` and kept
+  it: 3.5 ms and about 1 MiB more held for a 4288x64 strip, on top of the
+  array's 0.8 MiB. They now ask `has_strip()`, which gives the same answer
+  from the helper's bookkeeping. A scoreboard whose `scroll_helper` has no
+  `has_strip` (its own helper, a test double) is still asked
+  `cached_image`.
+- A strip built with `create_scrolling_image` or `set_scrolling_image`
+  still keeps both the image and the array, as before.
+
 ### Faster frame copy into the panel (library patch, applied at build time)
 
 - Copying each frame into the panel buffer (`SetImage`) was the biggest CPU
