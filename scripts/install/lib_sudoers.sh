@@ -10,6 +10,11 @@
 #
 # Add or remove a grant here and nowhere else.
 
+# Root-owned copy of scripts/install/ledmatrix_refresh_units.py, installed by
+# install_service.sh. Outside the checkout on purpose: the web user owns the
+# checkout, so a granted file inside it could be rewritten and run as root.
+LEDMATRIX_REFRESH_UNITS_PATH=/usr/local/sbin/ledmatrix-refresh-units
+
 # web_sudoers_rules WEB_USER PROJECT_ROOT SYSTEMCTL_PATH BASH_PATH REBOOT_PATH POWEROFF_PATH JOURNALCTL_PATH
 #
 # Print the ledmatrix_web sudoers rules to stdout.
@@ -58,6 +63,10 @@ $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/scripts/fix_perms/safe_pl
 # Install a requirements.txt as root via vetted helper, so packages are visible
 # to root-run ledmatrix.service (not just the web interface's own user).
 $WEB_USER ALL=(ALL) NOPASSWD: $BASH_PATH $PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh *
+# After an update, install the new systemd units (no arguments: "" allows none)
+# and, on the automatic update's rollback, put the previous ones back.
+$WEB_USER ALL=(ALL) NOPASSWD: $LEDMATRIX_REFRESH_UNITS_PATH ""
+$WEB_USER ALL=(ALL) NOPASSWD: $LEDMATRIX_REFRESH_UNITS_PATH --restore
 EOF
     if [ -n "$JOURNALCTL_PATH" ]; then
         cat << EOF

@@ -735,8 +735,16 @@ def _plugin_runtime_view():
 
     Only a ``live`` view reports those facts; a stale, stopped or missing
     snapshot answers None for them (see src/plugin_system/plugin_runtime.py).
+
+    The display's state stream over the control socket comes first
+    (``source: "socket"``); without it, the cache snapshot and the heartbeat
+    file (``source: "cache"``). Both are judged by the same rules.
     """
-    from src.plugin_system.plugin_runtime import read_plugin_runtime
+    from src.plugin_system.plugin_runtime import read_plugin_runtime, view_from_socket_state
+    from web_interface import display_state
+    view = view_from_socket_state(display_state.read_state())
+    if view is not None:
+        return view
     return read_plugin_runtime(getattr(api_v3, 'cache_manager', None))
 
 

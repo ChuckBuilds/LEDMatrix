@@ -323,7 +323,7 @@ class SportsScrollDisplay:
         :returns: True if a frame was drawn; False when there is no content or
             the frame could not be rendered.
         """
-        if not self.scroll_helper.cached_image:
+        if not self._has_strip():
             return False
 
         try:
@@ -416,7 +416,21 @@ class SportsScrollDisplay:
 
     def has_cached_content(self) -> bool:
         """Whether content is prepared and ready to scroll."""
-        return bool(self.scroll_helper.cached_image)
+        return self._has_strip()
+
+    def _has_strip(self) -> bool:
+        """Whether the helper holds a strip, without building its PIL image.
+
+        Reading ``cached_image`` after the strip was extended or trimmed builds
+        the image from the array and keeps it, so the strip is held twice;
+        display_scroll_frame asks this every frame. ``has_strip()`` answers
+        from the helper's bookkeeping. A helper without it (a plugin's own, a
+        test double) is asked the old way.
+        """
+        helper = self.scroll_helper
+        if callable(getattr(type(helper), "has_strip", None)):
+            return bool(helper.has_strip())
+        return bool(helper.cached_image)
 
     # ------------------------------------------------------------------
     # Live Vegas cards

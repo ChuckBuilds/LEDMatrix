@@ -517,6 +517,32 @@ class TestUpdateIsVerified:
         h.updater.run()
         assert h.pending['dependency_failures'] == ['requirements.txt']
 
+    @pytest.mark.parametrize('unit_refresh, expected', [
+        ({'status': 'refreshed', 'message': '', 'units': ['ledmatrix.service']}, True),
+        ({'status': 'needs_reinstall', 'message': '', 'units': ['ledmatrix.service']}, False),
+        (None, False),
+    ])
+    def test_the_health_check_learns_whether_the_update_installed_units(self, tmp_path, unit_refresh,
+                                                                          expected):
+        """Its rollback restores the previous units only when this update replaced them."""
+        repo = Repo(tmp_path)
+        repo.publish()
+        h = Harness(tmp_path, repo, core_update=real_pull(repo.device, unit_refresh=unit_refresh))
+        h.updater.run()
+        assert h.pending['units_refreshed'] is expected
+
+    def test_a_health_check_that_never_starts_also_restores_the_units(self, tmp_path):
+        repo = Repo(tmp_path)
+        old = repo.head()
+        repo.publish()
+        refreshed = {'status': 'refreshed', 'message': '', 'units': ['ledmatrix.service']}
+        h = Harness(tmp_path, repo, pickup=False,
+                    core_update=real_pull(repo.device, unit_refresh=refreshed))
+        h.updater.run()
+        assert repo.head() == old
+        assert [a for a in h.sudo if a[-1] == '--restore'] == [
+            ['sudo', '-n', '/usr/local/sbin/ledmatrix-refresh-units', '--restore']]
+
     def test_a_health_check_that_never_starts_means_the_update_is_undone(self, tmp_path):
         repo = Repo(tmp_path)
         old = repo.head()

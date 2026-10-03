@@ -55,7 +55,7 @@ from src.ipc.contract import (
     PluginReloadArgs,
     PluginReloadResult,
 )
-from src.ipc.server import ControlServer, QueuedCommand, start_control_server
+from src.ipc.server import ControlServer, QueuedCommand, StateHub, start_control_server
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -64,6 +64,13 @@ logger = get_logger(__name__)
 # How often the unchanged current mode is republished for the web UI, which
 # treats display_current_state older than 120 s as unknown.
 CURRENT_STATE_REFRESH_SECONDS = 30
+
+# While the control socket serves the web interface's state readers
+# (StateHub.readers_active), display_current_state is only their fallback:
+# it is then rewritten at this interval and on a change of the flags, not on
+# every mode change. Below the readers' 120 s max_age, so the fallback copy
+# never reads as unknown.
+CURRENT_STATE_RELAXED_REFRESH_SECONDS = 60
 
 # How long startup will wait for plugins to fetch their first data before
 # showing anything. Each plugin's update blocks for up to the executor's 30s
@@ -323,6 +330,9 @@ class DisplayController:
         # Monotonic stamp of the last _service_pending_changes pass; same
         # "None means never" convention as _last_on_demand_poll.
         self._last_pending_service: Optional[float] = None
+        # Monotonic stamp of the last scheduled-update pass; see
+        # _tick_plugin_updates_if_due. Same "None means never" convention.
+        self._last_plugin_update_tick: Optional[float] = None
         # The control socket (src/ipc), started by run(). None when it is not
         # served (Windows, LEDMATRIX_CONTROL_SOCKET=off, a bind failure);
         # the file mailbox works either way.
@@ -1089,10 +1099,37 @@ class DisplayController:
                 except Exception:  # pylint: disable=broad-except
                     logger.exception("Error marking plugin %s updated for Vegas", plugin_id)
 
+    #: Shortest gap between scheduled-update passes from the frame loops and
+    #: the dwell sleep. The pass (PluginManager.run_scheduled_updates) copies
+    #: the plugin dict and takes several locks per plugin to find, almost
+    #: always, that nothing is due: about 95 us with 20 plugins on a Pi, or
+    #: 1.2% of the render thread at 125 frames a second. No interval is
+    #: shorter than PluginManager.MIN_DYNAMIC_UPDATE_INTERVAL (5 s), and the
+    #: 1 Hz frame loop already ticks once a second, so a quarter second late
+    #: is not noticed.
+    PLUGIN_UPDATE_TICK_INTERVAL = 0.25
+
+    #: Class-level default for controllers built without __init__ (tests).
+    _last_plugin_update_tick: Optional[float] = None
+
+    def _tick_plugin_updates_if_due(self) -> None:
+        """_tick_plugin_updates, at most once per PLUGIN_UPDATE_TICK_INTERVAL.
+
+        For the per-frame callers. The top of each loop pass calls
+        _tick_plugin_updates itself, unthrottled, because that is where a
+        plugin just loaded, reloaded or enabled for on-demand gets its first
+        update, and it must not wait out the floor.
+        """
+        last = self._last_plugin_update_tick
+        if last is not None and time.monotonic() - last < self.PLUGIN_UPDATE_TICK_INTERVAL:
+            return
+        self._tick_plugin_updates()
+
     def _tick_plugin_updates(self):
         """Run any plugin updates that are due."""
         if not self.plugin_manager:
             return
+        self._last_plugin_update_tick = time.monotonic()
         try:
             self.plugin_manager.run_scheduled_updates()
         except Exception:  # pylint: disable=broad-except
@@ -1260,7 +1297,7 @@ class DisplayController:
             # A dwell can be a minute long (sixty seconds while scheduled
             # off); the watchdog must hear from this thread throughout.
             display_watchdog.watchdog.beat()
-            self._tick_plugin_updates()
+            self._tick_plugin_updates_if_due()
             self._service_pending_changes()
             self._check_live_takeover()
             if (self.current_display_mode != mode
@@ -1430,18 +1467,60 @@ class DisplayController:
             return None
         return max(0.0, expires_at - time.time())
 
+    #: The control socket's state stream (src/ipc/server.StateHub), while the
+    #: socket is served. Class-level default for controllers built without
+    #: __init__ (tests) and for a display with no socket.
+    _state_hub: Optional[StateHub] = None
+
+    def _current_mode_state(self) -> Dict[str, Any]:
+        """What display_current_state and the socket's ``display`` section hold."""
+        return {
+            'mode': self.current_display_mode,
+            'plugin_id': self.mode_to_plugin_id.get(self.current_display_mode),
+            'mode_index': self.current_mode_index,
+            'total_modes': len(self.available_modes),
+            'on_demand_active': self.on_demand_active,
+            'is_display_active': self.is_display_active,
+            'last_updated': time.time(),
+        }
+
+    def _push_live_state(self, display_state: Optional[Dict[str, Any]] = None) -> None:
+        """Hand the current mode and the brightness to the control socket's
+        state stream. In memory, no disk: the hub only bumps its version (and
+        wakes subscribers) when something other than ``last_updated`` changed.
+
+        Called on every pass of the publish points below, so
+        ``display.last_updated`` doubles as the render thread's proof of life
+        for the socket's readers, as the cache key's max_age does today.
+        """
+        hub = self._state_hub
+        if hub is None:
+            return
+        try:
+            hub.publish('display', display_state or self._current_mode_state(),
+                        volatile=('last_updated',))
+            hub.publish('brightness', {
+                'brightness': getattr(self, '_normal_brightness', None),
+                'panel_brightness': getattr(self, 'current_brightness', None),
+                'dimmed': bool(getattr(self, 'is_dimmed', False)),
+            })
+        except Exception as err:  # pylint: disable=broad-except
+            logger.debug("Could not publish the display state to the control socket: %s",
+                         err, exc_info=True)
+
+    def _state_readers_on_socket(self) -> bool:
+        """Is the control socket serving the web interface's state readers?"""
+        hub = self._state_hub
+        try:
+            return bool(hub is not None and hub.readers_active())
+        except Exception:  # pylint: disable=broad-except
+            return False
+
     def _publish_current_mode_state(self) -> None:
         """Publish the currently active display mode/plugin to cache for the web UI."""
         try:
-            state = {
-                'mode': self.current_display_mode,
-                'plugin_id': self.mode_to_plugin_id.get(self.current_display_mode),
-                'mode_index': self.current_mode_index,
-                'total_modes': len(self.available_modes),
-                'on_demand_active': self.on_demand_active,
-                'is_display_active': self.is_display_active,
-                'last_updated': time.time(),
-            }
+            state = self._current_mode_state()
+            self._push_live_state(state)
             self.cache_manager.set('display_current_state', state)
             self._last_published_mode = self.current_display_mode
             self._last_published_flags = self._current_state_flags()
@@ -1467,11 +1546,23 @@ class DisplayController:
         priority, a single enabled plugin -- has to be republished or the UI
         reports it as unknown. Otherwise this writes only on a change, not on
         every render tick.
+
+        While the control socket serves the web interface's state readers,
+        the socket's in-memory copy is updated on every call and the cache
+        key is only their fallback: a mode change alone is then written at
+        the relaxed refresh (CURRENT_STATE_RELAXED_REFRESH_SECONDS), still
+        inside the readers' max_age. The flags are still written at once.
+        When the socket stops serving them, the next call writes a changed
+        mode again.
         """
-        if (self.current_display_mode != self._last_published_mode
+        relaxed = self._state_readers_on_socket()
+        refresh = CURRENT_STATE_RELAXED_REFRESH_SECONDS if relaxed else CURRENT_STATE_REFRESH_SECONDS
+        if ((not relaxed and self.current_display_mode != self._last_published_mode)
                 or self._current_state_flags() != getattr(self, '_last_published_flags', None)
-                or time.monotonic() - self._last_published_at >= CURRENT_STATE_REFRESH_SECONDS):
-            self._publish_current_mode_state()
+                or time.monotonic() - self._last_published_at >= refresh):
+            self._publish_current_mode_state()   # pushes to the socket as well
+        else:
+            self._push_live_state()
 
     def _on_demand_state(self) -> Dict[str, Any]:
         """The on-demand state as published to the cache and the control socket."""
@@ -1494,6 +1585,11 @@ class DisplayController:
         """Publish current on-demand state to cache for external consumers."""
         try:
             state = self._on_demand_state()
+            hub = self._state_hub
+            if hub is not None:
+                # In memory, first: a subscriber hears the outcome of an
+                # on-demand command even if the cache write below fails.
+                hub.publish('on_demand', state, volatile=('last_updated', 'remaining'))
             self.cache_manager.set('display_on_demand_state', state)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
             logger.error("Failed to publish on-demand state: %s", err, exc_info=True)
@@ -1738,12 +1834,31 @@ class DisplayController:
         """
         if self._control_server is not None:
             return
+        hub = StateHub(loop_probe=display_watchdog.watchdog.liveness)
         try:
             self._control_server = start_control_server(
                 status_provider=self._control_status,
-                cache_dir=getattr(self.cache_manager, 'cache_dir', None))
+                cache_dir=getattr(self.cache_manager, 'cache_dir', None),
+                state_hub=hub)
         except Exception:  # pylint: disable=broad-except
             logger.exception("Control socket not started; using the file mailbox only")
+        if self._control_server is not None:
+            self._start_state_stream(hub)
+
+    def _start_state_stream(self, hub: StateHub) -> None:
+        """Start publishing to the socket's state stream (``state.get`` and
+        ``state.subscribe``): everything a reader would see, now, then on
+        every publish. Never raises; without it readers use the cache keys."""
+        try:
+            self._state_hub = hub
+            self._push_live_state()
+            hub.publish('on_demand', self._on_demand_state(),
+                        volatile=('last_updated', 'remaining'))
+            publisher = getattr(self, '_plugin_runtime_publisher', None)
+            if publisher is not None:
+                publisher.attach_hub(hub)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Control socket state stream not started; readers use the cache")
 
     def _control_status(self) -> Dict[str, Any]:
         """The socket's on_demand.status answer. Runs on the socket's thread: reads only."""
@@ -2820,7 +2935,10 @@ class DisplayController:
 
         self._follower_local_x = local_x
 
-        if rp and rp.scroll_helper.cached_image is not None:
+        # has_strip(), not cached_image: every follower frame asks, and
+        # reading a strip the follower's own rebuild deferred would build
+        # and keep a second copy of it as a PIL image.
+        if rp and rp.scroll_helper.has_strip():
             # Hold last frame until TCP image arrives after cycle reset
             if not self._follower_pending_new_image and local_x >= width:
                 rp.scroll_helper.scroll_position = (
@@ -3510,6 +3628,8 @@ class DisplayController:
                     self._release_on_demand_plugins()
                     if not self.available_modes:
                         continue  # it was all there was; idle as above
+                # Unthrottled, unlike the frame loops: a plugin loaded,
+                # reloaded or enabled for on-demand above is due at once.
                 self._tick_plugin_updates()
                 
                 # Clean up expired WiFi status messages
@@ -3772,7 +3892,7 @@ class DisplayController:
                             # Multi-display sync: send follower frame after each render
                             self._send_follower_frame(manager_to_display)
 
-                            self._tick_plugin_updates()
+                            self._tick_plugin_updates_if_due()
                             # Throttled: one clock compare between passes.
                             self._service_pending_changes()
                             self._check_live_takeover()
@@ -3831,7 +3951,7 @@ class DisplayController:
                                             "breaking early", active_mode,
                                             self.current_display_mode)
                                 break
-                            self._tick_plugin_updates()
+                            self._tick_plugin_updates_if_due()
 
                             elapsed = time.time() - start_time
                             if elapsed >= target_duration:
@@ -4532,6 +4652,7 @@ class DisplayController:
             except Exception as e:
                 logger.warning("Error closing the control socket: %s", e)
             self._control_server = None
+            self._state_hub = None
         # Stop the async update worker first so no in-flight update() call
         # is still touching display/cache-backed resources while they're
         # torn down below.

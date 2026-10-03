@@ -17,7 +17,7 @@ from src.common.path_safety import safe_path_component
 from src import display_watchdog
 from src.common import sync_manager as _sync
 from src import error_aggregator as _errors
-from web_interface import display_preview
+from web_interface import display_preview, display_state
 from web_interface.auth import request_is_authenticated
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
@@ -100,20 +100,30 @@ def get_health():
         # service is "active". No heartbeat at all (the dev server, an older
         # display) is not a failure: the preview-frame check below is then
         # the only signal, as it always was.
+        # The display reports the same beat's age over the control socket's
+        # state stream, measured in memory; the file is the fallback.
         try:
-            heartbeat = display_watchdog.read_heartbeat(display_watchdog.HEARTBEAT_PATH)
-            age = display_watchdog.heartbeat_age(heartbeat) if heartbeat else None
+            snapshot = display_state.read_state()
+            if snapshot is not None:
+                source = 'socket'
+                age = display_state.loop_heartbeat_age(snapshot)
+            else:
+                source = 'heartbeat_file'
+                heartbeat = display_watchdog.read_heartbeat(display_watchdog.HEARTBEAT_PATH)
+                age = display_watchdog.heartbeat_age(heartbeat) if heartbeat else None
             if age is None:
                 health_status['checks']['display_loop'] = {
                     'status': 'not_reported',
                     'note': 'The display is not writing a heartbeat (not started yet, '
                             'or a version or setup without one)',
+                    'source': source,
                 }
             else:
                 fresh = age < display_watchdog.HEARTBEAT_STALE_SECONDS
                 health_status['checks']['display_loop'] = {
                     'status': 'running' if fresh else 'stalled',
                     'heartbeat_age_seconds': round(age, 1),
+                    'source': source,
                 }
         except Exception:
             logger.warning("Health check could not read the display heartbeat", exc_info=True)
