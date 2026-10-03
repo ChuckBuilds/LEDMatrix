@@ -239,4 +239,4 @@ def test_pending_vegas_init_is_applied_by_the_helper_the_main_loop_calls():
 def test_main_loop_applies_pending_vegas_init_before_the_follower_branch():
     import inspect
     src = inspect.getsource(DisplayController.run)
-    assert src.index("self._apply_pending_vegas_init()") < src.index("self.sync_manager.is_follower_active()")
+    assert src.index("self._apply_pending_vegas_init()") < src.index("self._run_follower_frame()")

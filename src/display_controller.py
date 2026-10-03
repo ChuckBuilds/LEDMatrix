@@ -35,6 +35,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disab
 import pytz
 
 from src import display_watchdog
+from src.display_arbiter import (
+    Arbiter, ArbiterInputs, ArbiterState, Source, WifiNotice, wifi_notice_preempts,
+)
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
@@ -2754,11 +2757,12 @@ class DisplayController:
     # into an Arbiter / ScreenRunner / Sources (docs/RUN_LOOP_REDESIGN.md).
     # test/test_run_loop_golden.py pins down what the loop does with them.
 
-    def _blank_while_scheduled_off(self) -> None:
+    def _blank_while_scheduled_off(self, dwell: float) -> None:
         """One pass while the schedule has the panel off: blank it and dwell.
 
-        The dwell returns early when on-demand starts or the schedule turns
-        the panel back on (see _sleep_with_plugin_updates).
+        The Arbiter's SCHEDULED_OFF plan; ``dwell`` is its max_duration. The
+        dwell returns early when on-demand starts or the schedule turns the
+        panel back on (see _sleep_with_plugin_updates).
         """
         # Clear display when schedule makes it inactive to ensure blank screen
         # (not showing initialization screen)
@@ -2771,7 +2775,7 @@ class DisplayController:
 
         logger.info(f"Display not active (is_display_active={self.is_display_active}), sleeping...")
         self._publish_current_mode_state()
-        self._sleep_with_plugin_updates(60)
+        self._sleep_with_plugin_updates(dwell)
 
     def _run_follower_frame(self) -> None:
         """One frame while a sync leader drives this panel (follower mode).
@@ -2850,46 +2854,69 @@ class DisplayController:
         if remaining > 0:
             time.sleep(remaining)
 
-    def _show_wifi_notice(self) -> bool:
-        """Show a pending WiFi status message for one pass.
+    def _arbiter_inputs(self) -> ArbiterInputs:
+        """This pass's snapshot for Arbiter.decide, taken after _evaluate_schedule.
+
+        _evaluate_schedule forces is_display_active on while an on-demand
+        session overrides a scheduled-off window, and flags that with
+        on_demand_schedule_override, so the schedule's own answer is "on and
+        not overridden". The WiFi notice is read only when it could win --
+        the panel is on and neither a follower nor on-demand outranks it --
+        because _check_wifi_status_message has side effects (its 1 Hz
+        throttle, deleting an expired or corrupt file) that such a pass
+        never had.
+        """
+        schedule_on = self.is_display_active and not self.on_demand_schedule_override
+        on_demand = self.on_demand_active
+        follower = self.sync_manager.is_follower_active()
+        notice = None
+        if self.is_display_active and not follower and not on_demand:
+            notice = self._read_wifi_notice()
+        return ArbiterInputs(schedule_on=schedule_on, on_demand_active=on_demand,
+                             follower_active=follower, wifi_notice=notice)
+
+    def _read_wifi_notice(self) -> Optional[WifiNotice]:
+        """The pending WiFi notice (see _check_wifi_status_message), or None."""
+        status = self._check_wifi_status_message()
+        if not status:
+            return None
+        return WifiNotice(message=status['message'],
+                          expires_at=float(status['expires_at']))
+
+    def _show_wifi_notice(self, notice: WifiNotice, dwell: float) -> bool:
+        """Draw the Arbiter's WIFI plan and hold it for ``dwell`` seconds.
 
         Returns True when the message was drawn, and the pass ends there
-        (no rotation). On-demand outranks it, so nothing is checked while
-        on-demand is active; a message that fails to draw is treated as no
-        message.
+        (no rotation). A message that fails to draw is treated as no
+        message: the pass carries on as a LEGACY plan.
         """
-        if self.on_demand_active:
-            return False
-        wifi_status_data = self._check_wifi_status_message()
-        if not wifi_status_data:
-            return False
         self._end_scroll_before_core_screen()
-        if not self._display_wifi_status_message(wifi_status_data):
+        if not self._display_wifi_status_message(
+                {'message': notice.message, 'expires_at': notice.expires_at}):
             # Display failed, clear the status and continue normally
             return False
         # The plugin that resumes afterwards must redraw
         # the whole panel, not paint over the message.
         self.force_change = True
-        self._sleep_with_plugin_updates(0.5)
+        self._sleep_with_plugin_updates(dwell)
         return True
 
     def _wifi_notice_pending(self) -> bool:
-        """True when a WiFi notice is waiting that _show_wifi_notice would draw.
+        """True when a WiFi notice should end the current screen early.
 
         Polled from the frame loops, the dwell sleep and after a Vegas
         iteration yields, so a notice preempts whatever is on the panel
         within about a second instead of waiting for the screen to end --
         by which time a short notice has usually expired unseen. Cheap at
         frame rate: _check_wifi_status_message stats the file at most once
-        a second. On-demand outranks the notice, as in _show_wifi_notice.
+        a second. The rule is display_arbiter.wifi_notice_preempts; the
+        file is not read at all while on-demand, which outranks the notice,
+        is active.
         """
         if self.on_demand_active:
             return False
-        status = self._check_wifi_status_message()
-        if not status:
-            return False
-        # The 1 s throttle can hand back a result that has expired since.
-        return time.time() < float(status['expires_at'])
+        return wifi_notice_preempts(self._read_wifi_notice(), self.on_demand_active,
+                                    time.time())
 
     def _resolve_active_mode(self):
         """The mode this pass shows: the on-demand session's current mode
@@ -3499,8 +3526,13 @@ class DisplayController:
                 # is active). No repaint: this screen's first frame pushes it.
                 self._apply_brightness_target()
 
-                if not self.is_display_active:
-                    self._blank_while_scheduled_off()
+                # Who gets the panel this pass (src/display_arbiter.py). The
+                # Arbiter decides the scheduled-off gate, Follower and Wifi;
+                # a LEGACY plan carries on to the code below.
+                plan = Arbiter.decide(ArbiterState(), self._arbiter_inputs(), time.time())
+
+                if plan.source is Source.SCHEDULED_OFF:
+                    self._blank_while_scheduled_off(plan.max_duration)
                     continue
                 
                 self._publish_current_mode_state_if_changed()
@@ -3513,7 +3545,7 @@ class DisplayController:
                 # Multi-display sync: follower mode — render frames received from leader.
                 # Plugin update() threads still run (via _tick_plugin_updates above) so
                 # data is fresh when we return to standalone if the leader goes offline.
-                if self.sync_manager.is_follower_active():
+                if plan.source is Source.FOLLOWER:
                     self._run_follower_frame()
                     continue
 
@@ -3521,10 +3553,12 @@ class DisplayController:
                 # This also cleans up expired updates to prevent memory leaks
                 self.display_manager.process_deferred_updates()
 
-                # Check for WiFi status message (interrupts normal rotation, but respects on-demand)
-                # Priority: on-demand > wifi-status > live-priority > normal rotation
-                # Past this point no WiFi message is showing this pass.
-                if self._show_wifi_notice():
+                # WiFi status message: interrupts the rotation, but on-demand
+                # outranks it (the Arbiter's order). Past this point no WiFi
+                # message is showing this pass: one that failed to draw
+                # carries on as a LEGACY plan.
+                if (plan.source is Source.WIFI and plan.notice is not None
+                        and self._show_wifi_notice(plan.notice, plan.max_duration)):
                     continue  # Skip to next iteration, don't rotate
 
                 # Check for live priority content and switch to it immediately.

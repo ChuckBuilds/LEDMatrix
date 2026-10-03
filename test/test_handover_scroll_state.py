@@ -675,30 +675,40 @@ class TestTheControllersOwnScreens:
         _push(dm, (255, 0, 0))               # the ticker's last frame
         flags = _record_scrolling(dm, monkeypatch)
         c = _core_screen_controller(dm)
-        DisplayController._blank_while_scheduled_off(c)
+        DisplayController._blank_while_scheduled_off(c, 60.0)
         assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 0)
         assert flags == [False]              # a static frame, not a freeze
         assert not dm.is_currently_scrolling()
         c._sleep_with_plugin_updates.assert_called_once_with(60)
 
     def test_the_wifi_notice_shows_none_of_the_ticker(self, dm, monkeypatch):
+        from src.display_arbiter import WifiNotice
         from src.display_controller import DisplayController
         dm._scan_lag_bands = [(24, 48, 1)]
         dm.set_scrolling_state(True, 1)
         _push(dm, (255, 0, 0))
         flags = _record_scrolling(dm, monkeypatch)
         c = _core_screen_controller(dm)
-        c._check_wifi_status_message.return_value = {"message": "x", "expires_at": 1e12}
         c._display_wifi_status_message.side_effect = lambda _s: _push(dm, (0, 0, 255)) and True
-        assert DisplayController._show_wifi_notice(c) is True
+        notice = WifiNotice(message="x", expires_at=1e12)
+        assert DisplayController._show_wifi_notice(c, notice, 0.5) is True
         assert dm._presented[-1].getpixel((10, 30)) == (0, 0, 255)
         assert flags == [False]
 
     def test_no_notice_leaves_the_scroll_alone(self, dm):
+        """With no notice the Arbiter does not pick the WiFi screen, so
+        nothing ends the scroll."""
+        from src.display_arbiter import Arbiter, ArbiterState, Source
         from src.display_controller import DisplayController
         dm.set_scrolling_state(True, 2)
         c = _core_screen_controller(dm)
+        c.is_display_active = True
+        c.on_demand_schedule_override = False
+        c.sync_manager.is_follower_active.return_value = False
+        c._read_wifi_notice = types.MethodType(DisplayController._read_wifi_notice, c)
         c._check_wifi_status_message.return_value = None
-        assert DisplayController._show_wifi_notice(c) is False
+        inputs = DisplayController._arbiter_inputs(c)
+        assert inputs.wifi_notice is None
+        assert Arbiter.decide(ArbiterState(), inputs, 0.0).source is Source.LEGACY
         assert dm.is_currently_scrolling()
         assert dm._frame_hold == 2

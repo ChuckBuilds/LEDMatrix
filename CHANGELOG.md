@@ -208,6 +208,9 @@ policies are unchanged.
   this release: plugins reach it through `APIHelper` and `espn_dates`, and
   should not import it directly until a plugin-facing API ships (stage 3), so
   it sets no `ledmatrix_min_version` floor.
+- `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
+  Core-internal: plugins have no reason to import it, so it sets no
+  `ledmatrix_min_version` floor.
 
 ### Tooling
 
@@ -225,6 +228,17 @@ policies are unchanged.
   (`_dispatch_first_frame`, `_resolve_durations`, `_resolve_active_mode`,
   `_needs_high_fps`, `_advance_after_screen` and others), and the traces are
   identical before and after the move.
+- Display loop stage 2: an Arbiter decides who gets the panel. Each pass,
+  `run()` gathers a small snapshot (the schedule, the on-demand flag, the
+  sync follower, the pending WiFi notice) and calls
+  `Arbiter.decide(state, inputs, now)` in `src/display_arbiter.py`, a pure
+  function, which returns a `ScreenPlan`. It decides the scheduled-off
+  blank, the follower frame and the WiFi notice; on-demand, live priority,
+  Vegas and the rotation return a `LEGACY` plan and run the existing code.
+  The WiFi notice's mid-screen rule (`wifi_notice_preempts`) moves there
+  too. No behaviour change: the golden traces regenerate byte-identical.
+  `test/test_display_arbiter.py` tests `decide()` with a table of all 16
+  combinations of its inputs.
 
 ### Fixes
 
