@@ -19,6 +19,30 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Faster frame copy into the panel (library patch, applied at build time)
+
+- Copying each frame into the panel buffer (`SetImage`) was the biggest CPU
+  cost LEDMatrix owns on large panels: 6-7.5 ms per frame on a 512x64 Pi 4 at
+  ~85 fps, about 60% of a core. The library's binding walked the image column
+  by column and set one pixel at a time, and each pixel rewrote a word in
+  every PWM bit plane, 2KB apart, so nearly every write missed the cache.
+  `patches/rpi-rgb-led-matrix/0001-bulk-setimage.patch` copies row by row in
+  one bulk call per row, with the colour lookup done once and branch-free
+  bit-plane writes. The panel buffer is byte-identical to before (882 checks
+  across image types, offsets, PWM bits, brightness, inverse colours and a
+  pixel mapper).
+- Measured on hdpi (Pi 4, 4x128x64): frame copy 6.57 -> 2.21 ms, the display
+  process 139% -> 103% of a core, late frames 7.8 -> 5.4 per 1,000.
+- `first_time_install.sh` applies the patch to `rpi-rgb-led-matrix-master`
+  just before building the binding and takes it back out straight after (and
+  on any exit), so the submodule stays at its pinned commit with no local
+  changes. A patch that no longer applies after a submodule bump is reported
+  and skipped; the unpatched library still builds.
+- Existing installs keep the library they have until it is rebuilt:
+  `sudo RPI_RGB_FORCE_REBUILD=1 ./first_time_install.sh`.
+  `scripts/build_rgbmatrix_nogil.sh` builds from an unpatched copy and is
+  unchanged.
+
 ### Install
 
 - Raspberry Pi OS **Bookworm** (Debian 12, Python 3.11) is supported,

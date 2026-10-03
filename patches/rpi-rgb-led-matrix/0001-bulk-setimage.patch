@@ -1,0 +1,174 @@
+Faster SetImage for rpi-rgb-led-matrix (applied by first_time_install.sh at build
+time; the submodule itself stays at its pinned commit).
+
+Copying a frame into the panel buffer was the biggest CPU cost LEDMatrix owns on
+large panels: the binding's SetPixelsPillow walked the image column by column
+and called SetPixel per pixel, and each SetPixel read-modify-writes one word per
+PWM bit plane, 2KB apart, so consecutive pixels were a whole double-row apart and
+almost every write missed the cache. This patch:
+
+ * FrameCanvas gets its own SetPixelsPillow: row by row, one bulk SetPixels call
+   per row;
+ * Framebuffer::SetPixels clips once, looks colours up once per pixel, walks each
+   row's designators in order and writes the bit planes branch-free;
+ * the base Canvas.SetPixelsPillow loop (RGBMatrix.SetImage) is row-major.
+
+The bit-plane buffer is byte-identical to the old code's (882 memcmp checks over
+noise/gradient/solid/low-value/sparse images, clipped offsets, pwm 7/8/11,
+brightness 1/50/90/100, inverse colours, luminance correction off and a pixel
+mapper). Measured on a Pi 4 at 512x64: 6.0-6.3 ms -> 1.8 ms per frame through
+the Python binding; on hdpi (Pi 4, 4x128x64) frame copy 6.57 -> 2.21 ms and the
+display process 139% -> 103% of a core.
+
+LEDMatrix always draws into the canvas that is not on screen and swaps it in
+(DisplayManager.update_display), so the write order cannot show as tearing.
+
+Against hzeller/rpi-rgb-led-matrix 1ee4f76.
+
+diff --git a/bindings/python/rgbmatrix/core.pyx b/bindings/python/rgbmatrix/core.pyx
+index 230d87f..babc3bb 100644
+--- a/bindings/python/rgbmatrix/core.pyx
++++ b/bindings/python/rgbmatrix/core.pyx
+@@ -2,6 +2,7 @@
+ 
+ from libcpp cimport bool
+ from libc.stdint cimport uint8_t, uint32_t, uintptr_t
++from libc.stdlib cimport malloc, free
+ import cython
+ 
+ cdef extern from "Python.h":
+@@ -59,8 +60,9 @@ cdef class Canvas:
+ 
+         buffer = get_pillow_buffer(image_capsule)
+ 
+-        for col in range(max(0, -xstart), min(width, frame_width - xstart)):
+-            for row in range(max(0, -ystart), min(height, frame_height - ystart)):
++        # Row-major: walks both the image and the bitplane buffer sequentially.
++        for row in range(max(0, -ystart), min(height, frame_height - ystart)):
++            for col in range(max(0, -xstart), min(width, frame_width - xstart)):
+                 pixel = buffer[row][col]
+                 r = (pixel ) & 0xFF
+                 g = (pixel >> 8) & 0xFF
+@@ -86,6 +88,41 @@ cdef class FrameCanvas(Canvas):
+     def SetPixel(self, int x, int y, uint8_t red, uint8_t green, uint8_t blue):
+         (<cppinc.FrameCanvas*>self._getCanvas()).SetPixel(x, y, red, green, blue)
+ 
++    @cython.boundscheck(False)
++    @cython.wraparound(False)
++    def SetPixelsPillow(self, int xstart, int ystart, int width, int height, object image_capsule):
++        # Same result as Canvas.SetPixelsPillow(), but hands each image row
++        # to the C++ bulk FrameCanvas::SetPixels() instead of calling the
++        # virtual SetPixel() once per pixel.
++        cdef cppinc.FrameCanvas* my_canvas = <cppinc.FrameCanvas*>self._getCanvas()
++        cdef int col_start = max(0, -xstart)
++        cdef int col_end = min(width, my_canvas.width() - xstart)
++        cdef int row_start = max(0, -ystart)
++        cdef int row_end = min(height, my_canvas.height() - ystart)
++        cdef int row, col, pixel
++        cdef int *src
++        cdef cppinc.Color *line
++        cdef int **buffer
++
++        if col_end <= col_start or row_end <= row_start:
++            return
++        buffer = get_pillow_buffer(image_capsule)
++        line = <cppinc.Color*>malloc((col_end - col_start) * sizeof(cppinc.Color))
++        if line == NULL:
++            raise MemoryError()
++        try:
++            for row in range(row_start, row_end):
++                src = buffer[row]
++                for col in range(col_start, col_end):
++                    pixel = src[col]
++                    line[col - col_start].r = pixel & 0xFF
++                    line[col - col_start].g = (pixel >> 8) & 0xFF
++                    line[col - col_start].b = (pixel >> 16) & 0xFF
++                my_canvas.SetPixels(xstart + col_start, ystart + row,
++                                    col_end - col_start, 1, line)
++        finally:
++            free(line)
++
+ 
+     property width:
+         def __get__(self): return (<cppinc.FrameCanvas*>self._getCanvas()).width()
+diff --git a/bindings/python/rgbmatrix/cppinc.pxd b/bindings/python/rgbmatrix/cppinc.pxd
+index 8bec241..314332d 100644
+--- a/bindings/python/rgbmatrix/cppinc.pxd
++++ b/bindings/python/rgbmatrix/cppinc.pxd
+@@ -25,6 +25,7 @@ cdef extern from "led-matrix.h" namespace "rgb_matrix":
+         FrameCanvas *SwapOnVSync(FrameCanvas*, uint8_t)
+ 
+     cdef cppclass FrameCanvas(Canvas):
++        void SetPixels(int, int, int, int, Color*) nogil
+         bool SetPWMBits(uint8_t)
+         uint8_t pwmbits()
+         void SetBrightness(uint8_t)
+diff --git a/lib/framebuffer.cc b/lib/framebuffer.cc
+index 36d138b..aee62ca 100644
+--- a/lib/framebuffer.cc
++++ b/lib/framebuffer.cc
+@@ -807,11 +807,60 @@ void Framebuffer::SetPixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+   }
+ }
+ 
++// Bulk version of SetPixel(); produces exactly the same bitplane content.
++// Faster because it hoists the per-pixel work out of the loop: the color
++// mapping becomes one 256-entry table built per call (each channel maps
++// independently through the same function), the pixel designators of a row
++// are contiguous in the PixelDesignatorMap, and the bit-plane loop is
++// branchless (the color bits are effectively random, so the branches in
++// SetPixel() mispredict a lot).
+ void Framebuffer::SetPixels(int x, int y, int width, int height, Color *colors) {
+-  for (int iy = 0; iy < height; ++iy) {
+-    for (int ix = 0; ix < width; ++ix) {
+-      SetPixel(x + ix, y + iy, colors->r, colors->g, colors->b);
+-      ++colors;
++  PixelDesignatorMap *const mapper = *shared_mapper_;
++  const int ix_start = std::max(0, -x);
++  const int ix_end = std::min(width, mapper->width() - x);
++  const int iy_start = std::max(0, -y);
++  const int iy_end = std::min(height, mapper->height() - y);
++  if (ix_start >= ix_end || iy_start >= iy_end) return;
++
++  // Common case (luminance correction, no inversion): use the precomputed
++  // table directly; otherwise build one. Cheap enough to do per call, which
++  // matters for callers that send one row at a time.
++  uint16_t local_map[256];
++  const uint16_t *color_map;
++  if (do_luminance_correct_ && !inverse_color_) {
++    color_map = ColorLookupTable::GetLookup(brightness_).color;
++  } else {
++    for (int c = 0; c < 256; ++c) {
++      uint16_t unused1, unused2;
++      MapColors(c, 0, 0, &local_map[c], &unused1, &unused2);
++    }
++    color_map = local_map;
++  }
++
++  const int min_bit_plane = kBitPlanes - pwm_bits_;
++  gpio_bits_t *const plane_start = bitplane_buffer_ + columns_ * min_bit_plane;
++  for (int iy = iy_start; iy < iy_end; ++iy) {
++    const Color *c = colors + iy * width + ix_start;
++    const PixelDesignator *designator = mapper->get(x + ix_start, y + iy);
++    for (int ix = ix_start; ix < ix_end; ++ix, ++c, ++designator) {
++      const long pos = designator->gpio_word;
++      if (pos < 0) continue;  // non-used pixel marker.
++      const uint16_t red = color_map[c->r];
++      const uint16_t green = color_map[c->g];
++      const uint16_t blue = color_map[c->b];
++      const gpio_bits_t r_bits = designator->r_bit;
++      const gpio_bits_t g_bits = designator->g_bit;
++      const gpio_bits_t b_bits = designator->b_bit;
++      const gpio_bits_t designator_mask = designator->mask;
++      gpio_bits_t *bits = plane_start + pos;
++      for (int plane = min_bit_plane; plane < kBitPlanes; ++plane) {
++        const gpio_bits_t color_bits =
++          (r_bits & -(gpio_bits_t)((red >> plane) & 1))
++          | (g_bits & -(gpio_bits_t)((green >> plane) & 1))
++          | (b_bits & -(gpio_bits_t)((blue >> plane) & 1));
++        *bits = (*bits & designator_mask) | color_bits;
++        bits += columns_;
++      }
+     }
+   }
+ }
