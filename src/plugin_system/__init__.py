@@ -39,7 +39,7 @@ def __getattr__(name: str) -> Any:
         module_name, attr = _LAZY[name]
     except KeyError:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
-    value = getattr(importlib.import_module(module_name), attr)
+    value = getattr(importlib.import_module(module_name), attr)  # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import -- module_name comes from the fixed _LAZY table
     globals()[name] = value
     return value
 
