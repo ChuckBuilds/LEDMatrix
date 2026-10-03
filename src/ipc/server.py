@@ -14,6 +14,13 @@ every kind of screen. An awaited command (``brightness.set``,
 ``plugin.reload``) carries a :class:`CommandOutcome` that the render thread
 fills in; its connection thread waits for that, bounded, before answering.
 
+The state stream (stage 3): the display publishes what it is doing into a
+:class:`StateHub`, in memory, and ``state.get`` / ``state.subscribe`` read
+it. A subscriber's connection gives back its request slot, takes one of
+:data:`~src.ipc.contract.MAX_SUBSCRIBERS`, and is pushed the latest version
+on every change plus a keepalive tick, from its own thread: publishing never
+waits for a reader, and a reader that stops reading is dropped.
+
 Robustness rules, because this runs inside the display process:
 
 * every connection has its own daemon thread, at most :data:`MAX_CLIENTS` at
@@ -37,6 +44,7 @@ server checks them again: root, its own user, or a member of that group.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -45,8 +53,9 @@ import stat
 import struct
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Tuple
 
 from src.ipc.contract import (
     AWAIT_SECONDS,
@@ -55,8 +64,12 @@ from src.ipc.contract import (
     DEFAULT_SOCKET_DIR,
     DEFAULT_SOCKET_PATH,
     MAX_MESSAGE_BYTES,
+    MAX_SUBSCRIBERS,
     PROTOCOL_VERSION,
     QUEUED_COMMANDS,
+    STATE_SCHEMA,
+    STATE_SECTIONS,
+    SUBSCRIBE_KEEPALIVE_SECONDS,
     SUPPORTED_VERSIONS,
     AckResult,
     BrightnessSetArgs,
@@ -72,6 +85,9 @@ from src.ipc.contract import (
     QueuedArgs,
     Request,
     Response,
+    StateEvent,
+    StateEventKind,
+    StateGetArgs,
     configured_socket_path,
     decode_message,
     dev_socket_path,
@@ -179,6 +195,214 @@ class QueuedCommand:
         """Report failure to a waiting client (a no-op for an acked command)."""
         if self.outcome is not None:
             self.outcome.fail(code, message)
+
+
+# -- the state stream (stage 3) ----------------------------------------------------------
+
+#: How long a ``state.get`` keeps the display counting its readers as served
+#: over the socket (:meth:`StateHub.readers_active`). A subscriber counts for
+#: as long as it is connected.
+READER_WINDOW_SECONDS = 60.0
+
+#: Room kept for the envelope (``v``, ``id``, ``event``) around a snapshot,
+#: within MAX_MESSAGE_BYTES.
+_ENVELOPE_ROOM = 512
+
+_MISSING = object()
+
+LoopProbe = Callable[[], Mapping[str, Any]]
+
+
+def _fingerprint(value: Optional[Mapping[str, Any]], volatile: Iterable[str]) -> Any:
+    """What a section's version is judged on: the value minus its volatile keys
+    (timestamps that move on every publish without anything changing)."""
+    if value is None:
+        return None
+    skip = frozenset(volatile)
+    return {k: v for k, v in value.items() if k not in skip} if skip else dict(value)
+
+
+def _unknown_loop() -> Dict[str, Any]:
+    return {'heartbeat_age_seconds': None, 'armed': False, 'stale_after': None}
+
+
+def fit_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """``snapshot``, or a copy without the plugin runtime section when the
+    message would be over MAX_MESSAGE_BYTES (hundreds of plugins). The
+    reader then falls back to the cache for that section only; ``truncated``
+    says which was left out."""
+    state = snapshot.get('state')
+    if not isinstance(state, dict) or state.get('plugins') is None:
+        return snapshot
+    try:
+        size = len(json.dumps(snapshot, separators=(',', ':'), ensure_ascii=True,
+                              allow_nan=False))
+    except (TypeError, ValueError):
+        size = MAX_MESSAGE_BYTES
+    if size <= MAX_MESSAGE_BYTES - _ENVELOPE_ROOM:
+        return snapshot
+    logger.warning("State snapshot is %d bytes; sending it without the plugin runtime "
+                   "section", size)
+    trimmed = dict(snapshot)
+    trimmed['state'] = dict(state, plugins=None)
+    trimmed['truncated'] = ['plugins']
+    return trimmed
+
+
+class StateHub:
+    """The display's live state, in memory, for ``state.get`` and ``state.subscribe``.
+
+    Writers publish whole sections (:meth:`publish`): the render thread
+    publishes ``display``, ``on_demand`` and ``brightness``, and the plugin
+    runtime publisher's thread publishes ``plugins``. Each section has one
+    writer. ``loop`` is not published: it is measured when a reader asks
+    (``loop_probe``), so it keeps ageing while the render thread is stuck.
+
+    The version goes up when a section's value changes, ignoring the keys
+    the publisher names as volatile (timestamps). Publishing never blocks on
+    a reader: the lock is held only to swap a dict reference and compare it,
+    and every socket write happens on the reader's own thread, outside it.
+    A reader that is slow gets the latest version when it next asks, not
+    every version in between.
+    """
+
+    def __init__(self, loop_probe: Optional[LoopProbe] = None, *,
+                 clock: Callable[[], float] = time.monotonic,
+                 wall_clock: Callable[[], float] = time.time,
+                 epoch: Optional[str] = None, pid: Optional[int] = None,
+                 reader_window: float = READER_WINDOW_SECONDS):
+        self._cond = threading.Condition(threading.Lock())
+        self._sections: Dict[str, Optional[Dict[str, Any]]] = {}
+        self._fingerprints: Dict[str, Any] = {}
+        self._version = 0
+        self.epoch = epoch or uuid.uuid4().hex[:16]
+        self.pid = os.getpid() if pid is None else pid
+        self._loop_probe = loop_probe
+        self._clock = clock
+        self._wall_clock = wall_clock
+        self._reader_window = reader_window
+        self._last_read: Optional[float] = None
+        self._subscribers = 0
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+    @property
+    def subscribers(self) -> int:
+        return self._subscribers
+
+    # -- writers -------------------------------------------------------------
+
+    def publish(self, section: str, value: Optional[Mapping[str, Any]],
+                volatile: Iterable[str] = ()) -> bool:
+        """Store a section's latest value; True when that is a new version.
+
+        The value is copied (one level), so the caller may reuse its dict.
+        """
+        stored = None if value is None else dict(value)
+        fingerprint = _fingerprint(stored, volatile)
+        with self._cond:
+            self._sections[section] = stored
+            if self._fingerprints.get(section, _MISSING) == fingerprint:
+                return False
+            self._fingerprints[section] = fingerprint
+            self._version += 1
+            self._cond.notify_all()
+        return True
+
+    def wake(self) -> None:
+        """Wake every waiting reader (the server is closing)."""
+        with self._cond:
+            self._cond.notify_all()
+
+    # -- readers -------------------------------------------------------------
+
+    def loop(self) -> Dict[str, Any]:
+        """The render loop's liveness now. Never raises."""
+        if self._loop_probe is None:
+            return _unknown_loop()
+        try:
+            return dict(self._loop_probe())
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Render loop liveness probe failed", exc_info=True)
+            return _unknown_loop()
+
+    def snapshot(self, since: Optional[int] = None,
+                 epoch: Optional[str] = None) -> Dict[str, Any]:
+        """The :class:`~src.ipc.contract.StateSnapshot` now.
+
+        ``since`` with this hub's ``epoch``, still the current version, gives
+        the short ``changed: false`` form.
+        """
+        with self._cond:
+            version = self._version
+            sections = dict(self._sections)
+        loop = self.loop()
+        result: Dict[str, Any] = {
+            'schema': STATE_SCHEMA,
+            'version': version,
+            'epoch': self.epoch,
+            'pid': self.pid,
+            'served_at': self._wall_clock(),
+            'loop': loop,
+        }
+        if since is not None and epoch == self.epoch and since == version:
+            result['changed'] = False
+            return result
+        state: Dict[str, Any] = {name: sections.get(name) for name in STATE_SECTIONS
+                                 if name != 'loop'}
+        state['loop'] = loop
+        result['changed'] = True
+        result['state'] = state
+        return result
+
+    def wait_for_change(self, version: int, timeout: float,
+                        stop: Optional[threading.Event] = None) -> bool:
+        """Block up to ``timeout`` for a version other than ``version``."""
+        with self._cond:
+            self._cond.wait_for(
+                lambda: self._version != version or (stop is not None and stop.is_set()),
+                timeout)
+            return self._version != version
+
+    # -- who is reading ------------------------------------------------------
+
+    def note_read(self) -> None:
+        self._last_read = self._clock()
+
+    def subscriber_joined(self) -> None:
+        with self._cond:
+            self._subscribers += 1
+
+    def subscriber_left(self) -> None:
+        with self._cond:
+            self._subscribers = max(0, self._subscribers - 1)
+            self._last_read = self._clock()
+
+    def readers_active(self) -> bool:
+        """Is the socket serving state readers? A subscriber is connected, or a
+        ``state.get`` came within the reader window. The display uses this to
+        write the cache copies of the same state less often."""
+        if self._subscribers > 0:
+            return True
+        last = self._last_read
+        return last is not None and self._clock() - last < self._reader_window
+
+
+class _Slot:
+    """A connection slot, released once (a subscriber gives its back early)."""
+
+    def __init__(self, semaphore: threading.BoundedSemaphore):
+        self._semaphore = semaphore
+        self._held = True
+        self._lock = threading.Lock()
+
+    def release(self) -> None:
+        with self._lock:
+            if self._held:
+                self._held = False
+                self._semaphore.release()
 
 
 # -- peer credentials ------------------------------------------------------------------
@@ -315,8 +539,14 @@ class ControlServer:
                  message_timeout: float = MESSAGE_TIMEOUT_SECONDS,
                  idle_timeout: float = IDLE_TIMEOUT_SECONDS,
                  check_peer: bool = True,
-                 await_seconds: Optional[Mapping[str, float]] = None):
+                 await_seconds: Optional[Mapping[str, float]] = None,
+                 state_hub: Optional[StateHub] = None,
+                 max_subscribers: int = MAX_SUBSCRIBERS,
+                 keepalive: float = SUBSCRIBE_KEEPALIVE_SECONDS):
         self.path = path
+        self.state_hub = state_hub
+        self._subscriber_slots = threading.BoundedSemaphore(max_subscribers)
+        self._keepalive = keepalive
         self._await_seconds: Dict[str, float] = dict(AWAIT_SECONDS)
         if await_seconds:
             self._await_seconds.update(await_seconds)
@@ -378,6 +608,8 @@ class ControlServer:
         """Stop accepting and remove the socket file (only if it is still ours)."""
         self._stopping.set()
         self._close_socket()
+        if self.state_hub is not None:
+            self.state_hub.wake()   # subscribers see _stopping and hang up
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
@@ -549,6 +781,7 @@ class ControlServer:
 
     def _serve(self, conn: socket.socket) -> None:
         """One connection: authenticate, then answer requests until it ends."""
+        slot = _Slot(self._slots)
         try:
             conn.settimeout(self._io_timeout)
             peer = peer_credentials(conn)
@@ -557,7 +790,7 @@ class ControlServer:
                                "this user or group %s", peer.pid, peer.uid, peer.gid, self._group)
                 self._send(conn, Response.failure(None, ErrorCode.FORBIDDEN, 'not permitted'))
                 return
-            self._read_requests(conn, peer)
+            self._read_requests(conn, peer, slot)
         except Exception:  # pylint: disable=broad-except
             logger.exception("Control socket connection failed")
         finally:
@@ -565,7 +798,7 @@ class ControlServer:
                 conn.close()
             except OSError:
                 pass
-            self._slots.release()
+            slot.release()
 
     def _peer_ok(self, peer: PeerCredentials) -> bool:
         groups = None
@@ -573,7 +806,8 @@ class ControlServer:
             groups = process_groups(peer.pid)
         return peer_allowed(peer, self._own_uid, self._group, groups)
 
-    def _read_requests(self, conn: socket.socket, peer: Optional[PeerCredentials]) -> None:
+    def _read_requests(self, conn: socket.socket, peer: Optional[PeerCredentials],
+                       slot: Optional[_Slot] = None) -> None:
         reader = FrameReader(MAX_MESSAGE_BYTES)
         idle_since = time.monotonic()
         message_started: Optional[float] = None
@@ -598,7 +832,13 @@ class ControlServer:
                 self._send(conn, Response.failure(None, e.code, e.message))
                 return  # can't find the next message boundary: hang up
             for line in lines:
-                if not self._send(conn, self.handle_line(line, peer)):
+                response, cmd = self._handle(line, peer)
+                if cmd == Command.STATE_SUBSCRIBE and response.ok:
+                    # The connection becomes a one-way stream; anything the
+                    # client sent after the subscribe is ignored.
+                    self._subscribe(conn, response, slot)
+                    return
+                if not self._send(conn, response):
                     return
             if reader.pending:
                 if message_started is None or lines:
@@ -624,20 +864,91 @@ class ControlServer:
     # -- requests --------------------------------------------------------------------
 
     def handle_line(self, line: bytes, peer: Optional[PeerCredentials] = None) -> Response:
-        """Answer one request line. Never raises."""
+        """Answer one request line. Never raises.
+
+        A ``state.subscribe`` answered here gets its snapshot only; the
+        stream that follows needs a connection (``_read_requests``).
+        """
+        return self._handle(line, peer)[0]
+
+    def _handle(self, line: bytes,
+                peer: Optional[PeerCredentials]) -> Tuple[Response, Optional[str]]:
+        """The response to one line, and the command it answered (when known)."""
         request_id: Optional[str] = None
+        cmd: Optional[str] = None
         try:
             obj = decode_message(line)
             raw_id = obj.get('id')
             request_id = raw_id if isinstance(raw_id, str) and len(raw_id) <= 128 else None
             request = Request.from_dict(obj)
             request_id = request.id
-            return self._dispatch(request, peer)
+            cmd = request.cmd
+            return self._dispatch(request, peer), cmd
         except ProtocolError as e:
-            return Response.failure(e.request_id or request_id, e.code, e.message)
+            return Response.failure(e.request_id or request_id, e.code, e.message), cmd
         except Exception:  # pylint: disable=broad-except
             logger.exception("Control socket handler failed")
-            return Response.failure(request_id, ErrorCode.INTERNAL, 'internal error')
+            return Response.failure(request_id, ErrorCode.INTERNAL, 'internal error'), cmd
+
+    # -- the state stream ----------------------------------------------------------
+
+    def _subscribe(self, conn: socket.socket, response: Response,
+                   slot: Optional[_Slot]) -> None:
+        """Answer a ``state.subscribe`` and push state events until it ends.
+
+        Subscribers have their own bound (MAX_SUBSCRIBERS) and give their
+        request slot back, so a few browsers watching never use up the slots
+        commands need. Everything here runs on this connection's thread: a
+        reader that does not keep up only stalls its own sends, and one that
+        stops reading for a whole IO timeout is dropped. The render thread
+        only ever publishes into the hub.
+        """
+        hub = self.state_hub
+        if hub is None or not self._subscriber_slots.acquire(blocking=False):
+            self._send(conn, Response.failure(response.id, ErrorCode.BUSY,
+                                              'too many state subscribers', v=response.v))
+            return
+        if slot is not None:
+            slot.release()
+        hub.subscriber_joined()
+        try:
+            if not self._send(conn, response):
+                return
+            result = response.result or {}
+            version = result.get('version', -1)
+            sub_id = response.id or ''
+            logger.debug("Control socket: state subscriber joined at version %s", version)
+            while not self._stopping.is_set():
+                hub.wait_for_change(version, self._keepalive, self._stopping)
+                if self._stopping.is_set():
+                    return
+                snap = hub.snapshot(since=version, epoch=hub.epoch)
+                if snap.get('changed'):
+                    version = snap['version']
+                    event = StateEvent(sub_id, StateEventKind.STATE, fit_snapshot(snap),
+                                       v=response.v)
+                else:
+                    event = StateEvent(sub_id, StateEventKind.TICK, snap, v=response.v)
+                if not self._send_event(conn, event):
+                    return
+        finally:
+            hub.subscriber_left()
+            self._subscriber_slots.release()
+
+    def _send_event(self, conn: socket.socket, event: StateEvent) -> bool:
+        try:
+            data = encode_message(event.to_dict())
+        except ProtocolError as e:
+            logger.error("Control socket state event not sent: %s", e.message)
+            return False
+        try:
+            conn.sendall(data)
+            return True
+        except socket.timeout:
+            logger.info("Control socket: dropping a state subscriber that stopped reading")
+            return False
+        except OSError:
+            return False
 
     def _dispatch(self, request: Request, peer: Optional[PeerCredentials]) -> Response:
         if request.cmd == Command.HELLO:
@@ -677,6 +988,18 @@ class ControlServer:
                 return Response.failure(request.id, ErrorCode.INTERNAL, 'no status available',
                                         v=request.v)
             return Response.success(request.id, self._status_provider(), v=request.v)
+
+        if request.cmd in (Command.STATE_GET, Command.STATE_SUBSCRIBE):
+            hub = self.state_hub
+            if hub is None:
+                return Response.failure(request.id, ErrorCode.INTERNAL, 'no state available',
+                                        v=request.v)
+            if isinstance(args, StateGetArgs):
+                hub.note_read()
+                snap = hub.snapshot(since=args.since, epoch=args.epoch)
+            else:
+                snap = hub.snapshot()
+            return Response.success(request.id, fit_snapshot(snap), v=request.v)
 
         if request.cmd in QUEUED_COMMANDS and isinstance(args, (
                 OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs)):
@@ -728,22 +1051,25 @@ class ControlServer:
 
 def start_control_server(status_provider: Optional[StatusProvider] = None,
                          cache_dir: Optional[str] = None,
-                         environ: Optional[Mapping[str, str]] = None) -> Optional[ControlServer]:
+                         environ: Optional[Mapping[str, str]] = None,
+                         state_hub: Optional[StateHub] = None) -> Optional[ControlServer]:
     """Start the display's control socket, or return None when it can't run.
 
     None covers Windows, ``LEDMATRIX_CONTROL_SOCKET=off`` and any failure to
-    bind; in every case the web interface falls back to the file mailbox.
+    bind; in every case the web interface falls back to the file mailbox
+    and to the cache keys the display still writes.
     """
     path = server_socket_path(environ)
     if path is None:
         logger.debug("Control socket disabled or unsupported here; using the file mailbox only")
         return None
-    server = ControlServer(path, status_provider, resolve_socket_group(cache_dir))
+    server = ControlServer(path, status_provider, resolve_socket_group(cache_dir),
+                           state_hub=state_hub)
     return server if server.start() else None
 
 
 __all__ = [
-    'CommandOutcome', 'ControlServer', 'PeerCredentials', 'QueuedCommand', 'StatusProvider',
-    'peer_allowed', 'peer_credentials', 'process_groups', 'resolve_socket_group',
-    'server_socket_path', 'start_control_server', 'PROTOCOL_VERSION',
+    'CommandOutcome', 'ControlServer', 'PeerCredentials', 'QueuedCommand', 'StateHub',
+    'StatusProvider', 'fit_snapshot', 'peer_allowed', 'peer_credentials', 'process_groups',
+    'resolve_socket_group', 'server_socket_path', 'start_control_server', 'PROTOCOL_VERSION',
 ]

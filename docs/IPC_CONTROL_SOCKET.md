@@ -4,14 +4,17 @@ The display process serves a Unix socket that the web interface uses to send
 it commands and get an answer back. It replaces the cache-file "mailboxes" on
 the SD card one command at a time. Stage 1 carries on-demand start, stop and
 status. Stage 2 makes those commands land within a frame on every kind of
-screen, and adds `brightness.set` and `plugin.reload`. The file mailbox stays
-as a fallback for one release.
+screen, and adds `brightness.set` and `plugin.reload`. Stage 3 adds a state
+stream (`state.get`, `state.subscribe`), so the web interface reads what the
+display is doing from the socket instead of from cache files the display
+wrote to the SD card. The file mailbox and the cache keys stay as a fallback
+for one release.
 
 | | |
 |---|---|
 | Socket | `/run/ledmatrix/control.sock` (tmpfs) |
 | Served by | the display process ([`src/ipc/server.py`](../src/ipc/server.py)), started by `DisplayController.run()` |
-| Used by | the web interface ([`src/ipc/client.py`](../src/ipc/client.py)): `POST /api/v3/display/on-demand/start` and `/stop`, `POST /api/v3/plugins/update` (reload), `POST /api/v3/config/main` (brightness) |
+| Used by | the web interface ([`src/ipc/client.py`](../src/ipc/client.py)): `POST /api/v3/display/on-demand/start` and `/stop`, `POST /api/v3/plugins/update` (reload), `POST /api/v3/config/main` (brightness); and through [`web_interface/display_state.py`](../web_interface/display_state.py) (the state stream), `GET /api/v3/display/current-status`, `/display/on-demand/status`, `/plugins/installed` (`runtime`), `/plugins/state` and the reconciliations, `/health` (`display_loop`) |
 | Contract | [`src/ipc/contract.py`](../src/ipc/contract.py): messages, versions, framing and the socket path; both sides import it |
 | Override | `LEDMATRIX_CONTROL_SOCKET=/some/path.sock` for both processes, or `=off` to disable it |
 
@@ -35,6 +38,11 @@ can overwrite it), and belongs to the display process. If the display is not
 running, the socket does not exist, and the web interface knows right away.
 
 ## Protocol (version 1)
+
+Stage 3 is still version 1: `state.get` and `state.subscribe` are new
+commands, and a stage-2 display answers them `unknown_command`, which the
+web interface treats as "no socket" and falls back from.
+
 
 **Framing.** One JSON object per line (newline-delimited JSON), UTF-8, at
 most 64 KiB per line (`MAX_MESSAGE_BYTES`). Senders encode with
@@ -75,6 +83,8 @@ one. Clients branch on `error.code`, never on the message text.
 | `on_demand.status` | — | `{on_demand: {...}, current_mode, display_active}` | answered directly |
 | `brightness.set` | `{brightness: int 0-100}` | `{brightness, panel_brightness, dimmed, display_active}` | queued, awaited (2 s) |
 | `plugin.reload` | `{plugin_id}` | `{plugin_id, reloaded: true, version, modes}` | queued, awaited (10 s) |
+| `state.get` | `{since?, epoch?}` | a state snapshot (see "The state stream") | answered directly |
+| `state.subscribe` | — | a state snapshot, then pushed `state` / `tick` events | answered directly, then a stream |
 
 `duration` is a number of seconds, or a numeric string. `0`, `null` or `""`
 mean "until stopped". `pinned` must be a real boolean: the REST route has
@@ -130,6 +140,19 @@ web interface treats like any other socket failure and falls back from, and
 `hello` lists the commands a display knows. The version changes only when the
 envelope or the meaning of an existing command changes.
 
+**Events.** `state.subscribe` is the one command with more than one message
+in reply. After its response, the display pushes events on the same
+connection until either side hangs up:
+
+```json
+{"v": 1, "id": "<the subscribe id>", "event": "state", "result": {...a state snapshot...}}
+{"v": 1, "id": "<the subscribe id>", "event": "tick",  "result": {"version": 7, "epoch": "…", "pid": 812, "served_at": 1790000000.1, "changed": false, "loop": {...}}}
+```
+
+An event has `event` where a response has `ok`, which is how a reader tells
+them apart. The client sends nothing after the subscribe; anything it does
+send is ignored.
+
 **Error codes:** `bad_json`, `bad_request`, `message_too_large`,
 `unsupported_version`, `unknown_command`, `invalid_args`, `busy` (queue full,
 or too many connections), `forbidden` (peer credentials refused), `internal`.
@@ -146,6 +169,169 @@ print(client.on_demand_status())
 print(client.brightness_set(60))
 EOF
 ```
+
+## The state stream (stage 3)
+
+Before stage 3 the web interface learned what the display was doing by
+reading files the display kept writing:
+
+| What | Written by the display | How often | Medium |
+|---|---|---|---|
+| current mode, plugin, `is_display_active`, `on_demand_active` | `display_current_state` | every mode change, every flag change, and every 30 s | cache (SD card) |
+| on-demand session | `display_on_demand_state` | on each on-demand event | cache (SD card) |
+| plugin runtime snapshot (#690) | `plugin_runtime_snapshot` | on a change (at most every 10 s), else every 60 s | cache (SD card) |
+| render-loop liveness (#687) | `display-heartbeat.json` | every 5 s | tmpfs |
+
+Now the display also keeps the same state in memory and serves it on the
+socket.
+
+**The snapshot.** `state.get` and `state.subscribe` answer with one object:
+
+```json
+{"schema": 1, "version": 42, "epoch": "3f9c0d1e2a4b5c6d", "pid": 812,
+ "served_at": 1790000000.1, "changed": true,
+ "loop": {"heartbeat_age_seconds": 1.8, "armed": true, "stale_after": 60.0},
+ "state": {
+   "display":    {"mode": "nfl_live", "plugin_id": "football-scoreboard", "mode_index": 3,
+                  "total_modes": 9, "on_demand_active": false, "is_display_active": true,
+                  "last_updated": 1790000000.0},
+   "on_demand":  {"active": false, "status": "idle", "...": "as display_on_demand_state"},
+   "brightness": {"brightness": 80, "panel_brightness": 40, "dimmed": true},
+   "plugins":    {"schema": 1, "running": true, "published_at": 1789999998.5, "...": "as plugin_runtime_snapshot"},
+   "loop":       {"heartbeat_age_seconds": 1.8, "armed": true, "stale_after": 60.0}
+ }}
+```
+
+- `display` and `on_demand` are the dicts the cache keys hold, `plugins` is
+  the runtime snapshot (`build_runtime_snapshot`), and `brightness` is the
+  configured level, what the panel shows now, and whether the dim schedule
+  has it dimmed. A section not published yet is `null`.
+- `loop` is not published: the display measures it when it answers, from
+  the render thread's last beat in memory (`RenderWatchdog.liveness()`),
+  the same beat that writes the heartbeat file. So it keeps ageing while the
+  render thread is stuck, and the socket's connection threads still answer.
+  `heartbeat_age_seconds` is `null` until the loop has drawn its first frame.
+- `version` goes up whenever a section changes, ignoring the timestamps that
+  move on every publish (`last_updated`, `remaining`, `published_at`). It
+  counts within an `epoch`, one run of the display process, so a reader that
+  sees a new `epoch` has a restarted display.
+- `state.get` with `since` and `epoch` from an earlier answer gets just
+  `{changed: false, version, epoch, pid, served_at, loop}` while nothing has
+  changed.
+- A snapshot that would not fit in a message (hundreds of plugins) is sent
+  without `plugins`, and `truncated: ["plugins"]` says so. Readers then use
+  the cache for that section only.
+
+**The stream.** `state.subscribe` answers with the snapshot, then:
+
+- a `state` event (a full snapshot) whenever the version changes, and
+- a `tick` at least every 5 s (`SUBSCRIBE_KEEPALIVE_SECONDS`) when nothing
+  changed. It carries `loop`, so a stalled render loop shows up within one
+  tick, and it tells the reader the connection is alive.
+
+A slow reader is never sent a backlog: each event is the latest version, so
+one that falls behind skips the versions in between. A reader that has heard
+nothing for 15 s (three keepalives) stops trusting its copy.
+
+**Who publishes, and when.** All of it is in memory, with no disk writes:
+
+- the render thread, at the places it already published the cache keys:
+  `display` and `brightness` on every pass of
+  `_publish_current_mode_state_if_changed()` (every loop pass, and every
+  `_service_pending_changes()` in a dwell, a scrolling screen or Vegas), and
+  `on_demand` in `_publish_on_demand_state()`. Every pass refreshes
+  `display.last_updated`, so a reader can tell when the render thread has
+  stopped publishing, just as the cache key's 120 s `max_age` does.
+- the plugin runtime publisher's thread, on every 5 s tick: the snapshot is
+  rebuilt when the state machine changed, otherwise only its `published_at`
+  moves. A change reaches subscribers within a tick, without the cache's
+  10 s throttle.
+
+Publishing is a hand-off, as the command queue is in the other direction.
+The hub (`StateHub` in [`src/ipc/server.py`](../src/ipc/server.py)) holds a
+lock only to swap a dict reference, compare it with the last one and bump the
+version. Every socket write happens on the subscriber's own connection
+thread. The render thread never waits for a reader.
+
+### Readers in the web interface
+
+[`web_interface/display_state.py`](../web_interface/display_state.py) holds
+one `state.subscribe` connection per web process
+(`src.ipc.client.StateSubscription`, a daemon thread, started on the first
+read and reconnecting with a backoff of 1 s up to 30 s). A route answers
+from the latest pushed snapshot in memory. Before the subscription has one,
+the route asks once with `state.get` (0.5 s timeout). When neither works, it
+reads the cache keys and the heartbeat file as before:
+
+| Route | From the socket | Fallback |
+|---|---|---|
+| `GET /api/v3/display/current-status` | `state.display` | `display_current_state` |
+| `GET /api/v3/display/on-demand/status` | `state.on_demand`, with `remaining` worked out from `expires_at` now | `display_on_demand_state` |
+| `GET /api/v3/plugins/installed` (`runtime`), `/plugins/state`, `POST /plugins/state/reconcile` and the startup reconciliation | `state.plugins` + `state.loop` | `plugin_runtime_snapshot` + `display-heartbeat.json` |
+| `GET /api/v3/health` (`checks.display_loop`) | `state.loop` | `display-heartbeat.json` |
+
+Each answer says where it came from: `source: "socket" | "cache"` (or
+`"heartbeat_file"` for the health check).
+
+The SSE display stream (`/api/v3/stream/display`) reads the preview frame
+file, not a cache key, so it does not change.
+
+**The same verdicts either way.** The socket's answers are judged by the
+rules the cache readers apply (#726):
+
+- the runtime view is `stalled` when the render loop's heartbeat age is at
+  least `HEARTBEAT_STALE_SECONDS` (60 s, the health check's threshold), and
+  then reports no per-plugin facts;
+- it is `stale` when the snapshot is older than its `stale_after` (the
+  publisher thread stopped);
+- with no beat yet, the snapshot is judged on its own;
+- there is no pid check, because the display that answered is alive;
+- a `display` section the render thread has not refreshed for 120 s reads
+  as unknown, as the cache key does once it ages out.
+
+The age a reader uses is the age the display measured, plus the time since
+the snapshot arrived.
+
+### Fewer SD writes
+
+The cache keys are still written, for one release, as the fallback. While
+the socket serves the readers, the display writes two of them less often.
+"Serves the readers" means a subscriber is connected, or a `state.get` came
+within the last 60 s (`StateHub.readers_active()`):
+
+- `display_current_state` is no longer written on every mode change: once
+  every 60 s (`CURRENT_STATE_RELAXED_REFRESH_SECONDS`, inside the readers'
+  120 s `max_age`), and at once when `is_display_active` or
+  `on_demand_active` changes.
+- `plugin_runtime_snapshot`'s refresh goes from 60 s to 120 s
+  (`RELAXED_REFRESH_INTERVAL`), and the snapshot says so in its own
+  `refresh_interval` and `stale_after` (360 s). Changes are still written at
+  once, at most every 10 s.
+
+`display_on_demand_state` is written only on events, so it is unchanged.
+The heartbeat file is on tmpfs, so it costs no SD writes, and it stays: the
+automatic update's health check reads it.
+
+This is safe because the relaxed rate only applies while readers are using
+the socket. If they stop (the web interface loses the socket, or is stopped),
+the next publish after the reader window writes a changed mode at once, and
+the runtime refresh goes back to 60 s. A fallback reader in that window sees
+a mode up to 60 s old, never one older than its `max_age`.
+
+Measured with fake clocks (`test_cache_writes_per_minute_with_and_without_socket_readers`
+in `test/test_state_stream_readers.py`), for a rotation of 15 s screens:
+
+| Key | Writes/min, no socket readers | Writes/min, socket readers |
+|---|---|---|
+| `display_current_state` | 4.0 | 1.0 |
+| `plugin_runtime_snapshot` | 1.0 | 0.5 |
+| Total | 5.0 | 1.5 |
+
+That is 70% fewer writes for these keys: about 2,200 a day instead of 7,200.
+Shorter screens save more, because the old rate followed the mode changes.
+A display that rarely changes mode (one plugin, a long live game) saves less. Plugin
+data caches, the error snapshot and font usage are written by other code
+and are not affected.
 
 ## How the display applies a command
 
@@ -279,7 +465,16 @@ block the render loop or crash it:
   process created.
 - **Never fatal.** If the server cannot start (Windows, no `AF_UNIX`, a bind
   failure, `LEDMATRIX_CONTROL_SOCKET=off`), it logs that and the display runs
-  as before. The web interface then uses the mailbox.
+  as before. The web interface then uses the mailbox, and reads the cache
+  keys and the heartbeat file.
+- **Subscribers (stage 3).** A `state.subscribe` connection gives its request
+  slot back and takes one of 4 subscriber slots (`MAX_SUBSCRIBERS`). A fifth
+  gets `busy`. So a few browsers' web processes holding streams can never
+  use up the 8 slots that commands need. Each subscriber has its own thread.
+  A send that cannot finish within the 2 s IO timeout (a reader that stopped
+  reading) drops that subscriber. Nothing else waits for it, and the render
+  thread only publishes to the hub. `close()` wakes every subscriber, so
+  they end at once.
 
 ## Security model
 
@@ -313,8 +508,10 @@ read its state, set the brightness, and reload a plugin the display is
 already running, all of which anyone who can reach the web UI can already do
 (the last by restarting the display). Nothing on the socket runs a shell,
 writes a file, or names a path, and `plugin.reload` cannot make the display
-import a plugin it was not running. Stage 2 changed none of the access rules
-above.
+import a plugin it was not running. Stages 2 and 3 changed none of the
+access rules above. The state stream carries what the cache keys already
+held, and those are readable by the same group. A subscriber goes through
+the same connect-time and peer-credential checks as any other connection.
 
 **Development.** A display that is not root and cannot write to
 `/run/ledmatrix`, such as `python3 run.py -e` from a checkout, serves the
@@ -352,29 +549,34 @@ device never touches the live display.
      "which sections changed" ack had no reader: the web interface knows
      what it saved. A reload from the socket thread would also run every
      config subscriber on a second thread beside the watcher's.
-3. **A state stream.** A `subscribe` command that keeps the connection open
-   and pushes events: mode changes, on-demand state (including the outcome of
-   an acked on-demand command, which today is only published), plugin
-   runtime state, the outcome of a reload that answered `pending`, and the
-   heartbeat. It replaces the polled `display_current_state`,
-   `plugin_runtime_snapshot` (#690) and `display-heartbeat.json` (#687) for
-   readers that hold a connection. The web interface relays it to its
-   existing SSE stream. The files remain for one release for older readers.
-   - The server's per-connection threads (8 at most) do not suit long-lived
-     subscribers. A subscriber needs its own bound and a writer that drops
-     events for a slow reader rather than blocking the display.
-   - Events are produced on the render thread, so publishing must be a
-     non-blocking hand-off, like the queue in the other direction.
-   - The store's install of an already-enabled plugin, and an uninstall that
-     keeps its config, still answer `restart_required`. With the stream they
-     can use a load/unload command and report the result the same way the
-     update route does now.
+3. **A state stream (done).** `state.get` (a versioned snapshot) and
+   `state.subscribe` (the snapshot, then pushed changes and keepalive ticks)
+   carry the current mode, the on-demand state (including the outcome of an
+   acked on-demand command), the brightness, the plugin runtime snapshot and
+   the render loop's liveness, all served from memory (see "The state
+   stream"). The web interface's readers use it and fall back to the cache
+   keys and the heartbeat file. `display_current_state` and
+   `plugin_runtime_snapshot` are written less often while it serves them.
+   The keys remain for one release.
+   - Left for later: the outcome of a `plugin.reload` that answered
+     `pending` is visible only as the plugin's new `loaded_version` in
+     `state.plugins`, not as an event of its own.
+   - Left for later: the SSE display stream reads the preview frame, not
+     state, so nothing relays the stream to the browser yet. A browser still
+     polls the REST routes, which now answer from memory.
+   - Left for later: the store's install of an already-enabled plugin, and
+     an uninstall that keeps its config, still answer `restart_required`.
+     They can now use a load/unload command and report the result the same
+     way the update route does.
 4. **Retire the mailboxes.** After a release in which every device has had the
    socket, the web interface stops writing `display_on_demand_request`, and
    the display stops polling it, logging the plugins that still write it so
    they can move to an in-process `request_display()`. The other cache keys
    used as messages (`plugin_error_clear_request` and the remaining
-   `display_*` keys) move to the socket or to tmpfs.
+   `display_*` keys) move to the socket or to tmpfs. The display also stops
+   writing `display_current_state`, `display_on_demand_state` and
+   `plugin_runtime_snapshot` once the web interface no longer falls back to
+   them.
 
 ## Checking it on a device
 
@@ -405,3 +607,19 @@ sudo journalctl -u ledmatrix | grep -E "Brightness set|Reload(ing|ed) plugin"
 
 `unknown_command` in `brightness_socket_error` or `reload_error` means the
 display runs a stage-1 build: restart it once to pick up this one.
+
+The state stream:
+
+```bash
+curl -s localhost:5000/api/v3/display/current-status    # ... "source": "socket"
+curl -s localhost:5000/api/v3/health | python3 -m json.tool | grep -A3 display_loop
+python3 - <<'EOF'
+from src.ipc import client          # run from the project directory
+snap = client.state_get()
+print(snap['version'], snap['epoch'], snap['loop'], snap['state']['display'])
+EOF
+```
+
+`"source": "cache"` means the web interface could not use the socket: the
+display is stopped, predates stage 3, or the web user is not in the
+socket's group.

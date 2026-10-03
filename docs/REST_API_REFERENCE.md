@@ -331,12 +331,19 @@ by the display process (stale after 120 seconds).
   "data": {
     "mode": "nfl_live",
     "plugin_id": "football-scoreboard",
-    "last_updated": 1234567890.123
+    "last_updated": 1234567890.123,
+    "source": "socket"
   }
 }
 ```
 
-When nothing has been published, every field is `null`.
+When nothing has been published, every field is `null`. `source` is
+`socket` when the answer came from the display's state stream over the
+control socket ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), and `cache`
+when it came from the `display_current_state` cache key (no socket: the
+display is stopped or older, or this is Windows). A display whose render
+loop has not refreshed its state for 120 seconds is reported with every
+field `null`, either way.
 
 ### List Display Modes
 
@@ -413,10 +420,15 @@ Get the current on-demand display state.
       "returncode": 0,
       "stdout": "active",
       "stderr": ""
-    }
+    },
+    "source": "socket"
   }
 }
 ```
+
+`source` is `socket` (the display's state stream, with `remaining` worked
+out at the time of the request) or `cache` (the `display_on_demand_state`
+cache key).
 
 With no on-demand request, `state` is
 `{"active": false, "status": "idle", "last_updated": null}`.
@@ -552,7 +564,8 @@ List all installed plugins with their status and metadata.
       "published_at": 1790000030.0,
       "age_seconds": 12.4,
       "stale_after": 180.0,
-      "heartbeat_age_seconds": 2.1
+      "heartbeat_age_seconds": 2.1,
+      "source": "socket"
     }
   }
 }
@@ -581,7 +594,10 @@ the display is hung or died), `stopped` (the display shut down) or `unknown`
 (nothing published yet). Unless it is `live`, every one of those fields is
 `null`. `heartbeat_age_seconds` is the heartbeat's age when it was taken into
 account, `null` otherwise (no heartbeat, as on the dev server, or one from
-another process). Health and metrics are at [`/plugins/health`](#get-plugin-health)
+another process). `runtime.source` is `socket` when the snapshot and the
+heartbeat age came from the display's state stream over the control socket,
+and `cache` when they came from the `plugin_runtime_snapshot` cache key and
+the heartbeat file; the rules above are the same for both. Health and metrics are at [`/plugins/health`](#get-plugin-health)
 and `/plugins/metrics`.
 
 `vegas_participation` is what Vegas mode does with the plugin: `"scroll"`,
@@ -2265,7 +2281,10 @@ display snapshot. `data.status` is `healthy` or `degraded`, with
 (with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
 frozen even if the service is active; the status turns `degraded`), or
 `not_reported` when the display writes none (not started yet, the dev server,
-Windows), which does not affect the status.
+Windows), which does not affect the status. Its `source` is `socket` when the
+age came from the display's state stream over the control socket (measured
+in memory by the display) and `heartbeat_file` when it came from
+`/run/ledmatrix/display-heartbeat.json`.
 
 Open even when the web login is on, for uptime monitors; a caller that is not
 logged in (and has no token) then gets only `{"status": "success", "data":
