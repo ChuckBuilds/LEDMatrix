@@ -216,6 +216,23 @@ class RenderWatchdog:
     def armed(self) -> bool:
         return self._armed
 
+    def liveness(self) -> Dict[str, Any]:
+        """The heartbeat, in memory: what the control socket's state stream
+        reports as ``loop``.
+
+        ``heartbeat_age_seconds`` is the age of the render thread's last beat,
+        the beat that writes the heartbeat file, so it ages at the same rate
+        and is judged by the same ``HEARTBEAT_STALE_SECONDS``. None until the
+        loop has drawn its first frame. Any thread may call this: it only
+        reads two attributes.
+        """
+        last = self._last_beat
+        age = None
+        if self._armed and last is not None:
+            age = max(self._clock() - last, 0.0)
+        return {'heartbeat_age_seconds': age, 'armed': self._armed,
+                'stale_after': HEARTBEAT_STALE_SECONDS}
+
     def _on_render_thread(self) -> bool:
         return self._render_thread is not None and threading.get_ident() == self._render_thread
 

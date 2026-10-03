@@ -19,6 +19,36 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Control socket stage 3: the display's state over the socket
+
+- Two new commands, still protocol version 1. `state.get` returns a
+  versioned snapshot of what the display is doing: the current mode and
+  plugin, the on-demand session, the brightness, the plugin runtime
+  snapshot and the render loop's heartbeat age. With `since`/`epoch` it
+  returns a short "unchanged" answer. `state.subscribe` returns the same
+  snapshot, then pushes a `state` event on every change (always the latest
+  version) and a `tick` at least every 5 s. The display serves all of it
+  from memory (`StateHub` in `src/ipc/server.py`), and publishing never
+  waits for a reader. Subscribers have their own bound (4), separate from
+  the 8 request slots, and one that stops reading is dropped after the 2 s
+  IO timeout. See `docs/IPC_CONTROL_SOCKET.md`, "The state stream".
+- The web interface holds one subscription per process
+  (`web_interface/display_state.py`). `/display/current-status`,
+  `/display/on-demand/status`, the plugin runtime fields of
+  `/plugins/installed` and `/plugins/state`, the reconciliations and
+  `/health`'s `display_loop` read it first. When the socket is missing (a
+  stopped or older display, Windows), they fall back to the cache keys and
+  the heartbeat file. Each answer has a `source` (`socket`, `cache` or
+  `heartbeat_file`). The stale and stalled rules from #726 apply the same
+  way to both.
+- Fewer SD-card writes while the socket serves those readers.
+  `display_current_state` is written once a minute and on a flag change,
+  not on every mode change. The `plugin_runtime_snapshot` refresh goes from
+  60 s to 120 s. For a rotation of 15 s screens, that is 1.5 cache writes a
+  minute instead of 5. Both keys keep being written for one release.
+- `RenderWatchdog.liveness()` reports the heartbeat age from memory.
+  `PluginRuntimeView` has a `source`, and `describe()` includes it.
+
 ### Web UI: four more tabs are ES-module pages (stage 2)
 
 - Rotation, Operation History, Config Editor and Backup & Restore follow the
