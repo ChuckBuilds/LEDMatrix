@@ -82,3 +82,37 @@ class TestRestartIsRequestedWhenCodeChanged:
             data = _pull(client)
         assert data['status'] == 'error'
         assert data['restart_required'] is False
+
+
+class TestUnitsAreRefreshedWithTheCode:
+    """New code may bring new systemd unit settings; installing them is part of the update."""
+
+    @pytest.fixture
+    def refresh(self, monkeypatch):
+        from web_interface import unit_refresh
+        calls = []
+
+        def fake():
+            calls.append(True)
+            return {'status': 'refreshed', 'message': 'Service settings updated (ledmatrix.service).',
+                    'units': ['ledmatrix.service']}
+        monkeypatch.setattr(unit_refresh, 'refresh_after_update', fake)
+        return calls
+
+    def test_an_update_that_moved_head_refreshes_the_units(self, client, refresh):
+        with patch.object(mod.subprocess, 'run', _git(['aaa111', 'bbb222'])):
+            data = _pull(client)
+        assert refresh == [True]
+        assert data['unit_refresh']['status'] == 'refreshed'
+        assert 'Service settings updated' in data['message']
+
+    def test_nothing_new_touches_no_units(self, client, refresh):
+        with patch.object(mod.subprocess, 'run',
+                          _git(['aaa111', 'aaa111'], pull_out='Already up to date.\n')):
+            data = _pull(client)
+        assert refresh == [] and data['unit_refresh'] is None
+
+    def test_a_failed_pull_touches_no_units(self, client, refresh):
+        with patch.object(mod.subprocess, 'run', _git(['aaa111'], pull_rc=1)):
+            data = _pull(client)
+        assert refresh == [] and data['unit_refresh'] is None

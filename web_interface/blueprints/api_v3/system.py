@@ -415,6 +415,7 @@ def _perform_core_update_locked(stash_local_changes=True):
     # date" is a success too, and prompting for a restart then would
     # train users to ignore the prompt.
     code_changed = False
+    unit_result = None
     # Requirement files whose install failed. The automatic updater refuses
     # to restart onto code whose dependencies did not install.
     dependency_failures = []
@@ -537,6 +538,14 @@ def _perform_core_update_locked(stash_local_changes=True):
                     )
             except (OSError, RuntimeError) as purge_err:
                 logger.warning("Post-update plugin purge failed: %s", purge_err)
+        # The new code may come with new systemd unit settings (systemd/*).
+        # Install them now, so the restart that follows runs under them; the
+        # automatic update's rollback puts the old ones back.
+        if code_changed:
+            from web_interface import unit_refresh
+            unit_result = unit_refresh.refresh_after_update()
+            if unit_result['message']:
+                pull_message += " " + unit_result['message']
     else:
         logger.warning("git pull failed (returncode=%d): %s", result.returncode, result.stderr)
         # Show git's own first line: "check logs" leaves the user with
@@ -556,6 +565,8 @@ def _perform_core_update_locked(stash_local_changes=True):
         'restart_required': bool(result.returncode == 0 and code_changed),
         'dependency_failures': dependency_failures,
         'channel': channel.channel,
+        # web_interface/unit_refresh.py's result, or None when no code changed.
+        'unit_refresh': unit_result,
     }
 
 

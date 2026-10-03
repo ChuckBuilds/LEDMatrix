@@ -58,6 +58,10 @@ server has none.
 | `dom/test_store_dom.js` | yes | Store pagination, per-page, category, tri-state Installed button, and persistence across a re-boot, against the live registry |
 | `dom/test_no_double_fetch.js` | yes | Loads the **whole** `plugins_manager.js` and counts requests: typing in the store search must filter the cached list, not refetch `/api/v3/plugins/store/list` |
 | `dom/test_cache_page.js` | yes | The Cache tab as a page module (`js/pages/cache.js`) on the real partial: no inline script, one request per swap and per Refresh after repeated swaps, a cancelled request draws nothing, hostile keys stay text, delete/empty/error/login states |
+| `dom/test_durations_page.js` | yes | The Rotation tab (`js/pages/durations.js`) with the real `plugin-order-list.js` widget: one plugin-list request per swap, one move per click after repeated swaps, a swap cancels the request in flight, a late widget is waited for |
+| `dom/test_operation_history_page.js` | yes | The Operation History tab (`js/pages/operation-history.js`): one request per swap and per Refresh, the plugin filter filled once, paging, filters, search, Clear, error/login states, hostile values stay text |
+| `dom/test_raw_json_page.js` | yes | The Config Editor tab (`js/pages/raw-json.js`): one POST per Save after repeated swaps, Format/Validate, invalid JSON never sent, a save survives a swap, the old global entry points |
+| `dom/test_backup_restore_page.js` | yes | The Backup & Restore tab (`js/pages/backup-restore.js`): one request per action after repeated swaps, the upload and restore options, reads cancelled and writes not on a swap, hostile names stay text, the old global entry points |
 | `dom/test_tools_sections.js` | yes | The Tools tab's MQTT bridge and Pixlet editor sections: form prefill, the write-only password (blank means unchanged), the running-session banner and countdown, and that the editor link points at the host you loaded the page from |
 
 Point the DOM suites at a rig with a full plugin set when it matters — a dev box
