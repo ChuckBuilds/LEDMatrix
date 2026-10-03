@@ -200,6 +200,24 @@ class TestGetOdds:
             manager.get_odds('football', 'nfl', '401')          # hit
         assert [r for r in caplog.records if r.levelno == logging.INFO] == []
 
+    def test_debug_off_does_not_serialize_the_response(
+            self, manager, mock_get, caplog):
+        # json.dumps(indent=2) of every odds body ran even with DEBUG off.
+        with caplog.at_level(logging.INFO, logger=manager.logger.name), \
+                patch('src.base_odds_manager.json.dumps') as dumps:
+            assert manager.get_odds('football', 'nfl', '401') == FULL_EXTRACTED
+        dumps.assert_not_called()
+
+    def test_debug_on_still_logs_the_raw_response(
+            self, manager, mock_get, caplog):
+        with caplog.at_level(logging.DEBUG, logger=manager.logger.name):
+            manager.get_odds('football', 'nfl', '401')
+        messages = [r.getMessage() for r in caplog.records]
+        assert any(m.startswith('Received raw odds data from ESPN: {')
+                   for m in messages), messages
+        assert any(m.startswith('Returning extracted odds data: {')
+                   for m in messages), messages
+
 
 # ---------------------------------------------------------------------------
 # _extract_espn_data

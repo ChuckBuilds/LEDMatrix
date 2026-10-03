@@ -21,6 +21,7 @@ from PIL.PngImagePlugin import PngInfo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
+from src.common.json_body import response_json
 from src.common.logo_helper import MAX_LOGO_BYTES
 from src.common.permission_utils import (
     ensure_directory_permissions,
@@ -481,7 +482,7 @@ class LogoDownloader:
             logger.info(f"Fetching team data for {league} from ESPN API...")
             response = self.session.get(api_url, params={'limit':1000},headers=self.headers, timeout=self.request_timeout)
             response.raise_for_status()
-            data: Dict = response.json()
+            data: Dict = response_json(response)
             
             logger.info(f"Successfully fetched team data for {league}")
             return data
@@ -505,7 +506,7 @@ class LogoDownloader:
             logger.info(f"Fetching team data for team {team_id} in {league} from ESPN API...")
             response = self.session.get(f"{api_url}/{team_id}", headers=self.headers, timeout=self.request_timeout)
             response.raise_for_status()
-            data: Dict = response.json()
+            data: Dict = response_json(response)
             
             logger.info(f"Successfully fetched team data for {team_id} in {league}")
             return data

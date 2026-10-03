@@ -6,6 +6,7 @@ get_visible_portion, calculate_dynamic_duration, set_* methods,
 reset_scroll, clear_cache, get_scroll_info.
 """
 
+import numpy as np
 import pytest
 import time
 from unittest.mock import patch
@@ -171,6 +172,21 @@ class TestGetVisiblePortion:
         # Images should differ (colour from scrolled content)
         # Just verify both are valid PIL images with correct size
         assert img1.width == img2.width == DISPLAY_W
+
+    @pytest.mark.parametrize("start_x", [0, 1, 37, 200 - DISPLAY_W])
+    def test_integer_slice_is_byte_identical_to_a_contiguous_copy(
+            self, helper, start_x):
+        # The integer path dropped np.ascontiguousarray() before tobytes():
+        # a column slice of the strip is not C-contiguous, and tobytes()
+        # must still give the same C-order bytes the copy did.
+        rng = np.random.default_rng(start_x)
+        strip = rng.integers(0, 256, (DISPLAY_H, 200, 3), dtype=np.uint8)
+        helper.cached_array = strip
+        view = strip[:, start_x:start_x + DISPLAY_W]
+        assert not view.flags["C_CONTIGUOUS"]
+        frame = helper._get_visible_portion_integer(start_x, start_x + DISPLAY_W)
+        assert frame.tobytes() == np.ascontiguousarray(view).tobytes()
+        assert view.tobytes() == np.ascontiguousarray(view).tobytes()
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +410,75 @@ class TestFrameStatsPercentiles:
         assert info.called
         assert "Scroll frame stats" in info.call_args[0][0]
         assert helper._window == []
+
+
+class TestFrameStatsLogLevel:
+    """The stats line is INFO only when a window is degraded, on the window
+    that recovers, and as a 5-minute heartbeat; every other window is DEBUG.
+    Every 5s from every scroller at INFO was most of a healthy rig's journal.
+    """
+
+    HEALTHY = [0.010] * 500
+    # 10% of frames a whole refresh late: fps 90.9 against a locked 100.
+    SLOW = [0.010] * 450 + [0.020] * 50
+    # 2% stalled: barely moves the mean, but it is the judder to see.
+    STALLING = [0.010] * 490 + [0.025] * 10
+
+    def _log_window(self, helper, window):
+        helper._window = list(window)
+        helper.last_frame_time = time.time()
+        helper.last_fps_log_time = 0.0
+        with patch.object(helper.logger, "info") as info, \
+                patch.object(helper.logger, "debug") as debug, \
+                patch.object(helper.logger, "isEnabledFor", return_value=True):
+            helper.log_frame_rate()
+        return info, debug
+
+    def test_degraded_predicate(self):
+        from src.common.scroll_helper import frame_stats_degraded
+        assert not frame_stats_degraded(frame_stats(self.HEALTHY))
+        assert frame_stats_degraded(frame_stats(self.SLOW))
+        assert frame_stats_degraded(frame_stats(self.STALLING))
+        # One stall in 500 is a normal wobble, not degraded.
+        assert not frame_stats_degraded(
+            frame_stats([0.010] * 499 + [0.025]))
+
+    def test_first_window_is_info_as_a_heartbeat(self, helper):
+        info, debug = self._log_window(helper, self.HEALTHY)
+        assert info.called and not debug.called
+
+    def test_healthy_window_after_the_heartbeat_is_debug(self, helper):
+        helper._stats_last_info_log = time.time()
+        info, debug = self._log_window(helper, self.HEALTHY)
+        assert not info.called
+        assert "Scroll frame stats" in debug.call_args[0][0]
+
+    @pytest.mark.parametrize("window", ["SLOW", "STALLING"])
+    def test_degraded_window_is_info(self, helper, window):
+        helper._stats_last_info_log = time.time()
+        info, debug = self._log_window(helper, getattr(self, window))
+        assert "Scroll frame stats" in info.call_args[0][0]
+        assert not debug.called
+
+    def test_recovery_window_is_info_then_quiet(self, helper):
+        helper._stats_last_info_log = time.time()
+        self._log_window(helper, self.SLOW)
+        info, _ = self._log_window(helper, self.HEALTHY)
+        assert info.called, "the recovery was not reported"
+        info, debug = self._log_window(helper, self.HEALTHY)
+        assert not info.called and debug.called
+
+    def test_heartbeat_comes_back_after_the_interval(self, helper):
+        from src.common.scroll_helper import STATS_HEARTBEAT_INTERVAL
+        helper._stats_last_info_log = time.time() - STATS_HEARTBEAT_INTERVAL - 1
+        info, _ = self._log_window(helper, self.HEALTHY)
+        assert info.called
+
+    def test_reset_scroll_does_not_rearm_the_heartbeat(self, helper):
+        helper._stats_last_info_log = time.time()
+        helper.reset_scroll()
+        info, _ = self._log_window(helper, self.HEALTHY)
+        assert not info.called
 
 
 class TestIdleGapIsNotAFrame:

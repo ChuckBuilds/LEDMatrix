@@ -30,6 +30,8 @@ from pathlib import Path
 import pytest
 
 UNIT = (Path(__file__).resolve().parent.parent / "systemd" / "ledmatrix.service")
+#: The web interface is a threaded process too, so it carries the same cap.
+WEB_UNIT = UNIT.parent / "ledmatrix-web.service"
 
 #: The value the unit is expected to carry. 2 is the usual choice for a
 #: threaded Python process; 1-4 all keep some of the saving, but only one of
@@ -49,8 +51,9 @@ def test_the_unit_exists():
     assert UNIT.is_file(), f"{UNIT} is missing"
 
 
-def test_malloc_arena_max_is_capped():
-    env = _environment(UNIT.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("unit", [UNIT, WEB_UNIT], ids=lambda p: p.name)
+def test_malloc_arena_max_is_capped(unit):
+    env = _environment(unit.read_text(encoding="utf-8"))
     assert "MALLOC_ARENA_MAX" in env, (
         "the display unit does not cap glibc arenas; on a 3-core Pi the default "
         "ceiling is 24 and a measured rig held 23 of them, 920 MB"
@@ -69,9 +72,10 @@ def test_malloc_arena_max_is_capped():
     )
 
 
-def test_the_reason_is_recorded_next_to_it():
+@pytest.mark.parametrize("unit", [UNIT, WEB_UNIT], ids=lambda p: p.name)
+def test_the_reason_is_recorded_next_to_it(unit):
     """A bare tuning knob invites removal by whoever meets it next."""
-    text = UNIT.read_text(encoding="utf-8")
+    text = unit.read_text(encoding="utf-8")
     index = text.index("Environment=MALLOC_ARENA_MAX")
     preamble = text[:index].splitlines()[-12:]
     comment = "\n".join(line for line in preamble if line.startswith("#"))
@@ -82,7 +86,7 @@ def test_the_reason_is_recorded_next_to_it():
     )
 
 
-@pytest.mark.parametrize("unit", ["ledmatrix.service"])
+@pytest.mark.parametrize("unit", ["ledmatrix.service", "ledmatrix-web.service"])
 def test_the_unit_still_parses_as_ini(unit):
     """systemd will refuse a malformed unit, and the panel stays dark."""
     import configparser

@@ -116,3 +116,24 @@ def test_response_json_prefers_orjson_and_falls_back():
     assert json_body.response_json(response) == payload
     # A response object without bytes content (a test double) still works.
     assert json_body.response_json(SimpleNamespace(json=lambda: payload)) == payload
+
+
+@pytest.mark.parametrize("body", [b"not json", b"", b'{"a": NaN}', b"\xef\xbb\xbf{}"])
+def test_response_json_raises_and_returns_what_requests_does(body):
+    # The core fetch paths (api_helper, base_odds_manager, logo_downloader,
+    # dynamic_team_resolver) catch requests' JSONDecodeError on a bad body, so
+    # response_json must raise exactly that, and parse whatever requests
+    # parses (NaN, which orjson rejects) to the same value.
+    import requests
+
+    response = requests.models.Response()
+    response._content = body
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    try:
+        expected = response.json()
+    except requests.exceptions.JSONDecodeError:
+        with pytest.raises(requests.exceptions.JSONDecodeError):
+            json_body.response_json(response)
+    else:
+        assert json.dumps(json_body.response_json(response)) == json.dumps(expected)

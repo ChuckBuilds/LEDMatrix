@@ -246,8 +246,16 @@ mean exactly 10 ms, so a ticker stalling on half its frames still averages to a
 healthy 100 fps. The stats line reports the tail for that reason — read the
 percentiles, not the fps.
 
-Every scroller emits one line every 5 seconds covering *every* frame in that
-window, tagged with the plugin it came from:
+Every scroller summarises each 5-second window, covering *every* frame in it,
+in one line tagged with the plugin it came from. At the default log level the
+line reaches the journal only when it is worth reading: a **degraded** window
+(frame rate below 90% of the rate the window was locked to, i.e. 1 / its own
+median -- the same 0.9 Vegas's `Vegas FPS` line uses -- or more than 1% of its
+frames stalled), the first window after one (the recovery), and otherwise once
+every 5 minutes per scroller as a heartbeat, so silence means stopped rather
+than fine. Every window is logged at DEBUG: to see them all, run the display
+with `-d` or `LEDMATRIX_DEBUG=true` (see
+[CONFIG_DEBUGGING.md](CONFIG_DEBUGGING.md#enable-debug-logging)).
 
 ```bash
 journalctl -u ledmatrix --since "-10min" --no-pager | grep "Scroll frame stats"
@@ -285,6 +293,10 @@ journalctl -u ledmatrix --since "-3h" --no-pager | grep "Scroll frame stats" \
         printf "%-28s %5d windows  median %6.2fms  p95 %6.2fms\n", k, n[k], m[k]/n[k], p[k]/n[k]}' \
   | sort -k7 -rn
 ```
+
+At the default log level that ranks the windows the journal kept -- the
+degraded ones, recoveries and heartbeats -- so it over-weights bad windows;
+rank a debug run for an unbiased average, or soak the rig (below).
 
 The `$2 < 1000` guard drops windows whose median is a whole second or more.
 Those are not frames. Until the idle-gap fix in `log_frame_rate()`, the first
