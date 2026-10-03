@@ -138,6 +138,8 @@ echo "- View system logs via journalctl"
 echo "- Reboot and shutdown the system"
 echo "- Remove plugin directories (for update/uninstall when root-owned files block deletion)"
 echo "- Install plugin/base requirements.txt as root (so ledmatrix.service can see them)"
+echo "- Install the LEDMatrix systemd units an update changed, and restore them on rollback"
+echo "  (/usr/local/sbin/ledmatrix-refresh-units, installed by install_service.sh)"
 echo ""
 
 # Ask for confirmation

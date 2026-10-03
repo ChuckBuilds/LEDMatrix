@@ -54,6 +54,10 @@ EXPECTED_GRANTS = frozenset({
     ("NOPASSWD:", "$SYSTEMCTL_PATH restart ledmatrix-web.service"),
     ("NOPASSWD:", "$BASH_PATH $PROJECT_ROOT/scripts/fix_perms/safe_plugin_rm.sh *"),
     ("NOPASSWD:", "$BASH_PATH $PROJECT_ROOT/scripts/fix_perms/safe_pip_install.sh *"),
+    # The unit refresh helper (scripts/install/ledmatrix_refresh_units.py),
+    # with no arguments (`""`; RULE below drops the closing quote) or --restore.
+    ("NOPASSWD:", '$LEDMATRIX_REFRESH_UNITS_PATH "'),
+    ("NOPASSWD:", "$LEDMATRIX_REFRESH_UNITS_PATH --restore"),
     ("NOPASSWD:NOEXEC:", "$JOURNALCTL_PATH -u ledmatrix.service *"),
     ("NOPASSWD:NOEXEC:", "$JOURNALCTL_PATH -u ledmatrix *"),
     ("NOPASSWD:NOEXEC:", "$JOURNALCTL_PATH -t ledmatrix *"),
@@ -145,7 +149,8 @@ def test_installer_call_renders_the_expected_rules(installer, tmp_path):
             rendered.add((m.group(2), m.group(3)))
     subst = {"$SYSTEMCTL_PATH": "/x/systemctl", "$BASH_PATH": "/x/bash",
              "$REBOOT_PATH": "/x/reboot", "$POWEROFF_PATH": "/x/poweroff",
-             "$JOURNALCTL_PATH": "/x/journalctl", "$PROJECT_ROOT": "/srv/led root"}
+             "$JOURNALCTL_PATH": "/x/journalctl", "$PROJECT_ROOT": "/srv/led root",
+             "$LEDMATRIX_REFRESH_UNITS_PATH": "/usr/local/sbin/ledmatrix-refresh-units"}
     expected = set()
     for tags, command in EXPECTED_GRANTS:
         for var, value in subst.items():

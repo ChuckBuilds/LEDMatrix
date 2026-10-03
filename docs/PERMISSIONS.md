@@ -33,6 +33,9 @@ in again (services pick them up on restart).
 | `/run/ledmatrix/control.sock` | `root` : cache directory's group (`ledmatrix`) | `660` | The display's control socket; only root and that group can connect. See [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md#security-model) |
 | `scripts/fix_perms/safe_plugin_rm.sh`, `safe_pip_install.sh` | `root:root` | `755` | Run as root through sudo, so the web user must not be able to edit them |
 | `/etc/sudoers.d/ledmatrix_web`, `ledmatrix_wifi` | `root` | `440` | |
+| `/usr/local/sbin/ledmatrix-refresh-units` | `root:root` | `755` | Copy of `scripts/install/ledmatrix_refresh_units.py`, installed by `install_service.sh`. Outside the project so the web user cannot edit what sudo runs |
+| `/var/lib/ledmatrix/unit-backup/` | `root` | `700` | The units the last refresh replaced, for the automatic update's rollback |
+| `/etc/systemd/system/ledmatrix*.service`, `.path` | `root:root` | `644` | Readable so the web interface can compare them with the templates after an update |
 
 What keeps it that way at runtime:
 
@@ -86,6 +89,20 @@ password:
 - `journalctl -u ledmatrix.service *`, `-u ledmatrix *`, `-t ledmatrix *`,
   tagged `NOEXEC`: journalctl opens a pager on a terminal, and a shell
   escape from that pager would be a root shell
+- `/usr/local/sbin/ledmatrix-refresh-units ""` and
+  `/usr/local/sbin/ledmatrix-refresh-units --restore` — exactly these two
+  command lines (`""` means "no arguments"). After an update the first
+  installs the systemd units whose templates changed and runs
+  `systemctl daemon-reload`; the automatic update's rollback runs the second
+  to put the previous units back. The helper takes nothing from the caller:
+  the project folder and the web user come from the installed, root-owned
+  `ledmatrix.service` and `ledmatrix-web.service`. It only replaces the four
+  units `install_service.sh` installs, only if they are already installed,
+  and refuses a template that would change a unit's `User=` (root for the
+  display, the web user for the rest) or `WorkingDirectory=`, or that is a
+  symlink, not a regular file, or over 64 KB. It grants nothing new: the
+  templates are files the web user can edit, but so is `run.py`, which the
+  display service already runs as root.
 
 ### `/etc/sudoers.d/ledmatrix_wifi`
 
@@ -136,7 +153,9 @@ directory.
 | `safe_plugin_rm.sh`, `safe_pip_install.sh` | — | Called by the web interface through sudo | Not for manual use |
 
 To reinstall the sudoers rules, run
-`./scripts/install/configure_web_sudo.sh` (web rules) or
+`./scripts/install/configure_web_sudo.sh` (web rules; the
+`ledmatrix-refresh-units` rules also need the helper itself, which
+`sudo ./scripts/install/install_service.sh` installs) or
 `./scripts/install/configure_wifi_permissions.sh` (WiFi rules and polkit) as
 the web user, not with `sudo`.
 
