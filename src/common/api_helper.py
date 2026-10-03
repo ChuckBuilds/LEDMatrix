@@ -17,6 +17,7 @@ from src.common.espn_dates import (
     store_espn_scoreboard_cache,
 )
 from src.common.fetch_service import fetch_get, fetch_post, share_connection_pool
+from src.common.json_body import response_json
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 import requests
@@ -157,7 +158,7 @@ class APIHelper:
             response.raise_for_status()
             
             # Parse JSON response
-            data: Dict[Any, Any] = response.json()
+            data: Dict[Any, Any] = response_json(response)
             
             # Cache response if cache key provided
             if cache_key and self.cache_manager:
@@ -304,7 +305,7 @@ class APIHelper:
             )
             response.raise_for_status()
             
-            return cast(Optional[Dict[Any, Any]], response.json())
+            return cast(Optional[Dict[Any, Any]], response_json(response))
             
         except requests.exceptions.RequestException as e:
             self.logger.error(f"POST request failed for {url}: {e}")
