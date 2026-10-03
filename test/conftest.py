@@ -329,6 +329,21 @@ def _hermetic_control_socket(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_unit_refresh(monkeypatch, tmp_path_factory):
+    """Keep updates' systemd unit refresh off the host.
+
+    perform_core_update runs web_interface/unit_refresh.py after any update
+    that moves HEAD, and several tests run the real one against a test clone.
+    On a device -- or a machine where install_service.sh was tried out -- it
+    would compare the clone's templates with the real /etc/systemd/system and
+    run the real sudo helper. Point it at a folder that does not exist: no units
+    installed, nothing to do. The unit refresh tests pass their own.
+    """
+    from web_interface import unit_refresh
+    monkeypatch.setattr(unit_refresh, 'SYSTEMD_DIR', str(tmp_path_factory.getbasetemp() / 'no-systemd'))
+
+
+@pytest.fixture(autouse=True)
 def reset_logging():
     """Reset logging configuration before each test."""
     import logging

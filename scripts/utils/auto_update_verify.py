@@ -15,7 +15,8 @@ The updater leaves data/auto_update_pending.json:
 
     {"status": "pending", "old_head": ..., "new_head": ...,
      "old_ref": "main" | "" (detached) | absent (older updaters),
-     "display_was_active": bool, "dependency_failures": [...], "created_at": ...}
+     "display_was_active": bool, "dependency_failures": [...],
+     "units_refreshed": bool (absent from older updaters), "created_at": ...}
 
 This moves its status to "verifying" and then to one of "success",
 "rolled_back" or "rollback_failed", with "reason" and "detail" saying why.
@@ -74,6 +75,10 @@ BASH_CANDIDATES = ('/usr/bin/bash', '/bin/bash')
 #: ...and, like it, moves to the next one only when sudo refused the command
 #: line (permission_utils.SUDO_REFUSAL_PHRASES), never after pip itself ran.
 SUDO_REFUSAL_PHRASES = ('a password is required', 'is not allowed to run', 'no tty present')
+#: The root-owned helper that installed the update's systemd units
+#: (web_interface/unit_refresh.py); ``--restore`` puts the previous ones back.
+REFRESH_UNITS_PATH = '/usr/local/sbin/ledmatrix-refresh-units'
+UNIT_RESTORE_TIMEOUT_SECONDS = 90
 
 #: The longest one health check can take: restart and wait, roll back
 #: (diff, reset, reinstalls), restart and wait again. A wait's last poll can
@@ -81,7 +86,8 @@ SUDO_REFUSAL_PHRASES = ('a password is required', 'is not allowed to run', 'no t
 _WAIT_WORST_SECONDS = (HEALTH_TIMEOUT_SECONDS + STABLE_SECONDS + WEB_CHECK_TIMEOUT_SECONDS
                        + 2 * SYSTEMCTL_QUERY_TIMEOUT_SECONDS + POLL_SECONDS)
 WORST_CASE_SECONDS = (2 * (2 * RESTART_TIMEOUT_SECONDS + _WAIT_WORST_SECONDS)
-                      + GIT_TIMEOUT_SECONDS + GIT_RESET_TIMEOUT_SECONDS + PIP_BUDGET_SECONDS)
+                      + GIT_TIMEOUT_SECONDS + GIT_RESET_TIMEOUT_SECONDS + UNIT_RESTORE_TIMEOUT_SECONDS
+                      + PIP_BUDGET_SECONDS)
 
 #: What a command that could not run at all reports: its callers only read
 #: these three fields, the same ones a completed subprocess has.
@@ -300,12 +306,26 @@ class Verifier:
         if result.returncode != 0:
             return False, (f'"git reset --hard {old}" failed: '
                            f'{(result.stderr or result.stdout or "").strip()}')
+        notes = []
+        # The update also installed its own systemd units: put the previous
+        # ones back before anything restarts onto the rolled-back code.
+        if pending.get('units_refreshed') and not self.restore_units():
+            notes.append('restoring the previous service settings failed; run '
+                         '"sudo ./scripts/install/install_service.sh" in the LEDMatrix folder')
         deadline = self.clock() + PIP_BUDGET_SECONDS
         failed = [rel for rel in requirements if not self.install_requirements(rel, deadline)]
         if failed:
-            return True, ('reinstalling the previous dependencies from ' + ', '.join(failed)
-                          + ' failed; run Install Base Requirements from the Tools tab')
-        return True, ''
+            notes.append('reinstalling the previous dependencies from ' + ', '.join(failed)
+                         + ' failed; run Install Base Requirements from the Tools tab')
+        return True, '; '.join(notes)
+
+    def restore_units(self):
+        """Reinstall the systemd units the update replaced. True on success."""
+        result = self._run(['sudo', '-n', REFRESH_UNITS_PATH, '--restore'],
+                           timeout=UNIT_RESTORE_TIMEOUT_SECONDS)
+        if result.returncode != 0:
+            self.log(f'restoring the previous systemd units failed: {(result.stderr or "").strip()}')
+        return result.returncode == 0
 
     # -- the check itself -------------------------------------------------
 

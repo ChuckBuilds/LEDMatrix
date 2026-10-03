@@ -1,5 +1,5 @@
 # LEDMatrix Core Dependencies
-# Compatible with Python 3.10, 3.11, 3.12, and 3.13
+# Compatible with Python 3.11, 3.12 and 3.13; CI tests 3.11 and 3.13
 # Tested on Raspbian OS 12 (Bookworm) and 13 (Trixie)
 
 # Image processing

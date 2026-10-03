@@ -43,6 +43,107 @@ accepts both, but the store flags the old spelling as deprecated
   `scripts/build_rgbmatrix_nogil.sh` builds from an unpatched copy and is
   unchanged.
 
+### Install
+
+- Raspberry Pi OS **Bookworm** (Debian 12, Python 3.11) is supported,
+  alongside **Trixie** (Debian 13, Python 3.13). The installer used to stop
+  on anything but Trixie. Which releases and Pythons are accepted now lives
+  in one place, `scripts/install/lib_os.sh`, which `first_time_install.sh`
+  and `scripts/check_system_compatibility.sh` both read, so the two can no
+  longer disagree (the compatibility check called Bookworm an error, and
+  still accepted Python 3.10, which the rgbmatrix bindings refuse). An
+  unsupported system gets plain directions to the right image; a `python3`
+  older than 3.11 stops the install before anything changes.
+- The installer says up front when the Pi runs dhcpcd instead of
+  NetworkManager, and how to switch back: the web page's WiFi tab and the
+  `LEDMatrix-Setup` hotspot need NetworkManager. Not fatal, and it does not
+  switch the network stack itself, since that can cut the SSH session.
+- The desktop check no longer misses a desktop install: `dpkg -l | grep -q`
+  under `pipefail` read a match as "not found".
+- `cap_sys_nice` is set on the interpreter the services run
+  (`/usr/bin/python3`); it preferred `/usr/bin/python3.13` whenever it
+  existed.
+- The Step 7 dependency fallback (`scripts/install_dependencies_apt.py`) no
+  longer accepts apt packages older than the pins -- Bookworm's Flask 2.2.2
+  and Pillow 9.4, Trixie's Flask 3.1.1 and Pillow 11.1. The floors are read
+  from `web_interface/requirements.txt`, and pip is asked for `Pillow`, not
+  `PIL`.
+- CI runs the unit and plugin-safety suites on Python 3.11 and 3.13 (was
+  3.12); mypy targets 3.11.
+
+### Updates refresh the systemd units; new installs run the newest release
+
+- **Updates now install changed systemd units.** An update (Update Code, or
+  the weekly automatic update) moved the checkout's `systemd/*.service`
+  templates but never the units systemd runs, so settings added after a
+  device was installed -- #687's render-loop watchdog, for one -- only ever
+  arrived with a reinstall. After an update that moves HEAD, the web
+  interface compares the installed `ledmatrix.service`,
+  `ledmatrix-web.service` and `ledmatrix-update-verify.{service,path}` with
+  the new templates (rendered exactly as `install_service.sh` does, comments
+  ignored as the startup drift warning does) and, when they differ, runs the
+  new root-owned helper `/usr/local/sbin/ledmatrix-refresh-units`
+  (`scripts/install/ledmatrix_refresh_units.py`) through sudo: it installs
+  the changed units and runs `systemctl daemon-reload`, so the restart that
+  follows the update runs under them. Update Code's message says so.
+- **Rollback restores them.** The helper keeps the units it replaced
+  (`/var/lib/ledmatrix/unit-backup`, root only); when the automatic update's
+  health check rolls an update back, it runs `ledmatrix-refresh-units
+  --restore` before restarting the services onto the old code.
+- **The sudo rule needs a reinstall.** `install_service.sh` installs the
+  helper and `lib_sudoers.sh` grants it with exactly two command lines (no
+  arguments, and `--restore`). A device installed before this has neither;
+  its updates keep working, log that the new unit settings need a reinstall
+  and say so in Update Code's message, the same remedy as the startup
+  "unit drift" warning. Re-run `sudo ./first_time_install.sh` once (or
+  `sudo ./scripts/install/install_service.sh` then
+  `./scripts/install/configure_web_sudo.sh`).
+- `install_service.sh` now leaves the units it installs mode `0644`, as
+  `first_time_install.sh` already did; run on its own it left them `0600`.
+- **New installs run the newest release.** The one-shot installer cloned
+  `main`'s tip, so a new device ran unreleased code until the next release.
+  It now checks out the newest `vX.Y.Z` tag after cloning (the same semver
+  rules as `web_interface/update_channel.py`), and that release's own
+  `first_time_install.sh` runs. `LEDMATRIX_CHANNEL=beta` installs `main`
+  instead and records the beta channel; `first_time_install.sh --beta` (or
+  `LEDMATRIX_CHANNEL=beta|stable`) records a channel for a manual install.
+- **Re-running the one-shot never moves backwards.** On an existing stable
+  checkout it moves to the newest release only when that release contains
+  the current commit; a checkout newer than every release keeps its
+  fast-forward pull (on a branch) or stays put (detached), and beta keeps the
+  pull it always had. It used to fast-forward a detached release checkout to
+  `main`'s tip.
+
+### Control socket stage 3: the display's state over the socket
+
+- Two new commands, still protocol version 1. `state.get` returns a
+  versioned snapshot of what the display is doing: the current mode and
+  plugin, the on-demand session, the brightness, the plugin runtime
+  snapshot and the render loop's heartbeat age. With `since`/`epoch` it
+  returns a short "unchanged" answer. `state.subscribe` returns the same
+  snapshot, then pushes a `state` event on every change (always the latest
+  version) and a `tick` at least every 5 s. The display serves all of it
+  from memory (`StateHub` in `src/ipc/server.py`), and publishing never
+  waits for a reader. Subscribers have their own bound (4), separate from
+  the 8 request slots, and one that stops reading is dropped after the 2 s
+  IO timeout. See `docs/IPC_CONTROL_SOCKET.md`, "The state stream".
+- The web interface holds one subscription per process
+  (`web_interface/display_state.py`). `/display/current-status`,
+  `/display/on-demand/status`, the plugin runtime fields of
+  `/plugins/installed` and `/plugins/state`, the reconciliations and
+  `/health`'s `display_loop` read it first. When the socket is missing (a
+  stopped or older display, Windows), they fall back to the cache keys and
+  the heartbeat file. Each answer has a `source` (`socket`, `cache` or
+  `heartbeat_file`). The stale and stalled rules from #726 apply the same
+  way to both.
+- Fewer SD-card writes while the socket serves those readers.
+  `display_current_state` is written once a minute and on a flag change,
+  not on every mode change. The `plugin_runtime_snapshot` refresh goes from
+  60 s to 120 s. For a rotation of 15 s screens, that is 1.5 cache writes a
+  minute instead of 5. Both keys keep being written for one release.
+- `RenderWatchdog.liveness()` reports the heartbeat age from memory.
+  `PluginRuntimeView` has a `source`, and `describe()` includes it.
+
 ### Web UI: four more tabs are ES-module pages (stage 2)
 
 - Rotation, Operation History, Config Editor and Backup & Restore follow the

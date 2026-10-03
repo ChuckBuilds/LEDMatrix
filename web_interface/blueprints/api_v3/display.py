@@ -9,7 +9,7 @@ from web_interface.blueprints.api_v3 import (
     _get_display_service_status, _socket_reason_code, _stop_display_service, api_v3,
     jsonify, logger, request, uuid,
 )
-from web_interface import display_preview
+from web_interface import display_preview, display_state
 import web_interface.blueprints.api_v3 as _pkg
 from src.ipc import client as control_client
 # Read through the module rather than bound by value: tests patch these
@@ -163,13 +163,22 @@ def get_display_modes():
     return jsonify({'status': 'success', 'data': {'modes': modes}})
 @api_v3.route('/display/on-demand/status', methods=['GET'])
 def get_on_demand_status():
-    """Return the current on-demand display state."""
-    cache = _cache_manager()
-    # memory_ttl=0: the display service writes this key, so only the file
-    # is current. This process's memory tier would keep serving the first
-    # copy it read for the full max_age -- "active" for two minutes after
-    # the display had already stopped.
-    state = cache.get('display_on_demand_state', max_age=120, memory_ttl=0)
+    """Return the current on-demand display state.
+
+    From the display's state stream over the control socket when it is
+    available (``source: "socket"``), else the cache key it also writes
+    (``source: "cache"``).
+    """
+    state = display_state.on_demand_state(display_state.read_state())
+    source = 'socket'
+    if state is None:
+        source = 'cache'
+        cache = _cache_manager()
+        # memory_ttl=0: the display service writes this key, so only the file
+        # is current. This process's memory tier would keep serving the first
+        # copy it read for the full max_age -- "active" for two minutes after
+        # the display had already stopped.
+        state = cache.get('display_on_demand_state', max_age=120, memory_ttl=0)
     if state is None:
         state = {
             'active': False,
@@ -181,7 +190,8 @@ def get_on_demand_status():
         'status': 'success',
         'data': {
             'state': state,
-            'service': service_status
+            'service': service_status,
+            'source': source,
         }
     })
 @api_v3.route('/display/on-demand/start', methods=['POST'])
@@ -327,18 +337,22 @@ def stop_on_demand_display():
 def get_current_display_status():
     """Return the display mode/plugin currently intended to be shown.
 
-    Published by the display process (display_controller._publish_current_mode_state)
-    to the shared cache whenever the active mode changes, so the web UI (e.g. the
-    System Logs page) can show what's on screen without querying the display
-    process directly.
+    Read from the display's state stream over the control socket when it is
+    available (``source: "socket"``). Otherwise from what the display
+    publishes to the shared cache (display_controller._publish_current_mode_state)
+    when the active mode changes (``source: "cache"``).
     """
-    cache = _cache_manager()
-    # memory_ttl=0: written by the display service; see get_on_demand_status.
-    state = cache.get('display_current_state', max_age=120, memory_ttl=0)
+    state = display_state.current_status(display_state.read_state())
+    source = 'socket'
+    if state is None:
+        source = 'cache'
+        cache = _cache_manager()
+        # memory_ttl=0: written by the display service; see get_on_demand_status.
+        state = cache.get('display_current_state', max_age=120, memory_ttl=0)
     if state is None:
         state = {
             'mode': None,
             'plugin_id': None,
             'last_updated': None,
         }
-    return jsonify({'status': 'success', 'data': state})
+    return jsonify({'status': 'success', 'data': dict(state, source=source)})

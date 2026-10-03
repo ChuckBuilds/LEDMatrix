@@ -998,12 +998,14 @@ def _run_startup_reconciliation() -> None:
 
     try:
         from src.plugin_system.state_reconciliation import StateReconciliation
-        from src.plugin_system.plugin_runtime import read_plugin_runtime
+        # The display's runtime view: its control socket's state stream when
+        # it serves one, else the cache snapshot (both judged the same way).
+        from web_interface.blueprints.api_v3 import _plugin_runtime_view
         reconciler = StateReconciliation(
             config_manager=config_manager,
             plugins_dir=plugins_dir,
             store_manager=plugin_store_manager,
-            runtime_source=lambda: read_plugin_runtime(api_v3.cache_manager),
+            runtime_source=_plugin_runtime_view,
         )
         result = reconciler.reconcile_state()
         if result.inconsistencies_found:
