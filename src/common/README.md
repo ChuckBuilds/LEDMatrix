@@ -17,7 +17,9 @@ Rules for the package:
 - `from src.common import ...` re-exports `APIHelper`, `ScrollHelper`,
   `LogoHelper`, `TextHelper`, `scroll_config` (plus `ScrollSettings`,
   `configure_scroll`, `resolve_scroll_settings`, `refresh_hz_from_config`) and
-  the adaptive layout names below ([`__init__.py`](__init__.py)).
+  the adaptive layout names below ([`__init__.py`](__init__.py)). Each is
+  imported on first use, so `import src.common` or a submodule import stays
+  cheap; add a new re-export to `_LAZY` there as well as `__all__`.
 
 ## Summary
 

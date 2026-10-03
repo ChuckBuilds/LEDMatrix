@@ -29,7 +29,6 @@ import time
 import logging
 from enum import Enum
 from typing import Callable, Optional
-import numpy as np
 from PIL import Image
 
 from src.config_manager_atomic import _replace
@@ -434,6 +433,12 @@ class DisplaySyncManager:
             return
         if self._leader_state != LeaderState.CONNECTED or not self._peer_ip:
             return
+        # numpy is imported here, not at module level: the web interface
+        # imports this module for its constants (STATUS_FILE, SYNC_PORT) and
+        # would otherwise load numpy for nothing. Only a connected leader
+        # gets this far, and after the first frame the import is a
+        # sys.modules lookup.
+        import numpy as np
         try:
             arr = np.asarray(image.convert("RGB"), dtype=np.uint8)
             header = _RAW_MAGIC + _RAW_HEADER.pack(image.width, image.height)
