@@ -58,7 +58,8 @@ class TestFastPath:
         for _ in range(10):
             again = m.load_config()
         assert counts["n"] == 0, "fast path must not re-open any config file"
-        assert again is first  # same aliasing semantics as the full path
+        assert again == first
+        assert again is not first  # each caller gets its own copy, see below
 
     def test_config_change_triggers_reload(self, mgr):
         m, config, secrets, template = mgr
@@ -98,6 +99,33 @@ class TestFastPath:
         assert m.load_config()["timezone"] == "America/New_York"
 
 
+class TestCallersGetACopy:
+    """A web handler edits what load_config returned, then validates. When
+    validation failed, the edit stayed in the cache the fast path serves, and
+    the next unrelated save wrote it -- a nested secret included, in plain
+    text, because it had never reached config_secrets.json to be stripped."""
+
+    def test_editing_a_loaded_config_does_not_change_the_next_load(self, mgr):
+        m, config, secrets, template = mgr
+        loaded = m.load_config()
+        loaded["display"]["brightness"] = 1
+        loaded["weather"]["api_key"] = "typed-but-never-saved"
+        again = m.load_config()
+        assert again["display"]["brightness"] == 90
+        assert again["weather"]["api_key"] == "sek"
+
+    def test_the_full_path_also_returns_a_copy(self, mgr):
+        m, config, secrets, template = mgr
+        m.load_config()["display"]["brightness"] = 1  # first load: full path
+        assert m.load_config()["display"]["brightness"] == 90
+
+    def test_an_edit_never_reaches_a_later_save(self, mgr):
+        m, config, secrets, template = mgr
+        m.load_config()["display"]["new_secret"] = "hunter2"  # then bailed out
+        m.save_config(m.load_config())  # some other handler saves
+        assert "hunter2" not in config.read_text()
+
+
 class TestSaveCoherence:
     def test_save_config_then_load_returns_saved_data(self, mgr, monkeypatch):
         m, config, secrets, template = mgr
@@ -110,6 +138,15 @@ class TestSaveCoherence:
         assert loaded["display"]["brightness"] == 42
         assert loaded["weather"]["api_key"] == "sek"  # secrets survive in memory
         assert counts["n"] == 0  # signature refreshed by save; no re-read
+
+    def test_the_saved_dict_does_not_become_the_cache(self, mgr):
+        m, config, secrets, template = mgr
+        m.load_config()
+        new = {"display": {"brightness": 42}, "timezone": "UTC",
+               "weather": {"api_key": "sek"}}
+        m.save_config(new)
+        new["display"]["brightness"] = 7  # the caller keeps using its dict
+        assert m.load_config()["display"]["brightness"] == 42
 
     def test_cross_process_save_is_picked_up(self, mgr):
         """Another process writing config.json (different mtime) must bust

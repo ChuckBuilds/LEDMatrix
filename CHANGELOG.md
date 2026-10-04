@@ -532,6 +532,19 @@ policies are unchanged.
   the plugin leaves rotation until the cooldown ends, the same as a raising
   `update()`. The display still moves straight on to the next mode. A hung
   `display()` is still recorded once, as a hang.
+- A plugin settings save that failed validation no longer leaks into the next
+  save. `ConfigManager.load_config()` returned its cached config itself (the
+  fast path from #410), so the form save's edits went into the cache before
+  validation ran, and a refused save left them there. The next save of any
+  other setting (another plugin's, a plugin toggle, the schedule) wrote them
+  to config.json: the refused value, and a nested secret typed into the same
+  form (`mqtt.password`, `league.espn_s2`, `flightaware.api_key`) in plain
+  text, because it had never reached config_secrets.json to be stripped.
+  The form also reloaded showing the refused values. `load_config()` now
+  returns a private copy, and the saves keep one, so nothing a caller edits
+  reaches the cache unless it is saved. The copy is a pickle round trip:
+  2.0 ms for a real 64 KiB config on a Pi 4, against 6.9 ms for
+  `copy.deepcopy`.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that
