@@ -1,0 +1,10 @@
+{
+  "screens": [
+    [0.0, "clock", 20.0, "duration", 20, false],
+    [20.0, "weather", 20.0, "duration", 20, true],
+    [40.0, "clock", 20.0, "horizon", 20, true]
+  ],
+  "events": [
+    [0.0, "on-demand-error", "restore-failed"]
+  ]
+}
