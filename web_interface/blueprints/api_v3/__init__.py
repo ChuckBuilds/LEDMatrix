@@ -957,6 +957,19 @@ def _get_schema_property(schema, key_path):
                     i = j
                     matched = True
                     break
+                # Through an array to its items: a table row posts its cells
+                # as "cities.0.timezone", where the index names no property.
+                # Stopping here left each cell parsed with no schema at all,
+                # so a blank text cell became null and "2027" a number.
+                items = prop.get('items') if _schema_type_is(prop, 'array') else None
+                if isinstance(items, dict) and parts[j].isdigit():
+                    if j + 1 == len(parts):
+                        return items
+                    if 'properties' in items:
+                        current = items['properties']
+                        i = j + 1
+                        matched = True
+                        break
                 # Matched a non-object before consuming the path — can't go deeper.
                 return None
         if not matched:

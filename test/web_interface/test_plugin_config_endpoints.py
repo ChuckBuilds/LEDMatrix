@@ -220,3 +220,76 @@ class TestGetMasksSecrets:
         assert resp.status_code == 400
         body = resp.get_data(as_text=True)
         assert "COOKIE-KEY" not in body and "ghp_TOKEN" not in body
+
+
+ROWS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "enabled": {"type": "boolean", "default": True},
+        "cities": {
+            "type": "array",
+            "x-widget": "array-table",
+            "default": [],
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "timezone": {"type": "string"},
+                    "lat": {"type": "number"},
+                    "show": {"type": "boolean", "default": True},
+                },
+                "required": ["name", "lat"],
+            },
+        },
+    },
+}
+
+
+class TestArrayRowCellsFollowTheItemSchema:
+    """A table row posts its cells as ``cities.0.timezone``. The schema
+    lookup stopped at the array, so each cell was parsed blind: a blank
+    optional text cell became null and a text cell holding digits became a
+    number, and either failed validation -- every save of the page, for as
+    long as the row existed (geochron's city without a timezone, a countdown
+    named "2027")."""
+
+    ROW = {"cities.0.name": "Tokyo", "cities.0.timezone": "Asia/Tokyo",
+           "cities.0.lat": "35.68", "cities.0.show": "true",
+           "__rendered_section": ["cities"]}
+
+    @pytest.fixture(autouse=True)
+    def _rows(self, env):
+        env.use_schema(ROWS_SCHEMA)
+        env.store({"enabled": True, "cities": [
+            {"name": "Tokyo", "timezone": "Asia/Tokyo", "lat": 35.68, "show": True}]})
+
+    def test_a_blank_optional_text_cell_saves(self, env):
+        resp = env.post_form({**self.ROW, "cities.0.timezone": ""})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["cities"][0]["timezone"] == ""
+
+    def test_a_text_cell_of_digits_stays_text(self, env):
+        resp = env.post_form({**self.ROW, "cities.0.name": "2027"})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["cities"][0]["name"] == "2027"
+
+    def test_number_and_boolean_cells_still_convert(self, env):
+        resp = env.post_form({**self.ROW, "cities.0.show": "false"})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["cities"] == [
+            {"name": "Tokyo", "timezone": "Asia/Tokyo", "lat": 35.68, "show": False}]
+
+
+class TestMaskedSecretCellsInARow:
+    """The same lookup: a row's secret cell, rendered blank, came back as
+    null and failed validation, so a plugin with secrets in a list could not
+    be saved from its settings page at all."""
+
+    def test_the_stored_tokens_survive_a_save_of_the_form(self, env):
+        resp = env.post_form({
+            "city": "Lyon", "accounts.0.name": "a", "accounts.0.token": "",
+            "accounts.1.name": "b", "accounts.1.token": "",
+            "__rendered_section": ["city", "accounts"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID] == STORED_SECRETS[PLUGIN_ID]
+        assert env.main()[PLUGIN_ID]["accounts"] == [{"name": "a"}, {"name": "b"}]

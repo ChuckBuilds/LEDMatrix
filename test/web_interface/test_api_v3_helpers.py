@@ -169,6 +169,10 @@ class TestGetSchemaProperty:
             },
             "fifa.world": {"type": "object",
                            "properties": {"enabled": {"type": "boolean"}}},
+            "cities": {"type": "array",
+                       "items": {"type": "object",
+                                 "properties": {"timezone": {"type": "string"}}}},
+            "color": {"type": ["array", "null"], "items": {"type": "integer"}},
         }
     }
 
@@ -184,6 +188,15 @@ class TestGetSchemaProperty:
         # as a single key, not be split into nested fifa -> world lookups.
         prop = _get_schema_property(self.SCHEMA, "fifa.world.enabled")
         assert prop == {"type": "boolean"}
+
+    def test_an_index_steps_into_the_array_items(self):
+        # How a table row posts its cells
+        assert _get_schema_property(self.SCHEMA, "cities.0.timezone") == {"type": "string"}
+        assert _get_schema_property(self.SCHEMA, "color.2") == {"type": "integer"}
+
+    def test_a_non_index_under_an_array_is_not_found(self):
+        assert _get_schema_property(self.SCHEMA, "cities.timezone") is None
+        assert _get_schema_property(self.SCHEMA, "cities.0.nope") is None
 
     def test_missing_path_returns_none(self):
         assert _get_schema_property(self.SCHEMA, "nope.nope") is None

@@ -557,6 +557,15 @@ policies are unchanged.
   "unchanged", so a client can post the response back without erasing
   one. Core sections and malformed ids get a 400, as they already did from
   reset and uninstall.
+- Plugin settings with a table (a list of rows, such as geochron's cities
+  or the countdowns) save again when a text cell is blank or holds only
+  digits. A row posts its cells as `cities.0.timezone`, and the schema
+  lookup stopped at the list, so each cell was parsed with no schema: a
+  blank optional text cell became null, and a name like "2027" became a
+  number. Either failed validation, and every save of the page failed for
+  as long as the row existed. A plugin with a secret in its rows could not
+  be saved from the page at all, since the secret cell is drawn blank. The
+  lookup now steps from the index into the list's item schema.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that
