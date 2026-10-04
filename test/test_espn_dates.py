@@ -39,6 +39,14 @@ def forget_rejected_ranges(monkeypatch):
     monkeypatch.setattr(espn_dates, "_ranges_rejected_until", 0.0)
 
 
+@pytest.fixture(autouse=True)
+def nothing_is_settled_yet(monkeypatch):
+    """Pin "today" before every date these tests use, so the settled-chunk
+    memory stays out of tests that are not about it whatever the real date.
+    TestSettledChunkCache moves it forward."""
+    monkeypatch.setattr(espn_dates, "_utc_today", lambda: date(2000, 1, 1))
+
+
 class FakeResponse:
     def __init__(self, status_code=200, payload=None):
         self.status_code = status_code
@@ -489,3 +497,95 @@ class TestConcurrency:
 
         assert live["peak"] <= espn_dates.ESPN_CHUNK_WORKERS
         assert live["peak"] > 1, "chunks should actually overlap"
+
+
+class TestSettledChunkCache:
+    """Days that ended three or more days ago are fetched once a day, not hourly.
+
+    The scoreboards re-fetch a 22-day window every hour; on hdpi (2026-10-02)
+    the 12 settled days were 68% of that window's bytes.
+    """
+
+    TODAY = date(2026, 10, 2)
+    # The scoreboards' default window on that day: 14 back, 7 ahead.
+    WINDOW = "20260918-20261009"
+
+    @pytest.fixture(autouse=True)
+    def frozen_today(self, monkeypatch):
+        monkeypatch.setattr(espn_dates, "_utc_today", lambda: self.TODAY)
+
+    def _events(self):
+        days = [(9, d) for d in range(18, 31)] + [(10, d) for d in range(1, 10)]
+        return {"2026%02d%02d" % (m, d): [{"id": f"{m}-{d}"}] for m, d in days}
+
+    def test_the_second_refresh_only_asks_for_unsettled_days(self):
+        session = FakeSession(self._events())
+        first = fetch_espn_scoreboard(session, URL, params={"dates": self.WINDOW})
+        session.calls.clear()
+
+        second = fetch_espn_scoreboard(session, URL, params={"dates": self.WINDOW})
+
+        asked = sorted(call["dates"] for call in session.calls)
+        # Sep 29 is the last settled day (today minus three).
+        assert asked == ["20260930"] + ["202610%02d" % d for d in range(1, 10)]
+        assert second["events"] == first["events"]  # same events, same order
+        assert len(second["events"]) == 22
+
+    def test_a_hit_is_a_fresh_copy(self):
+        session = FakeSession(self._events())
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        hit = fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        hit["events"][0]["id"] = "mutated"
+        again = fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        assert again["events"][0]["id"] == "9-18"
+
+    def test_other_params_are_part_of_the_key(self):
+        session = FakeSession(self._events())
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW, "groups": 80})
+        session.calls.clear()
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        assert len(session.calls) == 22  # a different question, nothing reused
+
+    def test_entries_expire_after_a_day(self, monkeypatch):
+        clock = [1000.0]
+        monkeypatch.setattr(espn_dates.time, "monotonic", lambda: clock[0])
+        session = FakeSession(self._events())
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        clock[0] += espn_dates.SETTLED_CHUNK_TTL_SECONDS + 1
+        session.calls.clear()
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        assert len(session.calls) == 22
+
+    def test_failed_chunks_are_not_remembered(self):
+        session = FakeSession(self._events(), fail_chunks={"20260920"})
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        session.fail_chunks.clear()
+        session.calls.clear()
+        data = fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        assert "20260920" in [call["dates"] for call in session.calls]
+        assert len(data["events"]) == 22
+
+    def test_a_capped_month_is_not_remembered_but_its_days_are(self):
+        full = [{"id": f"x{i}"} for i in range(ESPN_MAX_LIMIT)]
+        session = FakeSession({"202608": full, "20260801": [{"id": "d1"}]})
+        fetch_espn_date_chunks(session, URL, params={"dates": "20260801-20260831"})
+        session.calls.clear()
+        data = fetch_espn_date_chunks(session, URL, params={"dates": "20260801-20260831"})
+        assert [call["dates"] for call in session.calls] == ["202608"]
+        assert [event["id"] for event in data["events"]] == ["d1"]
+
+    def test_memory_is_bounded(self, monkeypatch):
+        monkeypatch.setattr(espn_dates, "SETTLED_CACHE_MAX_ENTRIES", 5)
+        session = FakeSession(self._events())
+        fetch_espn_date_chunks(session, URL, params={"dates": self.WINDOW})
+        assert len(espn_dates._settled_chunks) == 5
+        assert espn_dates._settled_bytes == sum(
+            len(blob) for _, blob in espn_dates._settled_chunks.values())
+
+    def test_single_day_requests_are_untouched(self):
+        # The live path asks for today (or one day) as a plain request; that
+        # never goes through chunks or the memory.
+        session = FakeSession(self._events())
+        for _ in range(2):
+            fetch_espn_scoreboard(session, URL, params={"dates": "20260918"})
+        assert len(session.calls) == 2
