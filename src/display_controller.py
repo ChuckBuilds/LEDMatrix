@@ -1215,6 +1215,13 @@ class DisplayController:
                 note = getattr(self.plugin_manager, 'note_display_duration', None)
                 if note is not None and plugin_id:
                     note(plugin_id, time.monotonic() - started)
+                # A screen that drew once and holds makes no more
+                # update_display() calls, so a frame the preview throttle
+                # skipped would otherwise never reach the snapshot.
+                write_owed = getattr(getattr(self, 'display_manager', None),
+                                     'write_owed_snapshot', None)
+                if write_owed is not None:
+                    write_owed()
 
     def _health_tracker(self):
         """The plugin circuit breaker, or None when it is not enabled."""
