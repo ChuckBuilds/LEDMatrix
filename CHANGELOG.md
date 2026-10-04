@@ -550,6 +550,13 @@ policies are unchanged.
   replace its mask. A list of secrets still needs every entry's real value
   to be changed. The `config.json` editor is unchanged: its save writes the
   file as given, so a mask there would be stored.
+- A disabled plugin keeps its place in the rotation order and its Vegas
+  exclusion when the Display or Rotation & Durations tab is saved. The order
+  lists show enabled plugins only and rewrite their hidden inputs from those
+  rows as soon as they are drawn, so any save of either tab stored the lists
+  without the disabled plugin. Once re-enabled, it came back at the end of
+  the rotation and scrolling in Vegas again. Saved ids without a row now
+  stay in their saved places (`widgets/plugin-order-list.js`).
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
