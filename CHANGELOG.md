@@ -579,6 +579,12 @@ policies are unchanged.
   first operation carried on either way. The uninstall route also stopped
   recording a failed uninstall in the operation history for an uninstall
   that never started.
+- `/api/v3/plugins/<plugin_id>/static/<path>` serves images and other
+  binary files. It opened every file as UTF-8 text, so a plugin's icon or
+  preview image answered 500 `UnicodeDecodeError`. Files are now sent as
+  they are on disk, an image with its own content type; HTML, JavaScript,
+  CSS, JSON and other text keep the types they had. The path checks are
+  unchanged.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end

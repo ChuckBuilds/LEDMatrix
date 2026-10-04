@@ -3,8 +3,12 @@
 Routes decorate the shared `api_v3` Blueprint from the package `__init__`,
 so their endpoint names do not depend on which module they live in.
 """
+import mimetypes
+
+from flask import send_file
+
 from web_interface.blueprints.api_v3 import (
-    PROJECT_ROOT, Response, _plugin_directory, api_v3, datetime, hashlib,
+    PROJECT_ROOT, _plugin_directory, api_v3, datetime, hashlib,
     json, jsonify, logger, os, request, uuid,
 )
 from src.common.path_safety import (
@@ -231,8 +235,8 @@ def serve_plugin_static(plugin_id, file_path):
     if not requested_file.exists() or not requested_file.is_file():
         return jsonify({'status': 'error', 'message': 'File not found'}), 404
 
-    # Determine content type
-    content_type = 'text/plain'
+    # Determine content type. Text keeps the types this route always set;
+    # anything else (an icon, a preview image) gets its own.
     name = requested_file.name
     if name.endswith('.html'):
         content_type = 'text/html'
@@ -242,12 +246,14 @@ def serve_plugin_static(plugin_id, file_path):
         content_type = 'text/css'
     elif name.endswith('.json'):
         content_type = 'application/json'
+    else:
+        guessed = mimetypes.guess_type(name)[0]
+        content_type = ('text/plain' if not guessed or guessed.startswith('text/')
+                        else guessed)
 
-    # Read and return file
-    with open(requested_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    return Response(content, mimetype=content_type)
+    # Sent as bytes. Opening it as UTF-8 text failed to decode any binary
+    # file, so an image answered 500 UnicodeDecodeError.
+    return send_file(requested_file, mimetype=content_type)
 
 
 @api_v3.route('/plugins/assets/delete', methods=['POST'])
