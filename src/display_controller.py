@@ -39,7 +39,8 @@ import pytz
 from src import display_watchdog
 from src.display_arbiter import (
     RELOAD_PLAN, SCREEN_PREEMPTERS, Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
-    ScreenPlan, Source, WifiNotice, live_pick, on_demand_bound, wifi_notice_preempts,
+    ScreenPlan, Source, WifiNotice, live_pick, on_demand_bound, rotation_plan,
+    wifi_notice_preempts,
 )
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
@@ -60,7 +61,7 @@ from src.ipc.contract import (
 )
 from src.ipc.server import ControlServer, QueuedCommand, StateHub, start_control_server
 from src.screen_runner import (
-    FRAME, Checkpoint, ExitReason, FirstFrame, NoticeRead, Screen, ScreenRunner,
+    FRAME, Checkpoint, ExitReason, FirstFrame, NoticeRead, Outcome, Screen, ScreenRunner,
 )
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
@@ -1837,7 +1838,10 @@ class DisplayController:
         The caller checks that on_demand_modes is non-empty. The step itself
         is ArbiterState.next_on_demand.
         """
-        nxt = self._arbiter_state().next_on_demand()
+        self._show_on_demand_step(self._arbiter_state().next_on_demand())
+
+    def _show_on_demand_step(self, nxt: ArbiterState) -> None:
+        """Apply an on-demand session's step to its next mode and publish it."""
         self.on_demand_mode_index = nxt.on_demand_index
         next_mode = nxt.current_mode
         logger.info("Rotating to next on-demand mode: %s (index %d/%d)",
@@ -3383,17 +3387,12 @@ class DisplayController:
             if plan.mode is None:
                 logger.warning("On-demand active but no modes available, clearing on-demand mode")
                 self._clear_on_demand(reason='no-modes-available')
-                return ScreenPlan(Source.LEGACY, mode=self.current_display_mode,
-                                  preemptible_by=SCREEN_PREEMPTERS)
+                return rotation_plan(self._arbiter_state())
             self.on_demand_mode_index = self._arbiter_state().showing(plan).on_demand_index
             if self.current_display_mode != plan.mode:
                 self.current_display_mode = plan.mode
                 self.force_change = True
-            return plan
-        if plan.source is Source.LIVE:
-            return plan
-        return ScreenPlan(Source.LEGACY, mode=self.current_display_mode,
-                          preemptible_by=SCREEN_PREEMPTERS)
+        return plan
 
     def _plugin_for_mode(self, mode: Optional[str]):
         """The plugin to draw ``mode``, or None to skip it this pass.
@@ -3845,42 +3844,48 @@ class DisplayController:
                 )
         return needs_high_fps
 
-    def _advance_after_screen(self, active_mode: Optional[str]) -> None:
+    def _advance_after_screen(self, plan: ScreenPlan, outcome: Outcome) -> None:
         """Pick the next mode once a screen has run its course.
 
-        An on-demand session moves to its next mode (one with no modes left
-        is ended, and the rotation advances instead). Otherwise the rotation
-        advances -- unless the mode just shown is a live-priority mode that
-        is still live, which holds the panel.
+        ArbiterState.after makes the step; this gathers what it needs and
+        applies it. An on-demand session moves to its next mode (one with no
+        modes left is ended first, and the rotation advances instead).
+        Otherwise the rotation advances -- unless the mode just shown is a
+        live-priority mode that is still live, which holds the panel.
         """
-        if self.on_demand_active:
+        if self.on_demand_active and not self.on_demand_modes:
             # Guard against empty on_demand_modes to prevent ZeroDivisionError
-            if not self.on_demand_modes:
-                logger.warning("On-demand active but no modes available, clearing on-demand mode")
-                self._clear_on_demand(reason='no-modes-available')
-                # Fall through to normal rotation
-            else:
-                self._advance_on_demand()
-                return
-
-        # Check for live priority - don't rotate if current plugin has live content
-        should_rotate = True
-        if active_mode in self.plugin_modes:
-            plugin_instance = self.plugin_modes[active_mode]
-            if hasattr(plugin_instance, 'has_live_priority') and hasattr(plugin_instance, 'has_live_content'):
-                try:
-                    if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
-                        logger.info("Live priority active for %s - staying on current mode", active_mode)
-                        should_rotate = False
-                except Exception as e:
-                    logger.warning("Error checking live priority for %s: %s", active_mode, e)
-
-        if should_rotate and self.available_modes:
-            self.current_mode_index = (self.current_mode_index + 1) % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
+            logger.warning("On-demand active but no modes available, clearing on-demand mode")
+            self._clear_on_demand(reason='no-modes-available')
+            # Fall through to normal rotation
+        on_demand = self.on_demand_active
+        # The live hold is only asked about outside a session.
+        still_live = not on_demand and self._still_live(plan.mode)
+        state = self._arbiter_state()
+        nxt = state.after(replace(outcome, on_demand_active=on_demand, still_live=still_live))
+        if on_demand:
+            self._show_on_demand_step(nxt)
+        elif nxt is not state:
+            self._adopt_state(nxt)
             self.force_change = True
-
             logger.info("Switching to mode: %s", self.current_display_mode)
+
+    def _still_live(self, mode: Optional[str]) -> bool:
+        """The live hold: ``mode``'s plugin has live priority and live content,
+        so the rotation stays on it."""
+        if mode not in self.plugin_modes:
+            return False
+        plugin_instance = self.plugin_modes[mode]
+        if not (hasattr(plugin_instance, 'has_live_priority')
+                and hasattr(plugin_instance, 'has_live_content')):
+            return False
+        try:
+            if plugin_instance.has_live_priority() and plugin_instance.has_live_content():
+                logger.info("Live priority active for %s - staying on current mode", mode)
+                return True
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning("Error checking live priority for %s: %s", mode, e)
+        return False
 
     # -- One screen (ScreenHost for src/screen_runner.py) -------------------
 
@@ -3944,7 +3949,7 @@ class DisplayController:
             if self._wifi_notice_pending() and checkpoint.notice_counts:
                 return ScreenPlan(Source.WIFI)
         if self.current_display_mode != mode or not self.is_display_active:
-            return ScreenPlan(Source.LEGACY, mode=self.current_display_mode)
+            return ScreenPlan(Source.ROTATION, mode=self.current_display_mode)
         if (checkpoint.notice is NoticeRead.IF_UNDECIDED and checkpoint.notice_counts
                 and self._wifi_notice_pending()):
             return ScreenPlan(Source.WIFI)
@@ -4087,7 +4092,7 @@ class DisplayController:
                 # vegas_scroll.live_in_ticker keeps the marquee running and
                 # gives the live plugin extra turns inside it instead -- see
                 # StreamManager._apply_priority_weights.
-                if plan.source is Source.LEGACY and below.vegas_enabled:
+                if plan.source is Source.LEGACY:
                     after_vegas = self._run_vegas_iteration(below)
                     if after_vegas is None:
                         continue
@@ -4156,7 +4161,7 @@ class DisplayController:
                     # This allows trying other modes (recent, upcoming) from the same plugin
 
                 # Move to next mode
-                self._advance_after_screen(active_mode)
+                self._advance_after_screen(plan, outcome)
 
         except KeyboardInterrupt:
             logger.info("Received interrupt signal, shutting down...")

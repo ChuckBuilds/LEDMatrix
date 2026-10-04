@@ -9,6 +9,7 @@ that overrides the schedule and ends (#714).
 """
 
 import itertools
+from dataclasses import replace
 import os
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,7 @@ os.environ.setdefault("EMULATOR", "true")
 from src import display_arbiter  # noqa: E402
 from src.display_arbiter import (  # noqa: E402
     SCHEDULED_OFF_DWELL,
+    SCREEN_PREEMPTERS,
     WIFI_NOTICE_DWELL,
     Arbiter,
     ArbiterInputs,
@@ -38,6 +40,7 @@ FOLLOW = Source.FOLLOWER
 WIFI = Source.WIFI
 ONDEM = Source.ON_DEMAND
 LEGACY = Source.LEGACY
+ROTATION = Source.ROTATION
 
 # (schedule_on, on_demand_active, follower_active, notice) -> Source.
 # Every combination of the stage-2 inputs: 2 x 2 x 2 x 2 = 16 rows.
@@ -54,7 +57,7 @@ DECIDE_TABLE = [
     (False, True, True, None, FOLLOW),        # follower outranks on-demand
     (False, True, True, NOTICE, FOLLOW),
     # Scheduled on.
-    (True, False, False, None, LEGACY),       # live / Vegas / rotation
+    (True, False, False, None, ROTATION),     # live / Vegas / rotation
     (True, False, False, NOTICE, WIFI),
     (True, False, True, None, FOLLOW),
     (True, False, True, NOTICE, FOLLOW),      # follower outranks WiFi
@@ -102,8 +105,11 @@ class TestDecide:
             # An empty state: a session with no modes, which the
             # controller ends (see TestOnDemand for real sessions).
             assert plan == ScreenPlan(ONDEM)
+        elif expected is ROTATION:
+            # No live scan and Vegas off: the rotation's (empty) mode.
+            assert plan == ScreenPlan(ROTATION, preemptible_by=SCREEN_PREEMPTERS)
         else:
-            # A follower paces itself; LEGACY is run()'s existing code.
+            # A follower paces itself.
             assert plan == ScreenPlan(expected)
 
     def test_dwells_are_todays(self):
@@ -231,7 +237,7 @@ class TestControllerSnapshot:
             assert (plan.source is OFF) is (not dc.is_display_active), time_str
             return plan.source
 
-        assert step("22:59:30") is LEGACY
+        assert step("22:59:30") is ROTATION
         assert step("23:00:00") is OFF                 # window ends
         dc.on_demand_active = True
         assert step("23:00:10") is ONDEM               # on-demand overrides
@@ -243,7 +249,7 @@ class TestControllerSnapshot:
         assert step("06:59:00") is ONDEM
         assert step("07:00:00") is ONDEM               # schedule back on mid-session
         dc._reset_on_demand_fields()
-        assert step("07:00:30") is LEGACY
+        assert step("07:00:30") is ROTATION
 
 
 # -- OnDemand (stage 3) ---------------------------------------------------
@@ -431,3 +437,72 @@ class TestLiveTransitions:
         assert state.release_live() is state
         empty = ArbiterState(current_mode="x", live_resume_index=2)
         assert empty.release_live() is empty      # no rotation to resume into
+
+
+# -- Vegas and Rotation (stage 3) -----------------------------------------
+
+class TestVegasAndRotation:
+
+    # (state, inputs) -> (source, mode, ends_live). LEGACY now means Vegas only.
+    TABLE = [
+        (_rot("weather", 1), _below(live=()), ROTATION, "weather", False),
+        (_rot("weather", 1), _below(live=None), ROTATION, "weather", False),
+        (_rot("weather", 1), _below(live=(), vegas=True), LEGACY, None, False),
+        (_rot("weather", 1), _below(live=None, vegas=True, keeps=True), LEGACY, None, False),
+        # The iteration yielded: the screen it fell through to.
+        (_rot("weather", 1), _below(live=(), vegas=True, yielded=True),
+         ROTATION, "weather", False),
+        (_rot("weather", 1), _below(live=("nfl_live",), vegas=True, yielded=True),
+         LIVE, "nfl_live", False),
+        # Live priority just ended: the rotation resumes where it was cut.
+        (_rot("nhl_live", 3, resume=1), _below(live=()), ROTATION, "weather", True),
+        # ... and Vegas carries the resume through to its own pass.
+        (_rot("nhl_live", 3, resume=1), _below(live=(), vegas=True), LEGACY, None, True),
+        # A rotation that something moved off its list carries on from there.
+        (ArbiterState(current_mode=None, rotation=ROT), _below(live=()), ROTATION, None, False),
+    ]
+
+    @pytest.mark.parametrize("state,inputs,source,mode,ends_live", TABLE)
+    def test_decide(self, state, inputs, source, mode, ends_live):
+        plan = Arbiter.decide(state, inputs, 0.0)
+        assert (plan.source, plan.mode, plan.ends_live) == (source, mode, ends_live)
+
+    def test_a_rotation_plan_may_be_preempted_by_everything_a_screen_watches(self):
+        plan = Arbiter.decide(_rot(), _below(live=()), 0.0)
+        assert plan.preemptible_by == SCREEN_PREEMPTERS
+        assert {OFF, ONDEM, WIFI, LIVE, ROTATION, Source.RELOAD} == SCREEN_PREEMPTERS
+
+
+class _End:
+    def __init__(self, on_demand_active=False, still_live=False):
+        self.on_demand_active = on_demand_active
+        self.still_live = still_live
+
+
+class TestAfter:
+    """ArbiterState.after: _advance_after_screen's step."""
+
+    def test_the_rotation_advances(self):
+        nxt = _rot("weather", 1).after(_End())
+        assert (nxt.current_mode, nxt.rotation_index) == ("nfl_live", 2)
+
+    def test_it_wraps(self):
+        nxt = _rot("nhl_live", 3).after(_End())
+        assert (nxt.current_mode, nxt.rotation_index) == ("clock", 0)
+
+    def test_a_live_mode_still_live_holds(self):
+        state = _rot("nfl_live", 2)
+        assert state.after(_End(still_live=True)) is state
+
+    def test_an_on_demand_session_moves_to_its_next_mode(self):
+        state = replace(_session(index=1, current="b"), rotation=ROT, rotation_index=1)
+        nxt = state.after(_End(on_demand_active=True))
+        assert (nxt.current_mode, nxt.on_demand_index, nxt.rotation_index) == ("c", 2, 1)
+
+    def test_a_session_with_no_modes_is_left_to_the_controller(self):
+        state = ArbiterState(current_mode="x", rotation=ROT)
+        assert state.after(_End(on_demand_active=True)) is state
+
+    def test_no_rotation_no_step(self):
+        state = ArbiterState(current_mode="x")
+        assert state.after(_End()) is state

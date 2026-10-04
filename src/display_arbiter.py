@@ -25,7 +25,7 @@ come from one module.
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import FrozenSet, Optional, Tuple
+from typing import FrozenSet, Optional, Protocol, Tuple
 
 __all__ = [
     "Arbiter",
@@ -36,9 +36,11 @@ __all__ = [
     "ScreenPlan",
     "Source",
     "WIFI_NOTICE_DWELL",
+    "ScreenEnd",
     "WifiNotice",
     "live_pick",
     "on_demand_bound",
+    "rotation_plan",
     "wifi_notice_preempts",
 ]
 
@@ -59,9 +61,11 @@ class Source(Enum):
     ON_DEMAND = "on-demand"
     WIFI = "wifi"
     LIVE = "live"
-    # Not decided by the Arbiter yet: Vegas and the rotation are still chosen
-    # by run()'s own code. The Rotation Source is next; stage 4 adds Vegas.
+    # Vegas: the Arbiter picks it, but its iteration is still run()'s own
+    # code (and its interrupt callback a second copy of this order) until
+    # stage 4 makes it a Source driven frame by frame.
     LEGACY = "legacy"
+    ROTATION = "rotation"
     # Not a screen: a plugin reload waits at the top of the loop. It ends a
     # screen between frames (the screen counts as shown and the rotation
     # moves on), and the next pass reloads before it draws.
@@ -76,6 +80,19 @@ class FramePolicy(Enum):
     HIGH_FPS = "high-fps"
     #: The 1 Hz loop.
     STATIC = "static"
+
+
+class ScreenEnd(Protocol):
+    """What ArbiterState.after needs to know about how a screen ended
+    (screen_runner.Outcome, filled in by the controller)."""
+
+    @property
+    def on_demand_active(self) -> bool:
+        """An on-demand session was running when the screen ended."""
+
+    @property
+    def still_live(self) -> bool:
+        """The mode's plugin still had live content: hold the rotation."""
 
 
 @dataclass(frozen=True)
@@ -149,6 +166,22 @@ class ArbiterState:
         index = self.rotation.index(mode) if mode in self.rotation else self.rotation_index
         return replace(self, current_mode=mode, rotation_index=index,
                        live_resume_index=resume)
+
+    def after(self, outcome: "ScreenEnd") -> "ArbiterState":
+        """The state once a screen has run its course: the next mode.
+
+        An on-demand session moves to its next mode. Otherwise the rotation
+        advances -- unless the mode just shown is a live-priority mode that
+        is still live, which holds the panel. A session with no modes left
+        is ended by the controller before it asks (that is not pure: it
+        resumes the rotation and clears the cache).
+        """
+        if outcome.on_demand_active:
+            return self.next_on_demand() if self.on_demand_modes else self
+        if outcome.still_live or not self.rotation:
+            return self
+        index = (self.rotation_index + 1) % len(self.rotation)
+        return replace(self, rotation_index=index, current_mode=self.rotation[index])
 
     def release_live(self) -> "ArbiterState":
         """Nothing is live any more: the rotation resumes where it was."""
@@ -280,10 +313,12 @@ LEGACY_PLAN = ScreenPlan(Source.LEGACY)
 RELOAD_PLAN = ScreenPlan(Source.RELOAD)
 
 #: What may end a screen mid-way: the schedule, an on-demand session
-#: starting or ending, a WiFi notice, a plugin reload, and run()'s own
-#: changes of mode (live priority).
+#: starting or ending, a WiFi notice, a live game, the rotation moving
+#: under the screen, and a plugin reload. Not a follower or Vegas: those
+#: are only looked at between screens.
 SCREEN_PREEMPTERS: FrozenSet[Source] = frozenset(
-    {Source.SCHEDULED_OFF, Source.ON_DEMAND, Source.WIFI, Source.RELOAD, Source.LEGACY})
+    {Source.SCHEDULED_OFF, Source.ON_DEMAND, Source.WIFI, Source.LIVE, Source.ROTATION,
+     Source.RELOAD})
 
 
 class Arbiter:
@@ -335,8 +370,15 @@ class Arbiter:
                 return ScreenPlan(Source.LIVE, mode=pick, preemptible_by=SCREEN_PREEMPTERS)
             ends_live = state.live_resume_index is not None and bool(state.rotation)
 
-        # 5-6. Vegas, Rotation: still run()'s own code.
-        return ScreenPlan(Source.LEGACY, ends_live=ends_live)
+        # 5. Vegas: one iteration of the ticker, run by run()'s own code
+        # until stage 4. Passes once this pass's iteration has yielded.
+        if inputs.vegas_enabled and not inputs.vegas_yielded:
+            return ScreenPlan(Source.LEGACY, ends_live=ends_live)
+
+        # 6. Rotation: the rotation's current mode (after the resume, when
+        # live priority just ended).
+        return rotation_plan(state.release_live() if ends_live else state,
+                             ends_live=ends_live)
 
 
 def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
@@ -355,6 +397,18 @@ def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
     remaining = None if expires_at is None else max(0.0, expires_at - now)
     return ScreenPlan(Source.ON_DEMAND, mode=modes[_on_demand_index(state)],
                       max_duration=remaining, deadline=expires_at,
+                      preemptible_by=SCREEN_PREEMPTERS)
+
+
+def rotation_plan(state: ArbiterState, ends_live: bool = False) -> ScreenPlan:
+    """The Rotation Source: the mode the rotation is on.
+
+    That is ``state.current_mode``, which is ``rotation[rotation_index]``
+    except where something moved the panel off the list and the rotation
+    carries on from there: a live mode no rotation entry names, or None
+    when a session ended with no enabled mode to resume to.
+    """
+    return ScreenPlan(Source.ROTATION, mode=state.current_mode, ends_live=ends_live,
                       preemptible_by=SCREEN_PREEMPTERS)
 
 
