@@ -530,11 +530,13 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                # plugin_id: the id to enable it by (see _installed_plugin_id).
+                # plugin_id: the id to enable it by, and the id its config
+                # section is under (see _installed_plugin_id).
+                installed_id = _installed_plugin_id(plugin_id)
                 return {'success': True,
                         'message': f'Plugin {plugin_id} installed successfully{branch_msg}',
-                        'plugin_id': _installed_plugin_id(plugin_id),
-                        **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))}
+                        'plugin_id': installed_id,
+                        **_store_restart_fields('install', _plugin_enabled_in_config(installed_id))}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
@@ -588,10 +590,11 @@ def install_plugin():
                 )
 
             branch_msg = f" (branch: {branch})" if branch else ""
+            installed_id = _installed_plugin_id(plugin_id)
             return success_response(
                 message=f'Plugin installed successfully{branch_msg}',
-                extra={'plugin_id': _installed_plugin_id(plugin_id),
-                       **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))})
+                extra={'plugin_id': installed_id,
+                       **_store_restart_fields('install', _plugin_enabled_in_config(installed_id))})
         else:
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:
