@@ -1097,6 +1097,14 @@ def _parse_form_value_with_schema(value, key_path, schema):
     if isinstance(value, str):
         stripped = value.strip()
 
+        # A text field keeps what was typed. The guesses below ran first, so
+        # "true", "False", "[1, 2]" or "{}" in a text field became a boolean,
+        # list or object, and the save failed validation for a good string.
+        declared = prop.get('type') if isinstance(prop, dict) else None
+        if declared == 'string' or (isinstance(declared, list) and
+                                    [t for t in declared if t != 'null'] == ['string']):
+            return value
+
         # Check for boolean strings
         if stripped.lower() == 'true':
             return True

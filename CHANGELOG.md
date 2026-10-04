@@ -577,6 +577,12 @@ policies are unchanged.
   `{"plugin_id": "display", ...}` merged unvalidated values into the core
   display section (and added `"enabled": true` to it), and an id that was
   not a string answered with a 500.
+- A plugin text setting saves what was typed when that looks like a
+  boolean or JSON. The form save tried `true`/`false` and `[...]`/`{...}`
+  before it looked at the schema, so a text field holding "true", "False",
+  "[1, 2]" or "{}" was stored as a boolean, list or object, and the save
+  failed validation. Text fields, nullable ones included, are now taken as
+  typed; other types convert as before.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that

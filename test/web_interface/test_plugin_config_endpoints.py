@@ -365,3 +365,29 @@ class TestSaveRefusesWhatIsNotAPluginId:
     def test_a_malformed_id_is_a_400(self, env, plugin_id):
         resp = env.post_json({"city": "Lyon"}, plugin_id=plugin_id)
         assert resp.status_code == 400
+
+
+class TestTextFieldsKeepWhatWasTyped:
+    """A text field holding "true", "False", "[1, 2]" or "{}" was converted
+    to a boolean, list or object before the schema's type was consulted, and
+    the save then failed validation for a perfectly good string."""
+
+    @pytest.mark.parametrize("typed", ["true", "False", "[1, 2]", "{}", "42"])
+    def test_a_text_field(self, env, typed):
+        resp = env.post_form({"city": typed, "__rendered_section": ["city"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["city"] == typed
+
+    def test_a_nullable_text_field(self, env):
+        schema = json.loads(json.dumps(SCHEMA))
+        schema["properties"]["nickname"] = {"type": ["string", "null"], "default": None}
+        env.use_schema(schema)
+        resp = env.post_form({"nickname": "false", "__rendered_section": ["nickname"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["nickname"] == "false"
+
+    def test_other_types_still_convert(self, env):
+        resp = env.post_form({"mqtt.host": "true", "mqtt.port": "8883",
+                              "__rendered_section": ["mqtt"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["mqtt"] == {"host": "true", "port": 8883}
