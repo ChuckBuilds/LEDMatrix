@@ -957,6 +957,19 @@ def _get_schema_property(schema, key_path):
                     i = j
                     matched = True
                     break
+                # Through an array to its items: a table row posts its cells
+                # as "cities.0.timezone", where the index names no property.
+                # Stopping here left each cell parsed with no schema at all,
+                # so a blank text cell became null and "2027" a number.
+                items = prop.get('items') if _schema_type_is(prop, 'array') else None
+                if isinstance(items, dict) and parts[j].isdigit():
+                    if j + 1 == len(parts):
+                        return items
+                    if 'properties' in items:
+                        current = items['properties']
+                        i = j + 1
+                        matched = True
+                        break
                 # Matched a non-object before consuming the path — can't go deeper.
                 return None
         if not matched:
@@ -1040,6 +1053,16 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # The form draws a stored secret blank, so a blank secret means
+        # "unchanged", and "" is what the save drops as unchanged
+        # (remove_empty_secrets). A required one with no default fell
+        # through to None below, failed validation, and blocked every save
+        # of the page until the secret was typed in again. Not _SKIP_FIELD:
+        # that keeps the merged value from load_config(), which the save
+        # would then write back to config_secrets.json. Text secrets only:
+        # a list or object one gets its empty value below, dropped the same.
+        if prop and prop.get('x-secret') and prop.get('type', 'string') == 'string':
+            return ""
         # A nullable field left blank means null, not an empty container.
         # This is the inherit sentinel for per-mode style overrides: an
         # empty list there would read as "the user chose no colour" rather
@@ -1073,6 +1096,14 @@ def _parse_form_value_with_schema(value, key_path, schema):
     # Handle string values
     if isinstance(value, str):
         stripped = value.strip()
+
+        # A text field keeps what was typed. The guesses below ran first, so
+        # "true", "False", "[1, 2]" or "{}" in a text field became a boolean,
+        # list or object, and the save failed validation for a good string.
+        declared = prop.get('type') if isinstance(prop, dict) else None
+        if declared == 'string' or (isinstance(declared, list) and
+                                    [t for t in declared if t != 'null'] == ['string']):
+            return value
 
         # Check for boolean strings
         if stripped.lower() == 'true':

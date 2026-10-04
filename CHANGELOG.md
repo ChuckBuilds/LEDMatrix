@@ -618,6 +618,57 @@ policies are unchanged.
   the plugin leaves rotation until the cooldown ends, the same as a raising
   `update()`. The display still moves straight on to the next mode. A hung
   `display()` is still recorded once, as a hang.
+- A plugin settings save that failed validation no longer leaks into the next
+  save. `ConfigManager.load_config()` returned its cached config itself (the
+  fast path from #410), so the form save's edits went into the cache before
+  validation ran, and a refused save left them there. The next save of any
+  other setting (another plugin's, a plugin toggle, the schedule) wrote them
+  to config.json: the refused value, and a nested secret typed into the same
+  form (`mqtt.password`, `league.espn_s2`, `flightaware.api_key`) in plain
+  text, because it had never reached config_secrets.json to be stripped.
+  The form also reloaded showing the refused values. `load_config()` now
+  returns a private copy, and the saves keep one, so nothing a caller edits
+  reaches the cache unless it is saved. The copy duplicates only the dicts
+  and lists (every other JSON value is immutable): 2.1 ms for a real 60 KiB
+  config on a Pi 4, against 6.8 ms for `copy.deepcopy`.
+- `GET /api/v3/plugins/config` no longer returns secrets. It sent back the
+  plugin's section with config_secrets.json merged in, API keys and tokens
+  in plain text: the masking #276 added was dropped in #330. It also took
+  any id, so `?plugin_id=web_auth` returned the login's cookie-signing key
+  and password hash and `?plugin_id=github` the Plugin Store token. Secret
+  fields now come back blank, as the settings page renders them, and a
+  plugin with no schema has its credential-named fields blanked, as
+  `GET /config/main` does. Blank rather than the `••••••••` of
+  `GET /config/secrets`, because the save reads a blank secret as
+  "unchanged", so a client can post the response back without erasing
+  one. Core sections and malformed ids get a 400, as they already did from
+  reset and uninstall.
+- Plugin settings with a table (a list of rows, such as geochron's cities
+  or the countdowns) save again when a text cell is blank or holds only
+  digits. A row posts its cells as `cities.0.timezone`, and the schema
+  lookup stopped at the list, so each cell was parsed with no schema: a
+  blank optional text cell became null, and a name like "2027" became a
+  number. Either failed validation, and every save of the page failed for
+  as long as the row existed. A plugin with a secret in its rows could not
+  be saved from the page at all, since the secret cell is drawn blank. The
+  lookup now steps from the index into the list's item schema.
+- A plugin whose API key is required and has no default (youtube-stats)
+  can be saved from its settings page without typing the key in again. The
+  page draws a stored secret blank and posts the blank back; for a required
+  secret the save read that blank as null, failed validation, and refused
+  every save of the page. A blank secret field now means "unchanged", as it
+  already did for an optional one.
+- `POST /api/v3/plugins/config` refuses a core section or a malformed
+  plugin id with a 400, as reset and uninstall already did.
+  `{"plugin_id": "display", ...}` merged unvalidated values into the core
+  display section (and added `"enabled": true` to it), and an id that was
+  not a string answered with a 500.
+- A plugin text setting saves what was typed when that looks like a
+  boolean or JSON. The form save tried `true`/`false` and `[...]`/`{...}`
+  before it looked at the schema, so a text field holding "true", "False",
+  "[1, 2]" or "{}" was stored as a boolean, list or object, and the save
+  failed validation. Text fields, nullable ones included, are now taken as
+  typed; other types convert as before.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that
