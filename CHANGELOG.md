@@ -567,6 +567,12 @@ policies are unchanged.
   display service". The route now checks the service first and posts
   nothing when it refuses, and a request it posted before a failed start is
   taken back out of the mailbox, unless a newer one has replaced it.
+- `/api/v3/plugins/operation/<id>` reports a queued operation as `pending`
+  instead of answering 500. The queue keeps an operation's callback among
+  its parameters until it runs, and the status route tried to send that
+  function as JSON. An install queued behind another plugin's install
+  failed every status poll until the first one finished. Parameters whose
+  name starts with `_` are internal and are no longer in the answer.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end
