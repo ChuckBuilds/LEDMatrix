@@ -566,6 +566,12 @@ policies are unchanged.
   skipped. After a run the installed cards and the Updates badge show the
   new versions; they kept offering "Update to vX" for what had just been
   updated until the page was reloaded.
+- The Run On-Demand dialog lists a plugin's display modes, so a mode other
+  than the first can be started, and pinned. `/api/v3/plugins/installed`
+  never sent `display_modes`, which the dialog reads, so every plugin
+  offered only its own id under "This plugin exposes a single display
+  mode", and the display started its first mode. Each entry now carries
+  `display_modes`, the modes its manifest declares.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render

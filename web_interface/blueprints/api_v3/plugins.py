@@ -145,6 +145,14 @@ def get_installed_plugins():
         vegas_participation, vegas_participation_source = _vegas_participation(
             plugin_id, plugin_config, plugin_info)
 
+        # The modes the manifest declares, from the catalog as /display/modes
+        # and on-demand/start read them. The on-demand modal offers these;
+        # without them it offered only the plugin id, which the display
+        # turns into the first mode. Strings only: a manifest is hand-edited.
+        declared_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id)
+        display_modes = ([m for m in declared_modes if isinstance(m, str)]
+                         if isinstance(declared_modes, list) else [])
+
         return {
             'id': plugin_id,
             'name': plugin_info.get('name', plugin_id),
@@ -158,6 +166,7 @@ def get_installed_plugins():
             # The tab nav uses this as the <i> element's Font Awesome class
             # (app-shell.js / app-early.js); only a string can be one.
             'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
+            'display_modes': display_modes,
             'enabled': enabled,
             'verified': verified,
             # loaded, state, error_info, loaded_version, loaded_at: the
