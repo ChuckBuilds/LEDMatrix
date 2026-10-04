@@ -560,6 +560,12 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- Check & Update All updates what is installed now. A second run in the
+  same page sent the plugins the first run had seen, so a plugin uninstalled
+  since then failed with "plugin not found" and one installed since was
+  skipped. After a run the installed cards and the Updates badge show the
+  new versions; they kept offering "Update to vX" for what had just been
+  updated until the page was reloaded.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render
