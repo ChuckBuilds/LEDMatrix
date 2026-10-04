@@ -556,6 +556,14 @@ policies are unchanged.
   the panel went off at 23:00 or at 23:01 depending on when in the minute
   that check ran. Windows that cross midnight and per-day schedules follow
   the same rule, and so does the dim schedule.
+- The MQTT bridge settings on the Tools tab can save a broker password with
+  TLS off. The server refuses that unless `allow_insecure_mqtt` is set, and
+  the form had no way to set it, so a password-protected broker on a home
+  network without TLS could not be saved from the web UI, and once such a
+  password was stored every later save failed too. While "Use TLS" is
+  unchecked the form now shows "Allow without TLS (trusted network)",
+  prefilled from the saved settings. It is off until ticked, so the server
+  still refuses a cleartext password by default.
 - An on-demand session that ends during scheduled-off hours, by expiring or
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had

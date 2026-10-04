@@ -1093,6 +1093,12 @@
                 Use TLS
                 <span class="text-xs text-gray-500">(a password without TLS crosses the network in the clear)</span>
             </label>
+            <label id="mqtt-allow-insecure-row" class="${c.mqtt_tls ? 'hidden' : 'flex'} items-center gap-2 text-sm text-gray-700">
+                <input id="mqtt-allow-insecure" type="checkbox" ${c.allow_insecure_mqtt ? 'checked' : ''}
+                       class="rounded border-gray-300">
+                Allow without TLS (trusted network)
+                <span class="text-xs text-gray-500">(needed to save a password while TLS is off)</span>
+            </label>
 
             <div class="flex items-center justify-between gap-4 pt-2">
                 <p class="text-xs text-gray-500">
@@ -1132,6 +1138,15 @@
         if (clearBtn) clearBtn.addEventListener('click', () => clearMqttPassword());
         const clearTokenBtn = document.getElementById('mqtt-clear-api-token');
         if (clearTokenBtn) clearTokenBtn.addEventListener('click', () => clearMqttApiToken());
+        // The cleartext opt-in only means something while TLS is off.
+        const tlsBox = document.getElementById('mqtt-tls');
+        const allowRow = document.getElementById('mqtt-allow-insecure-row');
+        if (tlsBox && allowRow) {
+            tlsBox.addEventListener('change', () => {
+                allowRow.classList.toggle('hidden', tlsBox.checked);
+                allowRow.classList.toggle('flex', !tlsBox.checked);
+            });
+        }
     }
 
     window.loadMqttBridge = function() {
@@ -1160,6 +1175,9 @@
             on_demand_duration: val('mqtt-duration') === '' ? null : val('mqtt-duration'),
             log_level: val('mqtt-log-level'),
             mqtt_tls: !!(document.getElementById('mqtt-tls') || {}).checked,
+            // The server refuses a password with TLS off unless this is set
+            // (CWE-319); it is off until the user ticks it.
+            allow_insecure_mqtt: !!(document.getElementById('mqtt-allow-insecure') || {}).checked,
         };
         // Only send a password when one was typed; blank means "leave it alone".
         const pw = val('mqtt-password');
