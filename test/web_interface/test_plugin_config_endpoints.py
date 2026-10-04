@@ -293,3 +293,52 @@ class TestMaskedSecretCellsInARow:
         assert resp.status_code == 200, resp.get_json()
         assert env.secrets()[PLUGIN_ID] == STORED_SECRETS[PLUGIN_ID]
         assert env.main()[PLUGIN_ID]["accounts"] == [{"name": "a"}, {"name": "b"}]
+
+
+class TestABlankSecretIsLeftAsStored:
+    """The form renders a secret blank and posts the blank back. For a
+    required secret with no default (youtube-stats' api_key) the blank was
+    read as null, failed validation, and blocked every save of the page
+    until the key was typed in again."""
+
+    @pytest.fixture(autouse=True)
+    def _required_secret(self, env):
+        schema = json.loads(json.dumps(SCHEMA))
+        del schema["properties"]["api_key"]["default"]
+        schema["required"] = ["api_key"]
+        env.use_schema(schema)
+
+    def test_saving_other_settings_keeps_the_stored_secret(self, env):
+        resp = env.post_form({"api_key": "", "city": "Lyon",
+                              "__rendered_section": ["api_key", "city"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.main()[PLUGIN_ID]["city"] == "Lyon"
+        assert env.secrets()[PLUGIN_ID]["api_key"] == "TOPSECRET"
+
+    def test_a_new_secret_is_still_saved(self, env):
+        resp = env.post_form({"api_key": "NEW-KEY", "city": "Lyon",
+                              "__rendered_section": ["api_key", "city"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID]["api_key"] == "NEW-KEY"
+
+    def test_a_changed_secret_then_left_blank_stays_changed(self, env):
+        # The second save must not write back what the first one's load
+        # had merged in (the old key)
+        env.post_form({"api_key": "NEW-KEY", "__rendered_section": ["api_key"]})
+        resp = env.post_form({"api_key": "", "city": "Nice",
+                              "__rendered_section": ["api_key", "city"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID]["api_key"] == "NEW-KEY"
+
+    def test_a_blank_list_secret_is_left_as_stored_too(self, env, tmp_path):
+        schema = json.loads(json.dumps(SCHEMA))
+        schema["properties"]["tokens"] = {"type": "array", "x-secret": True,
+                                          "items": {"type": "string"}, "default": []}
+        env.use_schema(schema)
+        secrets = env.secrets()
+        secrets[PLUGIN_ID]["tokens"] = ["t1", "t2"]
+        (tmp_path / "config_secrets.json").write_text(json.dumps(secrets))
+        resp = env.post_form({"tokens": "", "city": "Lyon",
+                              "__rendered_section": ["tokens", "city"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID]["tokens"] == ["t1", "t2"]

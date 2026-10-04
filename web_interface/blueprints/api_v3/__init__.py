@@ -1053,6 +1053,16 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # The form draws a stored secret blank, so a blank secret means
+        # "unchanged", and "" is what the save drops as unchanged
+        # (remove_empty_secrets). A required one with no default fell
+        # through to None below, failed validation, and blocked every save
+        # of the page until the secret was typed in again. Not _SKIP_FIELD:
+        # that keeps the merged value from load_config(), which the save
+        # would then write back to config_secrets.json. Text secrets only:
+        # a list or object one gets its empty value below, dropped the same.
+        if prop and prop.get('x-secret') and prop.get('type', 'string') == 'string':
+            return ""
         # A nullable field left blank means null, not an empty container.
         # This is the inherit sentinel for per-mode style overrides: an
         # empty list there would read as "the user chose no colour" rather

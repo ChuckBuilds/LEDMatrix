@@ -566,6 +566,12 @@ policies are unchanged.
   as long as the row existed. A plugin with a secret in its rows could not
   be saved from the page at all, since the secret cell is drawn blank. The
   lookup now steps from the index into the list's item schema.
+- A plugin whose API key is required and has no default (youtube-stats)
+  can be saved from its settings page without typing the key in again. The
+  page draws a stored secret blank and posts the blank back; for a required
+  secret the save read that blank as null, failed validation, and refused
+  every save of the page. A blank secret field now means "unchanged", as it
+  already did for an optional one.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that
