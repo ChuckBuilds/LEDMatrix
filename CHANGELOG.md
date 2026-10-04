@@ -646,6 +646,48 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- Check & Update All updates what is installed now. A second run in the
+  same page sent the plugins the first run had seen, so a plugin uninstalled
+  since then failed with "plugin not found" and one installed since was
+  skipped. After a run the installed cards and the Updates badge show the
+  new versions; they kept offering "Update to vX" for what had just been
+  updated until the page was reloaded.
+- The Run On-Demand dialog lists a plugin's display modes, so a mode other
+  than the first can be started, and pinned. `/api/v3/plugins/installed`
+  never sent `display_modes`, which the dialog reads, so every plugin
+  offered only its own id under "This plugin exposes a single display
+  mode", and the display started its first mode. Each entry now carries
+  `display_modes`, the modes its manifest declares.
+- Installing Weather, Music, Stocks or Leaderboard from the Plugin Store
+  enables it, as installing any other plugin does. Each installs under the
+  id its manifest declares (`ledmatrix-weather` for the store's `weather`),
+  but the store enabled the store id, which `/api/v3/plugins/toggle`
+  answered with "Plugin not found": the plugin stayed disabled behind
+  "installed, but enabling it failed". `POST /api/v3/plugins/install` now
+  answers with the installed `plugin_id` (in the operation's result when it
+  is queued), and the store enables that.
+- Reinstalling a plugin from the Plugin Store leaves it enabled or disabled
+  as it was. Reinstall enabled it as a fresh install does, so a plugin the
+  user had switched off came back on.
+- A Plugin Store install that takes more than a minute is no longer
+  reported as failed. The store stopped waiting after 60 s and showed
+  "Install operation timed out" while the server, which allows the
+  plugin's dependency install 300 s on its own, carried on and usually
+  succeeded; the plugin was then neither enabled nor listed until the page
+  was reloaded. The store now waits up to 10 minutes, and if it still has
+  no answer it reloads the installed list and says the install may still
+  be running.
+- The Plugin Store's category filter lists every category its plugins
+  have. It offered a fixed seven while the registry uses about twenty, so
+  plugins filed under productivity, utility, transit and the rest could not
+  be filtered to, and "Financial" missed the plugin filed under "finance".
+  The choices are now built from the store's plugins, as the Starlark
+  section's are.
+- The Install button under Install Single Plugin (Plugin Manager > Install
+  from GitHub) runs one handler per click. It also had an inline `onclick`
+  whose handler threw a `ReferenceError` on every click; only the other
+  handler's request went out, and making the inline one work would have
+  sent every install twice. The inline handler is gone.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render

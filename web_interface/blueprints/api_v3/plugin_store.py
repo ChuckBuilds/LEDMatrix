@@ -42,6 +42,29 @@ def _store_incompatibility(plugin: dict) -> Optional[str]:
     return reason if isinstance(reason, str) and reason else None
 
 
+def _installed_plugin_id(plugin_id: str) -> str:
+    """The id the plugin installed for store entry ``plugin_id`` declares.
+
+    A registry entry can install under another id: ``weather`` installs a
+    directory whose manifest says ``ledmatrix-weather``, and that is the id
+    the plugin list, the config section and /plugins/toggle know it by. The
+    install is found the way the store's update and uninstall find it (the
+    entry's id, ``aliases`` and ``plugin_path`` name); ``plugin_id`` itself
+    when its manifest can't be read.
+    """
+    try:
+        plugin_dir = api_v3.plugin_store_manager._find_plugin_path(plugin_id)
+        manifest_path = (resolve_under(plugin_dir, 'manifest.json')
+                         if isinstance(plugin_dir, Path) else None)
+        if manifest_path is None or not manifest_path.is_file():
+            return plugin_id
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest_id = json.load(f).get('id')
+    except Exception:  # noqa: BLE001 - only names the install for the client
+        return plugin_id
+    return manifest_id if isinstance(manifest_id, str) and safe_path_component(manifest_id) else plugin_id
+
+
 def _listed_plugin_dir(base: Path, name: str) -> Optional[Path]:
     """The entry of ``base`` called ``name``, or None.
 
@@ -487,8 +510,10 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
+                # plugin_id: the id to enable it by (see _installed_plugin_id).
                 return {'success': True,
                         'message': f'Plugin {plugin_id} installed successfully{branch_msg}',
+                        'plugin_id': _installed_plugin_id(plugin_id),
                         **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
@@ -546,7 +571,8 @@ def install_plugin():
             branch_msg = f" (branch: {branch})" if branch else ""
             return success_response(
                 message=f'Plugin installed successfully{branch_msg}',
-                extra=_store_restart_fields('install', _plugin_enabled_in_config(plugin_id)))
+                extra={'plugin_id': _installed_plugin_id(plugin_id),
+                       **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))})
         else:
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:
