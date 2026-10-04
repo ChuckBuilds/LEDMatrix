@@ -10,6 +10,9 @@ import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from src.plugin_system.plugin_dirs import BACKUP_MARKER
+from src.plugin_system.plugin_local_files import (
+    KNOWN_STATE_PATTERNS, is_known_state_file,
+)
 from src.plugin_system.repo_urls import same_repo
 
 
@@ -302,7 +305,11 @@ class _UpdateMixin:
                 installed = False
 
             if installed:
-                self._discard_backup(plugin_id, backup_path, "update")
+                # install_plugin may land the new copy under the manifest id
+                # rather than the old directory name.
+                self._discard_backup(
+                    plugin_id, backup_path, "update",
+                    new_path=self._find_plugin_path(plugin_id) or plugin_path)
                 return True
 
             # Bad network, registry error...: the user keeps a working plugin.
@@ -509,8 +516,12 @@ class _UpdateMixin:
                             for line in untracked_result.stdout.strip().split('\n'):
                                 if line.startswith('??'):
                                     # Untracked file
-                                    file_path = line[3:].strip()
-                                    untracked_files.append(file_path)
+                                    file_path = line[3:].strip().strip('"')
+                                    # Tokens and secrets stay out of the
+                                    # stash (see below), so they alone are
+                                    # not a reason to stash.
+                                    if not is_known_state_file(file_path):
+                                        untracked_files.append(file_path)
                         
                         # Check for tracked file changes
                         status_result = subprocess.run(
@@ -537,9 +548,17 @@ class _UpdateMixin:
                     if has_changes:
                         self.logger.info(f"Stashing local changes in {plugin_id} before update")
                         try:
-                            # Use -u to include untracked files in stash
+                            # Use -u to include untracked files in stash --
+                            # except the plugin's tokens and secrets, which a
+                            # repo may have forgotten to gitignore. The stash
+                            # is never popped, so a stashed token.pickle would
+                            # vanish from the plugin and break it.
+                            stash_cmd = (
+                                ['git', '-C', str(plugin_path), 'stash', 'push', '-u',
+                                 '-m', f'LEDMatrix auto-stash before update {plugin_id}', '--', '.']
+                                + [f':(exclude,glob)**/{p}' for p in KNOWN_STATE_PATTERNS])
                             stash_result = subprocess.run(
-                                ['git', '-C', str(plugin_path), 'stash', 'push', '-u', '-m', f'LEDMatrix auto-stash before update {plugin_id}'],
+                                stash_cmd,
                                 capture_output=True,
                                 text=True,
                                 timeout=30,
