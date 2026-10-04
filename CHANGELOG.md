@@ -557,6 +557,15 @@ policies are unchanged.
   without the disabled plugin. Once re-enabled, it came back at the end of
   the rotation and scrolling in Vegas again. Saved ids without a row now
   stay in their saved places (`widgets/plugin-order-list.js`).
+- Restoring a backup with "Reinstall missing plugins" installs only the
+  plugins that are missing. Every plugin the backup listed was sent to the
+  store's install, which replaces an installed copy with a fresh download,
+  so a restore onto the same device re-downloaded all of them in one
+  request. A plugin installed from its own URL is not in the registry, so
+  its "reinstall" failed and the restore answered "Restore failed" while
+  the plugin sat there installed. An installed plugin, found by the store's
+  own lookup (registry aliases included), is now listed under Skipped as
+  `plugin:<id> (installed)`.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the

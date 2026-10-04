@@ -85,6 +85,17 @@ _RESTORE_OPTION_KEYS = frozenset((
     'restore_config', 'restore_secrets', 'restore_wifi', 'restore_fonts',
     'restore_plugin_uploads', 'reinstall_plugins',
 ))
+def _installed_path(psm, plugin_id):
+    """Where the store finds ``plugin_id`` installed, or None.
+
+    The same lookup install_plugin makes to decide that a copy exists: the
+    id, or an id the registry proves is the same plugin (``aliases``, the
+    ``plugin_path`` name), never a bare ``ledmatrix-<id>`` folder.
+    """
+    found = psm._existing_install(plugin_id)
+    return found if isinstance(found, Path) and found.exists() else None
+
+
 @api_v3.route('/backup/restore', methods=['POST'])
 def backup_restore():
     """Restore a backup ZIP with optional RestoreOptions."""
@@ -143,6 +154,15 @@ def backup_restore():
             if not pid:
                 continue
             try:
+                # Only what is missing. install_plugin replaces an installed
+                # copy with a fresh download, so restoring onto the same
+                # device re-downloaded every plugin, and one installed from
+                # its own URL (not in the registry) "failed" and failed the
+                # whole restore while it sat there installed. The store's
+                # own lookup, so registry aliases count as installed too.
+                if psm and _installed_path(psm, pid) is not None:
+                    result.skipped.append(f'plugin:{pid} (installed)')
+                    continue
                 if psm and hasattr(psm, 'install_plugin'):
                     ok = psm.install_plugin(pid)
                     if ok:
