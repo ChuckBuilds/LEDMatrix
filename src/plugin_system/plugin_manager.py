@@ -606,11 +606,10 @@ class PluginManager:
         if self.font_manager is None:
             return
         for name in ('forget_manager_fonts', 'forget_plugin_fonts'):
-            forget = getattr(self.font_manager, name, None)
-            if forget is None:
+            if not hasattr(self.font_manager, name):
                 continue
             try:
-                forget(plugin_id)
+                getattr(self.font_manager, name)(plugin_id)
             except Exception as e:
                 self.logger.debug("Could not forget fonts of %s (%s): %s", plugin_id, name, e)
     
