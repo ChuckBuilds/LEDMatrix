@@ -95,7 +95,7 @@ class _InstallMixin:
             if installed:
                 self._discard_backup(
                     plugin_id, backup_path, "install",
-                    new_path=self._find_plugin_path(plugin_id) or plugin_path)
+                    new_path=self._existing_install(plugin_id) or plugin_path)
                 return True
 
             self._restore_backup(plugin_id, plugin_path, backup_path, "Install")

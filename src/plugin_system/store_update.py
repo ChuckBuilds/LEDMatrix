@@ -309,7 +309,7 @@ class _UpdateMixin:
                 # rather than the old directory name.
                 self._discard_backup(
                     plugin_id, backup_path, "update",
-                    new_path=self._find_plugin_path(plugin_id) or plugin_path)
+                    new_path=self._existing_install(plugin_id) or plugin_path)
                 return True
 
             # Bad network, registry error...: the user keeps a working plugin.
