@@ -120,8 +120,10 @@ class TestARestoreWithNothingToResume:
     def test_it_is_reported_as_an_error(self, restored):
         assert restored.on_demand_status == 'error'
         assert restored.on_demand_last_error == 'restore-failed'
-        published = restored.cache_manager.set.call_args_list[-1]
-        assert published.args[0] == 'display_on_demand_state'
+        # The last on-demand state write, not the last write of any key: the
+        # font-usage publisher thread writes its own key at its own pace.
+        published = [c for c in restored.cache_manager.set.call_args_list
+                     if c.args and c.args[0] == 'display_on_demand_state'][-1]
         assert published.args[1]['status'] == 'error'
         assert published.args[1]['error'] == 'restore-failed'
 
