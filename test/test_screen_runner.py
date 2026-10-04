@@ -162,7 +162,7 @@ class TestStaticLoop:
         assert host.calls[2:9] == [("wait", 1.0), ("tick",), ("draw", 1), ("after_frame",),
                                    ("service",), ("check", "frame", ("scan", 1)), ("wait", 1.0)]
         # A completed loop: the after-loop look reads no notice, then FINAL.
-        assert host.calls[-2:] == [("check", "after-loop", None), ("check", "final", None)]
+        assert host.calls[-2:] == [("check", "after-completed-loop", None), ("check", "final", None)]
 
     def test_preempted_between_frames(self):
         by = ScreenPlan(Source.ON_DEMAND, mode="x")
@@ -271,7 +271,7 @@ class TestDynamicDuration:
         outcome, host, _ = _run(minimum=3.0, maximum=6.0, dynamic=True)
         assert outcome.exit_reason is ExitReason.DURATION
         # The end-of-screen log asks the plugin once more, before FINAL.
-        assert host.calls[-3:] == [("check", "after-loop", None), ("cycle?",),
+        assert host.calls[-3:] == [("check", "after-completed-loop", None), ("cycle?",),
                                    ("check", "final", None)]
 
     def test_high_fps_cycle_complete(self):
@@ -375,3 +375,81 @@ class TestControllerServicePoint:
         dc._pending_plugin_reloads = ("pending",)
         assert dc._screen_check(self._screen(), FRAME) is RELOAD_PLAN
         assert dc._screen_check(self._screen(), AFTER_LOOP) is None
+
+    def test_an_on_demand_index_past_a_shortened_list_starts_again(self, dc):
+        """_take_plan writes the shown index back, so the session's next
+        step goes on from the mode actually shown."""
+        from src.display_arbiter import Arbiter, ArbiterInputs
+        dc.on_demand_active = True
+        dc.on_demand_modes = ["clock", "sports_live"]
+        dc.on_demand_mode_index = 5            # the list shrank under it
+        inputs = ArbiterInputs(schedule_on=True, on_demand_active=True,
+                               follower_active=False)
+        plan = dc._take_plan(Arbiter.decide(dc._arbiter_state(), inputs, 0.0))
+        assert plan.mode == "clock" and dc.on_demand_mode_index == 0
+        dc._advance_on_demand()
+        assert dc.current_display_mode == "sports_live"
+
+
+@pytest.mark.parametrize("policy,report_hold", [(FramePolicy.HIGH_FPS, True),
+                                                (FramePolicy.STATIC, False)])
+def test_only_the_high_fps_loop_reports_a_held_frame(policy, report_hold):
+    """#758's report_hold: the 125 Hz loop times frames held by update();
+    the 1 Hz loop's frames are a second apart and must not."""
+    from unittest.mock import MagicMock
+    from src.display_controller import _ScreenHost
+    controller = MagicMock()
+    plan = ScreenPlan(Source.ROTATION, mode="ticker", frame_policy=policy)
+    plugin = object()
+    _ScreenHost(controller).draw(Screen(plan, plugin, True, 0.0))
+    controller._display_once.assert_called_once_with(plugin, "ticker", True,
+                                                     report_hold=report_hold)
+
+
+def _rows(tmp_path, horizon, build):
+    import os
+    os.environ.setdefault("EMULATOR", "true")
+    from test._run_loop_harness import RunLoopHarness
+    h = RunLoopHarness(tmp_path, horizon=horizon)
+    build(h)
+    return h.run()["screens"]
+
+
+class TestThroughRun:
+    """Service points that only the full loop reaches, on the harness."""
+
+    def test_a_notice_pending_when_a_later_frame_is_empty_ends_the_screen(self, tmp_path):
+        """The after-loop look reads the notice when the loop ended early: a
+        1 Hz screen whose second frame has nothing to show must not sit in
+        its make-up dwell (which only notices a notice that arrives during
+        it) while the notice expires."""
+        from test._run_loop_harness import FakePlugin
+
+        def build(h):
+            h.add_plugin(FakePlugin("flaky", ["flaky"], duration=12, first_frame_only=True))
+            h.add_plugin(FakePlugin("clock", ["clock"], duration=12))
+            h.wifi_message(0.5, "Connected to HomeNet", duration=5)
+        rows = _rows(tmp_path, 30, build)
+        assert rows[0][1] == "flaky" and rows[0][2] == 1.0
+        assert rows[1][1] == "<wifi>"
+        # ... and the mode it cut short comes back, not the next one.
+        after = next(row for row in rows[1:] if row[1] != "<wifi>")
+        assert after[1] == "flaky"
+
+    def test_vegas_yielding_to_a_follower_shows_a_rotation_screen_first(self, tmp_path):
+        """Pins today's behaviour (docs/RUN_LOOP_REDESIGN.md, "may be
+        wrong"): the interrupt check stops the ticker for a follower, but
+        the yield path never looks at one, so a rotation screen runs its
+        full duration before the next pass hands the panel to the leader."""
+        from test._run_loop_harness import FakePlugin
+
+        def build(h):
+            h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
+            h.add_plugin(FakePlugin("weather", ["weather"], duration=20))
+            h.enable_vegas(cycle=30)
+            h.sync.follower_windows = [(10, 60)]
+        rows = _rows(tmp_path, 50, build)
+        assert rows[0][1] == "<vegas>" and rows[0][3] == "vegas-interrupt"
+        assert 10.0 <= rows[0][0] + rows[0][2] <= 10.2
+        assert rows[1][1] == "clock" and rows[1][2] == 20.0
+        assert rows[2][1] == "<follower>"

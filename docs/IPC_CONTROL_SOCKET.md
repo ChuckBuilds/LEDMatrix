@@ -367,7 +367,9 @@ place it reads the mailbox:
   Vegas iteration is on the stack (`_apply_pending_plugin_reloads`). Until
   then the current screen ends early, as it does for a WiFi notice: the
   frame loops, the dwell and Vegas's interrupt check all treat a pending
-  reload as a reason to stop (`_screen_preempted`).
+  reload as a reason to stop (the frame loops through the Arbiter's
+  mid-screen check, `Source.RELOAD`; the dwell through
+  `_plugin_reload_pending`).
 - Only the quick half of the reload runs on the render thread
   (`_start_plugin_reload`): the plugin's modes leave the rotation, its
   config subscription is dropped, and `PluginManager.detach_plugin` takes

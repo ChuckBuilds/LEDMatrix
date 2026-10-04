@@ -1,26 +1,33 @@
 """What the panel shows next: the Arbiter of docs/RUN_LOOP_REDESIGN.md.
 
 ``Arbiter.decide(state, inputs, now)`` takes a snapshot that
-``DisplayController.run()`` gathers once per pass and returns a
-:class:`ScreenPlan` naming the Source that gets the panel. It is a pure
-function: no I/O, no clock reads (``now`` is passed in), no locks, and it
-changes nothing it is given. That is what lets a plain table of cases test
-the priority order, which used to exist only as the order of ``if`` blocks
-in ``run()``.
+``DisplayController.run()`` gathers and returns a :class:`ScreenPlan` naming
+the Source that gets the panel. It is a pure function: no I/O, no clock
+reads (``now`` is passed in), no locks, and it changes nothing it is given.
+That is what lets a plain table of cases test the priority order, which
+used to exist only as the order of ``if`` blocks in ``run()``.
 
-The full order is
+The order is
 
     ScheduledOff (a gate), Follower, OnDemand, Wifi, Live, Vegas, Rotation
 
-Stage 2 decides the gate, Follower and Wifi. Every other case returns a
-``LEGACY`` plan, meaning "carry on with run()'s existing code" (live
-priority, Vegas, then one rotation screen). OnDemand is in the order already
-because it outranks the WiFi notice: an active session is a ``LEGACY`` plan
-even when a notice is pending.
+Every Source but Vegas is decided here (stage 3). Vegas is the ``LEGACY``
+plan: the Arbiter picks it, but its iteration is still run()'s own code
+until stage 4.
 
-The Wifi Source's mid-screen rule, :func:`wifi_notice_preempts`, lives here
-too, so both of its answers -- at the top of a pass and between frames --
-come from one module.
+A pass asks twice: once with the inputs every pass reads (the gate,
+Follower, OnDemand, Wifi), and once more, only when nothing above the
+notice took the panel, with the inputs the Sources below it need (whether
+Vegas is on, the live-priority scan), read where run() always read them.
+
+``decide(..., running=plan)`` is the other question, asked by the
+ScreenRunner (src/screen_runner.py) at its service points: does a Source
+in ``plan.preemptible_by`` now take the panel from the screen that is
+running? The mid-screen rules are :func:`_hold_or_preempt`.
+
+The state transitions (the next on-demand mode, a live claim and its
+release, the rotation's step after a screen) are pure methods of
+:class:`ArbiterState`; the controller applies what they return.
 """
 
 from dataclasses import dataclass, replace
@@ -32,11 +39,13 @@ __all__ = [
     "ArbiterInputs",
     "ArbiterState",
     "FramePolicy",
+    "LIVE_PREEMPTERS",
     "SCHEDULED_OFF_DWELL",
+    "SCREEN_PREEMPTERS",
+    "ScreenEnd",
     "ScreenPlan",
     "Source",
     "WIFI_NOTICE_DWELL",
-    "ScreenEnd",
     "WifiNotice",
     "live_pick",
     "live_takeover",
@@ -285,7 +294,8 @@ class ScreenPlan:
         min_duration: Seconds the screen runs at least (dynamic duration).
         max_duration: How long the plan holds the panel, in seconds, at most
             (its dwell ends early when what the panel should show changes).
-            None when the Source paces itself: a follower frame, or LEGACY.
+            None when the Source paces itself (a follower frame, Vegas), and
+            for a rotation or live plan until its first frame.
         dynamic: Run until the plugin's cycle completes, between min and max.
         frame_policy: Which frame loop the screen runs.
         preemptible_by: The Sources that may end the screen mid-way.
@@ -313,7 +323,6 @@ class ScreenPlan:
 
 SCHEDULED_OFF_PLAN = ScreenPlan(Source.SCHEDULED_OFF, max_duration=SCHEDULED_OFF_DWELL)
 FOLLOWER_PLAN = ScreenPlan(Source.FOLLOWER)
-LEGACY_PLAN = ScreenPlan(Source.LEGACY)
 RELOAD_PLAN = ScreenPlan(Source.RELOAD)
 
 #: What may end a screen mid-way: the schedule, an on-demand session
@@ -404,7 +413,8 @@ def _hold_or_preempt(state: ArbiterState, inputs: ArbiterInputs, now: float,
     """The mid-screen rules: ``running``, or the plan that ends it.
 
     What the frame loops used to check one by one (_check_live_takeover,
-    then _screen_preempted with _wifi_notice_pending in it), in their order:
+    then _screen_preempted with _wifi_notice_pending in it, before stage 3),
+    in their order:
 
     1. Live: a game went live while a non-live screen runs (the inputs
        carry a scan only when one was due, at most once a second). Checked

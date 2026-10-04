@@ -42,6 +42,9 @@ from src.display_arbiter import (
     ScreenPlan, Source, WifiNotice, live_pick, live_takeover, on_demand_bound, rotation_plan,
     wifi_notice_preempts,
 )
+from src.screen_runner import (
+    FRAME, Checkpoint, ExitReason, FirstFrame, NoticeRead, Outcome, Screen, ScreenRunner,
+)
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
@@ -60,9 +63,6 @@ from src.ipc.contract import (
     PluginReloadResult,
 )
 from src.ipc.server import ControlServer, QueuedCommand, StateHub, start_control_server
-from src.screen_runner import (
-    FRAME, Checkpoint, ExitReason, FirstFrame, NoticeRead, Outcome, Screen, ScreenRunner,
-)
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -3278,7 +3278,7 @@ class DisplayController:
 
         Returns True when the message was drawn, and the pass ends there
         (no rotation). A message that fails to draw is treated as no
-        message: the pass carries on as a LEGACY plan.
+        message: the pass carries on to the Sources below the notice.
         """
         self._end_scroll_before_core_screen()
         if not self._display_wifi_status_message(
@@ -3294,14 +3294,14 @@ class DisplayController:
     def _wifi_notice_pending(self) -> bool:
         """True when a WiFi notice should end the current screen early.
 
-        Polled from the frame loops, the dwell sleep and after a Vegas
-        iteration yields, so a notice preempts whatever is on the panel
-        within about a second instead of waiting for the screen to end --
-        by which time a short notice has usually expired unseen. Cheap at
-        frame rate: _check_wifi_status_message stats the file at most once
-        a second. The rule is display_arbiter.wifi_notice_preempts; the
-        file is not read at all while on-demand, which outranks the notice,
-        is active.
+        Polled from the dwell sleep and after a Vegas iteration yields (the
+        frame loops ask the same rule through _screen_check), so a notice
+        preempts whatever is on the panel within about a second instead of
+        waiting for the screen to end -- by which time a short notice has
+        usually expired unseen. Cheap at frame rate:
+        _check_wifi_status_message stats the file at most once a second.
+        The rule is display_arbiter.wifi_notice_preempts; the file is not
+        read at all while on-demand, which outranks the notice, is active.
         """
         if self.on_demand_active:
             return False
@@ -4145,7 +4145,7 @@ class DisplayController:
                 # WiFi status message: interrupts the rotation, but on-demand
                 # outranks it (the Arbiter's order). Past this point no WiFi
                 # message is showing this pass: one that failed to draw
-                # carries on as a LEGACY plan.
+                # carries on as if there were none.
                 if (plan.source is Source.WIFI and plan.notice is not None
                         and self._show_wifi_notice(plan.notice, plan.max_duration)):
                     continue  # Skip to next iteration, don't rotate

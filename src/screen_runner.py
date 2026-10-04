@@ -167,7 +167,7 @@ FRAME = Checkpoint("frame", NoticeRead.IF_UNDECIDED, reload=True)
 #: After a frame loop that ended early (display() returned False, a reload).
 AFTER_LOOP = Checkpoint("after-loop", NoticeRead.IF_UNDECIDED, reload=False)
 #: After a frame loop that ran its course: only a mode change or the schedule.
-AFTER_COMPLETED_LOOP = Checkpoint("after-loop", NoticeRead.NEVER, reload=False)
+AFTER_COMPLETED_LOOP = Checkpoint("after-completed-loop", NoticeRead.NEVER, reload=False)
 #: The last look before the rotation advances.
 FINAL = Checkpoint("final", NoticeRead.NEVER, reload=False)
 

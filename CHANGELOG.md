@@ -19,6 +19,39 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Display loop stage 3: a ScreenRunner, and the Arbiter decides every screen
+
+Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
+
+- Each screen runs in `ScreenRunner` (`src/screen_runner.py`): the first
+  frame, the 125 Hz or 1 Hz frame loop, the make-up dwell and the
+  dynamic-duration exit, moved out of `DisplayController.run()` with their
+  pacing unchanged. It paces with an injected clock and returns an
+  `Outcome` whose `ExitReason` is `DURATION`, `CYCLE_COMPLETE`, `EMPTY`,
+  `ERROR`, `DISPLAY_FALSE`, `RELOAD` or `PREEMPTED`. `PREEMPTED` replaces
+  the five "did the mode change under this screen?" re-checks.
+- `Arbiter.decide()` now answers for on-demand, live priority and the
+  rotation too (Sources `ON_DEMAND`, `LIVE`, `ROTATION`); `LEGACY` means
+  only Vegas, whose iteration moves to stage 4. The on-demand session, the
+  rotation's position and the live resume point are snapshotted into
+  `ArbiterState`, whose pure transitions (`next_on_demand`, `claim_live`,
+  `release_live`, `after`) replace the bookkeeping in `_resolve_active_mode`,
+  `_apply_live_priority` and `_advance_after_screen`.
+- Between frames, the runner's service points make one
+  `decide(..., running=plan)` call instead of `_check_live_takeover`,
+  `_screen_preempted` and `_wifi_notice_pending` one after another. The
+  WiFi notice file is still read exactly where it was (the read is
+  throttled and deletes an expired file).
+- A Vegas pass scans the live-priority plugins once instead of twice at the
+  same instant.
+- The golden traces are byte-identical, and a capture of all 67 harness
+  runs in the suite (every sleep, frame, read and scan) matches `main`
+  apart from the duplicate scan above and one moment: in the 125 Hz loop a
+  live takeover's state change is made after the frame's 8 ms sleep rather
+  than before it, ending the screen at the same frame as before.
+- New module: `src/screen_runner.py`. Core-internal: plugins have no reason
+  to import it, so it sets no `ledmatrix_min_version` floor.
+
 ### A scrolling screen held by its plugin's update() is reported
 
 - While a plugin's `update()` runs it holds the plugin's lock, and that
