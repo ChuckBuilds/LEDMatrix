@@ -572,6 +572,10 @@ policies are unchanged.
   request every 2 s for as long as it stayed open, whichever tab was showing.
   It now gives up after a minute and only polls while the Overview is on
   screen.
+- Moving the Brightness slider on the Display tab no longer throws an error
+  in the browser console on every step. Its handler also updated a "LED
+  brightness" line that was removed from the page in #387; the lookup is
+  gone.
 - An on-demand session that ends during scheduled-off hours, by expiring or
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
