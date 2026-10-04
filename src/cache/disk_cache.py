@@ -4,6 +4,7 @@ Disk Cache
 Handles persistent disk-based caching with atomic writes and error recovery.
 """
 
+import hashlib
 import json
 import math
 import os
@@ -30,6 +31,35 @@ except ImportError:  # pragma: no cover - exercised on hosts without the wheel
 # not tied to the retention policies: those describe how long data stays
 # useful, and a half-written file was never useful.
 _ORPHAN_TEMP_MAX_AGE_SECONDS = 3600
+
+# Longest key, in UTF-8 bytes, used verbatim as a filename stem. ext4 caps a
+# name at 255 bytes and set()'s temp file is ".<stem>.json.<8 random>", 15
+# bytes longer than the stem, so anything near the cap could never be written:
+# the calendar plugin's key joins every calendar id and passed 300 bytes on a
+# real install, failing every write with ENAMETOOLONG. Longer keys keep this
+# many bytes as a readable prefix and end in a hash of the whole key.
+_MAX_KEY_FILENAME_BYTES = 200
+_KEY_HASH_CHARS = 16
+
+
+def _filename_stem(key: str) -> str:
+    """The filename stem for a key that is already a safe path component.
+
+    Short keys are used as they are, so every file already on disk keeps its
+    name. A long one becomes its first bytes plus a hash of the full key: the
+    prefix keeps the stem recognisable (and keeps the data-type words that
+    cleanup's retention lookup reads from it), the hash keeps two keys that
+    share a long prefix apart. The result is itself short, so a stem read back
+    from a filename -- which is how the web UI names a key it deletes -- maps to
+    the same file.
+    """
+    encoded = key.encode('utf-8')
+    if len(encoded) <= _MAX_KEY_FILENAME_BYTES:
+        return key
+    digest = hashlib.sha256(encoded).hexdigest()[:_KEY_HASH_CHARS]
+    keep = _MAX_KEY_FILENAME_BYTES - _KEY_HASH_CHARS - 1
+    prefix = encoded[:keep].decode('utf-8', errors='ignore')
+    return f"{prefix}-{digest}"
 
 
 
@@ -343,6 +373,8 @@ class DiskCache:
         derives them), so rejecting anything with a path component turns
         away only inputs that could never have been written here.
 
+        A key too long to be a filename is shortened by _filename_stem.
+
         Args:
             key: Cache key
 
@@ -356,7 +388,7 @@ class DiskCache:
         if safe_key is None:
             self.logger.warning("Rejected unsafe cache key %r", key)
             return None
-        return os.path.join(self.cache_dir, f"{safe_key}.json")
+        return os.path.join(self.cache_dir, f"{_filename_stem(safe_key)}.json")
     
     def get(self, key: str, max_age: Optional[int] = 300) -> Optional[Dict[str, Any]]:
         """
@@ -561,7 +593,7 @@ class DiskCache:
                             # If direct write also fails, try fallback location
                             self.logger.warning("Direct write failed for key '%s' to %s: %s", key, cache_path, write_error)
                             raise  # Re-raise to trigger fallback logic
-                except (IOError, OSError, PermissionError):
+                except (IOError, OSError, PermissionError) as primary_error:
                     # Attempt one-time fallback write to user's home cache directory
                     try:
                         # Try user's home cache directory as fallback
@@ -587,11 +619,14 @@ class DiskCache:
                         self.logger.debug("Fallback cache write also failed for key '%s': %s", key, e2)
                     
                     # If all write attempts failed, log warning but don't raise exception
-                    # Cache is a performance optimization, not critical for operation
+                    # Cache is a performance optimization, not critical for operation.
+                    # Name the real error: this used to say "permission denied"
+                    # whatever happened, which sent a too-long filename off to
+                    # be debugged as a directory-ownership problem.
                     self.logger.warning(
-                        "Could not write cache for key '%s' to %s (permission denied). "
+                        "Could not write cache for key '%s' to %s (%s). "
                         "Cache will be unavailable for this key, but application will continue.",
-                        key, cache_path
+                        key, cache_path, primary_error.strerror or primary_error
                     )
                     return  # Exit gracefully without raising exception
         

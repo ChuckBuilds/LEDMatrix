@@ -46,6 +46,32 @@ from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-e
 # CacheManager.config_manager not built yet (None means "not available").
 _UNSET: Any = object()
 
+
+def _outlived(record: Any, max_age: Optional[float], now: float) -> bool:
+    """Whether a record's own timestamp puts it past max_age.
+
+    The memory tier times an entry from when it was put there, and a record
+    loaded from disk is put there when it is read, not when it was written: a
+    record 290 s old, read after a restart, could be served for another
+    max_age from memory. This is the age check DiskCache.get makes, with the
+    same rule that a stored ttl wins over the caller's max_age. A record that
+    carries no timestamp is left to the memory tier's own clock.
+    """
+    if not isinstance(record, dict):
+        return False
+    stored_ttl = record.get('ttl')
+    if isinstance(stored_ttl, (int, float)) and not isinstance(stored_ttl, bool) \
+            and stored_ttl >= 0:
+        max_age = stored_ttl
+    stamp = record.get('timestamp')
+    if max_age is None or stamp is None or isinstance(stamp, bool):
+        return False
+    try:
+        return now - float(stamp) > max_age
+    except (TypeError, ValueError):
+        return False
+
+
 class CacheManager:
     """Manages caching of API responses to reduce API calls."""
 
@@ -284,7 +310,11 @@ class CacheManager:
         # 1) Memory cache
         cached = self._memory_cache_component.get(key, max_age=in_memory_ttl)
         if cached is not None:
-            return cached
+            if not _outlived(cached, max_age, time.time()):
+                return cached
+            # Too old for this reader. Disk may hold a newer write (from the
+            # other process), and if it does not, the miss is the right answer.
+            self._memory_cache_component.clear(key)
 
         # 2) Disk cache
         record = self._disk_cache_component.get(key, max_age=max_age)
@@ -318,7 +348,9 @@ class CacheManager:
         # Check memory cache first (1 minute TTL)
         cached = self._memory_cache_component.get(key, max_age=60)
         if cached is not None:
-            return cached
+            if not _outlived(cached, 3600, time.time()):
+                return cached
+            self._memory_cache_component.clear(key)
         
         # Check disk cache
         data = self._disk_cache_component.get(key, max_age=3600)  # 1 hour for load_cache
