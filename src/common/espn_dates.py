@@ -26,10 +26,30 @@ A month can hold more than 500 events (college baseball's March does), and
 ESPN answers that with exactly ``limit`` events and no hint that more exist. A
 month chunk that comes back full is therefore re-asked day by day.
 
+A window's *partial* edge months are asked for whole, too, once the window
+covers ``ESPN_MONTH_COVER_MIN_DAYS`` or more of their days, and the answer is
+trimmed back to the window's days. A scoreboard's default fortnight either side
+of today (29 days, two partial months) was 29 day requests per league; it is
+now 2. Trimming needs ESPN's "game day", which is the event's start in US
+Eastern time -- checked against the live API on 2026-10-03: 417 of 417 soccer
+events across five leagues and three months (one of them spanning the end of
+daylight saving) came back from exactly the day query their Eastern date
+names. A short window (a live poll's one or two days) stays day by day, so it
+never downloads a whole month to read a day of it.
+
+Chunk requests share one process-wide budget of ``ESPN_CHUNK_WORKERS`` in
+flight, however many windows are being fetched at once. Each window used to get
+its own six, so a scoreboard starting eight leagues -- each with a recent and
+an upcoming manager -- had ~40 requests in flight, every one beyond a session's
+pool a new connection and a new DNS lookup. On a Pi whose resolver could not
+keep up, that was ~90 ``NameResolutionError`` lines within a minute of every
+start.
+
 Once a range has been rejected, later ranges skip straight to chunks for
 ``RANGE_RETRY_SECONDS`` instead of spending a doomed request first -- live
 scoreboards ask every 30 seconds. After that the range is tried again, so the
-workaround retires itself if ESPN reverts.
+workaround retires itself if ESPN reverts. A process starts inside that
+period, as if a range had just been rejected.
 
 ONE CACHE KEY PER SCOREBOARD
 ----------------------------
@@ -55,7 +75,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from functools import partial
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, cast
 
@@ -100,16 +120,54 @@ RANGE_RETRY_SECONDS = 6 * 60 * 60
 # pool_maxsize of 10 so the shared Session never has to discard connections.
 ESPN_CHUNK_WORKERS = 6
 
+#: An edge month the window covers at least this many days of is asked for
+#: whole and trimmed, instead of one request per day (see module docstring).
+#: Below it the days are cheaper than the month: a whole month is two to
+#: three times the bytes of the half of it a fortnight window holds.
+ESPN_MONTH_COVER_MIN_DAYS = 7
+
+# Every chunk request in the process holds one of these while it is in flight
+# -- the cap is per process, not per window (see module docstring).
+_chunk_slots = threading.BoundedSemaphore(ESPN_CHUNK_WORKERS)
+
+
+def _eastern_zone() -> Optional[tzinfo]:
+    """US Eastern, the zone ESPN's ``dates=YYYYMMDD`` means, or None when
+    this Python has no time zone data (no edge month is trimmed then)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo("America/New_York")
+    except Exception:  # noqa: BLE001 - no zoneinfo module or no tz database
+        pass
+    try:
+        import pytz
+        return cast(tzinfo, pytz.timezone("America/New_York"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_EASTERN = _eastern_zone()
+
+# What _fetch_one_chunk returns for a month that came back at the cap.
+_CAPPED: Any = object()
+
 _range_lock = threading.Lock()
-_ranges_rejected_until = 0.0
+# A process starts out assuming ranges are still rejected, as they have been
+# since 2026-09-15, and tries one again RANGE_RETRY_SECONDS in. Starting
+# from "unknown" cost one doomed range request per window at every start --
+# eleven 400s at once from a soccer board, each fetching before any had
+# answered -- to learn what every start learns.
+_ranges_rejected_until = time.monotonic() + RANGE_RETRY_SECONDS
 
 __all__ = [
     "ESPN_MAX_LIMIT",
     "ESPN_CHUNK_WORKERS",
+    "ESPN_MONTH_COVER_MIN_DAYS",
     "RANGE_RETRY_SECONDS",
     "clamp_espn_limit",
     "parse_espn_date_range",
     "espn_date_chunks",
+    "espn_request_chunks",
     "merge_scoreboard_payloads",
     "fetch_espn_date_chunks",
     "fetch_espn_scoreboard",
@@ -220,6 +278,79 @@ def espn_date_chunks(start: date, end: date) -> List[str]:
     return chunks
 
 
+def espn_request_chunks(
+    start: date,
+    end: date,
+    month_cover_min_days: Optional[int] = None,
+) -> List[Tuple[str, Optional[Tuple[date, date]]]]:
+    """The requests that fetch ``[start, end]``, as ``(dates, trim)`` pairs.
+
+    :func:`espn_date_chunks`, except that a partial edge month with
+    ``month_cover_min_days`` (default ``ESPN_MONTH_COVER_MIN_DAYS``) or more
+    of its days in the window becomes one ``YYYYMM`` request whose ``trim``
+    is the first and last of those days: its events that start outside them
+    (US Eastern) are dropped. ``trim`` is None for every other request.
+    Without time zone data nothing can be trimmed, so the edge days stay day
+    requests.
+    """
+    if month_cover_min_days is None:
+        month_cover_min_days = ESPN_MONTH_COVER_MIN_DAYS
+    planned: List[Tuple[str, Optional[Tuple[date, date]]]] = []
+    run: List[str] = []
+
+    def flush() -> None:
+        if (_EASTERN is not None and month_cover_min_days > 0
+                and len(run) >= month_cover_min_days):
+            planned.append((run[0][:6], (_parse_day(run[0]), _parse_day(run[-1]))))
+        else:
+            planned.extend((day, None) for day in run)
+        run.clear()
+
+    for chunk in espn_date_chunks(start, end):
+        if run and (len(chunk) != 8 or chunk[:6] != run[0][:6]):
+            flush()
+        if len(chunk) == 8:
+            run.append(chunk)
+        else:
+            planned.append((chunk, None))
+    flush()
+    return planned
+
+
+def _parse_day(text: str) -> date:
+    return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+
+
+def _eastern_day(stamp: Any) -> Optional[date]:
+    """The US Eastern date of an ESPN event ``date`` ("2026-10-10T11:30Z"),
+    or None when it cannot be read."""
+    if not isinstance(stamp, str) or _EASTERN is None:
+        return None
+    try:
+        moment = datetime.fromisoformat(stamp.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return None
+    return moment.astimezone(_EASTERN).date()
+
+
+def _trim_to_days(payload: Any, first: date, last: date) -> Any:
+    """Drop the events of a month payload that start outside ``[first, last]``
+    (US Eastern). An event whose date cannot be read is kept: its day query
+    might well have returned it, and a game is never dropped on a guess.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+        return payload
+    kept = []
+    for event in payload["events"]:
+        day = _eastern_day(event.get("date")) if isinstance(event, dict) else None
+        if day is None or first <= day <= last:
+            kept.append(event)
+    payload["events"] = kept
+    return payload
+
+
 def merge_scoreboard_payloads(payloads: List[Any]) -> Dict[str, Any]:
     """Fold chunk responses into one scoreboard payload.
 
@@ -250,37 +381,54 @@ def merge_scoreboard_payloads(payloads: List[Any]) -> Dict[str, Any]:
 def _fetch_one_chunk(
     session, url: str, params: Dict[str, Any], headers, timeout, logger, chunk: str,
     cache_max_age: Optional[float] = None,
-) -> Optional[Dict[str, Any]]:
+    trims: Optional[Dict[str, Tuple[date, date]]] = None,
+) -> Any:
     """GET a single ``dates=`` chunk, or None when it failed.
 
     One bad chunk must not sink the rest of the season, so every error is
     logged and swallowed here rather than raised to the gather below.
+
+    A month that comes back at the cap is truncated: it returns ``_CAPPED``,
+    its payload dropped here before it is ever held beside the others. A
+    month in ``trims`` loses its events outside the days given there.
+
+    The request holds one of the process-wide ``_chunk_slots`` while it runs.
     """
     try:
-        response = fetch_get(
-            session,
-            url,
-            params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
-            headers=headers,
-            timeout=timeout,
-            **_memo_kwargs(cache_max_age),
-        )
-        response.raise_for_status()
-        return cast(Optional[Dict[str, Any]], response_json(response))
+        with _chunk_slots:
+            response = fetch_get(
+                session,
+                url,
+                params=dict(params, dates=chunk, limit=ESPN_MAX_LIMIT),
+                headers=headers,
+                timeout=timeout,
+                **_memo_kwargs(cache_max_age),
+            )
+            response.raise_for_status()
+            payload = response_json(response)
     except Exception as exc:  # noqa: BLE001 - see docstring
         if logger:
             logger.warning("ESPN chunk %s failed, skipping it: %s", chunk, exc)
         return None
+    if len(chunk) == 6 and isinstance(payload, dict):
+        if len(payload.get("events") or []) >= ESPN_MAX_LIMIT:
+            return _CAPPED
+        trim = (trims or {}).get(chunk)
+        if trim is not None:
+            payload = _trim_to_days(payload, *trim)
+    return payload
 
 
 def _fetch_chunks(
     session, url: str, params: Dict[str, Any], headers, timeout, logger,
     chunks: List[str], cache_max_age: Optional[float] = None,
-) -> List[Optional[Dict[str, Any]]]:
+    trims: Optional[Dict[str, Tuple[date, date]]] = None,
+) -> List[Any]:
     """Fetch every chunk, returning payloads positionally aligned with ``chunks``.
 
     Requests go out ``ESPN_CHUNK_WORKERS`` at a time because a cold season is
-    over a hundred of them. The order they come back in is not significant --
+    over a hundred of them -- and no more than that across every window the
+    process is fetching, which ``_fetch_one_chunk``'s slot enforces. The order they come back in is not significant --
     callers keep ``chunks`` order from the returned list -- but it does mean
     the session is shared across threads, which is why this only ever issues
     GETs and never touches session state.
@@ -293,7 +441,7 @@ def _fetch_chunks(
         return []
     fetch = partial(
         _fetch_one_chunk, session, url, params, headers, timeout, logger,
-        cache_max_age=cache_max_age,
+        cache_max_age=cache_max_age, trims=trims,
     )
     if len(chunks) == 1:
         return [fetch(chunks[0])]
@@ -340,7 +488,9 @@ def fetch_espn_date_chunks(
     if span is None:
         return None
 
-    chunks = espn_date_chunks(*span)
+    planned = espn_request_chunks(*span)
+    chunks = [chunk for chunk, _ in planned]
+    trims = {chunk: trim for chunk, trim in planned if trim is not None}
     if logger:
         logger.debug(
             "Fetching ESPN date range %s as %d month/day chunks",
@@ -349,32 +499,31 @@ def fetch_espn_date_chunks(
 
     results = _fetch_chunks(
         session, url, params, headers, timeout, logger, chunks, cache_max_age,
+        trims,
     )
     attempted = len(chunks)
 
-    # A month that came back at the cap is truncated; its days replace it in
-    # place, so merged events stay in chunk order however the requests raced.
+    # A month that came back at the cap is truncated; its days (only the
+    # window's, for a trimmed edge month) replace it in place, so merged
+    # events stay in chunk order however the requests raced. Its payload was
+    # already dropped in the worker: a capped college-baseball month is ~2MB
+    # of parsed JSON, and holding four of them through ~120 day requests added
+    # ~25MB to the peak -- more than the concurrency itself. Low-memory boards
+    # (docs/LOW_MEMORY_BOARDS.md) have under 200MB of headroom.
     slots: List[Any] = results
     capped: Dict[int, List[str]] = {}
     for index, chunk in enumerate(chunks):
-        payload = slots[index]
-        if payload is None or len(chunk) != 6:
+        if slots[index] is not _CAPPED:
             continue
-        events = payload.get("events") if isinstance(payload, dict) else None
-        if len(events or []) >= ESPN_MAX_LIMIT:
-            if logger:
-                logger.info(
-                    "ESPN month %s hit the %d-event cap; re-asking it day by day",
-                    chunk, ESPN_MAX_LIMIT,
-                )
-            capped[index] = _days_of_month(chunk)
-            # Drop the truncated month now rather than after its days arrive:
-            # a capped college-baseball month is ~2MB of parsed JSON, and
-            # holding four of them through ~120 day requests added ~25MB to
-            # the peak -- more than the concurrency itself. Low-memory boards
-            # (docs/LOW_MEMORY_BOARDS.md) have under 200MB of headroom.
-            slots[index] = None
-    payload = events = None
+        if logger:
+            logger.info(
+                "ESPN month %s hit the %d-event cap; re-asking it day by day",
+                chunk, ESPN_MAX_LIMIT,
+            )
+        trim = trims.get(chunk)
+        capped[index] = (_days_of_month(chunk) if trim is None
+                         else espn_date_chunks(*trim))
+        slots[index] = None
 
     if capped:
         days = [day for index in sorted(capped) for day in capped[index]]

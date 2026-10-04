@@ -109,8 +109,11 @@ and the plugin test harness all use it. Most plugins get BDF text through
 [`espn_dates.py`](espn_dates.py). ESPN's site API rejects `dates=` ranges
 and truncates results when `limit` is above 500. `fetch_espn_scoreboard()`
 splits a range into month and day requests ESPN accepts and merges the
-results; `espn_date_chunks()`, `fetch_espn_date_chunks()`,
-`clamp_espn_limit()` and `merge_scoreboard_payloads()` are the pieces.
+results; `espn_date_chunks()`, `espn_request_chunks()`,
+`fetch_espn_date_chunks()`, `clamp_espn_limit()` and
+`merge_scoreboard_payloads()` are the pieces. A window's partial edge months
+are asked whole and trimmed to its days (US Eastern), and chunk requests share
+one process-wide cap of `ESPN_CHUNK_WORKERS` in flight.
 Every request goes through [`fetch_service`](#fetch_service), the chunks
 counted against the plugin that asked. Scoreboard plugins also bundle a copy
 for older cores.
