@@ -344,12 +344,26 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         2. Fix permissions via os.chmod() then retry (works for same-owner files)
         3. Use sudo rm -rf as last resort (works for root-owned __pycache__, etc.)
 
+        A symlink -- a dev plugin linked in by scripts/dev/dev_plugin_setup.sh
+        -- is removed as a link, before any of that: rmtree refuses one, and
+        stage 2 would walk through it and chmod the developer's checkout.
+
         Args:
             path: Path to directory to remove
 
         Returns:
             True if directory was removed successfully, False otherwise
         """
+        if path.is_symlink():
+            # Checked before exists(), which follows the link: a dangling one
+            # would read as already removed and be left behind.
+            try:
+                path.unlink()
+                return True
+            except OSError as e:
+                self.logger.error(f"Could not remove the symlink {path}: {e}")
+                return False
+
         if not path.exists():
             return True  # Already removed
 

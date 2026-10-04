@@ -13,6 +13,7 @@ The invariants that keep this change safe:
    inline path exactly.
 """
 
+import asyncio
 import os
 import sys
 import threading
@@ -208,6 +209,32 @@ class TestFailurePaths:
         # lock released after failure
         assert pm.get_plugin_lock(plugin_id).acquire(blocking=False) is True
         pm.get_plugin_lock(plugin_id).release()
+
+    @pytest.mark.parametrize("raised", [asyncio.CancelledError, SystemExit])
+    def test_update_raising_a_base_exception_still_releases_the_plugin(self, pm, raised):
+        """asyncio.CancelledError and SystemExit derive from BaseException,
+        not Exception. Raised from update() on the worker, one skipped the
+        bookkeeping entirely: the plugin kept its lock and stayed RUNNING for
+        the life of the process -- never updated again, and every display()
+        skipped as busy."""
+        class CancellingPlugin(SlowPlugin):
+            def update(self):
+                self.update_calls += 1
+                raise raised()
+
+        plugin_id = _install(pm, CancellingPlugin())
+        pm.run_scheduled_updates()
+        deadline = time.monotonic() + 3
+        while pm.plugins[plugin_id].update_calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.2)
+
+        assert pm.get_plugin_lock(plugin_id).acquire(blocking=False) is True
+        pm.get_plugin_lock(plugin_id).release()
+        assert pm.state_manager.can_execute(plugin_id) is True
+        assert pm.plugin_last_update.get(plugin_id, 0) > 0
+        error = pm.state_manager.get_error_info(plugin_id)
+        assert error is not None and error["error_type"] == raised.__name__
 
     def test_unloaded_while_queued_is_harmless(self, pm):
         """Exercise the public unload_plugin() lifecycle rather than

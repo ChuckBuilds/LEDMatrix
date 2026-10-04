@@ -569,6 +569,46 @@ policies are unchanged.
   scroller or Vegas) were counted as 0.5-1 s freezes and logged as a
   `Render stall ... mid-scroll`. The controller now ends the scroll state
   before drawing either.
+- A plugin that keeps helpers in a package (elections' `providers/`,
+  flights' `enrichment/`, olympics' `data/` and `renderers/`) now runs its
+  updated helpers after a reload. Unloading dropped the package itself but
+  left its modules (`providers.feed`) in `sys.modules`, so the reload after a
+  store update imported the new `manager.py` and got the old helpers back from
+  the cache until the display restarted. `PluginLoader` now drops a plugin's
+  package modules when it unloads, and when a load fails part-way.
+- Uninstalling a dev plugin that `scripts/dev/dev_plugin_setup.sh` linked
+  into the plugins directory now removes the link and leaves the checkout
+  alone. The store's removal passed the link to `shutil.rmtree`, which
+  refuses a symlink; its fallback then walked through the link and chmodded
+  every directory and file of the linked checkout to 0700, and the sudo stage
+  refused a path outside the plugins directory, so the uninstall failed with
+  the link still in place. The same removal discards the set-aside copy after
+  an install or update. A symlink, dangling or not, is now unlinked.
+- A dev plugin linked in under a name its checkout does not share now loads.
+  `dev_plugin_setup.sh link-github foo <url>` clones `ledmatrix-foo` (the
+  repository naming convention) and links it as `plugins/foo`. The loader's
+  containment check for dependency installs resolved the link and looked for
+  `ledmatrix-foo` among the plugins directory's entries, found none, and
+  refused the plugin, so the load failed with "Dependency installation
+  failed" even when it had no `requirements.txt`. The check now looks for the
+  entry the path itself names in the plugins directory, the link, and still
+  only ever answers with an entry it found there.
+- A plugin whose `update()` raises `asyncio.CancelledError` or `SystemExit`
+  no longer goes dark until a restart. Both derive from `BaseException`, not
+  `Exception`, and the update worker's bookkeeping caught only `Exception`:
+  the plugin kept its lock and stayed RUNNING, so it was never updated again
+  and every `display()` was skipped as busy. It is now recorded as that
+  update's failure, the same as any other raise. The plugin executor
+  reported such a call as a timeout; it now reports it as a failure.
+- Saving a config change no longer freezes the panel while a plugin is busy.
+  `ConfigService` told its subscribers about a change while holding its lock,
+  and the display's per-plugin subscriber waits up to 5 s for a plugin in the
+  middle of an update. A save that enables or disables a plugin also queues a
+  reconcile, which the render thread runs, and its `get_config()` and
+  `unsubscribe()` waited behind every one of those callbacks. Subscribers now
+  run after the lock is released. One reload's notifications still finish
+  before the next one's start, and a callback `unsubscribe()` removed is not
+  running, and will not run, once it returns.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
