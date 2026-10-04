@@ -222,6 +222,22 @@ def _fingerprint(value: Optional[Mapping[str, Any]], volatile: Iterable[str]) ->
     return {k: v for k, v in value.items() if k not in skip} if skip else dict(value)
 
 
+def _volatile_values(sections: Mapping[str, Optional[Dict[str, Any]]],
+                     volatile: Mapping[str, FrozenSet[str]]) -> Dict[str, Dict[str, Any]]:
+    """``{section: {key: value}}``: the volatile keys each published section
+    has now. The sections are never mutated after publish (a publish swaps
+    in a new dict), so reading them outside the lock is safe."""
+    values: Dict[str, Dict[str, Any]] = {}
+    for name, keys in volatile.items():
+        value = sections.get(name)
+        if not keys or not isinstance(value, dict):
+            continue
+        present = {k: value[k] for k in keys if k in value}
+        if present:
+            values[name] = present
+    return values
+
+
 def _unknown_loop() -> Dict[str, Any]:
     return {'heartbeat_age_seconds': None, 'armed': False, 'stale_after': None}
 
@@ -259,7 +275,11 @@ class StateHub:
     (``loop_probe``), so it keeps ageing while the render thread is stuck.
 
     The version goes up when a section's value changes, ignoring the keys
-    the publisher names as volatile (timestamps). Publishing never blocks on
+    the publisher names as volatile (timestamps). Those keys still carry
+    news -- ``display.last_updated`` is the render thread's proof of life --
+    so the short ``changed: false`` answer, which is what a subscriber's
+    tick carries, has their current values in ``volatile``; a reader merges
+    them into its copy. Publishing never blocks on
     a reader: the lock is held only to swap a dict reference and compare it,
     and every socket write happens on the reader's own thread, outside it.
     A reader that is slow gets the latest version when it next asks, not
@@ -274,6 +294,7 @@ class StateHub:
         self._cond = threading.Condition(threading.Lock())
         self._sections: Dict[str, Optional[Dict[str, Any]]] = {}
         self._fingerprints: Dict[str, Any] = {}
+        self._volatile: Dict[str, FrozenSet[str]] = {}
         self._version = 0
         self.epoch = epoch or uuid.uuid4().hex[:16]
         self.pid = os.getpid() if pid is None else pid
@@ -301,9 +322,11 @@ class StateHub:
         The value is copied (one level), so the caller may reuse its dict.
         """
         stored = None if value is None else dict(value)
-        fingerprint = _fingerprint(stored, volatile)
+        skip = frozenset(volatile)
+        fingerprint = _fingerprint(stored, skip)
         with self._cond:
             self._sections[section] = stored
+            self._volatile[section] = skip
             if self._fingerprints.get(section, _MISSING) == fingerprint:
                 return False
             self._fingerprints[section] = fingerprint
@@ -333,11 +356,14 @@ class StateHub:
         """The :class:`~src.ipc.contract.StateSnapshot` now.
 
         ``since`` with this hub's ``epoch``, still the current version, gives
-        the short ``changed: false`` form.
+        the short ``changed: false`` form, with ``volatile``: each section's
+        volatile keys at their latest values (the rest of the section is
+        what the reader already has).
         """
         with self._cond:
             version = self._version
             sections = dict(self._sections)
+            volatile = dict(self._volatile)
         loop = self.loop()
         result: Dict[str, Any] = {
             'schema': STATE_SCHEMA,
@@ -349,6 +375,7 @@ class StateHub:
         }
         if since is not None and epoch == self.epoch and since == version:
             result['changed'] = False
+            result['volatile'] = _volatile_values(sections, volatile)
             return result
         state: Dict[str, Any] = {name: sections.get(name) for name in STATE_SECTIONS
                                  if name != 'loop'}

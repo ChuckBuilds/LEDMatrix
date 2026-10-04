@@ -576,6 +576,25 @@ policies are unchanged.
   even when the mode name stays the same. The display republished its
   current state only on a mode change or every 30 s, so `is_display_active`
   and `on_demand_active` could be up to 30 s out of date.
+- `/api/v3/display/current-status` no longer answers `mode: null` over the
+  control socket (#735) once the same mode has been on screen for more than
+  two minutes: a live game under live priority, Vegas, or a single plugin.
+  On ledpi it returned nulls in every sample for 90 minutes while the
+  display was live. The state stream's version leaves out the timestamps
+  that move on every publish, and a subscriber's keepalive tick carried only
+  the loop's heartbeat. So the web interface's copy kept the
+  `display.last_updated` of the last real change, and the reader's 120 s
+  rule called it unknown. The plugin runtime section had the same problem:
+  with no plugin changing state, `/plugins/state` and the `runtime` in
+  `/plugins/installed` read `stale` after 180 s. A tick (and a `state.get`
+  answer with `since`) now carries `volatile`: the current values of those
+  timestamps (`display.last_updated`, `on_demand.last_updated` and
+  `remaining`, `plugins.published_at`), and the subscription merges them
+  into its copy. The verdicts are unchanged. A render thread that stops
+  publishing still reads as `stalled` after 60 s and as unknown after 120 s,
+  a runtime publisher that stops still goes `stale`, and a subscription that
+  goes quiet still falls back to the cache. The cache path's 120 s rule is
+  unchanged.
 
 ### Scrolling
 
