@@ -74,6 +74,16 @@ class TestANamedLiveModeIsShown:
         football._activate_on_demand({'plugin_id': 'football-scoreboard'})
         assert not any(m.endswith('_live') for m in football.on_demand_modes)
 
+    def test_a_named_second_live_mode_with_content_leads(self, test_display_controller):
+        """With live content both live modes are kept, nfl_live first; a
+        request naming ncaa_fb_live must still open on it, not rotate away."""
+        c = test_display_controller
+        _register(c, 'football-scoreboard', SPORTS_MODES, _sports_plugin(has_live_content=True))
+        c._activate_on_demand({'plugin_id': 'football-scoreboard', 'mode': 'ncaa_fb_live'})
+        assert c.on_demand_modes[0] == 'ncaa_fb_live'
+        assert c.on_demand_modes.count('ncaa_fb_live') == 1
+        assert 'nfl_live' in c.on_demand_modes[1:]
+
     def test_the_named_mode_survives_a_restart(self, football):
         football._activate_on_demand({'plugin_id': 'football-scoreboard',
                                       'mode': 'ncaa_fb_live'})
@@ -117,3 +127,34 @@ class TestARestoreWithNothingToResume:
 
     def test_the_cached_request_is_dropped(self, restored):
         restored.cache_manager.clear_cache.assert_any_call('display_on_demand_config')
+
+
+def test_a_plugin_system_failure_ends_a_cached_session_not_yet_restored(
+        mock_config_manager, mock_display_manager, mock_cache_manager,
+        test_config_with_plugins, emulator_mode):
+    """Initialization can fail before the cached session is read, with
+    on_demand_active still False: the session must still end, visibly."""
+    from unittest.mock import patch
+    from src.display_controller import DisplayController
+
+    mock_config_manager.get_config.return_value = test_config_with_plugins
+    mock_config_manager.load_config.return_value = test_config_with_plugins
+    mock_cache_manager._memory_cache['display_on_demand_config'] = {
+        'plugin_id': 'clock-simple', 'mode': 'clock-simple'}
+    with patch('src.display_controller.ConfigManager', return_value=mock_config_manager), \
+         patch('src.display_controller.DisplayManager', return_value=mock_display_manager), \
+         patch('src.display_controller.CacheManager', return_value=mock_cache_manager), \
+         patch('src.display_controller.FontManager'), \
+         patch('src.plugin_system.PluginManager', side_effect=RuntimeError("boom")):
+        controller = DisplayController()
+        try:
+            assert controller.plugin_manager is None
+            assert not controller.on_demand_active
+            assert controller.on_demand_status == 'error'
+            assert controller.on_demand_last_error == 'restore-failed'
+            mock_cache_manager.clear_cache.assert_any_call('display_on_demand_config')
+        finally:
+            try:
+                controller.cleanup()
+            except Exception:
+                pass

@@ -565,8 +565,15 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
-            if self.on_demand_active:
-                # A restored session has no plugin to resume on.
+            # A restored session has no plugin to resume on. It may have been
+            # read already (on_demand_active) or not yet, if initialization
+            # failed before the restore ran; either way, end it visibly.
+            try:
+                cached_session = self.cache_manager.get('display_on_demand_config',
+                                                        max_age=3600)
+            except Exception:  # pylint: disable=broad-except
+                cached_session = None
+            if self.on_demand_active or cached_session:
                 self.cache_manager.clear_cache('display_on_demand_config')
                 self._set_on_demand_error('restore-failed')
             # Its state machine no longer describes what runs; let the last
@@ -2386,11 +2393,14 @@ class DisplayController:
             # Only live modes available but no content - use them anyway
             ordered_modes = live_modes
 
-        if (named_mode and named_mode in available_plugin_modes
-                and named_mode not in ordered_modes):
-            logger.info("On-demand: showing %s as requested; plugin '%s' reports no "
-                        "live-priority content for it", named_mode, plugin_id)
-            ordered_modes = [named_mode] + ordered_modes
+        if named_mode and named_mode in available_plugin_modes:
+            # The named mode leads whether or not the live check kept it: a
+            # second live mode with content is already in the list, but behind
+            # the first, so the session would rotate away before reaching it.
+            if named_mode not in ordered_modes:
+                logger.info("On-demand: showing %s as requested; plugin '%s' reports no "
+                            "live-priority content for it", named_mode, plugin_id)
+            ordered_modes = [named_mode] + [m for m in ordered_modes if m != named_mode]
 
         return ordered_modes
 
