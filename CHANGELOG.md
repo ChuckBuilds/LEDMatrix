@@ -699,6 +699,17 @@ policies are unchanged.
   heartbeat when the service stops), is `stale` at once instead of `live`
   for up to 180 s. No new files or writes: both checks are on the reading
   side.
+- A scoreboard's scroll and Vegas cards with `scroll_card.date_format:
+  "weekday"` now show the printed date's own weekday. A Friday 8 PM ET game
+  read "Sat Oct 2". The card took the weekday in the plugin's own
+  `timezone` setting, which ships blank, so it fell back to UTC, while the
+  "Oct 2" beside it came from the zone the plugin actually resolves (its
+  setting, then the global one, then the system zone). Every zone is within a
+  day of UTC, so the card now finds which day near the start's UTC date has
+  the printed month and day and names that one. Games east of UTC (Auckland,
+  Kiritimati) were off by a day the other way and are fixed the same way.
+  The switch-mode scorebug, which already used the plugin's resolved zone,
+  shares the same formatter and draws what it drew before.
 - `/api/v3/display/current-status` reflects a wake from scheduled-off, a
   schedule-off blank, or an on-demand session starting or ending at once,
   even when the mode name stays the same. The display republished its
