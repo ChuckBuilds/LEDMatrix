@@ -507,7 +507,11 @@ def save_main_config():
         # Try to get JSON data first, fallback to form data
         data = None
         if request.is_json:
-            data = request.get_json()
+            # silent=True, as in save_raw_main_config: get_json() raised
+            # Werkzeug's BadRequest into the catch-all below, a 500.
+            data = request.get_json(silent=True)
+            if data is None and request.get_data():
+                return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
             if data is not None and not isinstance(data, dict):
                 return jsonify({'status': 'error', 'message': 'Request body must be a JSON object'}), 400
         else:

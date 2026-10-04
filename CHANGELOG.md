@@ -566,6 +566,12 @@ policies are unchanged.
   the plugin sat there installed. An installed plugin, found by the store's
   own lookup (registry aliases included), is now listed under Skipped as
   `plugin:<id> (installed)`.
+- `POST /api/v3/config/main` answers a JSON body that does not parse with
+  400 `Invalid JSON in request body`, as `/config/raw/main` does, and an
+  empty JSON body with 400 `No data provided`. Both were a 500
+  `CONFIG_SAVE_FAILED` suggesting file permissions and disk space, with a
+  traceback logged at ERROR: `get_json()` raised inside the handler's
+  catch-all.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
