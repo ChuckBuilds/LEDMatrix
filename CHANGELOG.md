@@ -34,6 +34,29 @@ accepts both, but the store flags the old spelling as deprecated
   once the interval has passed. The cadence is unchanged, and nothing extra
   runs when no frame is owed.
 
+### ESPN date-range fetches: fewer requests, fewer at once
+
+A soccer board (8 leagues, ESPN rejecting `dates=` ranges) logged ~90
+`NameResolutionError` lines and an `update() timed out` at every start on a
+Pi: each league's fortnight-either-side window was 29 day requests, fetched
+by several managers at once, ~40 in flight. Measured against live ESPN with
+soccer-scoreboard 2.39.2, alternating runs: **~450 requests per start, peak
+~45 in flight, ~75 DNS lookups -> 46 requests, peak 13, ~30 lookups**.
+
+- `fetch_espn_date_chunks()` asks for a window's partial edge month whole
+  when the window covers `ESPN_MONTH_COVER_MIN_DAYS` (7) or more of its days,
+  and trims the answer to the window's days by each event's US Eastern start
+  date -- the day ESPN's `dates=YYYYMMDD` means (417 of 417 live soccer
+  events matched). A 29-day window spanning two months is 2 requests instead
+  of 29. Short windows (a live poll's 1-2 days) stay day by day. A trimmed
+  month that comes back at the 500-event cap re-asks only the window's days.
+  An event with no readable date is kept. New: `espn_request_chunks()`.
+- Chunk requests share one process-wide cap of `ESPN_CHUNK_WORKERS` (6) in
+  flight, across every window being fetched, instead of six per window.
+- A new process starts as if a range had just been rejected, so it no longer
+  spends one doomed 400 per window at every start (eleven at once from a
+  soccer board); the range is still retried `RANGE_RETRY_SECONDS` in.
+
 ### Cheap per-frame and per-fetch savings
 
 - `BaseOddsManager.get_odds()` no longer pretty-prints every odds response
