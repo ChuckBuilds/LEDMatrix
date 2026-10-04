@@ -16,6 +16,7 @@ import web_interface.blueprints.api_v3 as _pkg
 # as module attributes, and a value binding would not see the patch.
 # Several are also called from helpers that live in __init__, so the
 # package is the only patch point that covers every caller.
+from web_interface.cache import delete_cached
 
 
 @api_v3.route('/backup/preview', methods=['GET'])
@@ -145,6 +146,10 @@ def backup_restore():
             os.unlink(tmp_path)
         except OSError:
             pass
+    # Restored fonts reach the Fonts tab through a catalog cached for five
+    # minutes (fonts.py); upload and delete clear it, and so must this.
+    if any(str(item).startswith('fonts') for item in result.restored):
+        delete_cached('fonts_catalog')
 
     # Reinstall plugins if requested and store manager available
     if options.reinstall_plugins and result.plugins_to_install:

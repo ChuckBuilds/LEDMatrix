@@ -366,6 +366,31 @@ class TestInstalledPluginsAreNotReinstalled:
         assert "plugin:my-3p (installed)" in skipped
 
 
+class TestFontsCatalogCache:
+    """The Fonts tab's catalog is cached for 5 minutes (fonts.py).
+
+    Upload and delete clear it; a restore did not, so restored fonts were
+    missing from the Fonts tab and every font picker until it expired.
+    """
+
+    @pytest.fixture
+    def cached_catalog(self):
+        from web_interface.cache import delete_cached, get_cached, set_cached
+        set_cached('fonts_catalog', {'fonts': ['5x7.bdf']}, ttl_seconds=300)
+        yield lambda: get_cached('fonts_catalog', ttl_seconds=300)
+        delete_cached('fonts_catalog')
+
+    def test_a_restore_that_restored_fonts_clears_it(self, client, restore, cached_catalog):
+        restore.return_value = FakeResult(restored=["config", "fonts (2)"])
+        assert post(client).status_code == 200
+        assert cached_catalog() is None
+
+    def test_a_restore_without_fonts_keeps_it(self, client, restore, cached_catalog):
+        restore.return_value = FakeResult(restored=["config"])
+        assert post(client).status_code == 200
+        assert cached_catalog() == {'fonts': ['5x7.bdf']}
+
+
 class TestFailureReporting:
     def test_restore_errors_produce_a_500(self, client, restore):
         restore.return_value = FakeResult(

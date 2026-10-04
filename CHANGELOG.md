@@ -572,6 +572,9 @@ policies are unchanged.
   `CONFIG_SAVE_FAILED` suggesting file permissions and disk space, with a
   traceback logged at ERROR: `get_json()` raised inside the handler's
   catch-all.
+- Fonts restored from a backup show up in the Fonts tab and the font
+  pickers straight away. The font catalog is cached for five minutes, and
+  upload and delete cleared it but a restore did not.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
