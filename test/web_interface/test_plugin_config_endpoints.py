@@ -170,3 +170,53 @@ class TestARejectedSaveLeavesNothingBehind:
     def test_the_form_reloads_with_the_stored_values(self, env):
         assert env.post_form(self.REJECTED).status_code == 400
         assert api_v3.config_manager.load_config()[PLUGIN_ID]["mqtt"]["port"] == 1883
+
+
+class TestGetMasksSecrets:
+    """GET /plugins/config returned the section with config_secrets.json
+    merged in, secrets and all: the masking #276 added was lost when the
+    route was rewritten. The settings page and GET /config/secrets mask."""
+
+    def test_secrets_come_back_blank(self, env):
+        data = env.client.get(f"/api/v3/plugins/config?plugin_id={PLUGIN_ID}").get_json()["data"]
+        assert data["api_key"] == ""
+        assert data["accounts"] == [{"name": "a", "token": ""}, {"name": "b", "token": ""}]
+        assert data["city"] == "Paris"
+
+    def test_posting_the_response_back_keeps_every_secret(self, env):
+        data = env.client.get(f"/api/v3/plugins/config?plugin_id={PLUGIN_ID}").get_json()["data"]
+        resp = env.post_json(data)
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID] == STORED_SECRETS[PLUGIN_ID]
+        assert "TOPSECRET" not in json.dumps(env.main())
+
+    def test_the_settings_form_posting_masked_fields_keeps_every_secret(self, env):
+        # The page renders secrets blank (pages_v3 masks the same way)
+        resp = env.post_form({
+            "api_key": "", "city": "Lyon", "mqtt.host": "broker", "mqtt.port": "1883",
+            "mqtt.password": "", "__rendered_section": ["api_key", "city", "mqtt"]})
+        assert resp.status_code == 200, resp.get_json()
+        assert env.secrets()[PLUGIN_ID] == STORED_SECRETS[PLUGIN_ID]
+        assert env.main()[PLUGIN_ID]["city"] == "Lyon"
+
+    def test_a_plugin_without_a_schema_has_credential_named_fields_blanked(self, env, tmp_path):
+        (tmp_path / "plugins" / "bare").mkdir()
+        env.store({"enabled": True, "station": "KAUS"}, plugin_id="bare")
+        secrets = env.secrets()
+        secrets["bare"] = {"api_token": "BARE-TOKEN"}
+        (tmp_path / "config_secrets.json").write_text(json.dumps(secrets))
+        data = env.client.get("/api/v3/plugins/config?plugin_id=bare").get_json()["data"]
+        assert data["api_token"] == ""
+        assert data["station"] == "KAUS"
+
+    @pytest.mark.parametrize("section", ["web_auth", "github", "display"])
+    def test_a_core_section_is_refused(self, env, tmp_path, section):
+        secrets = env.secrets()
+        secrets["web_auth"] = {"cookie_secret": "COOKIE-KEY", "password_hash": "HASH"}
+        secrets["github"] = {"api_token": "ghp_TOKEN"}
+        (tmp_path / "config_secrets.json").write_text(json.dumps(secrets))
+        env.store({"hardware": {"rows": 32}}, plugin_id="display")
+        resp = env.client.get(f"/api/v3/plugins/config?plugin_id={section}")
+        assert resp.status_code == 400
+        body = resp.get_data(as_text=True)
+        assert "COOKIE-KEY" not in body and "ghp_TOKEN" not in body

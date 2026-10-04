@@ -545,6 +545,18 @@ policies are unchanged.
   reaches the cache unless it is saved. The copy is a pickle round trip:
   2.0 ms for a real 64 KiB config on a Pi 4, against 6.9 ms for
   `copy.deepcopy`.
+- `GET /api/v3/plugins/config` no longer returns secrets. It sent back the
+  plugin's section with config_secrets.json merged in, API keys and tokens
+  in plain text: the masking #276 added was dropped in #330. It also took
+  any id, so `?plugin_id=web_auth` returned the login's cookie-signing key
+  and password hash and `?plugin_id=github` the Plugin Store token. Secret
+  fields now come back blank, as the settings page renders them, and a
+  plugin with no schema has its credential-named fields blanked, as
+  `GET /config/main` does. Blank rather than the `••••••••` of
+  `GET /config/secrets`, because the save reads a blank secret as
+  "unchanged", so a client can post the response back without erasing
+  one. Core sections and malformed ids get a 400, as they already did from
+  reset and uninstall.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that

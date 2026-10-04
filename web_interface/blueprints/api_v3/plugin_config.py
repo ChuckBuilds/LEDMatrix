@@ -9,13 +9,15 @@ from web_interface.blueprints.api_v3 import (
     _enhance_schema_with_core_properties, _non_plugin_id_error,
     _filter_config_by_schema, _get_schema_property,
     _hidden_array_item_property, _plugin_directory,
-    _parse_form_value_with_schema, _schema_allows_null, _schema_type_is,
-    _set_missing_booleans_to_false, _set_nested_value, api_v3, datetime,
-    deep_merge, error_response, exception_error_response, find_secret_fields,
-    json, jsonify, logger, merge_secrets, os, remove_empty_secrets, request,
-    separate_secrets, success_response, validate_request_json,
+    _parse_form_value_with_schema, _redact_credentials, _schema_allows_null,
+    _schema_type_is, _set_missing_booleans_to_false, _set_nested_value, api_v3,
+    datetime, deep_merge, error_response, exception_error_response,
+    find_secret_fields, json, jsonify, logger, merge_secrets, os,
+    remove_empty_secrets, request, separate_secrets, success_response,
+    validate_request_json,
 )
 from src.web_interface.config_arrays import coerce_array_shapes
+from src.web_interface.secret_helpers import mask_secret_fields
 from src.web_interface.validators import dedup_unique_arrays
 import web_interface.blueprints.api_v3 as _pkg
 # Read through the module rather than bound by value: tests patch these
@@ -43,6 +45,12 @@ def get_plugin_config():
                 context={'missing_params': ['plugin_id']},
                 status_code=400
             )
+        # load_config() merges config_secrets.json in, core sections
+        # included: ?plugin_id=web_auth returned the login's cookie key and
+        # password hash, and ?plugin_id=github the Plugin Store token.
+        id_error = _non_plugin_id_error(plugin_id)
+        if id_error:
+            return id_error
 
         # Get plugin configuration from config manager
         main_config = api_v3.config_manager.load_config()
@@ -52,12 +60,13 @@ def get_plugin_config():
         # missing fields, reading legacy booleans as objects first: what the
         # plugin runs with, and what posts back through the JSON save
         schema_mgr = api_v3.schema_manager
+        schema = None
         if schema_mgr:
             try:
                 from src.plugin_system.schema_manager import prepare_plugin_config
+                schema = schema_mgr.load_schema(plugin_id, use_cache=True)
                 defaults = schema_mgr.generate_default_config(plugin_id, use_cache=True)
-                plugin_config = prepare_plugin_config(
-                    plugin_config, schema_mgr.load_schema(plugin_id, use_cache=True), defaults)
+                plugin_config = prepare_plugin_config(plugin_config, schema, defaults)
             except Exception as e:
                 # Log but don't fail - defaults merge is best effort
                 logger.warning("Could not merge defaults for %s: %s", plugin_id, e)
@@ -157,6 +166,17 @@ def get_plugin_config():
                 'enabled': True,
                 'display_duration': 30
             }
+
+        # Secrets go out blank, as the settings page renders them (#276 added
+        # this; #330 dropped it). Blank, not the bullets GET /config/secrets
+        # uses: the save reads a blank secret as "unchanged", so this
+        # response posts back without erasing one.
+        properties = schema.get('properties') if isinstance(schema, dict) else None
+        if isinstance(properties, dict):
+            plugin_config = mask_secret_fields(plugin_config, properties)
+        else:
+            # No schema to mark them: blank whatever is named like one
+            plugin_config = _redact_credentials(plugin_config)
 
         return success_response(data=plugin_config)
     except Exception as e:
