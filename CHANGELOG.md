@@ -514,6 +514,16 @@ policies are unchanged.
   for the plugin is refused (`plugin-reloading`), and a config reconcile
   neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
   out a reload for the lock skips the old instance.
+- A plugin display duration that is not a number no longer stops the
+  display. Several plugins (clock-simple, calendar, countdown) return their
+  `display_duration` setting as it is in config.json, so a value saved as
+  `"20"` or `null` (the raw config editor, a hand edit) reached the run loop
+  as a string or None. Comparing it with 0 raised a TypeError that no
+  handler in the loop caught: the display service exited when that plugin's
+  screen came up, and systemd restarted it into the same crash. The
+  controller now reads the plugin's answer as a number: a numeric string
+  counts, and anything else (or a `get_display_duration()` that raises)
+  shows the mode for 30 s, with one warning per plugin.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
