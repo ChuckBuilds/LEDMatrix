@@ -540,6 +540,16 @@ policies are unchanged.
   notice is what shows next, and Vegas resumes after it; before, a rotation
   screen showed instead and the notice expired behind it. An active
   on-demand session still holds the panel until it ends.
+- The Config Editor tab no longer shows API keys and tokens in plain
+  text. Its `config_secrets.json` editor (`/partials/raw-json`) was filled
+  with the file as it is on disk, so while the web login is off (the
+  default) anyone who could reach the port could read every credential,
+  although `GET /api/v3/config/secrets` masks them. The editor now shows the
+  same masked values. Saving it unchanged changes nothing, because the save
+  drops the masks and merges onto the stored file; to change a secret,
+  replace its mask. A list of secrets still needs every entry's real value
+  to be changed. The `config.json` editor is unchanged: its save writes the
+  file as given, so a mask there would be stored.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
