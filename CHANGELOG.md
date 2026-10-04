@@ -549,6 +549,14 @@ policies are unchanged.
   screen showed first and the game came after it. Each check also asks each
   plugin `has_live_content()` once, where a plugin registered under several
   modes used to be asked once per mode.
+- A plugin action whose params hold `true`, `false` or `null` runs again.
+  `/api/v3/plugins/action` wrote the params into the source of the wrapper
+  that runs the plugin's script, and those JSON words are not Python, so the
+  wrapper stopped with a NameError and the action answered "Action failed".
+  The plugin file manager's category toggle sends `"enabled": true`, so
+  turning a category on or off in of-the-day always failed. The params now
+  reach the wrapper on its stdin; the script still receives them as JSON on
+  its own stdin, as before.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end

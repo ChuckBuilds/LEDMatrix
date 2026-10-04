@@ -430,6 +430,10 @@ sys.exit(proc.returncode)
                     import tempfile
                     import json as json_lib
 
+                    # The params reach the wrapper on its stdin, never in
+                    # its source: written there as `params = <JSON>`, a
+                    # true, false or null was an undefined name and the
+                    # wrapper died with a NameError before the script ran.
                     params_json = json_lib.dumps(action_params)
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
                         wrapper.write(f'''import sys
@@ -439,6 +443,9 @@ import json
 
 # Set LEDMATRIX_ROOT
 os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# The params, as JSON on this wrapper's own stdin
+params = json.loads(sys.stdin.read())
 
 # Run the script and provide params as JSON via stdin
 proc = subprocess.Popen(
@@ -451,7 +458,6 @@ proc = subprocess.Popen(
 )
 
 # Send params as JSON to stdin
-params = {params_json}
 stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
 print(stdout)
 sys.exit(proc.returncode)
@@ -461,6 +467,7 @@ sys.exit(proc.returncode)
                     try:
                         result = subprocess.run(
                             ['python3', wrapper_path],
+                            input=params_json,
                             capture_output=True,
                             text=True,
                             timeout=120,
