@@ -583,6 +583,14 @@ policies are unchanged.
 - Reinstalling a plugin from the Plugin Store leaves it enabled or disabled
   as it was. Reinstall enabled it as a fresh install does, so a plugin the
   user had switched off came back on.
+- A Plugin Store install that takes more than a minute is no longer
+  reported as failed. The store stopped waiting after 60 s and showed
+  "Install operation timed out" while the server, which allows the
+  plugin's dependency install 300 s on its own, carried on and usually
+  succeeded; the plugin was then neither enabled nor listed until the page
+  was reloaded. The store now waits up to 10 minutes, and if it still has
+  no answer it reloads the installed list and says the install may still
+  be running.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render

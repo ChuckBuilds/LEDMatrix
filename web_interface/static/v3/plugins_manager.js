@@ -2083,6 +2083,13 @@ window.uninstallPlugin = function(pluginId) {
     });
 }
 
+// How many times the store's Install polls a queued install, a second apart.
+// The server allows the plugin's dependency install 300 s on its own
+// (install_requirements_file in src/plugin_system/store_install.py), after a
+// download that fetches the plugin a file at a time; the 60 the poller
+// defaults to reported installs that then succeeded as timed out.
+const INSTALL_POLL_MAX_ATTEMPTS = 600;
+
 function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
     const maxAttempts = options.maxAttempts || 60;
     const attempt = options.attempt || 0;
@@ -2598,7 +2605,18 @@ window.installPlugin = function(pluginId, branch = null) {
             pollOperationStatus(data.data.operation_id, pluginId, pluginId, {
                 onComplete: afterInstall,
                 onFailed: (errorMsg) => showNotification(errorMsg || `Failed to install ${pluginId}`, 'error'),
-                onTimeout: () => showNotification(`Install operation timed out for ${pluginId}`, 'error')
+                maxAttempts: INSTALL_POLL_MAX_ATTEMPTS,
+                // Out of patience is not a failure: the server may still be
+                // installing. Show the list as it is now and say so; nothing
+                // is enabled without the operation's answer.
+                onTimeout: () => {
+                    showNotification(
+                        `${pluginId} is still installing — it will appear in the installed list when it finishes`,
+                        'warning'
+                    );
+                    loadInstalledPlugins(true).catch(() => {})
+                        .then(() => applyStoreFiltersAndSort(true));
+                }
             });
         } else {
             // No operation queue configured - install already completed synchronously.
