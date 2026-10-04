@@ -368,6 +368,10 @@ class DisplayController:
         self.on_demand_last_error: Optional[str] = None
         self.on_demand_last_event: Optional[str] = None
         self.on_demand_schedule_override = False
+        # The mode the request named, when it named one (not a mode resolved
+        # from a bare plugin id). Shown even when the plugin's live checks
+        # would leave it out of the session (_on_demand_modes_for_plugin).
+        self._on_demand_named_mode: Optional[str] = None
         # Plugins that are disabled in config and loaded only because an
         # on-demand request named them. The main loop unloads each one once
         # on-demand has moved off it (_release_on_demand_plugins).
@@ -561,6 +565,17 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Plugin system initialization failed")
             self.plugin_manager = None
+            # A restored session has no plugin to resume on. It may have been
+            # read already (on_demand_active) or not yet, if initialization
+            # failed before the restore ran; either way, end it visibly.
+            try:
+                cached_session = self.cache_manager.get('display_on_demand_config',
+                                                        max_age=3600)
+            except Exception:  # pylint: disable=broad-except
+                cached_session = None
+            if self.on_demand_active or cached_session:
+                self.cache_manager.clear_cache('display_on_demand_config')
+                self._set_on_demand_error('restore-failed')
             # Its state machine no longer describes what runs; let the last
             # snapshot go stale (readers then say unknown) rather than keep
             # refreshing it.
@@ -1665,6 +1680,7 @@ class DisplayController:
         self.on_demand_expires_at = None
         self.on_demand_pinned = False
         self.on_demand_schedule_override = False
+        self._on_demand_named_mode = None
         # While the session ran, _evaluate_schedule may have forced
         # is_display_active on over a scheduled-off answer. Drop the minute
         # gate so the next _check_schedule recomputes it; otherwise the panel
@@ -1831,6 +1847,7 @@ class DisplayController:
         self.on_demand_pinned = on_demand_config.get('pinned', False)
         self.on_demand_requested_at = on_demand_config.get('requested_at')
         self.on_demand_expires_at = on_demand_config.get('expires_at')
+        self._on_demand_named_mode = on_demand_config.get('named_mode')
         self.on_demand_status = 'active'
         self.on_demand_schedule_override = True
         logger.info("On-demand mode detected during initialization: resuming on plugin '%s'; "
@@ -2317,13 +2334,25 @@ class DisplayController:
                 return modes[0]
         return plugin_id
 
-    def _on_demand_modes_for_plugin(self, plugin_id: str) -> List[str]:
+    def _on_demand_modes_for_plugin(self, plugin_id: str,
+                                    named_mode: Optional[str] = None) -> List[str]:
         """Every loaded display mode belonging to `plugin_id`, in rotation order.
 
         Live modes that actually have content lead, then the rest, then live
         modes with nothing to show -- so an on-demand request for a sports
         plugin opens on a game in progress rather than an empty live screen.
         Returns an empty list when the plugin has no loaded modes.
+
+        `named_mode` is a mode the request asked for by name. It is always
+        in the list, first when the checks below would have dropped it.
+        Those checks ask has_live_content(), which is the live-priority
+        question -- "should this plugin take the panel from the rotation?"
+        -- and the sports plugins answer it for favourite teams only. Asking
+        for ncaa_fb_live with fifteen games on and no favourite playing got
+        a 200 and nfl_recent on the panel. The plugin's display() is what
+        knows whether the mode has anything to draw; when it has not, the
+        session moves to the plugin's next mode like any empty on-demand
+        mode.
         """
         plugin_modes = self.plugin_display_modes.get(plugin_id, [])
         if not plugin_modes:
@@ -2364,6 +2393,15 @@ class DisplayController:
             # Only live modes available but no content - use them anyway
             ordered_modes = live_modes
 
+        if named_mode and named_mode in available_plugin_modes:
+            # The named mode leads whether or not the live check kept it: a
+            # second live mode with content is already in the list, but behind
+            # the first, so the session would rotate away before reaching it.
+            if named_mode not in ordered_modes:
+                logger.info("On-demand: showing %s as requested; plugin '%s' reports no "
+                            "live-priority content for it", named_mode, plugin_id)
+            ordered_modes = [named_mode] + [m for m in ordered_modes if m != named_mode]
+
         return ordered_modes
 
     def _apply_on_demand_pin(self, ordered_modes: List[str], resolved_mode: Optional[str],
@@ -2392,10 +2430,20 @@ class DisplayController:
 
         plugin_id = self.on_demand_plugin_id
 
-        ordered_modes = self._on_demand_modes_for_plugin(plugin_id)
+        ordered_modes = self._on_demand_modes_for_plugin(plugin_id, self._on_demand_named_mode)
         if not ordered_modes:
-            logger.warning("No valid display modes found for on-demand plugin '%s' after restoration", plugin_id)
-            self.on_demand_modes = []
+            # The plugin did not load this time (seen on a rig: its config
+            # failed validation after the crash that caused the restart), so
+            # there is nothing to resume. Leaving the session active with no
+            # modes published it as active for a plugin that was not running
+            # until the first pass ended it as an ordinary 'idle', and kept
+            # the cached request for the next restart to trip over. End it
+            # as a failure the status endpoint reports, and drop the cache.
+            logger.error("On-demand session for plugin '%s' cannot resume after the "
+                         "restart: the plugin has no loaded display modes (did it "
+                         "fail to load?); ending it", plugin_id)
+            self.cache_manager.clear_cache('display_on_demand_config')
+            self._set_on_demand_error('restore-failed')
             return
 
         # A restart must not silently un-pin: the pin is part of the request
@@ -2596,7 +2644,10 @@ class DisplayController:
         if resolved_mode in self.available_modes:
             self.current_mode_index = self.available_modes.index(resolved_mode)
 
-        ordered_modes = self._on_demand_modes_for_plugin(resolved_plugin_id)
+        # Named: the request gave this mode itself, rather than a plugin id
+        # (or a mode the plugin doesn't have) that resolved to a default.
+        named_mode = resolved_mode if mode == resolved_mode else None
+        ordered_modes = self._on_demand_modes_for_plugin(resolved_plugin_id, named_mode)
         if not ordered_modes:
             logger.error("No valid display modes found for plugin '%s'", resolved_plugin_id)
             self._set_on_demand_error("no-modes")
@@ -2613,6 +2664,7 @@ class DisplayController:
         self.on_demand_requested_at = now
         self.on_demand_expires_at = (now + duration) if duration else None
         self.on_demand_pinned = pinned
+        self._on_demand_named_mode = named_mode
         self.on_demand_status = 'active'
         self.on_demand_last_error = None
         self.on_demand_last_event = 'started'
@@ -2641,6 +2693,7 @@ class DisplayController:
             'mode': resolved_mode,
             'duration': duration,
             'pinned': pinned,
+            'named_mode': named_mode,
             'requested_at': now,
             'expires_at': self.on_demand_expires_at
         }
