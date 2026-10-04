@@ -576,6 +576,11 @@ policies are unchanged.
   in the browser console on every step. Its handler also updated a "LED
   brightness" line that was removed from the page in #387; the lookup is
   gone.
+- Creating an API token on the General tab no longer leaves the page asking
+  "Leave site?" on reload. The unsaved-changes guard marks a form when you
+  type in it and clears the mark only after an htmx save, and the token form
+  saves with a plain request, so it stayed marked after the token was
+  created. It is cleared once the token is saved.
 - An on-demand session that ends during scheduled-off hours, by expiring or
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
