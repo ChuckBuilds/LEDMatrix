@@ -340,15 +340,22 @@ def get_current_display_status():
     Read from the display's state stream over the control socket when it is
     available (``source: "socket"``). Otherwise from what the display
     publishes to the shared cache (display_controller._publish_current_mode_state)
-    when the active mode changes (``source: "cache"``).
+    when the active mode changes (``source: "cache"``). Unknown (every field
+    None) when the socket and the heartbeat both say the display is gone
+    (display_state.display_gone).
     """
-    state = display_state.current_status(display_state.read_state())
+    snapshot = display_state.read_state()
+    state = display_state.current_status(snapshot)
     source = 'socket'
     if state is None:
         source = 'cache'
-        cache = _cache_manager()
-        # memory_ttl=0: written by the display service; see get_on_demand_status.
-        state = cache.get('display_current_state', max_age=120, memory_ttl=0)
+        # A stopped display leaves its last answer in the cache, where it
+        # read as on (is_display_active: true) for the 120 s max_age. With
+        # no socket and no live heartbeat there is no display behind it.
+        if not display_state.display_gone(snapshot):
+            cache = _cache_manager()
+            # memory_ttl=0: written by the display service; see get_on_demand_status.
+            state = cache.get('display_current_state', max_age=120, memory_ttl=0)
     if state is None:
         state = {
             'mode': None,
