@@ -554,6 +554,15 @@ policies are unchanged.
   and every `display()` was skipped as busy. It is now recorded as that
   update's failure, the same as any other raise. The plugin executor
   reported such a call as a timeout; it now reports it as a failure.
+- Saving a config change no longer freezes the panel while a plugin is busy.
+  `ConfigService` told its subscribers about a change while holding its lock,
+  and the display's per-plugin subscriber waits up to 5 s for a plugin in the
+  middle of an update. A save that enables or disables a plugin also queues a
+  reconcile, which the render thread runs, and its `get_config()` and
+  `unsubscribe()` waited behind every one of those callbacks. Subscribers now
+  run after the lock is released. One reload's notifications still finish
+  before the next one's start, and a callback `unsubscribe()` removed is not
+  running, and will not run, once it returns.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
