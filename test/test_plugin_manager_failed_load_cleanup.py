@@ -69,6 +69,7 @@ def test_fixed_plugin_loads_new_code_after_failed_load(plugin_env, first_source)
     assert MODULE_NAME not in sys.modules
     assert PLUGIN_ID not in pm.plugin_loader._loaded_modules
     pm.font_manager.forget_manager_fonts.assert_called_with(PLUGIN_ID)
+    pm.font_manager.forget_plugin_fonts.assert_called_with(PLUGIN_ID)
 
     (plugin_dir / "manager.py").write_text(_FIXED, encoding="utf-8")
     assert pm.load_plugin(PLUGIN_ID) is True
