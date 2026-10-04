@@ -572,6 +572,11 @@ policies are unchanged.
   secret the save read that blank as null, failed validation, and refused
   every save of the page. A blank secret field now means "unchanged", as it
   already did for an optional one.
+- `POST /api/v3/plugins/config` refuses a core section or a malformed
+  plugin id with a 400, as reset and uninstall already did.
+  `{"plugin_id": "display", ...}` merged unvalidated values into the core
+  display section (and added `"enabled": true` to it), and an id that was
+  not a string answered with a 500.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that

@@ -342,3 +342,26 @@ class TestABlankSecretIsLeftAsStored:
                               "__rendered_section": ["tokens", "city"]})
         assert resp.status_code == 200, resp.get_json()
         assert env.secrets()[PLUGIN_ID]["tokens"] == ["t1", "t2"]
+
+
+class TestSaveRefusesWhatIsNotAPluginId:
+    """GET and reset refuse a core section or a malformed id; the save took
+    any of them. ``{"plugin_id": "display"}`` merged unvalidated values into
+    the core display section, and an id that was not a string raised a
+    TypeError, answered as a 500."""
+
+    def test_a_core_section_is_refused_and_left_alone(self, env):
+        env.store({"hardware": {"rows": 32}}, plugin_id="display")
+        resp = env.post_json({"hardware": {"rows": "banana"}}, plugin_id="display")
+        assert resp.status_code == 400
+        assert env.main()["display"] == {"hardware": {"rows": 32}}
+
+    def test_the_form_save_refuses_one_too(self, env):
+        resp = env.post_form({"password_hash": "x"}, plugin_id="web_auth")
+        assert resp.status_code == 400
+        assert "web_auth" not in env.main()
+
+    @pytest.mark.parametrize("plugin_id", [["demo"], {"id": "demo"}, 7, "", "../demo"])
+    def test_a_malformed_id_is_a_400(self, env, plugin_id):
+        resp = env.post_json({"city": "Lyon"}, plugin_id=plugin_id)
+        assert resp.status_code == 400

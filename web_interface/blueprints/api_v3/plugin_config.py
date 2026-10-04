@@ -203,6 +203,12 @@ def save_plugin_config():
             if error:
                 return error
             plugin_id = data['plugin_id']
+            # As reset and uninstall do: {"plugin_id": "display"} merged
+            # unvalidated values into the core display section, and an id
+            # that was not a string raised a TypeError, answered as a 500.
+            id_error = _non_plugin_id_error(plugin_id)
+            if id_error:
+                return id_error
             submitted_config = data.get('config', {})
             if not isinstance(submitted_config, dict):
                 return error_response(
@@ -221,6 +227,9 @@ def save_plugin_config():
                     'plugin_id required in query string',
                     status_code=400
                 )
+            id_error = _non_plugin_id_error(plugin_id)
+            if id_error:
+                return id_error
 
             # Load existing config as base (partial form updates should merge, not replace)
             existing_config = {}
