@@ -1164,6 +1164,55 @@ class DisplayController:
         except Exception:  # pylint: disable=broad-except
             logger.exception("Error running scheduled plugin updates")
 
+    #: A run of frames skipped because a plugin's update() held its lock is
+    #: reported once it has lasted this long.
+    DISPLAY_HOLD_REPORT_SECONDS = 0.25
+
+    #: (plugin_id, monotonic start) of the current run of skipped frames.
+    _display_hold: Optional[Tuple[str, float]] = None
+
+    def _note_display_hold(self, plugin_id: str, held: bool) -> None:
+        """Report how long a plugin's update() kept its display() from drawing.
+
+        While update() runs on the worker it holds the plugin's lock, and every
+        frame of that plugin's screen is skipped: the panel keeps showing the
+        last frame, which on a scroller is a frozen strip. Nothing said so --
+        the frames are not failures, and a scroll freeze of 5 s or more is a
+        gap to the frame stats, not a freeze. This times each such run and,
+        when it ends after DISPLAY_HOLD_REPORT_SECONDS or more, logs it
+        (rate-limited per plugin) and records it on the plugin's health as a
+        busy skip, which never touches the circuit breaker. Only frames of the
+        high-FPS loop are timed (see _display_once's ``report_hold``).
+        """
+        # The clock is read only when a run starts or ends: on a frame that
+        # draws with no run open, this is one attribute check.
+        current = self._display_hold
+        if held:
+            if current is None or current[0] != plugin_id:
+                self._display_hold = (plugin_id, time.monotonic())
+            return
+        if current is None:
+            return
+        self._display_hold = None
+        if current[0] != plugin_id:
+            return
+        seconds = time.monotonic() - current[1]
+        if seconds < self.DISPLAY_HOLD_REPORT_SECONDS:
+            return
+        pm = self.plugin_manager
+        warn = getattr(pm, '_warn_rate_limited', None)
+        if warn is not None:
+            warn(f"display-hold:{plugin_id}",
+                 "Display of %s held %.0f ms by its update()",
+                 plugin_id, seconds * 1000.0)
+        tracker = getattr(pm, 'health_tracker', None)
+        record = getattr(tracker, 'record_busy_skip', None)
+        if record is not None:
+            try:
+                record(plugin_id, "display hold", seconds)
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Could not record a display hold", exc_info=True)
+
     @contextmanager
     def _display_lock_or_skip(self, plugin_id):
         """Try-lock guard keeping a plugin's display() off its in-flight update().
@@ -1189,7 +1238,7 @@ class DisplayController:
             lock.release()
 
     def _display_once(self, plugin, mode: str, accepts_display_mode: bool,
-                      force_clear: bool = False):
+                      force_clear: bool = False, report_hold: bool = False):
         """Call ``plugin.display()`` directly for one frame of a render loop.
 
         Frames after a screen's first dispatch come through here rather than
@@ -1205,6 +1254,12 @@ class DisplayController:
                 ``display_mode`` so plugins with several modes stay on it.
             accepts_display_mode: Whether display() takes ``display_mode``.
             force_clear: Passed through to display().
+            report_hold: Time runs of frames skipped because update() holds
+                the plugin's lock (see _note_display_hold). Only the high-FPS
+                loop asks: its frames are ~8 ms apart, so a run measures the
+                hold, and a held scroller is a frozen strip. The 1 Hz loop's
+                frames are a second apart, so one skipped frame there would
+                read as a 1 s hold of a screen that did not visibly change.
 
         Each call is timed (two monotonic reads) and handed to
         PluginManager.note_display_duration, which logs and records slow
@@ -1219,6 +1274,12 @@ class DisplayController:
         display_watchdog.watchdog.beat()
         plugin_id = getattr(plugin, 'plugin_id', None)
         with self._display_lock_or_skip(plugin_id) as can_display:
+            if report_hold and plugin_id:
+                self._note_display_hold(plugin_id, held=not can_display)
+            elif can_display and self._display_hold is not None:
+                # A drawn frame outside the high-FPS loop: whatever run was
+                # open is over, unreported.
+                self._display_hold = None
             if not can_display:
                 return True
             started = time.monotonic()
@@ -3987,7 +4048,8 @@ class DisplayController:
                             _frame_start = time.perf_counter()
                             try:
                                 result = self._display_once(
-                                    manager_to_display, active_mode, _accepts_display_mode)
+                                    manager_to_display, active_mode, _accepts_display_mode,
+                                    report_hold=True)
                                 if isinstance(result, bool) and not result:
                                     logger.debug("Display returned False, breaking early")
                                     break
