@@ -98,7 +98,49 @@ const get = p => new Promise((res, rej) =>
   window.saveMqttBridge();
   await tick(150);
   ok('save includes password once typed', sent && sent.mqtt_password === 'typed-secret');
+
+  // A password with TLS off is refused unless allow_insecure_mqtt is set
+  // (CWE-319, api_v3/misc.py). The form has to be able to send it, or a
+  // plain-LAN broker with a password can never be saved from here.
+  const allowRow = () => $('mqtt-allow-insecure-row');
+  const shown = el => !!el && !el.classList.contains('hidden');
+  ok('allow-without-TLS control rendered', !!$('mqtt-allow-insecure'));
+  ok('allow-without-TLS starts as saved',
+     !!$('mqtt-allow-insecure') && $('mqtt-allow-insecure').checked === !!bridge.data.config.allow_insecure_mqtt);
+  ok('allow-without-TLS shown only while TLS is off',
+     shown(allowRow()) === !$('mqtt-tls').checked);
+  $('mqtt-tls').checked = true;
+  $('mqtt-tls').dispatchEvent(new window.Event('change', { bubbles: true }));
+  ok('ticking TLS hides it', !shown(allowRow()));
+  $('mqtt-tls').checked = false;
+  $('mqtt-tls').dispatchEvent(new window.Event('change', { bubbles: true }));
+  ok('unticking TLS shows it again', shown(allowRow()));
+
+  const setAllow = v => { if ($('mqtt-allow-insecure')) $('mqtt-allow-insecure').checked = v; };
+  setAllow(false);
+  window.saveMqttBridge();
+  await tick(150);
+  ok('save sends allow_insecure_mqtt false when unticked', !!sent && sent.allow_insecure_mqtt === false, sent);
+  setAllow(true);
+  window.saveMqttBridge();
+  await tick(150);
+  ok('save sends allow_insecure_mqtt true when ticked', !!sent && sent.allow_insecure_mqtt === true, sent);
   onPut = null;
+
+  // Prefilled from the saved settings, and hidden while TLS is saved on.
+  bridgePayload = JSON.parse(JSON.stringify(bridge));
+  bridgePayload.data.config.allow_insecure_mqtt = true;
+  bridgePayload.data.config.mqtt_tls = false;
+  window.loadMqttBridge();
+  await tick(150);
+  ok('a saved opt-in is prefilled', !!$('mqtt-allow-insecure') && $('mqtt-allow-insecure').checked === true);
+  bridgePayload.data.config.mqtt_tls = true;
+  window.loadMqttBridge();
+  await tick(150);
+  ok('hidden on load when TLS is saved on', !shown(allowRow()));
+  bridgePayload = bridge;
+  window.loadMqttBridge();
+  await tick(150);
 
   // ── Pixlet editor, idle ────────────────────────────────────────────────
   const appIds = (apps.data.apps || []).map(a => a.id);

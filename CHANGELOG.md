@@ -768,6 +768,31 @@ policies are unchanged.
   the panel went off at 23:00 or at 23:01 depending on when in the minute
   that check ran. Windows that cross midnight and per-day schedules follow
   the same rule, and so does the dim schedule.
+- The MQTT bridge settings on the Tools tab can save a broker password with
+  TLS off. The server refuses that unless `allow_insecure_mqtt` is set, and
+  the form had no way to set it, so a password-protected broker on a home
+  network without TLS could not be saved from the web UI, and once such a
+  password was stored every later save failed too. While "Use TLS" is
+  unchecked the form now shows "Allow without TLS (trusted network)",
+  prefilled from the saved settings. It is off until ticked, so the server
+  still refuses a cleartext password by default.
+- The Overview's plugin-config warning check stops polling. It asked
+  `/api/v3/plugins/reconciliation-status` every 2 s until startup
+  reconciliation reported done, and the route reports not done whenever its
+  status file is missing: reconciliation raised before writing it, or /tmp
+  was cleaned under a long-running web service. The page then sent that
+  request every 2 s for as long as it stayed open, whichever tab was showing.
+  It now gives up after a minute and only polls while the Overview is on
+  screen.
+- Moving the Brightness slider on the Display tab no longer throws an error
+  in the browser console on every step. Its handler also updated a "LED
+  brightness" line that was removed from the page in #387; the lookup is
+  gone.
+- Creating an API token on the General tab no longer leaves the page asking
+  "Leave site?" on reload. The unsaved-changes guard marks a form when you
+  type in it and clears the mark only after an htmx save, and the token form
+  saves with a plain request, so it stayed marked after the token was
+  created. It is cleared once the token is saved.
 - An on-demand session that ends during scheduled-off hours, by expiring or
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
