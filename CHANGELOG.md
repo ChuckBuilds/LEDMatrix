@@ -520,6 +520,26 @@ policies are unchanged.
   stored `ttl` was stretched the same way. A memory hit is now also checked against
   the record's own timestamp, and a stale one falls through to disk, which
   returns a newer write if there is one.
+- An on-demand request that names a `*_live` mode now shows that mode. On
+  ledpi, `{"plugin_id": "football-scoreboard", "mode": "ncaa_fb_live"}` with
+  15 college games on answered 200 and showed `nfl_recent`. The session's
+  mode list kept a live mode only when the plugin's `has_live_content()`
+  said so. That method answers the live-priority question, and the sports
+  plugins answer it for favourite teams only. A mode the request names
+  (not one resolved from a bare plugin id) now leads the session, with the
+  plugin's other modes after it. If it has nothing to draw, the session
+  moves on to the next of those modes, like any empty on-demand mode. The
+  name is saved with the session (`named_mode` in
+  `display_on_demand_config`), so a restart resumes on it.
+- A restart during an on-demand session whose plugin then fails to load no
+  longer leaves a session with no modes. On ledpi, `clock-simple` failed
+  config validation after a crash. The display logged `No valid display
+  modes found for on-demand plugin 'clock-simple' after restoration` and
+  kept reporting the session as active until its first pass ended it as
+  `idle`. The cached request stayed behind for the next restart. The session
+  now ends at startup with status `error` and error `restore-failed`, which
+  `/display/on-demand/status` reports, and the cached request is dropped. The
+  same applies when the plugin system itself fails to start.
 - The garbage-collection timer (`GcMonitor`, above) no longer prints
   `Exception ignored while calling GC callback ... 'NoneType' object has no
   attribute 'perf_counter'` when the display service or a test run exits.
