@@ -23,8 +23,17 @@ const ok = (label, cond, extra) => cond
   : (fail++, console.log('  FAIL ' + label + (extra !== undefined ? '  ' + JSON.stringify(extra) : '')));
 
 const html = fs.readFileSync(PARTIAL, 'utf8');
-const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(m => m[1]);
-const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi, '');
+const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)];
+const scripts = blocks.map(m => m[1]);
+// The markup is what lies between the script blocks (sliced around them, not
+// a replace(), which CodeQL reads as an incomplete HTML sanitizer).
+let markup = '';
+let from = 0;
+for (const m of blocks) {
+  markup += html.slice(from, m.index);
+  from = m.index + m[0].length;
+}
+markup += html.slice(from);
 const rendered = new Set([...markup.matchAll(/\bid="([^"{}]+)"/g)].map(m => m[1]));
 
 console.log('\n── Display partial: element lookups ──');
