@@ -317,6 +317,11 @@ class DisplayManager:
         # is handed to the writer; this only once it has been saved, so an
         # mtime touch never vouches for a frame still waiting to be written.
         self._saved_snapshot_digest: Optional[int] = None
+        # A changed frame reached _write_snapshot_if_due() inside the write
+        # interval and was skipped. Nothing writes it unless update_display()
+        # runs again, and a screen that draws once and holds never calls it
+        # again -- see write_owed_snapshot().
+        self._snapshot_owed = False
         self._snapshot_dir_prepared = False
         # Background writer used mid-scroll; see _write_snapshot_if_due.
         self._snapshot_cond = threading.Condition()
@@ -1788,9 +1793,10 @@ class DisplayManager:
 
             if frame_checksum is not None:
                 digest = frame_checksum
+                frame_changed = digest != self._last_snapshot_digest
                 action = snapshot_policy.decide(
                     now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
-                    viewer_fresh, digest != self._last_snapshot_digest)
+                    viewer_fresh, frame_changed)
             else:
                 # Ask as if the frame had changed before paying to find out.
                 # decide() is monotone in frame_changed -- a SKIP for a
@@ -1802,15 +1808,24 @@ class DisplayManager:
                     now, self._last_snapshot_ts, self._last_snapshot_touch_ts,
                     viewer_fresh, True)
                 if action is snapshot_policy.SnapshotAction.SKIP:
+                    # Not hashed, so not known to be unchanged: owed until a
+                    # later look finds it written or unchanged.
+                    self._snapshot_owed = True
                     return
                 digest = zlib.adler32(self.image.tobytes())
-                if digest == self._last_snapshot_digest:
+                frame_changed = digest != self._last_snapshot_digest
+                if not frame_changed:
                     # Unchanged after all: the decision an unchanged frame gets.
                     action = snapshot_policy.decide(
                         now, self._last_snapshot_ts,
                         self._last_snapshot_touch_ts, viewer_fresh, False)
             if action is snapshot_policy.SnapshotAction.SKIP:
+                # A changed frame inside the write interval stays owed: the
+                # next update_display() would write it, but a static screen
+                # may not make one -- write_owed_snapshot() covers that.
+                self._snapshot_owed = frame_changed
                 return
+            self._snapshot_owed = False
             if (action is snapshot_policy.SnapshotAction.TOUCH
                     and self._saved_snapshot_digest == digest):
                 # mtime bump only: keeps the health check (snapshot age)
@@ -1843,6 +1858,35 @@ class DisplayManager:
             self._last_snapshot_touch_ts = now
             self._last_snapshot_digest = digest
         except Exception as e:
+            self._log_snapshot_failure(e)
+
+    def write_owed_snapshot(self) -> None:
+        """Write a frame the snapshot throttle skipped, once it is due.
+
+        The preview snapshot is only ever written from update_display(), and
+        at most once per write interval (snapshot_policy). A frame pushed
+        inside that interval is skipped, and is written by the next
+        update_display() that comes after it -- but a screen that draws its
+        card once and then holds it makes no further call. Its frame was on
+        the panel and never in the preview: soccer's recent/upcoming cards
+        skip redundant redraws, and the first one after an on-demand start
+        (pushed a few milliseconds after the controller's clear) left
+        /api/v3/display/current and the web preview black for the whole
+        screen while the panel showed the card.
+
+        The render loop calls this after each frame. Cheap when nothing is
+        owed (one attribute read); otherwise the usual policy decides, so
+        the write still waits out the interval and an unchanged frame is
+        never re-encoded.
+        """
+        if not self._snapshot_owed:
+            return
+        try:
+            if self._writes_suppressed():
+                return
+            with self._update_lock:
+                self._write_snapshot_if_due()
+        except Exception as e:  # pylint: disable=broad-except
             self._log_snapshot_failure(e)
 
     def _log_snapshot_failure(self, error: Exception) -> None:
