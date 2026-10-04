@@ -7,6 +7,7 @@ methods reach shared state and helpers through ``self``.
 
 import json
 import requests
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -985,10 +986,14 @@ class _RegistryMixin:
 
     def get_registry_info(self, plugin_id: str) -> Optional[Dict]:
         """
-        Get plugin information from the registry cache only (no GitHub API calls).
+        Get plugin information from the registry (plugins.json).
 
-        Use this for lightweight lookups where only registry fields are needed
-        (e.g., verified status, latest_version).
+        Makes no GitHub API calls, but it does go through `fetch_registry`:
+        when the in-memory copy is missing or older than
+        ``registry_cache_timeout`` it downloads plugins.json, and with no
+        network that waits out the timeout and retries. A caller that must
+        not block on the network (the installed-plugins list) uses
+        `get_cached_registry_info` instead.
 
         Args:
             plugin_id: Plugin identifier
@@ -999,3 +1004,52 @@ class _RegistryMixin:
         registry = self.fetch_registry()
         plugins = registry.get('plugins', []) or []
         return self._match_registry_entry(plugins, plugin_id)
+
+    def get_cached_registry_info(self, plugin_id: str) -> Optional[Dict]:
+        """The registry entry for ``plugin_id`` from the copy already in
+        memory, however old; never touches the network.
+
+        None when no registry has been loaded yet, or the plugin isn't in it.
+        When the copy is missing or past ``registry_cache_timeout`` this
+        starts `refresh_registry_in_background`, so a later call has it.
+        """
+        cache = getattr(self, 'registry_cache', None)
+        cache_time = getattr(self, 'registry_cache_time', None)
+        if (not cache or not cache_time
+                or (time.time() - cache_time) >= self.registry_cache_timeout):
+            self.refresh_registry_in_background()
+        plugins = cache.get('plugins') if isinstance(cache, dict) else None
+        if not isinstance(plugins, list):
+            return None
+        return self._match_registry_entry(
+            [p for p in plugins if isinstance(p, dict)], plugin_id)
+
+    def refresh_registry_in_background(self) -> bool:
+        """Fetch the registry on a daemon thread; True when one was started.
+
+        At most one runs at a time. After a fetch that left no registry in
+        memory (offline), no new one starts for ``_failure_backoff_seconds``,
+        so an offline Pi doesn't retry on every page load.
+        """
+        with self._registry_refresh_lock:
+            running = self._registry_refresh_thread
+            if running is not None and running.is_alive():
+                return False
+            if time.time() < self._registry_refresh_retry_after:
+                return False
+            thread = threading.Thread(
+                target=self._background_registry_refresh,
+                name='registry-refresh', daemon=True)
+            self._registry_refresh_thread = thread
+            thread.start()
+            return True
+
+    def _background_registry_refresh(self) -> None:
+        try:
+            self.fetch_registry()
+        except Exception as e:  # noqa: BLE001 - a background warm-up must not crash
+            self.logger.warning("Background registry refresh failed: %s", e)
+        if not getattr(self, 'registry_cache', None):
+            with self._registry_refresh_lock:
+                self._registry_refresh_retry_after = (
+                    time.time() + self._failure_backoff_seconds)
