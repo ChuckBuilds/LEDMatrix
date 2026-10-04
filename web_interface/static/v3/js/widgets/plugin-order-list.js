@@ -18,7 +18,9 @@
  *   });
  *
  * The container re-renders from /api/v3/plugins/installed each init; the
- * hidden input(s) must already hold the saved order/exclusions (JSON).
+ * hidden input(s) must already hold the saved order/exclusions (JSON). Saved
+ * ids of disabled plugins (installed, but without a row) stay in them, in
+ * their saved places; ids of plugins no longer installed are dropped.
  */
 (function() {
     'use strict';
@@ -39,17 +41,60 @@
         const excludedInput = options.excludedInputId ? document.getElementById(options.excludedInputId) : null;
         if (!container || !orderInput) return;
 
+        // The saved lists as the inputs held them when the rows were drawn.
+        // Only enabled plugins get a row, and the inputs are rewritten from
+        // the rows, so a disabled plugin's place and exclusion have to be
+        // carried over from these: dropped, the next Display or Durations
+        // save stored the lists without it, and once re-enabled it came back
+        // at the end of the rotation and scrolling in Vegas again.
+        let savedOrder = [];
+        let savedExcluded = [];
+        // Every installed plugin's id, enabled or not, from the same
+        // response. A saved id outside it belongs to an uninstalled plugin
+        // and is dropped, as every save used to; without the list, nothing
+        // is dropped.
+        let installedIds = null;
+
+        // Saved ids of installed plugins with no row, once each. Only
+        // strings: /config/main refuses a list holding anything else, which
+        // would block every save.
+        function unlisted(saved, rowIds) {
+            const seen = new Set(rowIds);
+            return saved.filter(id => {
+                if (typeof id !== 'string' || seen.has(id)) return false;
+                if (installedIds && !installedIds.has(id)) return false;
+                seen.add(id);
+                return true;
+            });
+        }
+
         function syncInputs() {
-            const order = [];
+            const rowIds = [];
             const excluded = [];
             container.querySelectorAll('.plugin-order-item').forEach(item => {
                 const pluginId = item.dataset.pluginId;
-                order.push(pluginId);
+                rowIds.push(pluginId);
                 const checkbox = item.querySelector('.plugin-order-include');
                 if (checkbox && !checkbox.checked) excluded.push(pluginId);
             });
-            orderInput.value = JSON.stringify(order);
-            if (excludedInput) excludedInput.value = JSON.stringify(excluded);
+            // An id without a row keeps its saved slot; the rows fill the
+            // other slots in their current order, and any rows left over
+            // (plugins not in the saved order) go last.
+            const kept = new Set(unlisted(savedOrder, rowIds));
+            const order = [];
+            let next = 0;
+            savedOrder.forEach(id => {
+                if (kept.has(id)) {
+                    order.push(id);
+                    kept.delete(id);
+                } else if (rowIds.includes(id) && next < rowIds.length) {
+                    order.push(rowIds[next++]);
+                }
+            });
+            orderInput.value = JSON.stringify(order.concat(rowIds.slice(next)));
+            if (excludedInput) {
+                excludedInput.value = JSON.stringify(excluded.concat(unlisted(savedExcluded, rowIds)));
+            }
         }
 
         function setupDragAndDrop() {
@@ -104,6 +149,7 @@
             .then(data => {
                 const allPlugins = (data.data && data.data.plugins) || data.plugins || [];
                 const plugins = allPlugins.filter(p => p.enabled);
+                installedIds = new Set(allPlugins.map(p => p && p.id));
                 if (plugins.length === 0) {
                     const empty = document.createElement('p');
                     empty.className = 'text-sm text-gray-500 italic';
@@ -125,6 +171,8 @@
                 // (e.g. a saved value of "null"); normalize to arrays.
                 if (!Array.isArray(currentOrder)) currentOrder = [];
                 if (!Array.isArray(excluded)) excluded = [];
+                savedOrder = currentOrder;
+                savedExcluded = excluded;
 
                 // Saved order first, then any newly enabled plugins.
                 const orderedPlugins = [];

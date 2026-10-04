@@ -17,6 +17,7 @@ const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:5000';
 const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
+              'unit/test_plugin_order_list.js',
               'unit/test_html_escaping.js', 'unit/test_style_editor_element_keys.js',
               'unit/test_style_editor_layout_leaf_columns.js',
               'unit/test_style_editor_layout_leaf_collision.js',

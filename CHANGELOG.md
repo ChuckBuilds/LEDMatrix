@@ -677,6 +677,42 @@ policies are unchanged.
   notice is what shows next, and Vegas resumes after it; before, a rotation
   screen showed instead and the notice expired behind it. An active
   on-demand session still holds the panel until it ends.
+- The Config Editor tab no longer shows API keys and tokens in plain
+  text. Its `config_secrets.json` editor (`/partials/raw-json`) was filled
+  with the file as it is on disk, so while the web login is off (the
+  default) anyone who could reach the port could read every credential,
+  although `GET /api/v3/config/secrets` masks them. The editor now shows the
+  same masked values. Saving it unchanged changes nothing, because the save
+  drops the masks and merges onto the stored file; to change a secret,
+  replace its mask. A list of secrets still needs every entry's real value
+  to be changed. The `config.json` editor is unchanged: its save writes the
+  file as given, so a mask there would be stored.
+- A disabled plugin keeps its place in the rotation order and its Vegas
+  exclusion when the Display or Rotation & Durations tab is saved. The order
+  lists show enabled plugins only and rewrite their hidden inputs from those
+  rows as soon as they are drawn, so any save of either tab stored the lists
+  without the disabled plugin. Once re-enabled, it came back at the end of
+  the rotation and scrolling in Vegas again. A disabled plugin's saved id
+  now stays in its saved place (`widgets/plugin-order-list.js`); the id of
+  a plugin that is no longer installed is still dropped.
+- Restoring a backup with "Reinstall missing plugins" installs only the
+  plugins that are missing. Every plugin the backup listed was sent to the
+  store's install, which replaces an installed copy with a fresh download,
+  so a restore onto the same device re-downloaded all of them in one
+  request. A plugin installed from its own URL is not in the registry, so
+  its "reinstall" failed and the restore answered "Restore failed" while
+  the plugin sat there installed. An installed plugin, found by the store's
+  own lookup (registry aliases included), is now listed under Skipped as
+  `plugin:<id> (installed)`.
+- `POST /api/v3/config/main` answers a JSON body that does not parse with
+  400 `Invalid JSON in request body`, as `/config/raw/main` does, and an
+  empty JSON body with 400 `No data provided`. Both were a 500
+  `CONFIG_SAVE_FAILED` suggesting file permissions and disk space, with a
+  traceback logged at ERROR: `get_json()` raised inside the handler's
+  catch-all.
+- Fonts restored from a backup show up in the Fonts tab and the font
+  pickers straight away. The font catalog is cached for five minutes, and
+  upload and delete cleared it but a restore did not.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
