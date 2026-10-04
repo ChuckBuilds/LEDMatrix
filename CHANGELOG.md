@@ -542,9 +542,9 @@ policies are unchanged.
   text, because it had never reached config_secrets.json to be stripped.
   The form also reloaded showing the refused values. `load_config()` now
   returns a private copy, and the saves keep one, so nothing a caller edits
-  reaches the cache unless it is saved. The copy is a pickle round trip:
-  2.0 ms for a real 64 KiB config on a Pi 4, against 6.9 ms for
-  `copy.deepcopy`.
+  reaches the cache unless it is saved. The copy duplicates only the dicts
+  and lists (every other JSON value is immutable): 2.1 ms for a real 60 KiB
+  config on a Pi 4, against 6.8 ms for `copy.deepcopy`.
 - `GET /api/v3/plugins/config` no longer returns secrets. It sent back the
   plugin's section with config_secrets.json merged in, API keys and tokens
   in plain text: the masking #276 added was dropped in #330. It also took
