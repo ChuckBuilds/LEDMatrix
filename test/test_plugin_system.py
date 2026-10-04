@@ -189,6 +189,24 @@ class TestPluginExecutor:
         
         assert result is False
 
+    def test_a_base_exception_is_a_failure_not_a_timeout(self):
+        """asyncio.CancelledError derives from BaseException. Uncaught on
+        the executor's thread it ended the thread with the call never marked
+        complete, so a call that failed at once was reported, and recorded,
+        as timing out."""
+        import asyncio
+        import pytest
+        from src.exceptions import PluginError
+        from src.plugin_system.plugin_executor import PluginExecutor
+        executor = PluginExecutor(default_timeout=5.0)
+
+        def cancelled():
+            raise asyncio.CancelledError()
+
+        with pytest.raises(PluginError) as raised:
+            executor.execute_with_timeout(cancelled, plugin_id="test_plugin")
+        assert isinstance(raised.value.__cause__, asyncio.CancelledError)
+
 
 class TestPluginHealth:
     """Test plugin health monitoring."""

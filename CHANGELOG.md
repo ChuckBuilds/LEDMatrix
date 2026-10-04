@@ -547,6 +547,13 @@ policies are unchanged.
   failed" even when it had no `requirements.txt`. The check now looks for the
   entry the path itself names in the plugins directory, the link, and still
   only ever answers with an entry it found there.
+- A plugin whose `update()` raises `asyncio.CancelledError` or `SystemExit`
+  no longer goes dark until a restart. Both derive from `BaseException`, not
+  `Exception`, and the update worker's bookkeeping caught only `Exception`:
+  the plugin kept its lock and stayed RUNNING, so it was never updated again
+  and every `display()` was skipped as busy. It is now recorded as that
+  update's failure, the same as any other raise. The plugin executor
+  reported such a call as a timeout; it now reports it as a failure.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
