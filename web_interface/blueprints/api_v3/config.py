@@ -17,6 +17,8 @@ from src.pi5_matrix_support import is_raspberry_pi_5
 from web_interface.cache import invalidate_cache
 from web_interface.auth import SECTION as _WEB_AUTH_SECTION, strip_auth_section
 import web_interface.blueprints.api_v3 as _pkg
+import copy
+from typing import Any, Dict, Iterable, Tuple
 
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -32,6 +34,50 @@ FORM_SECTION_FIELD = '__form_section'
 #: General form was submitted, so its unchecked checkboxes read as False.
 GENERAL_FIELDS = ('timezone', 'city', 'state', 'country', 'web_display_autostart',
                   'plugins_directory', 'auto_update_enabled', 'auto_update_channel')
+
+#: Settings in config.json the running display applies without a restart,
+#: as key paths (a path covers everything under it). Brightness goes over the
+#: control socket (brightness.set) and the config watcher's refresh
+#: (DisplayController._refresh_config_cache); the per-mode durations are read
+#: from the live config each time a mode starts (_get_display_duration).
+#: Plugin sections are live as well (each plugin's on_config_change), and
+#: save_main_config adds the ones a request saves.
+LIVE_CONFIG_PATHS: Tuple[Tuple[str, ...], ...] = (
+    ('display', 'hardware', 'brightness'),
+    ('display', 'display_durations'),
+)
+
+
+_MISSING = object()
+
+
+def _config_leaves(config: Any, prefix: Tuple[str, ...] = ()) -> Dict[Tuple[str, ...], Any]:
+    """Every non-dict value in ``config``, by key path. An empty dict has none,
+    so a section created empty on the way to a field is not a change."""
+    if not isinstance(config, dict):
+        return {prefix: config}
+    leaves: Dict[Tuple[str, ...], Any] = {}
+    for key, value in config.items():
+        leaves.update(_config_leaves(value, prefix + (str(key),)))
+    return leaves
+
+
+def restart_needed(before: Dict[str, Any], after: Dict[str, Any],
+                   live_paths: Iterable[Tuple[str, ...]] = LIVE_CONFIG_PATHS) -> bool:
+    """Does going from config ``before`` to ``after`` need a display restart?
+
+    True when anything changed outside ``live_paths``. A save that changes
+    only live settings, or nothing at all, does not.
+    """
+    live = tuple(live_paths)
+    old, new = _config_leaves(before), _config_leaves(after)
+    for path in set(old) | set(new):
+        if old.get(path, _MISSING) == new.get(path, _MISSING):
+            continue
+        if not any(path[:len(prefix)] == prefix for prefix in live):
+            return True
+    return False
+
 
 #: Top-level fields save_main_config stores somewhere of its own (location,
 #: plugin_system, ...), never as a config key of the same name.
@@ -70,6 +116,22 @@ def _day_setting(data, day, flat_key, nested_key):
     if isinstance(day_config, dict) and nested_key in day_config:
         return True, day_config[nested_key]
     return False, None
+
+
+def _disabled_day_times(data, day, start_key, end_key):
+    """The times posted for a day that is off, the valid ones.
+
+    Nothing reads them while the day is off, but the schedule picker posts
+    them and GET returns them, so keeping them means turning the day back on
+    finds what was there. An invalid one is dropped rather than refused, for
+    the same reason.
+    """
+    times = {}
+    for field, key in (('start_time', start_key), ('end_time', end_key)):
+        value = _day_setting(data, day, key, field)[1]
+        if value and _validate_time_format(value)[0]:
+            times[field] = value
+    return times
 
 
 @api_v3.route('/config/main', methods=['GET'])
@@ -257,11 +319,16 @@ def save_schedule_config():
 
                     day_config['start_time'] = start_time
                     day_config['end_time'] = end_time
+                else:
+                    day_config.update(_disabled_day_times(data, day, start_key, end_key))
 
                 schedule_config['days'][day] = day_config
 
-            # Validate that at least one day is enabled in per-day mode
-            if enabled_days_count == 0:
+            # An enabled per-day schedule needs a day to be on. A disabled
+            # one does not: every day off with the schedule off is what
+            # config.template.json ships, so refusing it meant a fresh
+            # install could not post back the schedule GET returned.
+            if enabled_days_count == 0 and enabled_value:
                 return error_response(
                     ErrorCode.VALIDATION_ERROR,
                     "At least one day must be enabled in per-day schedule mode",
@@ -465,11 +532,13 @@ def save_dim_schedule_config():
 
                     day_config['start_time'] = start_time
                     day_config['end_time'] = end_time
+                else:
+                    day_config.update(_disabled_day_times(data, day, start_key, end_key))
 
                 dim_schedule_config['days'][day] = day_config
 
-            # Validate that at least one day is enabled in per-day mode
-            if enabled_days_count == 0:
+            # As for the on/off schedule: only an enabled one needs a day on.
+            if enabled_days_count == 0 and enabled_value:
                 return error_response(
                     ErrorCode.VALIDATION_ERROR,
                     "At least one day must be enabled in per-day dim schedule mode",
@@ -557,6 +626,8 @@ def save_main_config():
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
+        # What was stored, to tell which settings this save changed.
+        stored_config = copy.deepcopy(current_config)
         was_auto_update_enabled = bool((current_config.get('auto_update') or {}).get('enabled'))
 
         is_general_update = any(k in data for k in GENERAL_FIELDS)
@@ -1194,13 +1265,15 @@ def save_main_config():
                 message = f'{message}. {note}'
         except Exception:
             logger.warning("Automatic update setup could not be started", exc_info=True)
-        # Display hardware, rotation/durations and general settings take
-        # effect after a display restart; the UI shows its restart banner on
-        # this flag.
-        extra = {'restart_required': True}
-        # Brightness is the exception: the display applies a saved one
-        # without a restart. Over the control socket it lands at once,
-        # instead of when the config watcher next looks (up to ~2 s).
+        # Display hardware, rotation order and general settings take effect
+        # after a display restart; the UI shows its restart banner on this
+        # flag. Brightness, mode durations and plugin settings are applied by
+        # the running display (LIVE_CONFIG_PATHS), so a save that changed
+        # only those -- or nothing -- does not ask for one.
+        live_paths = LIVE_CONFIG_PATHS + tuple((plugin_id,) for plugin_id in plugin_keys_to_remove)
+        extra = {'restart_required': restart_needed(stored_config, current_config, live_paths)}
+        # Over the control socket a saved brightness lands at once, instead
+        # of when the config watcher next looks (up to ~2 s).
         if 'brightness' in data:
             saved = (current_config.get('display', {}).get('hardware', {}) or {}).get('brightness')
             if isinstance(saved, int) and not isinstance(saved, bool):

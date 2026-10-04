@@ -670,14 +670,14 @@ class TestCallerIdentity:
         assert _counters(global_service, plugin="football-scoreboard")["requests"] == 1
 
     def test_espn_chunks_on_worker_threads_count_against_the_caller(self, global_service):
-        from src.common.espn_dates import espn_date_chunks, fetch_espn_date_chunks, parse_espn_date_range
+        from src.common.espn_dates import espn_request_chunks, fetch_espn_date_chunks, parse_espn_date_range
 
         session = FakeSession(lambda url, kw: make_response(body=b'{"events": []}', url=url))
         dates = "20260801-20261015"
         with plugin_scope("baseball-scoreboard"):
             fetch_espn_date_chunks(session, "https://site.api.espn.com/s/scoreboard",
                                    params={"dates": dates})
-        chunks = len(espn_date_chunks(*parse_espn_date_range(dates)))
+        chunks = len(espn_request_chunks(*parse_espn_date_range(dates)))
         assert chunks > 1
         assert len(session.calls) == chunks
         assert _counters(global_service, plugin="baseball-scoreboard")["requests"] == chunks

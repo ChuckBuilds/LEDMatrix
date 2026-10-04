@@ -19,6 +19,44 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixed
+
+- The web preview and `/api/v3/display/current` no longer stay black for a
+  whole screen that draws its card once and then holds it. The snapshot is
+  written from `update_display()` at most once per write interval, so a frame
+  pushed inside that interval was skipped and left for the next
+  `update_display()` -- which such a screen never makes. Soccer's
+  recent/upcoming cards skip redundant redraws, and the first one after an
+  on-demand start lands a few milliseconds after the start's clear wrote a
+  black frame: on ledpi the preview showed 0 lit pixels for the whole 15 s
+  while the panel showed the card. `DisplayManager` now remembers a skipped
+  changed frame, and the render loop writes it (`write_owed_snapshot()`)
+  once the interval has passed. The cadence is unchanged, and nothing extra
+  runs when no frame is owed.
+
+### ESPN date-range fetches: fewer requests, fewer at once
+
+A soccer board (8 leagues, ESPN rejecting `dates=` ranges) logged ~90
+`NameResolutionError` lines and an `update() timed out` at every start on a
+Pi: each league's fortnight-either-side window was 29 day requests, fetched
+by several managers at once, ~40 in flight. Measured against live ESPN with
+soccer-scoreboard 2.39.2, alternating runs: **~450 requests per start, peak
+~45 in flight, ~75 DNS lookups -> 46 requests, peak 13, ~30 lookups**.
+
+- `fetch_espn_date_chunks()` asks for a window's partial edge month whole
+  when the window covers `ESPN_MONTH_COVER_MIN_DAYS` (7) or more of its days,
+  and trims the answer to the window's days by each event's US Eastern start
+  date -- the day ESPN's `dates=YYYYMMDD` means (417 of 417 live soccer
+  events matched). A 29-day window spanning two months is 2 requests instead
+  of 29. Short windows (a live poll's 1-2 days) stay day by day. A trimmed
+  month that comes back at the 500-event cap re-asks only the window's days.
+  An event with no readable date is kept. New: `espn_request_chunks()`.
+- Chunk requests share one process-wide cap of `ESPN_CHUNK_WORKERS` (6) in
+  flight, across every window being fetched, instead of six per window.
+- A new process starts as if a range had just been rejected, so it no longer
+  spends one doomed 400 per window at every start (eleven at once from a
+  soccer board); the range is still retried `RANGE_RETRY_SECONDS` in.
+
 ### Cheap per-frame and per-fetch savings
 
 - `BaseOddsManager.get_odds()` no longer pretty-prints every odds response
@@ -525,6 +563,34 @@ policies are unchanged.
   now ends at startup with status `error` and error `restore-failed`, which
   `/display/on-demand/status` reports, and the cached request is dropped. The
   same applies when the plugin system itself fails to start.
+- `POST /api/v3/config/schedule` and `/config/dim-schedule` accept a
+  disabled per-day schedule with every day off. That is the shape
+  `config.template.json` ships, so posting back what GET returned on a fresh
+  install answered 400 "At least one day must be enabled". An enabled per-day
+  schedule still needs a day on. A day that is off now keeps the times it
+  was posted with (the schedule picker sends them). Before, saving dropped
+  them, so turning the day back on showed the defaults.
+- `POST /api/v3/config/main` answers `restart_required: true` only when the
+  save changed a setting the running display does not apply by itself.
+  Brightness (`brightness.set` and the config watcher), the per-mode
+  durations and plugin sections are applied live. A brightness-only save,
+  such as the MQTT bridge's slider, or a save that changed nothing, no longer
+  shows the restart banner. Hardware, rotation order, timezone and every
+  other setting still ask for the restart.
+- `GET /api/v3/health` reports `degraded` when the display service is
+  stopped. Before, only the sub-checks changed, and the overall status stayed
+  `healthy` for as long as the last preview frame was under 60 s old.
+  `checks.display_loop.status` is now `stopped` when three things agree:
+  systemd says the service is not active, the control socket does not
+  answer, and there is no live heartbeat. Where the platform has no socket
+  (Windows) or it is switched off, nothing changes.
+- `GET /api/v3/display/current-status` no longer reports the stopped
+  display's last state (`is_display_active: true`) from the cache for up to
+  120 s. When the control socket does not answer and the render loop's
+  heartbeat is absent, stale, or from a process that is gone (#726's rules),
+  the answer is unknown, with every field `null`. A display that still beats
+  without a socket, Windows and a socket switched off read the cache as
+  before. New `web_interface.display_state.display_gone()`.
 - The garbage-collection timer (`GcMonitor`, above) no longer prints
   `Exception ignored while calling GC callback ... 'NoneType' object has no
   attribute 'perf_counter'` when the display service or a test run exits.
