@@ -69,6 +69,26 @@ def _deliver_on_demand(payload):
     return 'mailbox', reason
 
 
+def _withdraw_on_demand(request_id):
+    """Take a start request the route has refused back out of the mailbox.
+
+    The display reads the mailbox for an hour without looking at a
+    request's age, so one left there after an error answer ran whenever the
+    display next started. Only this request is removed: the mailbox is
+    re-read and cleared only while it still holds this request_id, as the
+    display's _consume_on_demand_request does, so a newer request posted in
+    the meantime stays for the display to take.
+    """
+    cache = _cache_manager()
+    try:
+        current = cache.get('display_on_demand_request', max_age=3600, memory_ttl=0)
+        if isinstance(current, dict) and current.get('request_id') == request_id:
+            cache.delete('display_on_demand_request')
+    except Exception:  # the route is answering an error already
+        logger.warning("Could not withdraw on-demand request %s from the mailbox",
+                       request_id, exc_info=True)
+
+
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
     """The latest display preview, as the /stream/display SSE stream sends it.
@@ -242,6 +262,18 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
+    # Checked before anything is delivered: a request posted and then
+    # refused here stayed in the mailbox and ran when the display was next
+    # started, long after the caller was told it had failed.
+    service_status = _get_display_service_status()
+
+    if not service_status.get('active') and not start_service:
+        return jsonify({
+            'status': 'error',
+            'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
+            'service_status': service_status
+        }), 400
+
     # Deliver the request over the control socket, or post it to the
     # mailbox the display process polls (DisplayController.
     # _poll_on_demand_requests). Done before any service start: a stopped
@@ -258,15 +290,6 @@ def start_on_demand_display():
         'timestamp': _pkg.time.time()
     }
     transport, socket_error = _deliver_on_demand(request_payload)
-
-    service_status = _get_display_service_status()
-
-    if not service_status.get('active') and not start_service:
-        return jsonify({
-            'status': 'error',
-            'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
-            'service_status': service_status
-        }), 400
 
     # start_service means "start it if it is not running", as the UI's
     # checkbox says; _ensure_display_service_running leaves a running service
@@ -285,6 +308,8 @@ def start_on_demand_display():
         service_result = _ensure_display_service_running()
         # Check if service actually started
         if service_result and not service_result.get('active'):
+            if transport == 'mailbox':
+                _withdraw_on_demand(request_id)
             return jsonify({
                 'status': 'error',
                 'message': 'Failed to start display service. Please check service logs or start it manually.',

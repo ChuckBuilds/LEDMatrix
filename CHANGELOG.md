@@ -557,6 +557,16 @@ policies are unchanged.
   turning a category on or off in of-the-day always failed. The params now
   reach the wrapper on its stdin; the script still receives them as JSON on
   its own stdin, as before.
+- An on-demand request that `/api/v3/display/on-demand/start` refuses no
+  longer runs later. The route posted the request to the display's mailbox
+  before checking the service, and the display reads that mailbox for an
+  hour without looking at a request's age. So with "Start display service"
+  unticked and the display stopped, the answer was "Display service is not
+  running", yet the next time the display was started it ran that plugin,
+  pinned if the request said so. The same happened after "Failed to start
+  display service". The route now checks the service first and posts
+  nothing when it refuses, and a request it posted before a failed start is
+  taken back out of the mailbox, unless a newer one has replaced it.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end

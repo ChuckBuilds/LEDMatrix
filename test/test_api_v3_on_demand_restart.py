@@ -150,6 +150,66 @@ class TestStartWhileTheServiceIsStopped:
         assert response.get_json()["status"] == "error"
 
 
+class _Mailbox:
+    """The CacheManager calls the routes make, over a dict."""
+
+    def __init__(self):
+        self.entries = {}
+
+    def set(self, key, value, ttl=None):
+        self.entries[key] = value
+
+    def get(self, key, max_age=300, memory_ttl=None):
+        return self.entries.get(key)
+
+    def delete(self, key):
+        self.entries.pop(key, None)
+
+
+class TestARefusedStartLeavesNoRequestBehind:
+    """A start the route answers with an error must not run later.
+
+    The request used to be posted before the service was checked, and the
+    display reads the mailbox for an hour without looking at a request's
+    age. So "Display service is not running" (start_service off) or "Failed
+    to start display service" left the request waiting, and the next time
+    the display started -- minutes later, by hand -- it ran that plugin,
+    pinned if the request said so.
+    """
+
+    @pytest.fixture
+    def mailbox(self, api_v3_module, service):
+        box = _Mailbox()
+        api_v3_module.api_v3.cache_manager = box
+        service["state"]["active"] = False
+        return box
+
+    def test_without_start_service_nothing_is_posted(self, api_v3_client, service, mailbox):
+        response = api_v3_client.post(START_URL, json={
+            "plugin_id": "weather", "pinned": True, "start_service": False})
+        assert response.status_code == 400
+        assert MAILBOX not in mailbox.entries
+
+    def test_a_start_that_fails_takes_its_request_back(self, api_v3_client, service, mailbox):
+        service["systemctl"].side_effect = lambda args: {
+            "returncode": 1, "stdout": "", "stderr": "denied"}
+        response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+        assert response.status_code == 500
+        assert MAILBOX not in mailbox.entries
+
+    def test_a_newer_request_in_the_mailbox_is_left_alone(self, api_v3_client, service, mailbox):
+        newer = {"request_id": "someone-else", "action": "start", "plugin_id": "clock"}
+
+        def start_fails_after_another_post(args):
+            mailbox.entries[MAILBOX] = newer
+            return {"returncode": 1, "stdout": "", "stderr": "denied"}
+
+        service["systemctl"].side_effect = start_fails_after_another_post
+        response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+        assert response.status_code == 500
+        assert mailbox.entries[MAILBOX] is newer
+
+
 class TestStop:
     def test_stop_posts_a_stop_request_and_leaves_the_service_running(
             self, api_v3_client, service):
