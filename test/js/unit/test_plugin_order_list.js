@@ -6,9 +6,10 @@
 // and its Vegas exclusion used to vanish from the inputs on that rewrite, so
 // any later save of the Display or Rotation & Durations tab stored them
 // without it: re-enabled, the plugin came back at the end of the rotation and
-// scrolling in Vegas again. Runs the shipped widget in a vm with a minimal
-// fake DOM -- no jsdom and no server needed, so it runs under
-// test/test_js_unit_suites.py too.
+// scrolling in Vegas again. An uninstalled plugin's id is still dropped, as
+// before, so the lists don't collect ids nothing can show. Runs the shipped
+// widget in a vm with a minimal fake DOM -- no jsdom and no server needed, so
+// it runs under test/test_js_unit_suites.py too.
 
 const fs = require('fs');
 const path = require('path');
@@ -71,7 +72,7 @@ class FakeElement {
 }
 
 /** Run the widget over `plugins` with the given saved inputs; resolves once it has drawn. */
-async function mount({ plugins, order, excluded }) {
+async function mount({ plugins, order, excluded, fetchFails }) {
   const els = {
     list: new FakeElement('div'),
     order: Object.assign(new FakeElement('input'), { value: JSON.stringify(order) }),
@@ -80,16 +81,17 @@ async function mount({ plugins, order, excluded }) {
     els.excluded = Object.assign(new FakeElement('input'), { value: JSON.stringify(excluded) });
   }
   const context = {
-    console,
+    // The widget logs a failed list; expected there, so kept off the output.
+    console: fetchFails ? Object.assign({}, console, { error: () => {} }) : console,
     window: {},
     document: {
       getElementById: (id) => els[id] || null,
       createElement: (tag) => new FakeElement(tag),
       createTextNode: (text) => new FakeElement('#text'),
     },
-    fetch: () => Promise.resolve({
+    fetch: () => (fetchFails ? Promise.reject(new Error('service restarting')) : Promise.resolve({
       json: () => Promise.resolve({ status: 'success', data: { plugins } }),
-    }),
+    })),
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(WIDGET, 'utf8'), context);
@@ -150,6 +152,25 @@ const PLUGINS = [
     const t = await mount({ plugins, order: ['clock', 'off', 'weather'] });
     ok('the disabled plugin keeps its slot; a plugin not in the saved order goes last',
        same(t.order(), ['clock', 'off', 'weather', 'new']), t.order());
+  }
+
+  console.log('\nAn uninstalled plugin is dropped; a failed list keeps everything');
+  {
+    const t = await mount({ plugins: PLUGINS, order: ['weather', 'gone', 'clock', 'stocks'],
+                            excluded: ['gone', 'clock'] });
+    ok('the disabled plugin is kept and the uninstalled one dropped from the order',
+       same(t.order(), ['weather', 'clock', 'stocks']), t.order());
+    ok('and from the exclusions', same(t.excluded(), ['clock']), t.excluded());
+  }
+  {
+    const t = await mount({ plugins: PLUGINS, order: ['weather', 'gone', 'clock', 'stocks'],
+                            excluded: ['gone', 'clock'], fetchFails: true });
+    // No installed list, so nothing can be told apart: no rows, and the
+    // inputs keep what was saved, uninstalled ids included.
+    ok('a failed plugin list draws no rows', t.rowIds().length === 0, t.rowIds());
+    ok('and leaves the saved order as it was',
+       same(t.order(), ['weather', 'gone', 'clock', 'stocks']), t.order());
+    ok('and the saved exclusions', same(t.excluded(), ['gone', 'clock']), t.excluded());
   }
 
   console.log('\nOnly what the server would accept is carried over');

@@ -555,8 +555,9 @@ policies are unchanged.
   lists show enabled plugins only and rewrite their hidden inputs from those
   rows as soon as they are drawn, so any save of either tab stored the lists
   without the disabled plugin. Once re-enabled, it came back at the end of
-  the rotation and scrolling in Vegas again. Saved ids without a row now
-  stay in their saved places (`widgets/plugin-order-list.js`).
+  the rotation and scrolling in Vegas again. A disabled plugin's saved id
+  now stays in its saved place (`widgets/plugin-order-list.js`); the id of
+  a plugin that is no longer installed is still dropped.
 - Restoring a backup with "Reinstall missing plugins" installs only the
   plugins that are missing. Every plugin the backup listed was sent to the
   store's install, which replaces an installed copy with a fresh download,

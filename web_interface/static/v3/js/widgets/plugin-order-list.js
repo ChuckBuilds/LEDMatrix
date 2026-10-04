@@ -19,7 +19,8 @@
  *
  * The container re-renders from /api/v3/plugins/installed each init; the
  * hidden input(s) must already hold the saved order/exclusions (JSON). Saved
- * ids without a row (disabled plugins) stay in them, in their saved places.
+ * ids of disabled plugins (installed, but without a row) stay in them, in
+ * their saved places; ids of plugins no longer installed are dropped.
  */
 (function() {
     'use strict';
@@ -48,13 +49,20 @@
         // at the end of the rotation and scrolling in Vegas again.
         let savedOrder = [];
         let savedExcluded = [];
+        // Every installed plugin's id, enabled or not, from the same
+        // response. A saved id outside it belongs to an uninstalled plugin
+        // and is dropped, as every save used to; without the list, nothing
+        // is dropped.
+        let installedIds = null;
 
-        // Saved ids with no row, once each. Only strings: /config/main
-        // refuses a list holding anything else, which would block every save.
+        // Saved ids of installed plugins with no row, once each. Only
+        // strings: /config/main refuses a list holding anything else, which
+        // would block every save.
         function unlisted(saved, rowIds) {
             const seen = new Set(rowIds);
             return saved.filter(id => {
                 if (typeof id !== 'string' || seen.has(id)) return false;
+                if (installedIds && !installedIds.has(id)) return false;
                 seen.add(id);
                 return true;
             });
@@ -141,6 +149,7 @@
             .then(data => {
                 const allPlugins = (data.data && data.data.plugins) || data.plugins || [];
                 const plugins = allPlugins.filter(p => p.enabled);
+                installedIds = new Set(allPlugins.map(p => p && p.id));
                 if (plugins.length === 0) {
                     const empty = document.createElement('p');
                     empty.className = 'text-sm text-gray-500 italic';
