@@ -34,8 +34,8 @@
  *
  * Layout: a few handlers defined up front, outside any IIFE, because the
  * cards and other scripts call them through window (configurePlugin,
- * togglePlugin, the GitHub token helpers, handleGitHubPluginInstall,
- * checkGitHubAuthStatus); then the plugin-manager IIFE (private state:
+ * togglePlugin, the GitHub token helpers, checkGitHubAuthStatus); then the
+ * plugin-manager IIFE (private state:
  * installedPlugins, the store cache, the on-demand poller); then the
  * Starlark IIFE.
  *
@@ -385,103 +385,6 @@ window.toggleGithubTokenContent = function(e) {
         debugLog('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
     }
 };
-
-// Simple standalone handler for GitHub plugin installation
-// Defined early and globally to ensure it's always available
-debugLog('[DEFINE] Defining handleGitHubPluginInstall function...');
-window.handleGitHubPluginInstall = function() {
-    debugLog('[handleGitHubPluginInstall] Function called!');
-
-    const urlInput = document.getElementById('github-plugin-url');
-    const statusDiv = document.getElementById('github-plugin-status');
-    const branchInput = document.getElementById('plugin-branch-input');
-    const installBtn = document.getElementById('install-plugin-from-url');
-
-    if (!urlInput) {
-        console.error('[handleGitHubPluginInstall] URL input not found');
-        alert('Error: Could not find URL input field');
-        return;
-    }
-
-    const repoUrl = urlInput.value.trim();
-    debugLog('[handleGitHubPluginInstall] Repo URL:', repoUrl);
-
-    if (!repoUrl) {
-        if (statusDiv) {
-            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
-        }
-        return;
-    }
-
-    if (!isGithubUrl(repoUrl)) {
-        if (statusDiv) {
-            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
-        }
-        return;
-    }
-
-    // Disable button and show loading
-    if (installBtn) {
-        installBtn.disabled = true;
-        installBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
-    }
-    if (statusDiv) {
-        statusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
-    }
-
-    const branch = branchInput?.value?.trim() || null;
-    const requestBody = { repo_url: repoUrl };
-    if (branch) {
-        requestBody.branch = branch;
-    }
-
-    debugLog('[handleGitHubPluginInstall] Sending request:', requestBody);
-
-    fetch('/api/v3/plugins/install-from-url', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-    })
-    .then(response => {
-        debugLog('[handleGitHubPluginInstall] Response status:', response.status);
-        return response.json();
-    })
-    .then(data => {
-        debugLog('[handleGitHubPluginInstall] Response data:', data);
-        if (data.status === 'success') {
-            if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.LEDEscape.html(data.plugin_id)}</span>`;
-            }
-            urlInput.value = '';
-
-            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
-            window.noteRestartRequired(data);
-
-            setTimeout(() => window.pluginManager.loadInstalledPlugins(true).catch(() => {}), 1000);
-        } else {
-            if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
-            }
-            showNotification(data.message || 'Installation failed', 'error');
-        }
-    })
-    .catch(error => {
-        console.error('[handleGitHubPluginInstall] Error:', error);
-        if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
-        }
-        showNotification('Error installing plugin: ' + error.message, 'error');
-    })
-    .finally(() => {
-        if (installBtn) {
-            installBtn.disabled = false;
-            installBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
-        }
-    });
-};
-debugLog('[DEFINE] handleGitHubPluginInstall defined and ready');
 
 // GitHub Authentication Status - Define early so it's available in IIFE
 // Shows warning banner only when token is missing or invalid

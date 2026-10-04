@@ -125,6 +125,7 @@ function create({ route } = {}) {
                warn: () => {}, info: () => {}, debug: () => {} },
     debugLog: () => {},
     addEventListener() {},
+    URL,
     document: {
       readyState: 'loading',
       body: { addEventListener() {} },

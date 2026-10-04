@@ -597,6 +597,11 @@ policies are unchanged.
   be filtered to, and "Financial" missed the plugin filed under "finance".
   The choices are now built from the store's plugins, as the Starlark
   section's are.
+- The Install button under Install Single Plugin (Plugin Manager > Install
+  from GitHub) runs one handler per click. It also had an inline `onclick`
+  whose handler threw a `ReferenceError` on every click; only the other
+  handler's request went out, and making the inline one work would have
+  sent every install twice. The inline handler is gone.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render
