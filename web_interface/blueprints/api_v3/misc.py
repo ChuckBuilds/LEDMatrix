@@ -135,7 +135,8 @@ def get_health():
 
         # A stopped display service. The heartbeat's absence alone says
         # nothing (the dev server, the emulator and Windows write none), so
-        # the overall status stayed "healthy" with the display down. Together
+        # the overall status stayed "healthy" with the display down until the
+        # last preview frame it left aged past 60 s (hardware: stale). Together
         # the three signals are definite: systemd says the service is not
         # active, the control socket does not answer, and there is no live
         # heartbeat (display_state.display_gone, which is never true where
