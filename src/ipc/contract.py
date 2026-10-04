@@ -149,12 +149,13 @@ class Command:
     PLUGIN_RELOAD = 'plugin.reload'
     STATE_GET = 'state.get'
     STATE_SUBSCRIBE = 'state.subscribe'
+    ERRORS_CLEAR = 'errors.clear'
 
 
 #: Every command version 1 defines, in the order ``hello`` reports them.
-#: ``brightness.set`` and ``plugin.reload`` came in stage 2, and ``state.get``
-#: and ``state.subscribe`` in stage 3, all within version 1 (see the module
-#: docstring on adding commands).
+#: ``brightness.set`` and ``plugin.reload`` came in stage 2, ``state.get``
+#: and ``state.subscribe`` in stage 3, and ``errors.clear`` in stage 4, all
+#: within version 1 (see the module docstring on adding commands).
 COMMANDS: Tuple[str, ...] = (
     Command.HELLO,
     Command.PING,
@@ -165,7 +166,14 @@ COMMANDS: Tuple[str, ...] = (
     Command.PLUGIN_RELOAD,
     Command.STATE_GET,
     Command.STATE_SUBSCRIBE,
+    Command.ERRORS_CLEAR,
 )
+
+#: Commands the connection thread answers itself, through a handler the
+#: display registers (``ControlServer(handlers=...)``), because they touch
+#: nothing the render thread owns. A display that registered none answers
+#: ``unknown_command``, and the client falls back as from an older display.
+DIRECT_COMMANDS = frozenset({Command.ERRORS_CLEAR})
 
 #: Commands that are queued for the render thread.
 QUEUED_COMMANDS = frozenset({Command.ON_DEMAND_START, Command.ON_DEMAND_STOP,
@@ -565,8 +573,32 @@ class StateSubscribeArgs:
         return cls()
 
 
+@dataclass(frozen=True)
+class ErrorsClearArgs:
+    """``errors.clear``: forget the plugin errors recorded at or before
+    ``cutoff`` (seconds since the epoch), as ``POST /api/v3/errors/clear``
+    asks. The request id is the clear's id, which the display's error
+    snapshot then reports as ``applied_clear_id``.
+    """
+    cutoff: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'cutoff': self.cutoff}
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'ErrorsClearArgs':
+        value = args.get('cutoff')
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ProtocolError(ErrorCode.INVALID_ARGS, 'cutoff must be a number of seconds')
+        if not math.isfinite(value) or value < 0:
+            raise ProtocolError(ErrorCode.INVALID_ARGS,
+                                'cutoff must be a finite, non-negative number of seconds')
+        return cls(cutoff=float(value))
+
+
 CommandArgs = Union[HelloArgs, OnDemandStartArgs, OnDemandStopArgs, NoArgs,
-                    BrightnessSetArgs, PluginReloadArgs, StateGetArgs, StateSubscribeArgs]
+                    BrightnessSetArgs, PluginReloadArgs, StateGetArgs, StateSubscribeArgs,
+                    ErrorsClearArgs]
 
 #: The arguments of a command that goes on the render thread's queue.
 QueuedArgs = Union[OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs]
@@ -581,6 +613,7 @@ _ARG_TYPES: Dict[str, Any] = {
     Command.PLUGIN_RELOAD: PluginReloadArgs,
     Command.STATE_GET: StateGetArgs,
     Command.STATE_SUBSCRIBE: StateSubscribeArgs,
+    Command.ERRORS_CLEAR: ErrorsClearArgs,
 }
 
 
@@ -651,6 +684,13 @@ class PluginReloadResult(TypedDict):
     reloaded: bool
     version: Optional[str]
     modes: List[str]
+
+
+class ErrorsClearResult(TypedDict):
+    """``errors.clear``, once applied and the error snapshot republished."""
+    request_id: str
+    cutoff: float
+    cleared: int
 
 
 class LoopState(TypedDict):

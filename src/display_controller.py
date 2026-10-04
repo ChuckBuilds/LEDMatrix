@@ -42,7 +42,7 @@ from src.display_arbiter import (
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
 from src.config_service import ConfigService
-from src.cache_manager import CacheManager
+from src.cache_manager import CacheManager, MailboxWatch
 from src.font_manager import FontManager
 from src.logging_config import get_logger
 from src.exceptions import PluginError
@@ -61,6 +61,10 @@ from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
 logger = get_logger(__name__)
+
+# The on-demand file mailbox: the fallback for a web interface that cannot
+# reach the control socket, and how some plugins still ask for the screen.
+ON_DEMAND_MAILBOX_KEY = 'display_on_demand_request'
 
 # How often the unchanged current mode is republished for the web UI, which
 # treats display_current_state older than 120 s as unknown.
@@ -1776,15 +1780,26 @@ class DisplayController:
     #: perceptible, and it cuts the read rate by 30x.
     ON_DEMAND_POLL_INTERVAL = 0.25
 
-    #: Shortest gap between _service_pending_changes passes. The same floor as
-    #: the mailbox poll, since that read is the only real cost in the pass:
-    #: the schedule checks are gated to once per clock minute and the rest is
-    #: attribute compares. Callers run at frame rate, so between passes the
-    #: whole cost is one monotonic-clock compare.
-    PENDING_CHANGES_INTERVAL = ON_DEMAND_POLL_INTERVAL
+    #: The mailbox poll while the control socket is up. The web interface then
+    #: writes the mailbox only when it could not reach the socket (a display
+    #: being restarted, a web user not yet in the socket's group), and the
+    #: plugins that still write it get the screen within this long. A look is
+    #: one stat() of the mailbox file (MailboxWatch).
+    MAILBOX_POLL_INTERVAL_WITH_SOCKET = 1.0
 
-    #: Class-level default for controllers built without __init__ (tests).
+    #: Shortest gap between _service_pending_changes passes. The same floor
+    #: the mailbox poll had before the socket, since that read was the only
+    #: real cost in the pass: the schedule checks are gated to once per clock
+    #: minute and the rest is attribute compares. Callers run at frame rate,
+    #: so between passes the whole cost is one monotonic-clock compare.
+    PENDING_CHANGES_INTERVAL = 0.25
+
+    #: Class-level defaults for controllers built without __init__ (tests).
     _control_server: Optional[ControlServer] = None
+    #: Created on the first poll; see _poll_on_demand_requests.
+    _on_demand_mailbox: Optional[MailboxWatch] = None
+    #: Writers whose mailbox requests have been logged (_note_mailbox_request).
+    _mailbox_writers_logged: FrozenSet[str] = frozenset()
 
     def _service_pending_changes(self) -> None:
         """Apply changes made elsewhere while the display thread is busy.
@@ -1945,10 +1960,10 @@ class DisplayController:
         processed_id still guards against reprocessing if the delete fails.
         """
         try:
-            current = self.cache_manager.get('display_on_demand_request',
+            current = self.cache_manager.get(ON_DEMAND_MAILBOX_KEY,
                                              max_age=3600, memory_ttl=0)
             if not current or current.get('request_id') == request_id:
-                self.cache_manager.delete('display_on_demand_request')
+                self.cache_manager.delete(ON_DEMAND_MAILBOX_KEY)
             else:
                 logger.debug("Newer on-demand request %s arrived while processing "
                              "%s; leaving it in the mailbox",
@@ -1966,10 +1981,12 @@ class DisplayController:
             return
         hub = StateHub(loop_probe=display_watchdog.watchdog.liveness)
         try:
+            from src.error_aggregator import apply_error_clear
             self._control_server = start_control_server(
                 status_provider=self._control_status,
                 cache_dir=getattr(self.cache_manager, 'cache_dir', None),
-                state_hub=hub)
+                state_hub=hub,
+                handlers={ControlCommand.ERRORS_CLEAR: apply_error_clear})
         except Exception:  # pylint: disable=broad-except
             logger.exception("Control socket not started; using the file mailbox only")
         if self._control_server is not None:
@@ -2277,15 +2294,37 @@ class DisplayController:
         }
         command.succeed(dict(result))
 
+    def _mailbox_poll_interval(self) -> float:
+        """How often the on-demand mailbox is looked at: its old 0.25 s when
+        it is the only way in, MAILBOX_POLL_INTERVAL_WITH_SOCKET while the
+        control socket carries the web interface's commands."""
+        if self._control_server is not None:
+            return self.MAILBOX_POLL_INTERVAL_WITH_SOCKET
+        return self.ON_DEMAND_POLL_INTERVAL
+
     def _poll_on_demand_requests(self) -> None:
-        """Poll cache for new on-demand requests from external controllers."""
+        """Apply on-demand requests: the control socket's, then the mailbox's.
+
+        Socket commands are in memory and are applied at once. The file
+        mailbox (``display_on_demand_request``) is the fallback for a web
+        interface that could not reach the socket, and the way four plugins
+        still ask for the screen. It is looked at once per poll interval
+        (_mailbox_poll_interval), and read only when its file changed
+        (MailboxWatch): a look that finds nothing new is one stat().
+        """
         # Socket commands are already in memory: no disk read, so no floor.
         self._drain_control_commands()
         now = time.monotonic()
         if (self._last_on_demand_poll is not None
-                and now - self._last_on_demand_poll < self.ON_DEMAND_POLL_INTERVAL):
+                and now - self._last_on_demand_poll < self._mailbox_poll_interval()):
             return
         self._last_on_demand_poll = now
+
+        watch = self._on_demand_mailbox
+        if watch is None:
+            watch = self._on_demand_mailbox = MailboxWatch(ON_DEMAND_MAILBOX_KEY)
+        if not watch.changed(self.cache_manager):
+            return
 
         try:
             # Use a long max_age (1 hour) to ensure requests aren't expired before processing
@@ -2297,21 +2336,52 @@ class DisplayController:
             # pinned in memory for the full hour and every later poll returned
             # that stale copy -- meaning no second on-demand request was honoured
             # for an hour, while the API still reported success.
-            request = self.cache_manager.get('display_on_demand_request',
+            request = self.cache_manager.get(ON_DEMAND_MAILBOX_KEY,
                                              max_age=3600, memory_ttl=0)
         except (OSError, RuntimeError, ValueError, TypeError) as err:
+            watch.forget()   # read it again next time
             logger.error("Failed to read on-demand request: %s", err, exc_info=True)
             return
 
-        if not request:
+        if not isinstance(request, dict):
             return
+        self._note_mailbox_request(request)
         self._handle_on_demand_request(request)
 
+    def _note_mailbox_request(self, request: Dict[str, Any]) -> None:
+        """Log, once per writer, an on-demand request that came through the
+        mailbox while the control socket is up.
+
+        The web interface writes the mailbox only when the socket fails, so
+        this is mostly a plugin that writes ``display_on_demand_request``
+        itself. The mailbox is going away; the log says who still uses it.
+        """
+        if self._control_server is None:
+            return
+        writer = request.get('plugin_id') or request.get('mode') or 'unknown'
+        if not isinstance(writer, str):
+            writer = 'unknown'
+        if writer in self._mailbox_writers_logged:
+            return
+        self._mailbox_writers_logged = self._mailbox_writers_logged | {writer}
+        logger.info("On-demand %s request %s (for %s) came through the file mailbox "
+                    "although the control socket is up. The mailbox is deprecated: it "
+                    "is read every %.1fs and will be removed in a future release.",
+                    request.get('action'), request.get('request_id'), writer,
+                    self.MAILBOX_POLL_INTERVAL_WITH_SOCKET)
+
     def _handle_on_demand_request(self, request: Dict[str, Any]) -> None:
-        """Process one on-demand request, from the mailbox or the control socket."""
+        """Process one on-demand request, from the mailbox or the control socket.
+
+        A socket command carries ``source: 'socket'``. Only a mailbox request
+        is removed from the mailbox afterwards: a socket command never put
+        anything there, so that would be a disk read and maybe a delete for
+        nothing.
+        """
         request_id = request.get('request_id')
         if not request_id:
             return
+        from_mailbox = request.get('source') != 'socket'
 
         action = request.get('action')
         
@@ -2339,27 +2409,35 @@ class DisplayController:
             # only thing that ends the request: without it the same stop was
             # re-read and re-processed on every poll, forever, logging at
             # ON_DEMAND_POLL_INTERVAL for the life of the process.
-            self._consume_on_demand_request(request_id)
+            if from_mailbox:
+                self._consume_on_demand_request(request_id)
             return
 
-        # For start requests, check if already processed
+        # For start requests, check if already processed. A duplicate in the
+        # mailbox (a copy of a socket command, or one read before a restart)
+        # is taken out of it too, so it is not read again.
         if request_id == self.on_demand_request_id:
             logger.debug("On-demand start request %s already processed (instance check)", request_id)
+            if from_mailbox:
+                self._consume_on_demand_request(request_id)
             return
-        
+
         # Also check persistent processed_id (for restart scenarios)
         processed_request_id = self.cache_manager.get('display_on_demand_processed_id', max_age=3600)
         if request_id == processed_request_id:
             logger.debug("On-demand start request %s already processed (persisted check)", request_id)
+            if from_mailbox:
+                self._consume_on_demand_request(request_id)
             return
-        
-        logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)", 
+
+        logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)",
                    request_id, action, request.get('plugin_id'), request.get('mode'))
-        
+
         # Mark as processed BEFORE processing (to prevent duplicate processing)
         self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)
         self.on_demand_request_id = request_id
-        self._consume_on_demand_request(request_id)
+        if from_mailbox:
+            self._consume_on_demand_request(request_id)
 
         if action == 'start':
             logger.info("Processing on-demand start request for plugin: %s", request.get('plugin_id'))

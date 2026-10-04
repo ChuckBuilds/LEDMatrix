@@ -19,6 +19,50 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### The control socket carries every web command; the mailboxes are a fallback
+
+Stage 4 of the web → display control socket (`docs/IPC_CONTROL_SOCKET.md`).
+
+- **Mailbox only when the socket cannot carry it.** The on-demand routes
+  (`POST /api/v3/display/on-demand/start` and `/stop`) write the
+  `display_on_demand_request` mailbox only when the display never had the
+  request: no socket (a stopped display, one older than the socket), a
+  refused or timed-out connect, or a display too old to know the command.
+  A display that had it and refused or did not answer (a full queue, bad
+  arguments, silence after the send) is answered `503` (`400` for bad
+  arguments) with `socket_error`, and no mailbox copy is written: the
+  display may have applied it, or would refuse the copy too. A stop with
+  `stop_service` still stops the service. `src.ipc.client.should_fall_back()`
+  holds the rule; `ControlError.sent` says whether the display had the
+  request.
+- **`errors.clear`.** `POST /api/v3/errors/clear` goes over the socket: the
+  display clears its error records and republishes its error snapshot
+  before it answers, so the response says `applied: true` with the
+  display's own `cleared_count`. The `plugin_error_clear_request` mailbox
+  is written only on the same fallback rule (a display from before this
+  release answers `unknown_command`, and gets the mailbox). A display that
+  had it and failed answers `503`. The error snapshot gains
+  `applied_clear_cutoff`, so an older mailbox request is not shown as
+  pending once a wider clear has been applied.
+- **The display looks at the mailboxes less, and more cheaply.** While the
+  control socket is up, the on-demand mailbox is looked at once a second
+  instead of every 0.25 s (`MAILBOX_POLL_INTERVAL_WITH_SOCKET`), and both
+  mailboxes are read only when their file changed since the last look:
+  otherwise a look is one `stat()` (`CacheManager.file_signature`,
+  `MailboxWatch`). A socket command no longer reads or deletes the mailbox
+  file. A duplicate already processed is taken out of the mailbox, rather
+  than re-read for an hour. Without a socket (Windows,
+  `LEDMATRIX_CONTROL_SOCKET=off`) the mailbox is read every 0.25 s as before.
+- **Kept for one release.** The display still reads both mailboxes, so an
+  older web interface (or a web user not yet in the socket's group) keeps
+  working during an upgrade, and still writes `display_current_state`,
+  `display_on_demand_state` and `plugin_runtime_snapshot` for the readers'
+  fallback. A request that comes through the on-demand mailbox while the
+  socket is up is logged once per writer: plugins that write
+  `display_on_demand_request` themselves (birdnet-go, mqtt-notifications,
+  on-air, pomodoro-timer) now get the screen within a second rather than a
+  quarter second, and need an in-process way in before the mailbox goes.
+
 ### A scrolling screen held by its plugin's update() is reported
 
 - While a plugin's `update()` runs it holds the plugin's lock, and that

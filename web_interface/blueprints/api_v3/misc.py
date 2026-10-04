@@ -374,6 +374,23 @@ def _read_errors():
     return snapshot, clear_request
 
 
+def _send_error_clear(request_id, cutoff):
+    """``errors.clear`` over the control socket: the display's answer, or None
+    when the socket could not carry it (no socket, or a display older than
+    the command) and the clear goes to the mailbox instead. A display that
+    took the request and failed raises ControlError (no second copy)."""
+    client = _pkg.control_client
+    try:
+        return client.errors_clear(request_id, cutoff)
+    except client.ControlError as e:
+        if not client.should_fall_back(e):
+            raise
+        _pkg._log_socket_failure('errors.clear', e, _pkg._socket_reason_code(e.reason))
+    except Exception:  # never let the socket path break the route
+        logger.exception("Control socket client failed clearing errors; using the mailbox")
+    return None
+
+
 @api_v3.route('/errors/summary', methods=['GET'])
 def get_error_summary():
     """
@@ -471,7 +488,17 @@ def clear_old_errors():
         now = _pkg.time.time()
         cutoff = now if clear_all else now - max_age_hours * 3600
         try:
-            result = _errors.request_error_clear(_errors_cache(), cutoff)
+            result = _errors.request_error_clear(_errors_cache(), cutoff,
+                                                 send=_send_error_clear)
+        except _pkg.control_client.ControlError as e:
+            reason = _pkg._socket_reason_code(e.reason)
+            logger.warning("The display did not apply the error clear: %s", e)
+            return error_response(
+                error_code=ErrorCode.SYSTEM_ERROR,
+                message="The display service did not apply the clear",
+                context={'socket_error': reason},
+                status_code=503
+            )
         except OSError as e:
             logger.error("Could not record an error clear request: %s", e)
             return error_response(
@@ -481,11 +508,12 @@ def clear_old_errors():
             )
 
         scope = "all errors" if clear_all else f"errors older than {max_age_hours} hours"
-        return success_response(
-            data=result,
-            message=(f"Clear of {scope} requested; the display service applies it "
-                     f"within about {int(_errors.SNAPSHOT_TICK_INTERVAL)} seconds")
-        )
+        if result.get('applied'):
+            message = f"Cleared {scope}"
+        else:
+            message = (f"Clear of {scope} requested; the display service applies it "
+                       f"within about {int(_errors.SNAPSHOT_TICK_INTERVAL)} seconds")
+        return success_response(data=result, message=message)
     except Exception as e:
         logger.error(f"Error clearing old errors: {e}", exc_info=True)
         return error_response(

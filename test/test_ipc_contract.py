@@ -167,7 +167,8 @@ class TestOnDemandArgs:
     def test_every_command_has_an_argument_type(self, cmd):
         args = {Command.ON_DEMAND_START: {'plugin_id': 'p'},
                 Command.PLUGIN_RELOAD: {'plugin_id': 'p'},
-                Command.BRIGHTNESS_SET: {'brightness': 50}}.get(cmd, {})
+                Command.BRIGHTNESS_SET: {'brightness': 50},
+                Command.ERRORS_CLEAR: {'cutoff': 1790000000.0}}.get(cmd, {})
         c.parse_args(cmd, args)
 
     def test_hello_versions(self):
