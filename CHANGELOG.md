@@ -540,6 +540,34 @@ policies are unchanged.
   now ends at startup with status `error` and error `restore-failed`, which
   `/display/on-demand/status` reports, and the cached request is dropped. The
   same applies when the plugin system itself fails to start.
+- `POST /api/v3/config/schedule` and `/config/dim-schedule` accept a
+  disabled per-day schedule with every day off. That is the shape
+  `config.template.json` ships, so posting back what GET returned on a fresh
+  install answered 400 "At least one day must be enabled". An enabled per-day
+  schedule still needs a day on. A day that is off now keeps the times it
+  was posted with (the schedule picker sends them). Before, saving dropped
+  them, so turning the day back on showed the defaults.
+- `POST /api/v3/config/main` answers `restart_required: true` only when the
+  save changed a setting the running display does not apply by itself.
+  Brightness (`brightness.set` and the config watcher), the per-mode
+  durations and plugin sections are applied live. A brightness-only save,
+  such as the MQTT bridge's slider, or a save that changed nothing, no longer
+  shows the restart banner. Hardware, rotation order, timezone and every
+  other setting still ask for the restart.
+- `GET /api/v3/health` reports `degraded` when the display service is
+  stopped. Before, only the sub-checks changed, and the overall status stayed
+  `healthy` for as long as the last preview frame was under 60 s old.
+  `checks.display_loop.status` is now `stopped` when three things agree:
+  systemd says the service is not active, the control socket does not
+  answer, and there is no live heartbeat. Where the platform has no socket
+  (Windows) or it is switched off, nothing changes.
+- `GET /api/v3/display/current-status` no longer reports the stopped
+  display's last state (`is_display_active: true`) from the cache for up to
+  120 s. When the control socket does not answer and the render loop's
+  heartbeat is absent, stale, or from a process that is gone (#726's rules),
+  the answer is unknown, with every field `null`. A display that still beats
+  without a socket, Windows and a socket switched off read the cache as
+  before. New `web_interface.display_state.display_gone()`.
 - The garbage-collection timer (`GcMonitor`, above) no longer prints
   `Exception ignored while calling GC callback ... 'NoneType' object has no
   attribute 'perf_counter'` when the display service or a test run exits.

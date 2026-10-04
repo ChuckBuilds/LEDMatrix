@@ -102,6 +102,7 @@ def get_health():
         # the only signal, as it always was.
         # The display reports the same beat's age over the control socket's
         # state stream, measured in memory; the file is the fallback.
+        snapshot = None
         try:
             snapshot = display_state.read_state()
             if snapshot is not None:
@@ -131,6 +132,26 @@ def get_health():
                 'status': 'unknown',
                 'error': 'see logs for details'
             }
+
+        # A stopped display service. The heartbeat's absence alone says
+        # nothing (the dev server, the emulator and Windows write none), so
+        # the overall status stayed "healthy" with the display down until the
+        # last preview frame it left aged past 60 s (hardware: stale). Together
+        # the three signals are definite: systemd says the service is not
+        # active, the control socket does not answer, and there is no live
+        # heartbeat (display_state.display_gone, which is never true where
+        # the platform has no socket or it is switched off).
+        try:
+            if (not display_service_status.get('active')
+                    and display_state.display_gone(snapshot)):
+                health_status['checks']['display_loop'] = {
+                    'status': 'stopped',
+                    'note': 'The display service is not running',
+                    'source': 'service',
+                }
+        except Exception:
+            logger.warning("Health check could not tell whether the display is stopped",
+                           exc_info=True)
 
         # Check hardware connectivity (if display manager available)
         try:

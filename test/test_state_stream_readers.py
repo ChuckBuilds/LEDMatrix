@@ -612,6 +612,12 @@ class TestEndToEnd:
         cached['display_current_state'] = {'mode': 'from-cache', 'last_updated': 1}
         path = str(tmp_path / 'control.sock')
         monkeypatch.setenv(c.SOCKET_PATH_ENV, path)
+        # The display is this process, and its render loop is beating: the
+        # cache is then still its answer once the socket goes.
+        heartbeat = tmp_path / 'display-heartbeat.json'
+        heartbeat.write_text(json.dumps({'pid': os.getpid(), 'mono': time.monotonic(),
+                                         'wall': time.time()}))
+        monkeypatch.setattr(display_watchdog, 'HEARTBEAT_PATH', str(heartbeat))
         hub = _hub_with_everything()
         server = ControlServer(path, state_hub=hub, keepalive=0.2)
         assert server.start()
@@ -638,3 +644,8 @@ class TestEndToEnd:
                 break
             time.sleep(0.05)
         assert (data['mode'], data['source']) == ('from-cache', 'cache')
+        # Stopped: systemd takes the heartbeat's directory with it, and the
+        # cache's last answer is no longer anyone's.
+        heartbeat.unlink()
+        data = _data(client, '/api/v3/display/current-status')
+        assert (data['mode'], data['source']) == (None, 'cache')
