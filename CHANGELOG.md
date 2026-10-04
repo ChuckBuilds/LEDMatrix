@@ -524,6 +524,15 @@ policies are unchanged.
   controller now reads the plugin's answer as a number: a numeric string
   counts, and anything else (or a `get_display_duration()` that raises)
   shows the mode for 30 s, with one warning per plugin.
+- A scroll strip narrower than the panel scrolls instead of raising on every
+  frame. When a frame ran off the end of the strip, `ScrollHelper` copied
+  the strip's tail and then the rest of the frame from its head, which
+  assumed the head was that wide; for a narrower strip that raised
+  `ValueError: could not broadcast` at every position, so nothing was drawn
+  and each frame logged a traceback. Vegas builds such a strip, with no
+  lead-in, when its content is narrower than the chain. A frame that runs
+  off the strip now continues from its head column by column, so a narrow
+  strip repeats across the panel; a wide strip wraps exactly as before.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while

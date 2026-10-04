@@ -561,7 +561,7 @@ class ScrollHelper:
         width = self.display_width
         strip_width = self.cached_array.shape[1]
 
-        if start_x + width + 1 <= strip_width:
+        if 0 <= start_x and start_x + width + 1 <= strip_width:
             # Slice the backing array directly. Going via
             # _get_visible_portion_integer would build two PIL images only for
             # them to be converted straight back to arrays, which measured 15x
@@ -569,9 +569,10 @@ class ScrollHelper:
             near = self.cached_array[:, start_x:start_x + width]
             far = self.cached_array[:, start_x + 1:start_x + 1 + width]
         else:
-            # Close enough to the end that one of the slices wraps; let the
-            # integer path handle that and pay the conversion. Continuous mode
-            # extends the strip before reaching here, so this is the rare case.
+            # One of the slices wraps (close to the end, or a strip narrower
+            # than the panel); let the integer path handle that and pay the
+            # conversion. Continuous mode extends the strip before reaching
+            # here, so this is the rare case.
             near = np.asarray(
                 self._get_visible_portion_integer(start_x, start_x + width))
             far = np.asarray(
@@ -601,34 +602,33 @@ class ScrollHelper:
         _size = (self.display_width, self.display_height)
         img_w = self.cached_array.shape[1]
 
-        if end_x <= img_w:
+        if 0 <= start_x and end_x <= img_w:
             # Normal case: single contiguous slice (fastest path). tobytes()
             # on the column-slice view already returns C-order bytes, so
             # ascontiguousarray() first only added a second full-frame copy.
             return Image.frombytes(
                 'RGB', _size,
                 self.cached_array[:, start_x:end_x].tobytes())
+
+        # Ensure frame buffer is allocated for all non-simple paths
+        if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
+            self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+
+        if img_w == 0:
+            self._frame_buffer[:] = 0
         else:
-            # Ensure frame buffer is allocated for all non-simple paths
-            if self._frame_buffer is None or self._frame_buffer.shape != (self.display_height, self.display_width, 3):
-                self._frame_buffer = np.zeros((self.display_height, self.display_width, 3), dtype=np.uint8)
+            # The frame runs off the strip, so it carries on from the head:
+            # frame column j is strip column (start_x + j) modulo the strip's
+            # width -- the tail and then the head, and a strip narrower than
+            # the panel repeated across it. Copying the tail and then the rest
+            # of the frame from the head assumed the head was that wide, and
+            # raised at every position for a strip narrower than the panel
+            # (Vegas composes one, with no lead-in, when its content is
+            # narrower than the chain).
+            np.take(self.cached_array, np.arange(start_x, end_x), axis=1,
+                    mode='wrap', out=self._frame_buffer)
 
-            width1 = img_w - start_x
-            if width1 > 0:
-                # Wrap-around: tail of image + head of image
-                self._frame_buffer[:, :width1] = self.cached_array[:, start_x:]
-                remaining_width = self.display_width - width1
-                self._frame_buffer[:, width1:] = self.cached_array[:, :remaining_width]
-            else:
-                # Edge case: start_x at or past image end — show from beginning,
-                # clamped to available width (scroll_position should wrap before
-                # reaching this state in normal operation).
-                available = min(self.display_width, img_w)
-                self._frame_buffer[:, :available] = self.cached_array[:, :available]
-                if available < self.display_width:
-                    self._frame_buffer[:, available:] = 0
-
-            return Image.frombytes('RGB', _size, self._frame_buffer.tobytes())
+        return Image.frombytes('RGB', _size, self._frame_buffer.tobytes())
     
     def calculate_dynamic_duration(self) -> int:
         """
