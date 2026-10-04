@@ -523,6 +523,13 @@ policies are unchanged.
   scroller or Vegas) were counted as 0.5-1 s freezes and logged as a
   `Render stall ... mid-scroll`. The controller now ends the scroll state
   before drawing either.
+- A plugin that keeps helpers in a package (elections' `providers/`,
+  flights' `enrichment/`, olympics' `data/` and `renderers/`) now runs its
+  updated helpers after a reload. Unloading dropped the package itself but
+  left its modules (`providers.feed`) in `sys.modules`, so the reload after a
+  store update imported the new `manager.py` and got the old helpers back from
+  the cache until the display restarted. `PluginLoader` now drops a plugin's
+  package modules when it unloads, and when a load fails part-way.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
