@@ -1825,14 +1825,19 @@ class DisplayManager:
                 # may not make one -- write_owed_snapshot() covers that.
                 self._snapshot_owed = frame_changed
                 return
-            self._snapshot_owed = False
             if (action is snapshot_policy.SnapshotAction.TOUCH
                     and self._saved_snapshot_digest == digest):
                 # mtime bump only: keeps the health check (snapshot age)
                 # green without paying for a PNG encode of an unchanged frame
+                # (this frame is already on disk, so nothing is owed).
+                self._snapshot_owed = False
                 os.utime(self._snapshot_path, None)
                 self._last_snapshot_touch_ts = now
                 return
+            # Owed until the write below succeeds: if it raises, the frame
+            # stays owed and write_owed_snapshot() retries it, rather than a
+            # held screen leaving the preview stale after one failed write.
+            self._snapshot_owed = True
             # (A TOUCH for a frame that isn't on disk yet -- still queued, or
             # its write failed -- is written instead: touching would make the
             # older file on disk look current.)
@@ -1857,6 +1862,7 @@ class DisplayManager:
             self._last_snapshot_ts = now
             self._last_snapshot_touch_ts = now
             self._last_snapshot_digest = digest
+            self._snapshot_owed = False
         except Exception as e:
             self._log_snapshot_failure(e)
 

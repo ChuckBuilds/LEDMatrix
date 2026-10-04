@@ -130,6 +130,27 @@ def test_the_owed_write_still_waits_out_the_interval(viewer, monkeypatch):
     assert len(saves) == 1
 
 
+def test_a_failed_owed_write_stays_owed_and_is_retried(viewer, monkeypatch):
+    dm = viewer
+    _clear_then_draw_card(dm)
+    _age_last_write(dm)
+    attempts = []
+
+    def failing_save(image):
+        attempts.append(image)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dm, "_save_snapshot", failing_save)
+    dm.write_owed_snapshot()                  # the write fails
+    assert len(attempts) == 1
+    assert dm._snapshot_owed is True          # still owed: a held screen
+    saves = []                                # makes no update_display()
+    monkeypatch.setattr(dm, "_save_snapshot", lambda image: saves.append(image))
+    dm.write_owed_snapshot()                  # retried on the next frame
+    assert len(saves) == 1
+    assert dm._snapshot_owed is False
+
+
 def test_nothing_owed_after_a_frame_that_was_written(viewer, monkeypatch):
     dm = viewer
     dm.draw.rectangle([0, 0, 8, 8], fill=(0, 255, 0))
