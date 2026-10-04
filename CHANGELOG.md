@@ -897,6 +897,13 @@ policies are unchanged.
   string counts, anything else that is not a finite number (or a
   `get_display_duration()` that raises) pauses for 30 s, and a number at or
   below zero for 15 s, with one warning per plugin.
+- Reinstalling Weather, Music, Stocks or Leaderboard from the Plugin Store
+  while it is enabled asks for a display restart, as reinstalling any other
+  enabled plugin does. `POST /api/v3/plugins/install` looked for the
+  plugin's `enabled` flag under the store id (`weather`), but its config
+  section is under the id its manifest declares (`ledmatrix-weather`), so
+  `restart_required` was always false and the display kept running the
+  copy it had loaded. The check now uses the installed id.
 
 ### Scrolling
 
