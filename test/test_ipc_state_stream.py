@@ -96,6 +96,27 @@ class TestStateHub:
         assert hub.snapshot(since=1, epoch='other')['changed'] is True
         assert hub.snapshot(since=1)['changed'] is True
 
+    def test_the_short_answer_carries_the_latest_volatile_values(self, hub):
+        """A version that stays put must not freeze the timestamps a reader
+        judges freshness by: the short answer (a tick) carries them."""
+        hub.publish('on_demand', {'active': False, 'last_updated': 2.0, 'remaining': 0.0},
+                    volatile=('last_updated', 'remaining'))
+        hub.publish('brightness', {'brightness': 50})
+        version = hub.version
+        assert not hub.publish('display', _display(updated=1234.5), volatile=('last_updated',))
+        short = hub.snapshot(since=version, epoch='e1')
+        assert short['changed'] is False and 'state' not in short
+        assert short['volatile'] == {'display': {'last_updated': 1234.5},
+                                     'on_demand': {'last_updated': 2.0, 'remaining': 0.0}}
+        # The full answer has them in place already.
+        assert 'volatile' not in hub.snapshot()
+
+    def test_volatile_values_skip_sections_without_any(self):
+        hub = StateHub(epoch='e1')
+        hub.publish('brightness', {'brightness': 50})
+        hub.publish('plugins', None, volatile=('published_at',))
+        assert hub.snapshot(since=hub.version, epoch='e1')['volatile'] == {}
+
     def test_each_display_run_has_its_own_epoch(self):
         assert StateHub().epoch != StateHub().epoch
 
@@ -276,6 +297,40 @@ class TestSubscriptionStore:
         assert latest['state']['loop']['heartbeat_age_seconds'] == 70.0
         assert latest['received_mono'] == clock.now
 
+    def test_a_tick_refreshes_the_volatile_timestamps(self, hub):
+        """The bug from the ledpi rig: the same mode on screen for minutes
+        left the reader's display.last_updated at the last real change."""
+        clock = FakeClock()
+        sub = client.StateSubscription(paths=['/nowhere'], clock=clock)
+        sub._store(hub.snapshot(), full=True)
+        hub.publish('display', _display(updated=9999.0), volatile=('last_updated',))
+        sub._store(hub.snapshot(since=1, epoch='e1'), full=False)
+        latest = sub.latest()
+        assert latest['state']['display']['last_updated'] == 9999.0
+        assert latest['state']['display']['mode'] == 'clock'
+        assert latest['version'] == 1
+
+    def test_a_tick_adds_no_section_or_key_and_ignores_another_version(self, hub):
+        clock = FakeClock()
+        sub = client.StateSubscription(paths=['/nowhere'], clock=clock)
+        snap = hub.snapshot()
+        sub._store(snap, full=True)
+        updated = snap['state']['display']['last_updated']
+        sub._store({'version': 1, 'epoch': 'e1',
+                    'volatile': {'display': {'new_key': 1}, 'plugins': {'published_at': 5.0},
+                                 'on_demand': 'junk'}}, full=False)
+        state = sub.latest()['state']
+        assert 'new_key' not in state['display'] and state['plugins'] is None
+        assert state['on_demand'] is None
+        # A tick for a version this copy is not at says nothing about it.
+        sub._store({'version': 7, 'epoch': 'e1',
+                    'volatile': {'display': {'last_updated': 5.0}}}, full=False)
+        assert sub.latest()['state']['display']['last_updated'] == updated
+        # A display from before ticks carried them: the loop still refreshes.
+        sub._store({'version': 1, 'epoch': 'e1', 'loop': {'heartbeat_age_seconds': 3.0}},
+                   full=False)
+        assert sub.latest()['loop'] == {'heartbeat_age_seconds': 3.0}
+
     def test_a_tick_from_another_epoch_is_ignored(self, hub):
         clock = FakeClock()
         sub = client.StateSubscription(paths=['/nowhere'], clock=clock)
@@ -368,6 +423,33 @@ class TestLiveStream:
         kinds = [self._next(sock, reader, pending)['event'] for _ in range(3)]
         assert kinds == ['tick', 'tick', 'tick']
         sock.close()
+
+    def test_ticks_carry_the_timestamps_the_version_ignores(self, live, path):
+        _, hub = live
+        sock, reader = self._subscribe(path)
+        pending = []
+        self._next(sock, reader, pending)
+        hub.publish('display', _display(updated=4242.0), volatile=('last_updated',))
+        for _ in range(3):   # a tick already on its way may predate the publish
+            tick = self._next(sock, reader, pending)
+            assert tick['event'] == 'tick'
+            if tick['result']['volatile'] == {'display': {'last_updated': 4242.0}}:
+                break
+        else:
+            pytest.fail(f'no tick carried the new last_updated: {tick}')
+        sock.close()
+
+    def test_a_subscription_keeps_last_updated_current(self, live, path):
+        _, hub = live
+        sub = client.StateSubscription(paths=[path]).start()
+        try:
+            assert _wait_until(lambda: sub.latest() is not None)
+            hub.publish('display', _display(updated=4242.0), volatile=('last_updated',))
+            assert _wait_until(lambda: (sub.latest() or {}).get('state', {})
+                               .get('display', {}).get('last_updated') == 4242.0)
+            assert sub.snapshots == 1        # ticks, not new snapshots
+        finally:
+            sub.stop()
 
     def test_a_burst_is_coalesced_to_the_latest(self, live, path):
         _, hub = live

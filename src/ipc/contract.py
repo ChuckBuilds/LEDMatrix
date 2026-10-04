@@ -191,7 +191,7 @@ MAX_SUBSCRIBERS = 4
 
 #: A subscriber hears from the display at least this often: a ``state``
 #: event when something changed, else a ``tick`` carrying the render loop's
-#: liveness. A client that has heard nothing for a few of these treats its
+#: liveness and the latest volatile timestamps. A client that has heard nothing for a few of these treats its
 #: copy as unknown.
 SUBSCRIBE_KEEPALIVE_SECONDS = 5.0
 
@@ -530,8 +530,10 @@ class StateGetArgs:
     """``state.get``: the display's state, as a versioned snapshot.
 
     With ``since`` and the ``epoch`` it came from, the answer is only
-    ``{changed: false, version, epoch, served_at, loop}`` while the state is
-    still at that version, so a poller that already has it is sent no state.
+    ``{changed: false, version, epoch, served_at, loop, volatile}`` while the
+    state is still at that version, so a poller that already has it is sent
+    no state -- only the latest values of the keys that do not count as a
+    change (``volatile``, see :class:`StateSnapshot`).
     """
     since: Optional[int] = None
     epoch: Optional[str] = None
@@ -672,9 +674,13 @@ class StateSnapshot(TypedDict, total=False):
     ``version`` counts changes to the state within one ``epoch`` (one run of
     the display process): a reader that sees a new epoch starts over.
     ``changed`` is False only for a ``state.get`` whose ``since`` is still
-    current, and then ``state`` is absent. ``served_at`` is the display's
-    wall clock when it answered. ``loop`` is measured at that moment, so it
-    is also inside ``state``.
+    current, and then ``state`` is absent and ``volatile`` is there instead:
+    ``{section: {key: value}}``, the current values of the keys the version
+    ignores (``display.last_updated``, ``on_demand.last_updated`` and
+    ``remaining``, ``plugins.published_at``). A reader merges them into the
+    copy it has; they are how it can tell the writers are still publishing.
+    ``served_at`` is the display's wall clock when it answered. ``loop`` is
+    measured at that moment, so it is also inside ``state``.
 
     ``state`` holds the sections in :data:`STATE_SECTIONS`:
 
@@ -696,12 +702,13 @@ class StateSnapshot(TypedDict, total=False):
     served_at: float
     changed: bool
     state: Dict[str, Any]
+    volatile: Dict[str, Dict[str, Any]]
     loop: LoopState
 
 
 class StateEventKind:
     STATE = 'state'   # result: a full StateSnapshot, the latest version
-    TICK = 'tick'     # result: {version, epoch, pid, served_at, loop}; nothing changed
+    TICK = 'tick'     # result: {version, epoch, pid, served_at, loop, volatile}; nothing changed
 
 
 @dataclass(frozen=True)

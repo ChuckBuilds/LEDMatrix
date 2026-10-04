@@ -146,7 +146,7 @@ connection until either side hangs up:
 
 ```json
 {"v": 1, "id": "<the subscribe id>", "event": "state", "result": {...a state snapshot...}}
-{"v": 1, "id": "<the subscribe id>", "event": "tick",  "result": {"version": 7, "epoch": "…", "pid": 812, "served_at": 1790000000.1, "changed": false, "loop": {...}}}
+{"v": 1, "id": "<the subscribe id>", "event": "tick",  "result": {"version": 7, "epoch": "…", "pid": 812, "served_at": 1790000000.1, "changed": false, "loop": {...}, "volatile": {"display": {"last_updated": 1790000000.0}, "...": "..."}}}
 ```
 
 An event has `event` where a response has `ok`, which is how a reader tells
@@ -216,8 +216,14 @@ socket.
   counts within an `epoch`, one run of the display process, so a reader that
   sees a new `epoch` has a restarted display.
 - `state.get` with `since` and `epoch` from an earlier answer gets just
-  `{changed: false, version, epoch, pid, served_at, loop}` while nothing has
-  changed.
+  `{changed: false, version, epoch, pid, served_at, loop, volatile}` while
+  nothing has changed. `volatile` is `{section: {key: value}}`: the current
+  values of those ignored timestamps, which the reader merges into the copy
+  it has. They don't make a new version, but they are still news:
+  `display.last_updated` is how a reader knows the render thread is still
+  publishing, and `plugins.published_at` the runtime publisher. Without
+  them a reader's copy kept the timestamps of the last real change, so a
+  mode on screen for over 120 s read as unknown.
 - A snapshot that would not fit in a message (hundreds of plugins) is sent
   without `plugins`, and `truncated: ["plugins"]` says so. Readers then use
   the cache for that section only.
@@ -226,8 +232,10 @@ socket.
 
 - a `state` event (a full snapshot) whenever the version changes, and
 - a `tick` at least every 5 s (`SUBSCRIBE_KEEPALIVE_SECONDS`) when nothing
-  changed. It carries `loop`, so a stalled render loop shows up within one
-  tick, and it tells the reader the connection is alive.
+  changed. It is the short `changed: false` answer, so it carries `loop`
+  (a stalled render loop shows up within one tick) and `volatile` (the
+  timestamps stay as fresh as the writers keep them), and it tells the
+  reader the connection is alive.
 
 A slow reader is never sent a backlog: each event is the latest version, so
 one that falls behind skips the versions in between. A reader that has heard

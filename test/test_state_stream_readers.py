@@ -468,6 +468,140 @@ class TestRoutes:
         assert pkg._plugin_runtime_view().source == 'cache'
 
 
+# --- freshness over a long-lived subscription ---------------------------------------------
+
+class _Rig:
+    """A display and one web subscription on fake clocks, with no socket.
+
+    Each second the render thread runs its publish point (unless stopped);
+    every 5 s the plugin runtime publisher ticks and the subscription gets
+    what the server would push it: a ``state`` event when the version moved,
+    else a tick (the short ``changed: false`` answer). The loop's heartbeat
+    is the time since the render thread last went round.
+    """
+
+    MODE = 'ncaa_fb_live'
+
+    def __init__(self):
+        from src.ipc import client as control_client
+        self.wall = FakeClock(1_800_000_000.0)
+        self.mono = FakeClock(5000.0)
+        self.last_render = self.mono.now
+        self.hub = StateHub(loop_probe=lambda: {
+            'heartbeat_age_seconds': self.mono.now - self.last_render, 'armed': True,
+            'stale_after': display_watchdog.HEARTBEAT_STALE_SECONDS},
+            epoch='e1', clock=self.mono, wall_clock=self.wall)
+        self.dc = _controller(self.hub)
+        self.dc.current_display_mode = self.MODE
+        self.dc.mode_to_plugin_id[self.MODE] = 'football-scoreboard'
+        self.publisher = PluginRuntimePublisher(MagicMock(), _states(), clock=self.mono,
+                                                wall_clock=self.wall)
+        self.publisher.attach_hub(self.hub)
+        self.sub = control_client.StateSubscription(paths=['/nowhere'], clock=self.mono)
+        self.render = self.plugins = self.ticks = True
+        self.sent_version = None
+        self._publish()
+        self._push()
+
+    def _publish(self):
+        from src import display_controller as dc_module
+        with patch.object(dc_module.time, 'monotonic', self.mono), \
+                patch.object(dc_module.time, 'time', self.wall):
+            self.dc._publish_current_mode_state_if_changed()
+        self.last_render = self.mono.now
+
+    def _push(self):
+        snap = self.hub.snapshot(since=self.sent_version, epoch='e1')
+        self.sub._store(snap, full=bool(snap.get('changed')))
+        self.sent_version = snap['version']
+
+    def run(self, seconds):
+        for _ in range(int(seconds)):
+            self.wall.now += 1
+            self.mono.now += 1
+            if self.render:
+                self._publish()
+            if int(self.mono.now) % 5 == 0:
+                if self.plugins:
+                    self.publisher.tick()
+                if self.ticks:
+                    self._push()
+
+    def status(self):
+        return display_state.current_status(self.sub.latest(), now=self.wall.now)
+
+    def runtime(self):
+        return view_from_socket_state(self.sub.latest(), now=self.wall.now,
+                                      now_mono=self.mono.now)
+
+
+class TestFreshnessOverTicks:
+    """#735 on the ledpi rig: with one mode on screen for more than two
+    minutes (a live game, Vegas, a single plugin) current-status read
+    ``mode: null`` from the socket. The version stayed put, so the
+    subscription's copy kept the ``last_updated`` of the last real change."""
+
+    def test_a_mode_on_screen_for_fifteen_minutes_stays_known(self):
+        rig = _Rig()
+        for _ in range(15):
+            rig.run(60)
+            status = rig.status()
+            assert status['mode'] == rig.MODE, status
+            assert rig.wall.now - status['last_updated'] <= 5
+            # The plugin section, unchanged as long, stays live too.
+            assert rig.runtime().status == rt.LIVE
+        assert rig.sub.snapshots == 1          # all of it from ticks
+
+    def test_the_route_keeps_answering_from_the_socket(self, web, monkeypatch):
+        client, cached = web
+        cached['display_current_state'] = {'mode': 'from-cache', 'last_updated': 1}
+        rig = _Rig()
+        rig.run(10 * 60)
+        monkeypatch.setattr(display_state, 'read_state', rig.sub.latest)
+        with patch.object(display_state.time, 'time', rig.wall):
+            data = _data(client, '/api/v3/display/current-status')
+        assert (data['mode'], data['source']) == (rig.MODE, 'socket')
+
+    def test_a_render_thread_that_stops_still_reads_stalled_then_unknown(self):
+        """#726's verdicts are unchanged: the socket thread keeps ticking,
+        but nothing refreshes last_updated and the heartbeat ages."""
+        rig = _Rig()
+        rig.run(5 * 60)
+        rig.render = False
+        rig.run(display_watchdog.HEARTBEAT_STALE_SECONDS + 5)
+        assert rig.runtime().status == rt.STALLED
+        assert display_state.loop_heartbeat_age(rig.sub.latest()) >= \
+            display_watchdog.HEARTBEAT_STALE_SECONDS
+        assert rig.status()['mode'] == rig.MODE              # not 120 s yet
+        rig.run(display_state.CURRENT_STATE_MAX_AGE_SECONDS)
+        assert rig.status() == {'mode': None, 'plugin_id': None, 'last_updated': None}
+
+    def test_a_runtime_publisher_that_stops_goes_stale(self):
+        rig = _Rig()
+        rig.run(60)
+        rig.plugins = False
+        rig.run(rt.STALE_AFTER + 10)
+        assert rig.runtime().status == rt.STALE
+        assert rig.status()['mode'] == rig.MODE
+
+    def test_when_the_ticks_stop_the_route_falls_back_to_the_cache(self, web, monkeypatch):
+        from src.ipc import client as control_client
+        client, cached = web
+        cached['display_current_state'] = {'mode': 'from-cache', 'last_updated': 1}
+        rig = _Rig()
+        rig.run(5 * 60)
+        rig.ticks = False
+        rig.run(control_client.SUBSCRIPTION_SILENCE_SECONDS + 1)
+        assert rig.sub.latest() is None
+
+        def no_socket(*args, **kwargs):
+            raise control_client.ControlError('no_socket')
+        monkeypatch.setattr(display_state, '_subscription', lambda: rig.sub)
+        monkeypatch.setattr(control_client, 'state_get', no_socket)
+        data = _data(client, '/api/v3/display/current-status')
+        assert (data['mode'], data['source']) == ('from-cache', 'cache')
+
+
 # --- end to end over a real socket -------------------------------------------------------
 
 @needs_unix_sockets

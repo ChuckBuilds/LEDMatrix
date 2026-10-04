@@ -283,6 +283,29 @@ def snapshot_loop_age(snapshot: Mapping[str, Any],
     return max(float(age), 0.0) + snapshot_age(snapshot, now_mono)
 
 
+def _merge_volatile(state: Dict[str, Any], volatile: Any) -> None:
+    """Fold a tick's ``volatile`` values (``{section: {key: value}}``) into
+    ``state``, copying each section it touches.
+
+    These are the timestamps the hub leaves out of its version --
+    ``display.last_updated``, ``on_demand.last_updated``/``remaining``,
+    ``plugins.published_at`` -- and the readers judge freshness by them, so
+    a copy that only full ``state`` events updated would go stale while the
+    same mode stayed on screen. Only keys the section already has are taken:
+    a tick never adds a section or a key the last snapshot did not carry
+    (a section left out of a truncated snapshot stays out).
+    """
+    if not isinstance(volatile, dict):
+        return  # a display from before ticks carried them
+    for name, values in volatile.items():
+        section = state.get(name)
+        if not isinstance(section, dict) or not isinstance(values, dict):
+            continue
+        fresh = {k: v for k, v in values.items() if k in section}
+        if fresh:
+            state[name] = dict(section, **fresh)
+
+
 #: A subscription that has heard nothing for this long is not trusted: the
 #: display sends a tick at least every SUBSCRIBE_KEEPALIVE_SECONDS.
 SUBSCRIPTION_SILENCE_SECONDS = 3 * SUBSCRIBE_KEEPALIVE_SECONDS
@@ -449,12 +472,17 @@ class StateSubscription:
                 self.snapshots += 1
             elif (self._snapshot is not None
                   and result.get('epoch') == self._snapshot.get('epoch')):
-                # A tick: nothing changed but the render loop's liveness.
+                # A tick: nothing changed but the render loop's liveness and
+                # the volatile keys (timestamps) the writers keep refreshing.
                 snap = dict(self._snapshot)
+                state = dict(snap.get('state') or {})
+                if result.get('version') == snap.get('version'):
+                    _merge_volatile(state, result.get('volatile'))
                 loop = result.get('loop')
                 if isinstance(loop, dict):
-                    snap['state'] = dict(snap.get('state') or {}, loop=loop)
+                    state['loop'] = loop
                     snap['loop'] = loop
+                snap['state'] = state
                 snap['served_at'] = result.get('served_at', snap.get('served_at'))
                 self._snapshot = snap
             else:
