@@ -26,6 +26,7 @@ from src.display_arbiter import (  # noqa: E402
     ScreenPlan,
     Source,
     WifiNotice,
+    on_demand_bound,
     wifi_notice_preempts,
 )
 
@@ -34,6 +35,7 @@ NOTICE = WifiNotice(message="Connected to HomeNet", expires_at=1_000.0)
 OFF = Source.SCHEDULED_OFF
 FOLLOW = Source.FOLLOWER
 WIFI = Source.WIFI
+ONDEM = Source.ON_DEMAND
 LEGACY = Source.LEGACY
 
 # (schedule_on, on_demand_active, follower_active, notice) -> Source.
@@ -46,8 +48,8 @@ DECIDE_TABLE = [
     (False, False, True, None, OFF),
     (False, False, True, NOTICE, OFF),
     # Scheduled off, but on-demand overrides the gate.
-    (False, True, False, None, LEGACY),       # on-demand: run() decides
-    (False, True, False, NOTICE, LEGACY),     # on-demand outranks WiFi
+    (False, True, False, None, ONDEM),        # on-demand overrides the gate
+    (False, True, False, NOTICE, ONDEM),      # on-demand outranks WiFi
     (False, True, True, None, FOLLOW),        # follower outranks on-demand
     (False, True, True, NOTICE, FOLLOW),
     # Scheduled on.
@@ -55,8 +57,8 @@ DECIDE_TABLE = [
     (True, False, False, NOTICE, WIFI),
     (True, False, True, None, FOLLOW),
     (True, False, True, NOTICE, FOLLOW),      # follower outranks WiFi
-    (True, True, False, None, LEGACY),
-    (True, True, False, NOTICE, LEGACY),      # on-demand outranks WiFi
+    (True, True, False, None, ONDEM),
+    (True, True, False, NOTICE, ONDEM),       # on-demand outranks WiFi
     (True, True, True, None, FOLLOW),
     (True, True, True, NOTICE, FOLLOW),
 ]
@@ -95,6 +97,10 @@ class TestDecide:
         elif expected is WIFI:
             assert plan == ScreenPlan(WIFI, max_duration=WIFI_NOTICE_DWELL,
                                       notice=NOTICE)
+        elif expected is ONDEM:
+            # An empty state: a session with no modes, which the
+            # controller ends (see TestOnDemand for real sessions).
+            assert plan == ScreenPlan(ONDEM)
         else:
             # A follower paces itself; LEGACY is run()'s existing code.
             assert plan == ScreenPlan(expected)
@@ -227,13 +233,84 @@ class TestControllerSnapshot:
         assert step("22:59:30") is LEGACY
         assert step("23:00:00") is OFF                 # window ends
         dc.on_demand_active = True
-        assert step("23:00:10") is LEGACY              # on-demand overrides
+        assert step("23:00:10") is ONDEM               # on-demand overrides
         assert dc.on_demand_schedule_override is True
-        assert step("23:01:00") is LEGACY              # next minute, still on
+        assert step("23:01:00") is ONDEM               # next minute, still on
         dc._reset_on_demand_fields()                   # session ends
         assert step("23:01:20") is OFF                 # same minute: blanks
         dc.on_demand_active = True
-        assert step("06:59:00") is LEGACY
-        assert step("07:00:00") is LEGACY              # schedule back on mid-session
+        assert step("06:59:00") is ONDEM
+        assert step("07:00:00") is ONDEM               # schedule back on mid-session
         dc._reset_on_demand_fields()
         assert step("07:00:30") is LEGACY
+
+
+# -- OnDemand (stage 3) ---------------------------------------------------
+
+ON = ArbiterInputs(schedule_on=True, on_demand_active=True, follower_active=False)
+
+
+def _session(modes=("a", "b", "c"), index=0, expires_at=None, current=None):
+    return ArbiterState(current_mode=current, on_demand_modes=tuple(modes),
+                        on_demand_index=index, on_demand_expires_at=expires_at)
+
+
+class TestOnDemand:
+
+    # (modes, index, expires_at, now) -> (mode, max_duration)
+    TABLE = [
+        (("a", "b", "c"), 0, None, 100.0, "a", None),       # untimed
+        (("a", "b", "c"), 2, None, 100.0, "c", None),
+        (("a", "b", "c"), 3, None, 100.0, "a", None),       # past the end: 0
+        (("a", "b", "c"), 9, None, 100.0, "a", None),
+        (("a",), 0, 130.0, 100.0, "a", 30.0),               # 30 s left
+        (("a",), 0, 130.0, 130.0, "a", 0.0),                # none left
+        (("a",), 0, 130.0, 200.0, "a", 0.0),                # never negative
+    ]
+
+    @pytest.mark.parametrize("modes,index,expires_at,now,mode,max_duration", TABLE)
+    def test_current_mode_and_time_left(self, modes, index, expires_at, now, mode,
+                                        max_duration):
+        plan = Arbiter.decide(_session(modes, index, expires_at), ON, now)
+        assert plan.source is ONDEM
+        assert plan.mode == mode
+        assert plan.max_duration == max_duration
+        assert plan.deadline == expires_at
+
+    def test_no_modes_left_is_a_plan_with_no_mode(self):
+        plan = Arbiter.decide(_session(modes=()), ON, 0.0)
+        assert plan == ScreenPlan(ONDEM)
+
+    def test_preemptible_by_the_schedule_a_reload_and_its_own_changes(self):
+        plan = Arbiter.decide(_session(), ON, 0.0)
+        assert {Source.SCHEDULED_OFF, ONDEM, Source.RELOAD} <= plan.preemptible_by
+        assert Source.FOLLOWER not in plan.preemptible_by
+
+    @pytest.mark.parametrize("index,expected_index,expected_mode", [
+        (0, 1, "b"), (1, 2, "c"), (2, 0, "a")])
+    def test_next_on_demand_wraps(self, index, expected_index, expected_mode):
+        nxt = _session(index=index).next_on_demand()
+        assert (nxt.on_demand_index, nxt.current_mode) == (expected_index, expected_mode)
+
+    def test_showing_a_plan_resets_an_index_past_the_end(self):
+        state = _session(index=5, current="x")
+        plan = Arbiter.decide(state, ON, 0.0)
+        shown = state.showing(plan)
+        assert (shown.on_demand_index, shown.current_mode) == (0, "a")
+        assert state.on_demand_index == 5            # not mutated
+
+
+# (min, max, deadline, now) -> bounds. The bound applied after the first frame.
+BOUND_TABLE = [
+    (10.0, 20.0, None, 0.0, (10.0, 20.0)),      # untimed: unchanged
+    (10.0, 20.0, 100.0, 50.0, (10.0, 20.0)),    # plenty left
+    (10.0, 20.0, 100.0, 85.0, (10.0, 15.0)),    # max cut to what is left
+    (10.0, 20.0, 100.0, 95.0, (5.0, 5.0)),      # both cut
+    (10.0, 20.0, 100.0, 100.0, None),           # nothing left
+    (10.0, 20.0, 100.0, 150.0, None),
+]
+
+
+@pytest.mark.parametrize("min_d,max_d,deadline,now,expected", BOUND_TABLE)
+def test_on_demand_bound(min_d, max_d, deadline, now, expected):
+    assert on_demand_bound(min_d, max_d, deadline, now) == expected

@@ -23,9 +23,9 @@ too, so both of its answers -- at the top of a pass and between frames --
 come from one module.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, Tuple
 
 __all__ = [
     "Arbiter",
@@ -37,6 +37,7 @@ __all__ = [
     "Source",
     "WIFI_NOTICE_DWELL",
     "WifiNotice",
+    "on_demand_bound",
     "wifi_notice_preempts",
 ]
 
@@ -54,6 +55,7 @@ class Source(Enum):
 
     SCHEDULED_OFF = "scheduled-off"
     FOLLOWER = "follower"
+    ON_DEMAND = "on-demand"
     WIFI = "wifi"
     # Not decided by the Arbiter yet: on-demand, live priority, Vegas and the
     # rotation are still chosen by run()'s own code. Stage 3 adds the
@@ -91,10 +93,70 @@ class WifiNotice:
 class ArbiterState:
     """What the Arbiter remembers between passes.
 
-    Nothing yet: the stage-2 Sources decide from the inputs alone. The
-    on-demand index, the rotation index and the live resume point move here
-    with their Sources in stage 3.
+    A snapshot of the controller's own fields, taken when decide() is
+    called (DisplayController._arbiter_state); the transitions below return
+    the next state, and the controller writes it back.
+
+    Attributes:
+        current_mode: The mode on the panel or about to be
+            (``current_display_mode``).
+        on_demand_modes: The on-demand session's modes, in the order it
+            shows them (a pinned mode already moved to the front when the
+            session started, by _apply_on_demand_pin).
+        on_demand_index: Which of them is showing.
+        on_demand_expires_at: When the session ends (wall clock), or None
+            for a session with no duration.
+        on_demand_pinned: The session was started pinned. Carried for the
+            snapshot; the pin itself is already in ``on_demand_modes``.
     """
+
+    current_mode: Optional[str] = None
+    on_demand_modes: Tuple[str, ...] = ()
+    on_demand_index: int = 0
+    on_demand_expires_at: Optional[float] = None
+    on_demand_pinned: bool = False
+
+    def next_on_demand(self) -> "ArbiterState":
+        """The session's next mode, wrapping round. Needs a mode list."""
+        index = (self.on_demand_index + 1) % len(self.on_demand_modes)
+        return replace(self, on_demand_index=index,
+                       current_mode=self.on_demand_modes[index])
+
+    def showing(self, plan: "ScreenPlan") -> "ArbiterState":
+        """The state once ``plan`` is on the panel.
+
+        An on-demand plan puts the session's index on the mode it shows (an
+        index past the end of a shortened list starts it again at 0).
+        """
+        state = replace(self, current_mode=plan.mode)
+        if plan.source is Source.ON_DEMAND and self.on_demand_modes:
+            state = replace(state, on_demand_index=_on_demand_index(self))
+        return state
+
+
+def _on_demand_index(state: ArbiterState) -> int:
+    """The session's index, or 0 once it is past the end of its list."""
+    index = state.on_demand_index
+    return index if index < len(state.on_demand_modes) else 0
+
+
+def on_demand_bound(min_duration: float, max_duration: float,
+                    deadline: Optional[float],
+                    now: float) -> Optional[Tuple[float, float]]:
+    """Shorten a screen's (min, max) seconds to what is left of a timed
+    on-demand session ending at ``deadline``. None when nothing is left.
+
+    The OnDemand Source's bound, applied after the screen's first frame,
+    where it always was (``now`` is read then).
+    """
+    if deadline is None:
+        return min_duration, max_duration
+    remaining = max(0.0, deadline - now)
+    min_duration = min(min_duration, remaining)
+    max_duration = min(max_duration, remaining)
+    if max_duration <= 0:
+        return None
+    return min_duration, max_duration
 
 
 @dataclass(frozen=True)
@@ -139,6 +201,9 @@ class ScreenPlan:
         frame_policy: Which frame loop the screen runs.
         preemptible_by: The Sources that may end the screen mid-way.
         notice: The WiFi notice to draw, for a WIFI plan.
+        deadline: For an on-demand plan, when the session ends (wall
+            clock): after the first frame the screen's durations are cut to
+            what is left (:func:`on_demand_bound`).
     """
 
     source: Source
@@ -150,6 +215,7 @@ class ScreenPlan:
     frame_policy: Optional[FramePolicy] = None
     preemptible_by: FrozenSet[Source] = frozenset()
     notice: Optional[WifiNotice] = None
+    deadline: Optional[float] = None
 
 
 SCHEDULED_OFF_PLAN = ScreenPlan(Source.SCHEDULED_OFF, max_duration=SCHEDULED_OFF_DWELL)
@@ -157,10 +223,11 @@ FOLLOWER_PLAN = ScreenPlan(Source.FOLLOWER)
 LEGACY_PLAN = ScreenPlan(Source.LEGACY)
 RELOAD_PLAN = ScreenPlan(Source.RELOAD)
 
-#: What may end a screen mid-way: the schedule, a WiFi notice, a plugin
-#: reload, and run()'s own changes of mode (on-demand, live priority).
+#: What may end a screen mid-way: the schedule, an on-demand session
+#: starting or ending, a WiFi notice, a plugin reload, and run()'s own
+#: changes of mode (live priority).
 SCREEN_PREEMPTERS: FrozenSet[Source] = frozenset(
-    {Source.SCHEDULED_OFF, Source.WIFI, Source.RELOAD, Source.LEGACY})
+    {Source.SCHEDULED_OFF, Source.ON_DEMAND, Source.WIFI, Source.RELOAD, Source.LEGACY})
 
 
 class Arbiter:
@@ -171,20 +238,18 @@ class Arbiter:
         """The plan for this pass, from the Sources in priority order.
 
         Args:
-            state: What the Arbiter remembers between passes (nothing yet).
+            state: What the Arbiter remembers between passes.
             inputs: This pass's snapshot.
-            now: Wall-clock time of the snapshot. No stage-2 Source reads it:
-                the top-of-pass WiFi check takes the notice as read, and only
-                the mid-screen check (:func:`wifi_notice_preempts`) compares
-                it with the expiry. It is in the signature for the Sources
-                stage 3 adds (on-demand expiry, durations).
+            now: Wall-clock time of the snapshot. The OnDemand Source reads
+                it for what is left of a timed session. The top-of-pass WiFi
+                check does not: it takes the notice as read, and only the
+                mid-screen check (:func:`wifi_notice_preempts`) compares it
+                with the expiry.
 
         Returns:
             The winning Source's plan, or LEGACY_PLAN when the winner is one
             run() still decides itself.
         """
-        del state, now  # not read by the stage-2 Sources; see the docstring
-
         # ScheduledOff is a gate, not a Source: a scheduled-off panel stays
         # blank even for a follower, and only an on-demand session overrides
         # it (#714 -- one ending in off hours blanks at the next pass).
@@ -195,9 +260,9 @@ class Arbiter:
         if inputs.follower_active:
             return FOLLOWER_PLAN
 
-        # 2. OnDemand: decided by run() until stage 3. It outranks the notice.
+        # 2. OnDemand: the session's current mode. It outranks the notice.
         if inputs.on_demand_active:
-            return LEGACY_PLAN
+            return _on_demand_plan(state, now)
 
         # 3. Wifi: a pending notice, held for one short dwell per pass.
         if inputs.wifi_notice is not None:
@@ -206,6 +271,25 @@ class Arbiter:
 
         # 4-6. Live, Vegas, Rotation: still run()'s own code.
         return LEGACY_PLAN
+
+
+def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
+    """The OnDemand Source: the session's current mode.
+
+    ``max_duration`` is what is left of a timed session at ``now`` (None
+    without a duration); ``deadline`` carries the expiry so the bound can be
+    applied again after the first frame. A session with no modes left (its
+    plugin was unloaded under it) gets a plan with no mode: the controller
+    ends the session and shows the rotation's mode instead.
+    """
+    modes = state.on_demand_modes
+    if not modes:
+        return ScreenPlan(Source.ON_DEMAND)
+    expires_at = state.on_demand_expires_at
+    remaining = None if expires_at is None else max(0.0, expires_at - now)
+    return ScreenPlan(Source.ON_DEMAND, mode=modes[_on_demand_index(state)],
+                      max_duration=remaining, deadline=expires_at,
+                      preemptible_by=SCREEN_PREEMPTERS)
 
 
 def wifi_notice_preempts(notice: Optional[WifiNotice], on_demand_active: bool,

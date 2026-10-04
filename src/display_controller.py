@@ -39,7 +39,7 @@ import pytz
 from src import display_watchdog
 from src.display_arbiter import (
     RELOAD_PLAN, SCREEN_PREEMPTERS, Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
-    ScreenPlan, Source, WifiNotice, wifi_notice_preempts,
+    ScreenPlan, Source, WifiNotice, on_demand_bound, wifi_notice_preempts,
 )
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
@@ -1834,10 +1834,12 @@ class DisplayController:
     def _advance_on_demand(self) -> None:
         """Move an active on-demand session to its next mode and publish it.
 
-        The caller checks that on_demand_modes is non-empty.
+        The caller checks that on_demand_modes is non-empty. The step itself
+        is ArbiterState.next_on_demand.
         """
-        self.on_demand_mode_index = (self.on_demand_mode_index + 1) % len(self.on_demand_modes)
-        next_mode = self.on_demand_modes[self.on_demand_mode_index]
+        nxt = self._arbiter_state().next_on_demand()
+        self.on_demand_mode_index = nxt.on_demand_index
+        next_mode = nxt.current_mode
         logger.info("Rotating to next on-demand mode: %s (index %d/%d)",
                     next_mode, self.on_demand_mode_index, len(self.on_demand_modes))
         self.current_display_mode = next_mode
@@ -3273,30 +3275,49 @@ class DisplayController:
         return wifi_notice_preempts(self._read_wifi_notice(), self.on_demand_active,
                                     time.time())
 
-    def _resolve_active_mode(self):
-        """The mode this pass shows: the on-demand session's current mode
-        while one is active, else the rotation's.
+    def _arbiter_state(self) -> ArbiterState:
+        """What the Arbiter remembers, read from the controller's fields.
 
-        Moves current_display_mode onto the on-demand mode (forcing a clear)
-        when they differ, and ends an on-demand session that has no modes.
-        None when the rotation has no current mode.
+        The controller's attributes stay the record (the web UI, the control
+        socket and the on-demand cache read them); this is the frozen copy
+        decide() and the state transitions work on.
         """
-        if not self.on_demand_active:
-            return self.current_display_mode
-        # Guard against empty on_demand_modes
-        if not self.on_demand_modes:
-            logger.warning("On-demand active but no modes available, clearing on-demand mode")
-            self._clear_on_demand(reason='no-modes-available')
-            return self.current_display_mode
-        # Rotate through on-demand plugin modes
-        if self.on_demand_mode_index >= len(self.on_demand_modes):
-            # Reset to first mode if index is out of bounds
-            self.on_demand_mode_index = 0
-        active_mode = self.on_demand_modes[self.on_demand_mode_index]
-        if self.current_display_mode != active_mode:
-            self.current_display_mode = active_mode
-            self.force_change = True
-        return active_mode
+        return ArbiterState(
+            current_mode=self.current_display_mode,
+            on_demand_modes=tuple(self.on_demand_modes or ()),
+            on_demand_index=self.on_demand_mode_index,
+            on_demand_expires_at=self.on_demand_expires_at,
+            on_demand_pinned=bool(self.on_demand_pinned),
+        )
+
+    def _screen_inputs(self) -> ArbiterInputs:
+        """The Arbiter's inputs for the screen this pass shows, taken once
+        the pass has dealt with the gate, a follower and the WiFi notice
+        (and, on a Vegas pass, the iteration)."""
+        return ArbiterInputs(schedule_on=True, on_demand_active=self.on_demand_active,
+                             follower_active=False)
+
+    def _take_plan(self, plan: ScreenPlan) -> ScreenPlan:
+        """Put ``plan`` in the controller's state before its screen runs.
+
+        An on-demand plan moves current_display_mode onto the session's
+        mode (forcing a clear) when they differ. One with no mode ends a
+        session that has no modes left, and the rotation's mode shows
+        instead. Returns the plan the screen runs.
+        """
+        if plan.source is Source.ON_DEMAND:
+            if plan.mode is None:
+                logger.warning("On-demand active but no modes available, clearing on-demand mode")
+                self._clear_on_demand(reason='no-modes-available')
+                return ScreenPlan(Source.LEGACY, mode=self.current_display_mode,
+                                  preemptible_by=SCREEN_PREEMPTERS)
+            self.on_demand_mode_index = self._arbiter_state().showing(plan).on_demand_index
+            if self.current_display_mode != plan.mode:
+                self.current_display_mode = plan.mode
+                self.force_change = True
+            return plan
+        return ScreenPlan(Source.LEGACY, mode=self.current_display_mode,
+                          preemptible_by=SCREEN_PREEMPTERS)
 
     def _plugin_for_mode(self, mode: Optional[str]):
         """The plugin to draw ``mode``, or None to skip it this pass.
@@ -3705,20 +3726,6 @@ class DisplayController:
                 max_duration = 15.0
         return min_duration, max_duration
 
-    def _clamp_to_on_demand(self, min_duration: float,
-                            max_duration: float) -> Optional[Tuple[float, float]]:
-        """Shorten a screen's (min, max) to what is left of a timed on-demand
-        session. None when the session has no time left (nothing to show).
-        """
-        if self.on_demand_active:
-            remaining = self._get_on_demand_remaining()
-            if remaining is not None:
-                min_duration = min(min_duration, remaining)
-                max_duration = min(max_duration, remaining)
-                if max_duration <= 0:
-                    return None
-        return min_duration, max_duration
-
     def _needs_high_fps(self, plugin, active_mode: str, log: bool = True) -> bool:
         """Whether a screen runs the high-FPS (8 ms) loop or the 1 s one.
 
@@ -3829,7 +3836,8 @@ class DisplayController:
         min_duration, max_duration = self._resolve_durations(
             plugin, active_mode, base_duration, dynamic_enabled)
 
-        bounds = self._clamp_to_on_demand(min_duration, max_duration)
+        # The OnDemand Source's bound: what is left of a timed session.
+        bounds = on_demand_bound(min_duration, max_duration, plan.deadline, time.time())
         if bounds is None:
             self._check_on_demand_expiration()
             return None
@@ -3956,7 +3964,7 @@ class DisplayController:
                 # Who gets the panel this pass (src/display_arbiter.py). The
                 # Arbiter decides the scheduled-off gate, Follower and Wifi;
                 # a LEGACY plan carries on to the code below.
-                plan = Arbiter.decide(ArbiterState(), self._arbiter_inputs(), time.time())
+                plan = Arbiter.decide(self._arbiter_state(), self._arbiter_inputs(), time.time())
 
                 if plan.source is Source.SCHEDULED_OFF:
                     self._blank_while_scheduled_off(plan.max_duration)
@@ -4051,7 +4059,12 @@ class DisplayController:
                             logger.exception("Vegas mode error")
                             # Fall through to normal rotation on error
 
-                active_mode = self._resolve_active_mode()
+                # The screen: the on-demand session's current mode while one
+                # is active (it may have started during a Vegas iteration),
+                # else the rotation's.
+                plan = self._take_plan(Arbiter.decide(
+                    self._arbiter_state(), self._screen_inputs(), time.time()))
+                active_mode = plan.mode
 
                 if self._active_dynamic_mode and self._active_dynamic_mode != active_mode:
                     self._active_dynamic_mode = None
@@ -4071,10 +4084,7 @@ class DisplayController:
 
                 # One screen: the first frame, the frame loop, the make-up
                 # dwell (src/screen_runner.py).
-                outcome = runner.run(
-                    ScreenPlan(Source.LEGACY, mode=active_mode,
-                               preemptible_by=SCREEN_PREEMPTERS),
-                    manager_to_display)
+                outcome = runner.run(plan, manager_to_display)
 
                 if outcome.exit_reason is ExitReason.PREEMPTED:
                     # Something else has the panel now (an on-demand start or
