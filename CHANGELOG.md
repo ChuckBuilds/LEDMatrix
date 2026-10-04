@@ -488,6 +488,23 @@ policies are unchanged.
 
 ### Fixes
 
+- A cache key too long to be a filename is now cached. The calendar
+  plugin's key joins every calendar id the user picked; on a real install
+  it passed 300 bytes, ext4 refuses names over 255, and every write failed
+  with `File name too long` — logged as "(permission denied)", so it read
+  like a cache-directory ownership problem. `DiskCache.get_cache_path` now
+  keeps a key of up to 200 UTF-8 bytes as its filename, as before, and
+  turns a longer one into its first bytes plus a hash of the whole key. The
+  web UI's cache list and delete keep working, because the shortened name
+  maps back to the same file. A failed write now names the real error.
+- The cache's memory tier no longer serves data older than the reader asked
+  for. A record loaded from disk was timed in memory from the load, not
+  from when it was written, so `get(key, max_age=300)` could return data
+  close to 600 s old (after a restart, after the hourly memory sweep, or in
+  the other process, which only ever loads the record from disk), and a
+  stored `ttl` was stretched the same way. A memory hit is now also checked against
+  the record's own timestamp, and a stale one falls through to disk, which
+  returns a newer write if there is one.
 - The garbage-collection timer (`GcMonitor`, above) no longer prints
   `Exception ignored while calling GC callback ... 'NoneType' object has no
   attribute 'perf_counter'` when the display service or a test run exits.
