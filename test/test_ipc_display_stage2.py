@@ -44,9 +44,9 @@ def _reload(plugin_id):
 def _screen(mode):
     """A rotation screen of ``mode``, as the ScreenRunner hands it to the
     1 Hz loop's frame wait."""
-    from src.display_arbiter import SCREEN_PREEMPTERS, ScreenPlan, Source
+    from src.display_arbiter import ArbiterState, rotation_plan
     from src.screen_runner import Screen
-    plan = ScreenPlan(Source.LEGACY, mode=mode, preemptible_by=SCREEN_PREEMPTERS)
+    plan = rotation_plan(ArbiterState(current_mode=mode))
     return Screen(plan, plugin=None, accepts_display_mode=False, start=0.0)
 
 
@@ -262,7 +262,8 @@ class TestRealTimeWake:
         dc.on_demand_active = False
         dc._activate_on_demand = MagicMock(
             side_effect=lambda request: setattr(dc, 'current_display_mode', 'weather'))
-        dc._wifi_notice_pending = MagicMock(return_value=False)
+        dc._wifi_notice_pending = MagicMock(return_value=False)   # the dwell's check
+        dc._read_wifi_notice = MagicMock(return_value=None)       # the frame wait's
         dc._tick_plugin_updates = MagicMock()
         dc._check_live_takeover = MagicMock()
         dc.cache_manager.get = MagicMock(return_value=None)

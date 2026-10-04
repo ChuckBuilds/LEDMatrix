@@ -38,8 +38,8 @@ import pytz
 
 from src import display_watchdog
 from src.display_arbiter import (
-    RELOAD_PLAN, SCREEN_PREEMPTERS, Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
-    ScreenPlan, Source, WifiNotice, live_pick, on_demand_bound, rotation_plan,
+    Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
+    ScreenPlan, Source, WifiNotice, live_pick, live_takeover, on_demand_bound, rotation_plan,
     wifi_notice_preempts,
 )
 from src.display_manager import DisplayManager
@@ -3063,42 +3063,81 @@ class DisplayController:
     #: shown yet, so the next pass must not advance the live round-robin past it.
     _live_takeover_unshown: bool = False
 
-    def _check_live_takeover(self) -> None:
-        """Hand the panel to a live game that started while a screen runs.
+    def _scan_for_takeover(self) -> Optional[Tuple[str, ...]]:
+        """The live-priority scan a mid-screen check makes, when one is due.
 
-        Called from the frame loops and the dwell sleep. Live priority used
-        to be checked only between screens, so a game that went live during
-        a 30 s screen waited for it to end. This switches current_display_mode
-        to the live mode, which ends the screen the way any other mode change
-        does. Throttled to LIVE_TAKEOVER_INTERVAL since the last scan of any
-        kind. Nothing happens while an on-demand session is active, while
-        the panel is scheduled off, while Vegas keeps live content in its
-        ticker, or when the screen showing is already a live mode.
+        Live priority used to be checked only between screens, so a game
+        that went live during a 30 s screen waited for it to end. The frame
+        loops and the dwell sleep now scan for one, throttled to
+        LIVE_TAKEOVER_INTERVAL since the last scan of any kind. None (no
+        scan) while an on-demand session is active, while the panel is
+        scheduled off, while Vegas keeps live content in its ticker, or when
+        the screen showing is already a live mode -- a live screen is not
+        rescanned at all: live priority put it there, and live games take
+        turns between screens, not mid-screen.
 
-        A live screen is not rescanned at all: live priority put it there,
-        and live games take turns between screens, not mid-screen.
+        Whether what it found takes the panel is the Arbiter's call
+        (display_arbiter.live_takeover).
         """
         if self.current_display_mode in self._last_live_modes:
-            return
+            return None
         last = self._last_live_scan
         if last is not None and time.monotonic() - last < self.LIVE_TAKEOVER_INTERVAL:
-            return
+            return None
         if self.on_demand_active or not self.is_display_active:
-            return
+            return None
         try:
             coordinator = getattr(self, 'vegas_coordinator', None)
             if (coordinator is not None and coordinator.is_enabled
                     and self._vegas_keeps_live_in_ticker()):
-                return
-            live_modes = self._collect_live_modes()
-            if not live_modes or self.current_display_mode in live_modes:
-                return
-            self._apply_live_priority(live_modes[0])
-            self._live_takeover_unshown = True
+                return None
+            return tuple(self._collect_live_modes())
         except Exception:  # pylint: disable=broad-except
             # Called from inside the frame loops; a failure here must not
             # take the display loop down with it.
             logger.exception("Error checking for a live-priority takeover")
+            return None
+
+    def _claim_live_takeover(self, mode: str) -> None:
+        """A live game takes the panel mid-screen: switch current_display_mode
+        to it (which ends the screen) and keep the next pass from advancing
+        the live round-robin past it before it has shown."""
+        try:
+            self._apply_live_priority(mode)
+            self._live_takeover_unshown = True
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Error checking for a live-priority takeover")
+
+    def _mid_screen_inputs(self, live_scan: Optional[Tuple[str, ...]] = None,
+                           reload: bool = False) -> ArbiterInputs:
+        """The Arbiter's inputs between frames and in a dwell, without the
+        WiFi notice (read separately, only when it could decide anything).
+
+        A follower is not looked at mid-screen, and the Vegas flags are left
+        out: the scan is None whenever the ticker keeps live content.
+        """
+        return ArbiterInputs(
+            schedule_on=self.is_display_active and not self.on_demand_schedule_override,
+            on_demand_active=self.on_demand_active,
+            follower_active=False,
+            live_modes=live_scan,
+            reload_pending=reload and self._plugin_reload_pending,
+        )
+
+    def _check_live_takeover(self) -> None:
+        """Hand the panel to a live game that started while the dwell sleeps.
+
+        The dwell's half of what the frame loops do at their service points
+        (_screen_check): scan when one is due (_scan_for_takeover), and if
+        the Arbiter says a live mode takes over, claim it.
+        """
+        live_scan = self._scan_for_takeover()
+        if live_scan is None:
+            return
+        mode = live_takeover(ArbiterState(current_mode=self.current_display_mode),
+                             self._mid_screen_inputs(live_scan))
+        if mode is not None:
+            self._claim_live_takeover(mode)
 
     # -- Pieces of run() --------------------------------------------------
     # Extracted from run() unchanged, as the first step of restructuring it
@@ -3935,27 +3974,59 @@ class DisplayController:
         )
 
     def _screen_service(self, screen: Screen) -> Optional[Tuple[str, ...]]:
-        """Between frames: apply pending changes, then the live takeover."""
+        """Between frames: apply pending changes, then the live scan if due.
+
+        The scan's answer is weighed at the service point that follows
+        (_screen_check); in the 125 Hz loop that is after the frame's sleep,
+        where the loop has always checked whether the screen should end.
+        """
         # Throttled: one clock compare between passes.
         self._service_pending_changes()
-        self._check_live_takeover()
-        return None
+        return self._scan_for_takeover()
 
     def _screen_check(self, screen: Screen, checkpoint: Checkpoint,
                       live_scan: Optional[Tuple[str, ...]] = None) -> Optional[ScreenPlan]:
-        """The plan that ends ``screen`` at a service point, or None while it holds."""
-        mode = screen.mode
+        """The ScreenRunner's service point: one Arbiter.decide() call.
+
+        Returns the plan that ends ``screen`` (a live takeover is claimed
+        first), or None while it holds. What it reads follows
+        ``checkpoint``: a pending plugin reload counts only between frames,
+        and the WiFi notice file is read exactly where the loop always read
+        it (NoticeRead) -- the read is throttled to once a second and deletes
+        an expired file, so an extra or a missing read would move both.
+        """
+        running = screen.plan
+        # The mid-screen rules read only the mode on the panel; the full
+        # snapshot would copy the rotation list on every 125 Hz frame.
+        state = ArbiterState(current_mode=self.current_display_mode)
+        inputs = self._mid_screen_inputs(live_scan, reload=checkpoint.reload)
+        if self._screen_reads_notice(checkpoint, state, inputs, running):
+            notice = self._read_wifi_notice()
+            if checkpoint.notice_counts:
+                inputs = replace(inputs, wifi_notice=notice)
+        by = Arbiter.decide(state, inputs, time.time(), running=running)
+        if by is running:
+            return None
+        if by.source is Source.LIVE and by.mode is not None:
+            self._claim_live_takeover(by.mode)
+        return by
+
+    def _screen_reads_notice(self, checkpoint: Checkpoint, state: ArbiterState,
+                             inputs: ArbiterInputs, running: ScreenPlan) -> bool:
+        """Whether this service point reads the WiFi notice file.
+
+        Never during an on-demand session, which outranks the notice. Where
+        the loop read it only if nothing cheaper had already ended the
+        screen (IF_UNDECIDED), not once the mode has moved, the schedule has
+        the panel off, or a live game is taking over.
+        """
+        if checkpoint.notice is NoticeRead.NEVER or self.on_demand_active:
+            return False
         if checkpoint.notice is NoticeRead.ALWAYS:
-            if self._wifi_notice_pending() and checkpoint.notice_counts:
-                return ScreenPlan(Source.WIFI)
-        if self.current_display_mode != mode or not self.is_display_active:
-            return ScreenPlan(Source.ROTATION, mode=self.current_display_mode)
-        if (checkpoint.notice is NoticeRead.IF_UNDECIDED and checkpoint.notice_counts
-                and self._wifi_notice_pending()):
-            return ScreenPlan(Source.WIFI)
-        if checkpoint.reload and self._plugin_reload_pending:
-            return RELOAD_PLAN
-        return None
+            return True
+        return (self.is_display_active
+                and state.current_mode == running.mode
+                and live_takeover(state, inputs) is None)
 
     def run(self):
         """Run the display controller, switching between displays."""

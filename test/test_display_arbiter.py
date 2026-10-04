@@ -29,6 +29,7 @@ from src.display_arbiter import (  # noqa: E402
     Source,
     WifiNotice,
     live_pick,
+    live_takeover,
     on_demand_bound,
     wifi_notice_preempts,
 )
@@ -506,3 +507,120 @@ class TestAfter:
     def test_no_rotation_no_step(self):
         state = ArbiterState(current_mode="x")
         assert state.after(_End()) is state
+
+
+# -- Mid-screen: decide(..., running=plan) (stage 3) ----------------------
+#
+# What the ScreenRunner asks at each service point. These rows are what
+# _check_live_takeover, _screen_preempted and _wifi_notice_pending answered
+# between frames before stage 3, written out.
+
+CLOCK = Arbiter.decide(ArbiterState(current_mode="clock"), _below(live=()), 0.0)
+NFL = Arbiter.decide(ArbiterState(current_mode="clock"), _below(live=("nfl_live",)), 0.0)
+OD = Arbiter.decide(_session(modes=("x", "y")), ON, 0.0)
+FRESH = WifiNotice(message="AP mode", expires_at=1_000.0)
+
+HELD = "held"
+
+
+def _mid(on_demand=False, schedule_on=True, live=None, notice=None, reload=False):
+    return ArbiterInputs(schedule_on=schedule_on, on_demand_active=on_demand,
+                         follower_active=False, live_modes=live, wifi_notice=notice,
+                         reload_pending=reload)
+
+
+# (running, current_mode, inputs, now) -> HELD or (source, mode)
+MID_TABLE = [
+    # Nothing changed.
+    (CLOCK, "clock", _mid(), 500.0, HELD),
+    (CLOCK, "clock", _mid(live=()), 500.0, HELD),
+    # A game went live: it takes the panel (the first live mode).
+    (CLOCK, "clock", _mid(live=("nfl_live", "nhl_live")), 500.0, (LIVE, "nfl_live")),
+    # ... even with a notice pending: the claim is made now, and the next
+    # pass shows the notice first (top-of-pass order), then the game.
+    (CLOCK, "clock", _mid(live=("nfl_live",), notice=FRESH), 500.0, (LIVE, "nfl_live")),
+    # ... but not over the schedule or an on-demand session.
+    (CLOCK, "clock", _mid(live=("nfl_live",), schedule_on=False), 500.0, (OFF, None)),
+    (CLOCK, "x", _mid(live=("nfl_live",), on_demand=True), 500.0, (ONDEM, "x")),
+    # A screen already on a live mode is not taken over by another.
+    (CLOCK, "nfl_live", _mid(live=("nfl_live", "nhl_live")), 500.0, (ROTATION, "nfl_live")),
+    (NFL, "nfl_live", _mid(live=("nhl_live",)), 500.0, HELD),
+    # The mode moved under the screen: on-demand started, or ended, or the
+    # rotation was rebuilt.
+    (CLOCK, "x", _mid(on_demand=True), 500.0, (ONDEM, "x")),
+    (OD, "weather", _mid(), 500.0, (ROTATION, "weather")),
+    (CLOCK, "weather", _mid(), 500.0, (ROTATION, "weather")),
+    # An on-demand session that ends on the same mode keeps the screen.
+    (OD, "x", _mid(), 500.0, HELD),
+    # The schedule: off ends it; an on-demand override holds.
+    (CLOCK, "clock", _mid(schedule_on=False), 500.0, (OFF, None)),
+    (OD, "x", _mid(on_demand=True, schedule_on=False), 500.0, HELD),
+    # A WiFi notice, compared with its expiry; on-demand outranks it.
+    (CLOCK, "clock", _mid(notice=FRESH), 999.9, (WIFI, None)),
+    (CLOCK, "clock", _mid(notice=FRESH), 1_000.0, HELD),
+    (NFL, "nfl_live", _mid(notice=FRESH), 500.0, (WIFI, None)),
+    (OD, "x", _mid(on_demand=True, notice=FRESH), 500.0, HELD),
+    # A plugin reload waits at the top of the loop.
+    (CLOCK, "clock", _mid(reload=True), 500.0, (Source.RELOAD, None)),
+    (OD, "x", _mid(on_demand=True, reload=True), 500.0, (Source.RELOAD, None)),
+    # The order between them: a moved mode before the schedule, the
+    # schedule before a notice, a notice before a reload.
+    (CLOCK, "weather", _mid(schedule_on=False), 500.0, (ROTATION, "weather")),
+    (CLOCK, "clock", _mid(schedule_on=False, notice=FRESH), 500.0, (OFF, None)),
+    (CLOCK, "clock", _mid(notice=FRESH, reload=True), 500.0, (WIFI, None)),
+]
+
+
+class TestMidScreen:
+
+    @pytest.mark.parametrize("running,current,inputs,now,expected", MID_TABLE)
+    def test_decide(self, running, current, inputs, now, expected):
+        state = ArbiterState(current_mode=current)
+        plan = Arbiter.decide(state, inputs, now, running=running)
+        if expected == HELD:
+            assert plan is running
+        else:
+            assert plan is not running
+            assert (plan.source, plan.mode) == expected
+
+    def test_the_running_plans(self):
+        assert (CLOCK.source, CLOCK.mode) == (ROTATION, "clock")
+        assert (NFL.source, NFL.mode) == (LIVE, "nfl_live")
+        assert LIVE not in NFL.preemptible_by
+        assert (OD.source, OD.mode) == (ONDEM, "x")
+
+    def test_a_follower_and_vegas_never_preempt(self):
+        for plan in (CLOCK, NFL, OD):
+            assert FOLLOW not in plan.preemptible_by
+            assert LEGACY not in plan.preemptible_by
+
+    def test_nothing_in_preemptible_by_means_nothing_preempts(self):
+        bare = replace(CLOCK, preemptible_by=frozenset())
+        inputs = _mid(live=("nfl_live",), schedule_on=False, notice=FRESH, reload=True)
+        assert Arbiter.decide(ArbiterState(current_mode="weather"), inputs, 0.0,
+                              running=bare) is bare
+
+    def test_mid_screen_decide_reads_no_clock(self):
+        boom = MagicMock(side_effect=AssertionError("decide read the clock"))
+        with patch("time.time", boom), patch("time.monotonic", boom):
+            for running, current, inputs, now, _ in MID_TABLE:
+                Arbiter.decide(ArbiterState(current_mode=current), inputs, now,
+                               running=running)
+
+
+# (current, inputs) -> live_takeover. The mode a mid-screen check claims.
+TAKEOVER_TABLE = [
+    ("clock", _mid(live=("nfl_live",)), "nfl_live"),
+    ("clock", _mid(live=()), None),
+    ("clock", _mid(live=None), None),                       # no scan was due
+    ("nfl_live", _mid(live=("nfl_live",)), None),
+    ("clock", _mid(live=("nfl_live",), on_demand=True), None),
+    ("clock", _mid(live=("nfl_live",), schedule_on=False), None),
+    ("clock", replace(_mid(live=("nfl_live",)), vegas_enabled=True,
+                      vegas_live_in_ticker=True), None),
+]
+
+
+@pytest.mark.parametrize("current,inputs,expected", TAKEOVER_TABLE)
+def test_live_takeover(current, inputs, expected):
+    assert live_takeover(ArbiterState(current_mode=current), inputs) == expected

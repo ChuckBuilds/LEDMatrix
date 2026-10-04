@@ -39,6 +39,7 @@ __all__ = [
     "ScreenEnd",
     "WifiNotice",
     "live_pick",
+    "live_takeover",
     "on_demand_bound",
     "rotation_plan",
     "wifi_notice_preempts",
@@ -253,6 +254,8 @@ class ArbiterInputs:
         vegas_yielded: This pass's Vegas iteration has run and yielded, so
             the Vegas Source passes and the screen it fell through to is
             decided.
+        reload_pending: Mid-screen only: a plugin reload is waiting for the
+            top of the loop, at a service point where that ends the screen.
     """
 
     schedule_on: bool
@@ -263,6 +266,7 @@ class ArbiterInputs:
     vegas_enabled: bool = False
     vegas_live_in_ticker: bool = False
     vegas_yielded: bool = False
+    reload_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -320,27 +324,41 @@ SCREEN_PREEMPTERS: FrozenSet[Source] = frozenset(
     {Source.SCHEDULED_OFF, Source.ON_DEMAND, Source.WIFI, Source.LIVE, Source.ROTATION,
      Source.RELOAD})
 
+#: A live screen is not preempted by Live: live games take turns between
+#: screens, never mid-screen.
+LIVE_PREEMPTERS: FrozenSet[Source] = SCREEN_PREEMPTERS - {Source.LIVE}
+
 
 class Arbiter:
     """Decides which Source gets the panel. Stateless; see the module docstring."""
 
     @staticmethod
-    def decide(state: ArbiterState, inputs: ArbiterInputs, now: float) -> ScreenPlan:
+    def decide(state: ArbiterState, inputs: ArbiterInputs, now: float,
+               running: Optional[ScreenPlan] = None) -> ScreenPlan:
         """The plan for this pass, from the Sources in priority order.
+
+        With ``running``, the question is the ScreenRunner's at one of its
+        service points instead: does a Source in ``running.preemptible_by``
+        now take the panel from that screen? The answer is ``running``
+        itself (the same object) while it holds, else the plan that ends it.
+        See :func:`_hold_or_preempt` for the rules.
 
         Args:
             state: What the Arbiter remembers between passes.
             inputs: This pass's snapshot.
             now: Wall-clock time of the snapshot. The OnDemand Source reads
-                it for what is left of a timed session. The top-of-pass WiFi
-                check does not: it takes the notice as read, and only the
-                mid-screen check (:func:`wifi_notice_preempts`) compares it
-                with the expiry.
+                it for what is left of a timed session, and the mid-screen
+                WiFi rule (:func:`wifi_notice_preempts`) to compare with the
+                notice's expiry. The top-of-pass WiFi check does not: it
+                takes the notice as read.
+            running: The screen on the panel, for a mid-screen check.
 
         Returns:
-            The winning Source's plan, or LEGACY_PLAN when the winner is one
-            run() still decides itself.
+            The winning Source's plan (LEGACY for Vegas), or ``running``.
         """
+        if running is not None:
+            return _hold_or_preempt(state, inputs, now, running)
+
         # ScheduledOff is a gate, not a Source: a scheduled-off panel stays
         # blank even for a follower, and only an on-demand session overrides
         # it (#714 -- one ending in off hours blanks at the next pass).
@@ -367,7 +385,7 @@ class Arbiter:
             pick = live_pick(inputs.live_modes, state.current_mode,
                              advance=not state.live_takeover_unshown)
             if pick is not None:
-                return ScreenPlan(Source.LIVE, mode=pick, preemptible_by=SCREEN_PREEMPTERS)
+                return ScreenPlan(Source.LIVE, mode=pick, preemptible_by=LIVE_PREEMPTERS)
             ends_live = state.live_resume_index is not None and bool(state.rotation)
 
         # 5. Vegas: one iteration of the ticker, run by run()'s own code
@@ -379,6 +397,66 @@ class Arbiter:
         # live priority just ended).
         return rotation_plan(state.release_live() if ends_live else state,
                              ends_live=ends_live)
+
+
+def _hold_or_preempt(state: ArbiterState, inputs: ArbiterInputs, now: float,
+                     running: ScreenPlan) -> ScreenPlan:
+    """The mid-screen rules: ``running``, or the plan that ends it.
+
+    What the frame loops used to check one by one (_check_live_takeover,
+    then _screen_preempted with _wifi_notice_pending in it), in their order:
+
+    1. Live: a game went live while a non-live screen runs (the inputs
+       carry a scan only when one was due, at most once a second). Checked
+       first because it is the one preemption that changes the state -- the
+       rotation moves to the live mode and remembers where it was -- and it
+       still happens when a WiFi notice is also pending: the next pass then
+       shows the notice, and the game after it.
+    2. The panel's mode moved under the screen: an on-demand session
+       started, ended or changed mode, or the rotation was rebuilt (a
+       plugin enabled, disabled or reloaded).
+    3. The schedule turned the panel off.
+    4. A WiFi notice arrived (unless on-demand outranks it), compared with
+       its expiry because the read throttle can hand back a stale one.
+    5. A plugin reload is waiting at the top of the loop.
+
+    A follower and Vegas are never mid-screen preemptions; they are looked
+    at between screens.
+    """
+    by = running.preemptible_by
+    if Source.LIVE in by:
+        takeover = live_takeover(state, inputs)
+        if takeover is not None:
+            return ScreenPlan(Source.LIVE, mode=takeover, preemptible_by=LIVE_PREEMPTERS)
+    if state.current_mode != running.mode:
+        source = Source.ON_DEMAND if inputs.on_demand_active else Source.ROTATION
+        if source in by:
+            return ScreenPlan(source, mode=state.current_mode, preemptible_by=SCREEN_PREEMPTERS)
+    if (Source.SCHEDULED_OFF in by and not inputs.schedule_on
+            and not inputs.on_demand_active):
+        return SCHEDULED_OFF_PLAN
+    notice = inputs.wifi_notice
+    if (Source.WIFI in by and notice is not None
+            and wifi_notice_preempts(notice, inputs.on_demand_active, now)):
+        return ScreenPlan(Source.WIFI, max_duration=WIFI_NOTICE_DWELL, notice=notice)
+    if Source.RELOAD in by and inputs.reload_pending:
+        return RELOAD_PLAN
+    return running
+
+
+def live_takeover(state: ArbiterState, inputs: ArbiterInputs) -> Optional[str]:
+    """The live mode that takes the panel mid-screen, or None.
+
+    The first live mode, when a scan found one and the panel is not on a
+    live mode already. Never while on-demand holds the panel, while it is
+    scheduled off, or while Vegas keeps live content in its ticker.
+    """
+    if not _live_applies(inputs) or inputs.on_demand_active or not inputs.schedule_on:
+        return None
+    live = inputs.live_modes
+    if not live or state.current_mode in live:
+        return None
+    return live[0]
 
 
 def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
