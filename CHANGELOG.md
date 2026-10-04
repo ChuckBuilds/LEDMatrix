@@ -885,6 +885,18 @@ policies are unchanged.
   a runtime publisher that stops still goes `stale`, and a subscription that
   goes quiet still falls back to the cache. The cache path's 120 s rule is
   unchanged.
+- A plugin that pauses the Vegas scroll gets its pause when its display
+  duration is not a plain number. Several plugins (clock-simple, calendar,
+  countdown) return `display_duration` as it is in config.json, so a value
+  saved as `"20"` or `null` (the raw config editor, a hand edit) reached the
+  pause as a string or None; comparing it with the clock raised, and the
+  plugin flashed up and the scroll went straight on, at every one of its
+  turns. `inf` held the pause until something interrupted it, and 0, a
+  negative number or NaN ended it at once. The pause now reads the duration
+  as the rotation does (`finite_seconds()` in `base_plugin`): a numeric
+  string counts, anything else that is not a finite number (or a
+  `get_display_duration()` that raises) pauses for 30 s, and a number at or
+  below zero for 15 s, with one warning per plugin.
 
 ### Scrolling
 

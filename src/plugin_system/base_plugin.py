@@ -11,6 +11,7 @@ Stability: Stable - maintains backward compatibility
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Any, Optional, List
+import math
 import os
 import sys
 from src.deprecation import deprecated, warn_deprecated
@@ -238,6 +239,26 @@ def resolve_vegas_participation(plugin: Any, plugin_id: Optional[str] = None) ->
                 "using its legacy Vegas hooks",
                 pid, declared, ', '.join(VEGAS_PARTICIPATION_VALUES))
     return legacy_vegas_participation(plugin)
+
+
+def finite_seconds(value: Any) -> Optional[float]:
+    """``value`` as seconds when it is a finite number or a numeric string,
+    else None. A bool is not a number here, though it is an int: True would
+    read as a one-second screen.
+
+    How the core reads a plugin's get_display_duration() -- the rotation
+    (DisplayController._get_display_duration) and the Vegas static pause --
+    which several plugins answer straight from config.json, so a value saved
+    as "20" or null arrives as a string or None. A number at or below zero is
+    returned as it is; each caller has its own rule for that.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if math.isfinite(seconds) else None
 
 
 class BasePlugin(ABC):

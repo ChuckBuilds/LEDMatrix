@@ -219,7 +219,8 @@ class TestCoordinatorStaticPause:
     def _plugin(self):
         plugin = MagicMock()
         plugin.plugin_id = 'clock'
-        plugin.get_display_duration.return_value = 0
+        # A moment: zero would pause 15 s, as the rotation shows it.
+        plugin.get_display_duration.return_value = 0.01
         return plugin
 
     def test_trigger_comes_from_the_pipeline(self):

@@ -18,10 +18,11 @@ import math
 import sys
 import time
 import threading
-from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Any, FrozenSet, List, Callable, TYPE_CHECKING
 
 from src import display_watchdog
 from src.common import render_gate
+from src.plugin_system.base_plugin import finite_seconds
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.elements import LiveEpochs
 from src.vegas_mode.plugin_adapter import PluginAdapter
@@ -52,6 +53,14 @@ _FPS_HEARTBEAT_INTERVAL = 300.0
 #: Pi 4 with two scoreboards (9 modes), 1.7% of a 125fps frame, growing with
 #: every plugin. Game state doesn't change within a quarter second.
 _LIVE_PRIORITY_CHECK_INTERVAL = 0.25
+
+#: Seconds a static pause shows a plugin whose display duration can't be
+#: used, as long as the rotation shows it: 30 when get_display_duration()
+#: raises or answers something that is not a number
+#: (DisplayController._get_display_duration), 15 when it answers a number at
+#: or below zero (DisplayController._resolve_durations).
+_UNREADABLE_DURATION = 30.0
+_NOT_POSITIVE_DURATION = 15.0
 
 
 def _percentile(ordered: List[float], fraction: float) -> float:
@@ -92,6 +101,9 @@ class VegasModeCoordinator:
     _live_reason: Optional[str] = None
     # Set only while Vegas has changed the GIL switch interval; read with getattr.
     _saved_switch_interval: Optional[float]
+    #: Plugins already warned about a display duration the pause can't use,
+    #: so a bad setting logs once, not at every turn. Replaced, not mutated.
+    _duration_warned: FrozenSet[str] = frozenset()
 
     def __init__(
         self,
@@ -1010,7 +1022,7 @@ class VegasModeCoordinator:
             # Wait for the plugin's display duration. Monotonic, like the
             # iteration clock: an NTP step on an RTC-less Pi would otherwise
             # end the pause at once or stretch it by the correction.
-            duration = plugin.get_display_duration()
+            duration = self._static_pause_duration(plugin)
             start = time.monotonic()
 
             while time.monotonic() - start < duration:
@@ -1045,6 +1057,42 @@ class VegasModeCoordinator:
             self._end_static_pause()
 
         return True
+
+    def _static_pause_duration(self, plugin: 'BasePlugin') -> float:
+        """Seconds a static pause shows ``plugin``: its display duration,
+        read the way the rotation reads it.
+
+        Several plugins return their display_duration setting straight from
+        config.json, so one saved as "20" or null came back as a string or
+        None; comparing it with the clock raised, and the pause's broad
+        except ended the pause at every one of the plugin's turns. inf
+        paused until something interrupted it, and NaN, False, 0 or a
+        negative number ended the pause at once. A numeric string counts
+        (finite_seconds); anything else, or a raise, gets
+        _UNREADABLE_DURATION, and a number at or below zero
+        _NOT_POSITIVE_DURATION, logged once per plugin.
+        """
+        try:
+            value = plugin.get_display_duration()
+        except Exception as err:  # pylint: disable=broad-except
+            problem = f"get_display_duration() raised {type(err).__name__}: {err}"
+            seconds = _UNREADABLE_DURATION
+        else:
+            seconds = finite_seconds(value)
+            if seconds is not None and seconds > 0:
+                return seconds
+            if seconds is None:
+                problem = f"display duration {value!r} is not a number"
+                seconds = _UNREADABLE_DURATION
+            else:
+                problem = f"display duration {value!r} is not above zero"
+                seconds = _NOT_POSITIVE_DURATION
+        plugin_id = plugin.plugin_id
+        if plugin_id not in self._duration_warned:
+            self._duration_warned = self._duration_warned | {plugin_id}
+            logger.warning("[%s] %s; its static pause lasts %.0fs (logged once)",
+                           plugin_id, problem, seconds)
+        return seconds
 
     def _end_static_pause(self) -> None:
         """End static pause and restore scroll state."""
