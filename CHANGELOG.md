@@ -530,6 +530,14 @@ policies are unchanged.
   store update imported the new `manager.py` and got the old helpers back from
   the cache until the display restarted. `PluginLoader` now drops a plugin's
   package modules when it unloads, and when a load fails part-way.
+- Uninstalling a dev plugin that `scripts/dev/dev_plugin_setup.sh` linked
+  into the plugins directory now removes the link and leaves the checkout
+  alone. The store's removal passed the link to `shutil.rmtree`, which
+  refuses a symlink; its fallback then walked through the link and chmodded
+  every directory and file of the linked checkout to 0700, and the sudo stage
+  refused a path outside the plugins directory, so the uninstall failed with
+  the link still in place. The same removal discards the set-aside copy after
+  an install or update. A symlink, dangling or not, is now unlinked.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
