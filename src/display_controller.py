@@ -39,7 +39,7 @@ import pytz
 from src import display_watchdog
 from src.display_arbiter import (
     RELOAD_PLAN, SCREEN_PREEMPTERS, Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
-    ScreenPlan, Source, WifiNotice, on_demand_bound, wifi_notice_preempts,
+    ScreenPlan, Source, WifiNotice, live_pick, on_demand_bound, wifi_notice_preempts,
 )
 from src.display_manager import DisplayManager
 from src.config_manager import ConfigManager
@@ -2955,27 +2955,23 @@ class DisplayController:
         rotation resumes from there instead of continuing after the live
         plugin's mode (which would skip every mode between the two). The save
         happens only on the initial switch, not on each re-check while the
-        live hold continues.
+        live hold continues. The steps are ArbiterState.claim_live and
+        release_live; this applies them.
         """
+        state = self._arbiter_state()
         if live_priority_mode:
-            if self.current_display_mode != live_priority_mode:
+            nxt = state.claim_live(live_priority_mode)
+            if nxt is not state:
                 logger.info("Live content detected - switching immediately to %s", live_priority_mode)
-                if self._live_resume_index is None:
-                    self._live_resume_index = self.current_mode_index
-                self.current_display_mode = live_priority_mode
+                self._adopt_state(nxt)
                 self.force_change = True
-                # Update mode index to match the new mode
-                try:
-                    self.current_mode_index = self.available_modes.index(live_priority_mode)
-                except ValueError:
-                    pass
-        elif self._live_resume_index is not None and self.available_modes:
-            # Live priority ended — resume rotation where it was interrupted.
-            self.current_mode_index = self._live_resume_index % len(self.available_modes)
-            self.current_display_mode = self.available_modes[self.current_mode_index]
-            self.force_change = True
-            logger.info("Live priority ended - resuming rotation at %s", self.current_display_mode)
-            self._live_resume_index = None
+        else:
+            nxt = state.release_live()
+            if nxt is not state:
+                # Live priority ended — resume rotation where it was interrupted.
+                self._adopt_state(nxt)
+                self.force_change = True
+                logger.info("Live priority ended - resuming rotation at %s", self.current_display_mode)
 
     def _collect_live_modes(self):
         """Return every currently live-priority mode, in registration order.
@@ -3043,16 +3039,10 @@ class DisplayController:
         currently shown, so each dwell advances to the next live game. The
         currently-displayed mode is the cursor, so this stays correct as games
         start and end (no separate index to keep in sync).
+
+        The pick is display_arbiter.live_pick, which the Live Source uses.
         """
-        live_modes = self._collect_live_modes()
-        if not live_modes:
-            return None
-        if self.current_display_mode in live_modes:
-            if advance:
-                idx = live_modes.index(self.current_display_mode)
-                return live_modes[(idx + 1) % len(live_modes)]
-            return self.current_display_mode
-        return live_modes[0]
+        return live_pick(tuple(self._collect_live_modes()), self.current_display_mode, advance)
 
     #: Shortest gap between live-priority scans made mid-screen. A scan asks
     #: every live-priority plugin has_live_content(), which the scoreboards
@@ -3288,23 +3278,107 @@ class DisplayController:
             on_demand_index=self.on_demand_mode_index,
             on_demand_expires_at=self.on_demand_expires_at,
             on_demand_pinned=bool(self.on_demand_pinned),
+            rotation=tuple(self.available_modes),
+            rotation_index=self.current_mode_index,
+            live_resume_index=self._live_resume_index,
+            live_takeover_unshown=self._live_takeover_unshown,
         )
 
-    def _screen_inputs(self) -> ArbiterInputs:
-        """The Arbiter's inputs for the screen this pass shows, taken once
-        the pass has dealt with the gate, a follower and the WiFi notice
-        (and, on a Vegas pass, the iteration)."""
-        return ArbiterInputs(schedule_on=True, on_demand_active=self.on_demand_active,
-                             follower_active=False)
+    def _adopt_state(self, state: ArbiterState) -> None:
+        """Write a state transition's result back to the controller's fields.
+
+        Only the fields a transition moves: the rotation's mode list and the
+        on-demand session's list and expiry are not the Arbiter's to change.
+        """
+        self.current_display_mode = state.current_mode
+        self.current_mode_index = state.rotation_index
+        self.on_demand_mode_index = state.on_demand_index
+        self._live_resume_index = state.live_resume_index
+        self._live_takeover_unshown = state.live_takeover_unshown
+
+    def _arbiter_inputs_below_wifi(self, inputs: ArbiterInputs) -> ArbiterInputs:
+        """``inputs`` with what the Sources below the WiFi notice read.
+
+        Whether Vegas is on (_is_vegas_mode_active, which also applies a
+        pending Vegas start and queued Vegas config), whether it keeps live
+        content in its ticker, and the live-priority scan -- made unless an
+        on-demand session holds the panel or the ticker keeps live content,
+        exactly the passes that scanned before. No notice is pending here:
+        one that drew ended the pass, and one that failed to draw is
+        treated as none.
+        """
+        vegas = self._is_vegas_mode_active()
+        keeps = self._vegas_keeps_live_in_ticker()
+        live = None
+        if not self.on_demand_active and not (vegas and keeps):
+            live = tuple(self._collect_live_modes())
+        return replace(inputs, wifi_notice=None, live_modes=live,
+                       vegas_enabled=vegas, vegas_live_in_ticker=keeps)
+
+    def _run_vegas_iteration(self, inputs: ArbiterInputs) -> Optional[ScreenPlan]:
+        """One Vegas iteration (the LEGACY plan), and what follows it.
+
+        None when the pass ends here: the iteration ran its course, or it
+        yielded for the schedule, a plugin reload or a WiFi notice (the next
+        pass shows the notice, not a rotation screen that would outlast a
+        short one). Otherwise the plan for the screen it fell through to,
+        decided with ``vegas_yielded``: a live game that stopped the ticker
+        shows now (step 7 ran before the game went live, so without this a
+        rotation screen showed first and the game a screen later), an
+        on-demand session that started mid-iteration shows, else the
+        rotation's mode. The yield path checked the schedule itself and
+        never looked at a follower, so the gate and Follower answers are
+        carried over from the top of the pass.
+        """
+        try:
+            # Run Vegas mode iteration
+            if self.vegas_coordinator.run_iteration():
+                # Vegas completed an iteration, continue to next loop
+                return None
+            # Vegas was interrupted, fall through to normal handling
+            logger.debug("Vegas mode interrupted, falling back to normal rotation")
+            if not self.is_display_active:
+                # Scheduled off mid-iteration: blank the panel now rather
+                # than render a screen.
+                return None
+            if self._plugin_reload_pending:
+                # Reload first (top of the loop), then the ticker carries on.
+                return None
+            if self._wifi_notice_pending():
+                # Checked before live content: WiFi outranks live, and a
+                # later pass switches to the game.
+                return None
+            keeps = self._vegas_keeps_live_in_ticker()
+            live = None
+            if not self.on_demand_active and not keeps:
+                live = tuple(self._collect_live_modes())
+            yielded = replace(inputs, on_demand_active=self.on_demand_active,
+                              live_modes=live, vegas_live_in_ticker=keeps,
+                              vegas_yielded=True)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Vegas mode error")
+            # Fall through to normal rotation on error
+            yielded = replace(inputs, on_demand_active=self.on_demand_active,
+                              live_modes=None, vegas_yielded=True)
+        return self._take_plan(Arbiter.decide(self._arbiter_state(), yielded, time.time()))
 
     def _take_plan(self, plan: ScreenPlan) -> ScreenPlan:
         """Put ``plan`` in the controller's state before its screen runs.
 
-        An on-demand plan moves current_display_mode onto the session's
-        mode (forcing a clear) when they differ. One with no mode ends a
-        session that has no modes left, and the rotation's mode shows
+        A live plan claims the panel for its mode (_apply_live_priority); a
+        plan that ``ends_live`` resumes the rotation where live priority
+        interrupted it. An on-demand plan moves current_display_mode onto the
+        session's mode (forcing a clear) when they differ; one with no mode
+        ends a session that has no modes left, and the rotation's mode shows
         instead. Returns the plan the screen runs.
         """
+        if plan.source is Source.LIVE:
+            self._apply_live_priority(plan.mode)
+        elif plan.ends_live:
+            self._apply_live_priority(None)
+        # The takeover's mode is chosen and about to show (or the pass has
+        # moved past it): the round-robin may advance from here on.
+        self._live_takeover_unshown = False
         if plan.source is Source.ON_DEMAND:
             if plan.mode is None:
                 logger.warning("On-demand active but no modes available, clearing on-demand mode")
@@ -3315,6 +3389,8 @@ class DisplayController:
             if self.current_display_mode != plan.mode:
                 self.current_display_mode = plan.mode
                 self.force_change = True
+            return plan
+        if plan.source is Source.LIVE:
             return plan
         return ScreenPlan(Source.LEGACY, mode=self.current_display_mode,
                           preemptible_by=SCREEN_PREEMPTERS)
@@ -3961,10 +4037,12 @@ class DisplayController:
                 # is active). No repaint: this screen's first frame pushes it.
                 self._apply_brightness_target()
 
-                # Who gets the panel this pass (src/display_arbiter.py). The
-                # Arbiter decides the scheduled-off gate, Follower and Wifi;
-                # a LEGACY plan carries on to the code below.
-                plan = Arbiter.decide(self._arbiter_state(), self._arbiter_inputs(), time.time())
+                # Who gets the panel this pass (src/display_arbiter.py): the
+                # scheduled-off gate, Follower, OnDemand and Wifi are decided
+                # here; the Sources below the notice once their inputs are
+                # read, further down.
+                inputs = self._arbiter_inputs()
+                plan = Arbiter.decide(self._arbiter_state(), inputs, time.time())
 
                 if plan.source is Source.SCHEDULED_OFF:
                     self._blank_while_scheduled_off(plan.max_duration)
@@ -3996,74 +4074,25 @@ class DisplayController:
                         and self._show_wifi_notice(plan.notice, plan.max_duration)):
                     continue  # Skip to next iteration, don't rotate
 
-                # Check for live priority content and switch to it immediately.
-                # advance=True so multiple simultaneously-live games take turns
-                # (round-robin) instead of pinning to the first plugin.
-                # Skipped when the ticker is keeping live content: switching
-                # the rotation underneath Vegas would move current_mode_index
-                # and stash a resume point for a takeover that never happens.
-                # After a mid-screen takeover (_check_live_takeover) the live
-                # mode is already chosen but not shown yet: don't advance past it.
-                if (not self.on_demand_active
-                        and not (self._is_vegas_mode_active()
-                                 and self._vegas_keeps_live_in_ticker())):
-                    live_priority_mode = self._check_live_priority(
-                        advance=not self._live_takeover_unshown)
-                    self._apply_live_priority(live_priority_mode)
-                self._live_takeover_unshown = False
+                # The Sources below the notice: OnDemand, Live, Vegas and the
+                # rotation. Their inputs (whether Vegas is on, the live scan)
+                # are read only now, where run() always read them: a scan
+                # asks every live-priority plugin, and the Vegas check
+                # applies queued Vegas config.
+                below = self._arbiter_inputs_below_wifi(inputs)
+                plan = self._take_plan(Arbiter.decide(self._arbiter_state(), below, time.time()))
 
-                # Vegas scroll mode - continuous ticker across all plugins
-                # Priority: on-demand > wifi-status > live-priority > vegas > normal rotation
-                if self._is_vegas_mode_active():
-                    # Live content normally preempts the ticker entirely. With
-                    # vegas_scroll.live_in_ticker the marquee keeps running and
-                    # the live plugin takes extra turns inside it instead --
-                    # see StreamManager._apply_priority_weights.
-                    live_mode = (None if self._vegas_keeps_live_in_ticker()
-                                 else self._check_live_priority())
-                    if not live_mode:
-                        try:
-                            # Run Vegas mode iteration
-                            if self.vegas_coordinator.run_iteration():
-                                # Vegas completed an iteration, continue to next loop
-                                continue
-                            else:
-                                # Vegas was interrupted (live priority), fall through to normal handling
-                                logger.debug("Vegas mode interrupted, falling back to normal rotation")
-                                if not self.is_display_active:
-                                    # Scheduled off mid-iteration: blank the
-                                    # panel now rather than render a screen.
-                                    continue
-                                if self._plugin_reload_pending:
-                                    # Reload first (top of the loop), then
-                                    # the ticker carries on.
-                                    continue
-                                if self._wifi_notice_pending():
-                                    # It yielded for a WiFi notice: the next
-                                    # pass shows it, not a rotation screen
-                                    # that would outlast a short notice.
-                                    # Checked before live content: WiFi
-                                    # outranks live, and step 7 of a later
-                                    # pass switches to the game.
-                                    continue
-                                # Live content stopped the ticker: switch to
-                                # the game now. Step 7 ran before the game
-                                # went live, so without this a rotation screen
-                                # showed first and the game a screen later.
-                                if (not self.on_demand_active
-                                        and not self._vegas_keeps_live_in_ticker()):
-                                    live_mode = self._check_live_priority(advance=True)
-                                    if live_mode:
-                                        self._apply_live_priority(live_mode)
-                        except Exception:
-                            logger.exception("Vegas mode error")
-                            # Fall through to normal rotation on error
+                # Vegas scroll mode - continuous ticker across all plugins.
+                # Live content outranks it (a LIVE plan above) unless
+                # vegas_scroll.live_in_ticker keeps the marquee running and
+                # gives the live plugin extra turns inside it instead -- see
+                # StreamManager._apply_priority_weights.
+                if plan.source is Source.LEGACY and below.vegas_enabled:
+                    after_vegas = self._run_vegas_iteration(below)
+                    if after_vegas is None:
+                        continue
+                    plan = after_vegas
 
-                # The screen: the on-demand session's current mode while one
-                # is active (it may have started during a Vegas iteration),
-                # else the rotation's.
-                plan = self._take_plan(Arbiter.decide(
-                    self._arbiter_state(), self._screen_inputs(), time.time()))
                 active_mode = plan.mode
 
                 if self._active_dynamic_mode and self._active_dynamic_mode != active_mode:

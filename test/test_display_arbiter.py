@@ -26,6 +26,7 @@ from src.display_arbiter import (  # noqa: E402
     ScreenPlan,
     Source,
     WifiNotice,
+    live_pick,
     on_demand_bound,
     wifi_notice_preempts,
 )
@@ -314,3 +315,119 @@ BOUND_TABLE = [
 @pytest.mark.parametrize("min_d,max_d,deadline,now,expected", BOUND_TABLE)
 def test_on_demand_bound(min_d, max_d, deadline, now, expected):
     assert on_demand_bound(min_d, max_d, deadline, now) == expected
+
+
+# -- Live (stage 3) -------------------------------------------------------
+
+LIVE = Source.LIVE
+
+# (live_modes, current_mode, advance) -> pick. _check_live_priority's rule.
+PICK_TABLE = [
+    ((), "clock", True, None),
+    (None, "clock", True, None),
+    (("nfl",), "clock", True, "nfl"),                 # not on a live mode: first
+    (("nfl", "nhl"), "clock", True, "nfl"),
+    (("nfl", "nhl"), "clock", False, "nfl"),
+    (("nfl", "nhl"), "nfl", True, "nhl"),             # round-robin
+    (("nfl", "nhl"), "nhl", True, "nfl"),             # wraps
+    (("nfl", "nhl"), "nhl", False, "nhl"),            # a peek stays put
+    (("nfl",), "nfl", True, "nfl"),                   # one game: itself
+]
+
+
+@pytest.mark.parametrize("live,current,advance,expected", PICK_TABLE)
+def test_live_pick(live, current, advance, expected):
+    assert live_pick(live, current, advance) == expected
+
+
+def _below(live=None, vegas=False, keeps=False, yielded=False, on_demand=False):
+    """Inputs for the Sources below the notice (no notice, no follower)."""
+    return ArbiterInputs(schedule_on=True, on_demand_active=on_demand,
+                         follower_active=False, live_modes=live, vegas_enabled=vegas,
+                         vegas_live_in_ticker=keeps, vegas_yielded=yielded)
+
+
+ROT = ("clock", "weather", "nfl_live", "nhl_live")
+
+
+def _rot(current="clock", index=0, resume=None, unshown=False):
+    return ArbiterState(current_mode=current, rotation=ROT, rotation_index=index,
+                        live_resume_index=resume, live_takeover_unshown=unshown)
+
+
+class TestLive:
+
+    # (state, inputs) -> (source, mode, ends_live)
+    TABLE = [
+        # Nothing live, nothing to resume.
+        (_rot(), _below(live=()), "below", None, False),
+        # Not scanned (on-demand, or the ticker keeps live content).
+        (_rot(), _below(live=None), "below", None, False),
+        # A game is live: it takes the panel.
+        (_rot(), _below(live=("nfl_live",)), LIVE, "nfl_live", False),
+        # Two: round-robin from the one showing.
+        (_rot("nfl_live", 2), _below(live=("nfl_live", "nhl_live")), LIVE, "nhl_live", False),
+        # ... unless a mid-screen takeover chose it and it has not shown yet.
+        (_rot("nfl_live", 2, resume=0, unshown=True),
+         _below(live=("nfl_live", "nhl_live")), LIVE, "nfl_live", False),
+        # Vegas keeps live content in its ticker: Live has no say at all,
+        # not even the resume.
+        (_rot(), _below(live=("nfl_live",), vegas=True, keeps=True), "below", None, False),
+        (_rot("nfl_live", 2, resume=1),
+         _below(live=(), vegas=True, keeps=True), "below", None, False),
+        # Vegas that yields to live content: Live outranks it.
+        (_rot(), _below(live=("nfl_live",), vegas=True), LIVE, "nfl_live", False),
+        # The game ended: the interrupted rotation resumes.
+        (_rot("nfl_live", 2, resume=1), _below(live=()), "below", None, True),
+        (_rot("nfl_live", 2, resume=1), _below(live=(), vegas=True), "below", None, True),
+        # On-demand outranks Live.
+        (ArbiterState(on_demand_modes=("x",)), _below(live=("nfl_live",), on_demand=True),
+         ONDEM, "x", False),
+    ]
+
+    @pytest.mark.parametrize("state,inputs,source,mode,ends_live", TABLE)
+    def test_decide(self, state, inputs, source, mode, ends_live):
+        plan = Arbiter.decide(state, inputs, 0.0)
+        if source == "below":
+            assert plan.source not in (LIVE, ONDEM, OFF, FOLLOW, WIFI)
+        else:
+            assert plan.source is source
+            assert plan.mode == mode
+        assert plan.ends_live is ends_live
+
+    def test_a_live_plan_has_no_durations_until_its_first_frame(self):
+        plan = Arbiter.decide(_rot(), _below(live=("nfl_live",)), 0.0)
+        assert (plan.min_duration, plan.max_duration, plan.frame_policy) == (None, None, None)
+
+
+class TestLiveTransitions:
+
+    def test_claim_saves_where_the_rotation_was(self):
+        nxt = _rot("weather", 1).claim_live("nfl_live")
+        assert (nxt.current_mode, nxt.rotation_index, nxt.live_resume_index) == ("nfl_live", 2, 1)
+
+    def test_a_second_claim_keeps_the_first_resume_point(self):
+        nxt = _rot("nfl_live", 2, resume=1).claim_live("nhl_live")
+        assert (nxt.current_mode, nxt.rotation_index, nxt.live_resume_index) == ("nhl_live", 3, 1)
+
+    def test_claiming_the_mode_showing_changes_nothing(self):
+        state = _rot("nfl_live", 2, resume=1)
+        assert state.claim_live("nfl_live") is state
+
+    def test_a_live_mode_outside_the_rotation_keeps_the_index(self):
+        nxt = _rot("weather", 1).claim_live("mlb_live")
+        assert (nxt.current_mode, nxt.rotation_index, nxt.live_resume_index) == ("mlb_live", 1, 1)
+
+    def test_release_resumes_and_forgets(self):
+        nxt = _rot("nhl_live", 3, resume=1).release_live()
+        assert (nxt.current_mode, nxt.rotation_index, nxt.live_resume_index) == ("weather", 1, None)
+
+    def test_release_wraps_a_resume_point_past_a_shortened_rotation(self):
+        nxt = _rot("nhl_live", 3, resume=6).release_live()
+        assert (nxt.current_mode, nxt.rotation_index) == ("nfl_live", 2)   # 6 % 4
+
+    def test_release_with_nothing_to_resume_changes_nothing(self):
+        state = _rot("clock", 0)
+        assert state.release_live() is state
+        empty = ArbiterState(current_mode="x", live_resume_index=2)
+        assert empty.release_live() is empty      # no rotation to resume into

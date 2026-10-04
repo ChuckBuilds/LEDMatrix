@@ -37,6 +37,7 @@ __all__ = [
     "Source",
     "WIFI_NOTICE_DWELL",
     "WifiNotice",
+    "live_pick",
     "on_demand_bound",
     "wifi_notice_preempts",
 ]
@@ -57,9 +58,9 @@ class Source(Enum):
     FOLLOWER = "follower"
     ON_DEMAND = "on-demand"
     WIFI = "wifi"
-    # Not decided by the Arbiter yet: on-demand, live priority, Vegas and the
-    # rotation are still chosen by run()'s own code. Stage 3 adds the
-    # OnDemand, Live and Rotation Sources; stage 4 adds Vegas.
+    LIVE = "live"
+    # Not decided by the Arbiter yet: Vegas and the rotation are still chosen
+    # by run()'s own code. The Rotation Source is next; stage 4 adds Vegas.
     LEGACY = "legacy"
     # Not a screen: a plugin reload waits at the top of the loop. It ends a
     # screen between frames (the screen counts as shown and the rotation
@@ -108,6 +109,14 @@ class ArbiterState:
             for a session with no duration.
         on_demand_pinned: The session was started pinned. Carried for the
             snapshot; the pin itself is already in ``on_demand_modes``.
+        rotation: The rotation's modes (``available_modes``).
+        rotation_index: Where the rotation is (``current_mode_index``).
+        live_resume_index: Where the rotation was when live priority took
+            the panel, so it resumes there once nothing is live; None while
+            live priority holds nothing.
+        live_takeover_unshown: A mid-screen takeover chose current_mode and
+            it has not been shown yet, so the next pass must not advance the
+            live round-robin past it.
     """
 
     current_mode: Optional[str] = None
@@ -115,12 +124,39 @@ class ArbiterState:
     on_demand_index: int = 0
     on_demand_expires_at: Optional[float] = None
     on_demand_pinned: bool = False
+    rotation: Tuple[str, ...] = ()
+    rotation_index: int = 0
+    live_resume_index: Optional[int] = None
+    live_takeover_unshown: bool = False
 
     def next_on_demand(self) -> "ArbiterState":
         """The session's next mode, wrapping round. Needs a mode list."""
         index = (self.on_demand_index + 1) % len(self.on_demand_modes)
         return replace(self, on_demand_index=index,
                        current_mode=self.on_demand_modes[index])
+
+    def claim_live(self, mode: str) -> "ArbiterState":
+        """Live priority takes the panel for ``mode``.
+
+        The rotation's position is saved only on the first claim, not on
+        each re-check while the hold continues, so it resumes where live
+        priority interrupted it instead of after the live mode (which would
+        skip every mode between the two).
+        """
+        if self.current_mode == mode:
+            return self
+        resume = self.rotation_index if self.live_resume_index is None else self.live_resume_index
+        index = self.rotation.index(mode) if mode in self.rotation else self.rotation_index
+        return replace(self, current_mode=mode, rotation_index=index,
+                       live_resume_index=resume)
+
+    def release_live(self) -> "ArbiterState":
+        """Nothing is live any more: the rotation resumes where it was."""
+        if self.live_resume_index is None or not self.rotation:
+            return self
+        index = self.live_resume_index % len(self.rotation)
+        return replace(self, current_mode=self.rotation[index], rotation_index=index,
+                       live_resume_index=None)
 
     def showing(self, plan: "ScreenPlan") -> "ArbiterState":
         """The state once ``plan`` is on the panel.
@@ -172,12 +208,28 @@ class ArbiterInputs:
             when it could win (the panel is on, and neither a follower nor
             on-demand outranks it), because reading it has side effects: a
             1 Hz throttle and deleting an expired file.
+        live_modes: The modes with live content, from a live-priority scan,
+            in registration order; None when no scan was made (on-demand,
+            Vegas keeping live content in its ticker, a throttled
+            mid-screen check). A scan asks every live-priority plugin, so it
+            is made only where run() always made it.
+        vegas_enabled: Vegas mode is on (and no on-demand session holds it
+            off).
+        vegas_live_in_ticker: Vegas keeps live content in its ticker
+            instead of yielding the panel to it.
+        vegas_yielded: This pass's Vegas iteration has run and yielded, so
+            the Vegas Source passes and the screen it fell through to is
+            decided.
     """
 
     schedule_on: bool
     on_demand_active: bool
     follower_active: bool
     wifi_notice: Optional[WifiNotice] = None
+    live_modes: Optional[Tuple[str, ...]] = None
+    vegas_enabled: bool = False
+    vegas_live_in_ticker: bool = False
+    vegas_yielded: bool = False
 
 
 @dataclass(frozen=True)
@@ -204,6 +256,9 @@ class ScreenPlan:
         deadline: For an on-demand plan, when the session ends (wall
             clock): after the first frame the screen's durations are cut to
             what is left (:func:`on_demand_bound`).
+        ends_live: Nothing is live any more and live priority had
+            interrupted the rotation: taking this plan resumes the rotation
+            where it was (ArbiterState.release_live) before it shows.
     """
 
     source: Source
@@ -216,6 +271,7 @@ class ScreenPlan:
     preemptible_by: FrozenSet[Source] = frozenset()
     notice: Optional[WifiNotice] = None
     deadline: Optional[float] = None
+    ends_live: bool = False
 
 
 SCHEDULED_OFF_PLAN = ScreenPlan(Source.SCHEDULED_OFF, max_duration=SCHEDULED_OFF_DWELL)
@@ -269,8 +325,18 @@ class Arbiter:
             return ScreenPlan(Source.WIFI, max_duration=WIFI_NOTICE_DWELL,
                               notice=inputs.wifi_notice)
 
-        # 4-6. Live, Vegas, Rotation: still run()'s own code.
-        return LEGACY_PLAN
+        # 4. Live: the next live game, round-robin across several. With
+        # nothing live, a rotation that live priority interrupted resumes.
+        ends_live = False
+        if _live_applies(inputs):
+            pick = live_pick(inputs.live_modes, state.current_mode,
+                             advance=not state.live_takeover_unshown)
+            if pick is not None:
+                return ScreenPlan(Source.LIVE, mode=pick, preemptible_by=SCREEN_PREEMPTERS)
+            ends_live = state.live_resume_index is not None and bool(state.rotation)
+
+        # 5-6. Vegas, Rotation: still run()'s own code.
+        return ScreenPlan(Source.LEGACY, ends_live=ends_live)
 
 
 def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
@@ -290,6 +356,41 @@ def _on_demand_plan(state: ArbiterState, now: float) -> ScreenPlan:
     return ScreenPlan(Source.ON_DEMAND, mode=modes[_on_demand_index(state)],
                       max_duration=remaining, deadline=expires_at,
                       preemptible_by=SCREEN_PREEMPTERS)
+
+
+def _live_applies(inputs: ArbiterInputs) -> bool:
+    """Whether the Live Source has a say: a scan was made, and Vegas is not
+    keeping live content in its ticker (where the live plugin takes extra
+    turns in the marquee instead of the panel)."""
+    if inputs.live_modes is None:
+        return False
+    return not (inputs.vegas_enabled and inputs.vegas_live_in_ticker)
+
+
+def live_pick(live_modes: Optional[Tuple[str, ...]], current_mode: Optional[str],
+              advance: bool) -> Optional[str]:
+    """The live mode to show, or None when nothing is live.
+
+    When several plugins are live at once this round-robins between them, so
+    the panel alternates each dwell instead of pinning to the first one
+    registered. The mode on the panel is the cursor, so this stays right as
+    games start and end.
+
+    Args:
+        live_modes: The live modes, in registration order.
+        current_mode: The mode on the panel.
+        advance: True for the rotation's pick (the live mode after the one
+            showing). False for a peek (the one showing if it is still live,
+            else the first), which Vegas uses to ask whether anything is.
+    """
+    if not live_modes:
+        return None
+    if current_mode in live_modes:
+        if advance:
+            index = live_modes.index(current_mode)
+            return live_modes[(index + 1) % len(live_modes)]
+        return current_mode
+    return live_modes[0]
 
 
 def wifi_notice_preempts(notice: Optional[WifiNotice], on_demand_active: bool,
