@@ -181,13 +181,14 @@ that the harness patches in today.
   - dynamic duration (cycle complete, plugin cap, global cap)
   - live priority taking over and handing back; live round-robin
   - on-demand start/stop/expiry; pinned on-demand; a session resumed after
-    a restart
+    a restart, and one that cannot resume (its plugin did not load); a
+    request naming a live mode the plugin's live check would drop
   - schedule off and dim, with an on-demand override during downtime
   - WiFi notice; sync follower
   - Vegas, with and without `live_in_ticker`
 - Each trace row is `[start, mode, duration, exit_reason, frames,
   force_clear]`. The exit reason is the event that decided what came next.
-- All 16 tests run in under a second. The goldens were generated from
+- All 18 tests run in under a second. The goldens were generated from
   main's `run()` before any code moved.
 - Vegas uses `FakeVegas`, which implements only the contract the controller
   depends on: `run_iteration()` returns True after its duration and False
