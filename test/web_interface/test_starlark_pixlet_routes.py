@@ -26,8 +26,15 @@ import pytest
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from web_interface import app as web_app
     from web_interface.app import app
+    # The captive-portal before_request hook shells out to systemctl/nmcli
+    # whenever its 30s cache is cold, so on a Linux host whether a request
+    # here runs subprocess depended on how long ago the previous one was --
+    # and several tests below stub subprocess. Pin it: no test in this file
+    # is about AP mode.
+    monkeypatch.setattr(web_app, 'is_ap_mode_active', lambda: False)
     app.config['TESTING'] = True
     with app.test_client() as c:
         yield c
@@ -1131,25 +1138,28 @@ class TestPixletEditorHostDefaultsButDoesNotOverride:
         class FakeProcess:
             pid = 424242
 
-        real_popen = mod.subprocess.Popen
-
         def fake_popen(cmd, *args, env=None, **kwargs):
-            # Only the editor launch is faked. Patching subprocess.Popen
-            # patches it for the whole request, and the captive-portal
-            # before_request hook runs `systemctl is-active hostapd` through
-            # subprocess.run whenever its 30s cache has expired -- which
-            # needs a real process (run() uses it as a context manager).
-            if str(script) not in cmd:
-                return real_popen(cmd, *args, env=env, **kwargs)
-            captured['env'] = env
+            if env is not None:
+                captured['env'] = env
             return FakeProcess()
+
+        # Swap the route module's own ``subprocess`` binding, not the shared
+        # ``subprocess.Popen``: patching the attribute on the real module is
+        # process-wide, and the app's before_request hook (the captive-portal
+        # check) runs ``subprocess.run`` -- ``with Popen(...)`` -- whenever its
+        # 30s AP-mode cache is cold on a host with systemctl. On the Linux CI
+        # runner that handed it this FakeProcess and 500'd the request, but
+        # only when the previous request was more than 30s earlier.
+        fake_subprocess = types.ModuleType('subprocess')
+        fake_subprocess.__dict__.update(mod.subprocess.__dict__)
+        fake_subprocess.Popen = fake_popen
 
         with patch.object(mod, '_validate_starlark_app_path',
                           return_value=(app_dir, None)), \
              patch.object(mod, '_PIXLET_EDITOR_SCRIPT', script), \
              patch.object(mod, '_PIXLET_EDITOR_STATE', state_file), \
              patch.object(mod, '_find_pixlet_binary', return_value='/usr/bin/pixlet'), \
-             patch.object(mod.subprocess, 'Popen', side_effect=fake_popen), \
+             patch.object(mod, 'subprocess', fake_subprocess), \
              patch.dict(os.environ):
             if operator_host is None:
                 os.environ.pop('PIXLET_EDITOR_HOST', None)
