@@ -88,6 +88,7 @@ src/plugin_system/testing/vegas.py
 src/plugin_system/vegas_elements.py
 src/redaction.py
 src/scan_order.py
+src/screen_runner.py
 src/startup_validator.py
 src/vegas_mode/__init__.py
 src/vegas_mode/config.py

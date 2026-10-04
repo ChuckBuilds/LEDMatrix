@@ -25,12 +25,13 @@ come from one module.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import FrozenSet, Optional
 
 __all__ = [
     "Arbiter",
     "ArbiterInputs",
     "ArbiterState",
+    "FramePolicy",
     "SCHEDULED_OFF_DWELL",
     "ScreenPlan",
     "Source",
@@ -58,6 +59,20 @@ class Source(Enum):
     # rotation are still chosen by run()'s own code. Stage 3 adds the
     # OnDemand, Live and Rotation Sources; stage 4 adds Vegas.
     LEGACY = "legacy"
+    # Not a screen: a plugin reload waits at the top of the loop. It ends a
+    # screen between frames (the screen counts as shown and the rotation
+    # moves on), and the next pass reloads before it draws.
+    RELOAD = "reload"
+
+
+class FramePolicy(Enum):
+    """How often a screen draws: today's two frame loops (see
+    DisplayController._needs_high_fps). Stage 5 lets plugins declare it."""
+
+    #: The 125 Hz loop, paced to an 8 ms deadline: scrolling plugins.
+    HIGH_FPS = "high-fps"
+    #: The 1 Hz loop.
+    STATIC = "static"
 
 
 @dataclass(frozen=True)
@@ -107,22 +122,45 @@ class ArbiterInputs:
 class ScreenPlan:
     """The Arbiter's answer for one pass.
 
+    decide() is pure, so it cannot ask a plugin anything: the fields a
+    plugin answers (its durations, whether it runs a dynamic cycle, how
+    often it draws) are filled in by the controller after the screen's first
+    frame, when they have always been read (DisplayController.complete_plan).
+
     Attributes:
         source: The Source that gets the panel.
+        mode: The display mode to draw (None for a blank, follower or notice).
+        plugin: The id of the plugin drawing ``mode``, once resolved.
+        min_duration: Seconds the screen runs at least (dynamic duration).
         max_duration: How long the plan holds the panel, in seconds, at most
             (its dwell ends early when what the panel should show changes).
             None when the Source paces itself: a follower frame, or LEGACY.
+        dynamic: Run until the plugin's cycle completes, between min and max.
+        frame_policy: Which frame loop the screen runs.
+        preemptible_by: The Sources that may end the screen mid-way.
         notice: The WiFi notice to draw, for a WIFI plan.
     """
 
     source: Source
+    mode: Optional[str] = None
+    plugin: Optional[str] = None
+    min_duration: Optional[float] = None
     max_duration: Optional[float] = None
+    dynamic: bool = False
+    frame_policy: Optional[FramePolicy] = None
+    preemptible_by: FrozenSet[Source] = frozenset()
     notice: Optional[WifiNotice] = None
 
 
 SCHEDULED_OFF_PLAN = ScreenPlan(Source.SCHEDULED_OFF, max_duration=SCHEDULED_OFF_DWELL)
 FOLLOWER_PLAN = ScreenPlan(Source.FOLLOWER)
 LEGACY_PLAN = ScreenPlan(Source.LEGACY)
+RELOAD_PLAN = ScreenPlan(Source.RELOAD)
+
+#: What may end a screen mid-way: the schedule, a WiFi notice, a plugin
+#: reload, and run()'s own changes of mode (on-demand, live priority).
+SCREEN_PREEMPTERS: FrozenSet[Source] = frozenset(
+    {Source.SCHEDULED_OFF, Source.WIFI, Source.RELOAD, Source.LEGACY})
 
 
 class Arbiter:
