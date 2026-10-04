@@ -19,6 +19,21 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixed
+
+- The web preview and `/api/v3/display/current` no longer stay black for a
+  whole screen that draws its card once and then holds it. The snapshot is
+  written from `update_display()` at most once per write interval, so a frame
+  pushed inside that interval was skipped and left for the next
+  `update_display()` -- which such a screen never makes. Soccer's
+  recent/upcoming cards skip redundant redraws, and the first one after an
+  on-demand start lands a few milliseconds after the start's clear wrote a
+  black frame: on ledpi the preview showed 0 lit pixels for the whole 15 s
+  while the panel showed the card. `DisplayManager` now remembers a skipped
+  changed frame, and the render loop writes it (`write_owed_snapshot()`)
+  once the interval has passed. The cadence is unchanged, and nothing extra
+  runs when no frame is owed.
+
 ### Cheap per-frame and per-fetch savings
 
 - `BaseOddsManager.get_odds()` no longer pretty-prints every odds response
