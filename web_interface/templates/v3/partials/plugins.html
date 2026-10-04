@@ -250,13 +250,7 @@
                 <input type="text" id="plugin-search" placeholder="Search plugins by name, description, or tags..." aria-label="Search the Plugin Store" class="form-control text-sm flex-[3] min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                 <select id="plugin-category" aria-label="Filter the Plugin Store by category" class="form-control text-sm flex-1 px-3 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:shadow-md transition-shadow">
                     <option value="">All Categories</option>
-                    <option value="sports">Sports</option>
-                    <option value="content">Content</option>
-                    <option value="time">Time</option>
-                    <option value="weather">Weather</option>
-                    <option value="financial">Financial</option>
-                    <option value="media">Media</option>
-                    <option value="demo">Demo</option>
+                    <!-- The rest come from the store's plugins (plugins_manager.js, syncStoreCategoryOptions). -->
                 </select>
             </div>
 
@@ -467,8 +461,9 @@
                             <input type="text" id="github-plugin-url" aria-label="Plugin GitHub repository URL"
                                    placeholder="https://github.com/user/ledmatrix-plugin-name" 
                                    class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                            <button type="button" id="install-plugin-from-url" 
-                                    onclick="if(window.handleGitHubPluginInstall){window.handleGitHubPluginInstall()}else{alert('Function not loaded yet, please refresh the page')}"
+                            <!-- Wired by attachInstallButtonHandler (plugins_manager.js); an inline
+                                 onclick here ran a second install handler on every click. -->
+                            <button type="button" id="install-plugin-from-url"
                                     class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md whitespace-nowrap">
                                 <i class="fas fa-download mr-2"></i>Install
                             </button>

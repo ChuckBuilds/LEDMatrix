@@ -561,21 +561,24 @@ class TestPinnedDivergence:
         assert C.recent_score_color(on, LOG, game, (9, 9, 9)) == (9, 9, 9)
 
     def test_weekday_zone_source(self):
-        # DIVERGENCE, user-visible: the scorebug asks the plugin's
+        # DIVERGENCE, not drawn: the scorebug asks the plugin's
         # _get_timezone() (plugin setting -> global setting -> system zone);
         # the card reads only config["timezone"] and falls back to UTC. The
         # scoreboards' schemas default that key to "", and the scroll display
-        # hands the renderer the plugin config, so a board that sets only the
-        # global zone gets UTC weekdays in scroll mode: an evening kickoff in
-        # New York is labelled with the next day.
+        # hands the renderer the plugin config, so the bare weekday helpers
+        # still disagree for an evening kickoff in New York.
         game = {"start_time_utc": "2026-09-20T00:30:00+00:00"}  # Sat 20:30 EDT
         host = _Host({}, tz=ZoneInfo("America/New_York"))
         assert host._weekday_for(game) == "Sat"
         assert C.weekday_for({}, LOG, game) == "Sun"
+        # DECIDED: what a card draws is the printed date's own weekday, so
+        # the scroll card no longer labels that kickoff with the next day
+        # ("Sun Sep 19" before). Both formatters place the extractor's "M/D"
+        # against the start time instead of re-deriving the day in a zone.
         cfg = {"scroll_card": {"date_format": "weekday", "switch_date_format": "inherit"}}
         host = _Host(cfg, tz=ZoneInfo("America/New_York"))
         assert host._format_game_date("9/19", game) == "Sat Sep 19"
-        assert C.format_game_date(cfg, LOG, "9/19", game) == "Sun Sep 19"
+        assert C.format_game_date(cfg, LOG, "9/19", game) == "Sat Sep 19"
 
     def test_weekday_out_of_range_start(self):
         # DIVERGENCE: the mixin catches OverflowError from astimezone() and

@@ -25,11 +25,12 @@ import os
 import inspect
 import signal
 import json
+import math
 import threading
 import types
 from collections import deque
 from contextlib import contextmanager
-from typing import Dict, Any, List, Optional, Callable, Set, Tuple
+from typing import Dict, Any, FrozenSet, List, Optional, Callable, Set, Tuple
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disable=no-name-in-module
 import pytz
@@ -87,6 +88,19 @@ _INITIAL_UPDATE_BUDGET_SECONDS = 20.0
 _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
+
+
+def _finite_seconds(value: Any) -> Optional[float]:
+    """``value`` as seconds when it is a finite number or a numeric string,
+    else None. A bool is not a number here, though it is an int: True would
+    read as a one-second screen."""
+    if isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if math.isfinite(seconds) else None
 
 
 class _PluginReloadJob:
@@ -1348,6 +1362,12 @@ class DisplayController:
                         "until one does", self.EMPTY_ROTATION_PAUSE)
         self._sleep_with_plugin_updates(self.EMPTY_ROTATION_PAUSE)
 
+    #: Plugins already warned about a display duration that is not a number,
+    #: so a bad setting logs once, not at every one of its screens. A
+    #: frozenset, replaced rather than mutated; class-level default for
+    #: controllers built without __init__ (tests).
+    _duration_warned: FrozenSet[str] = frozenset()
+
     def _get_display_duration(self, mode_key):
         """Seconds to show a mode: the Rotation & Durations page's value for it
         (display.display_durations), else the plugin's own duration.
@@ -1355,6 +1375,17 @@ class DisplayController:
         The saved value has to win. Every plugin inherits
         get_display_duration(), so checking the plugin first meant the page's
         values were never read.
+
+        The plugin's answer is checked here, not trusted. Several plugins
+        return their display_duration setting straight from config.json, so
+        one saved as "20" or null (the raw config editor, a hand edit) came
+        back as a string or None; _resolve_durations compared it with 0, and
+        the TypeError went past every handler in the loop and stopped the
+        display service, which systemd restarted into the same screen. A
+        numeric string counts, as in BasePlugin.get_display_duration; any
+        other value that is not a finite number, or a raise, gets the 30 s a
+        mode without a plugin gets. A number at or below zero is passed on:
+        _resolve_durations has its own rule for that.
         """
         display_durations = self.config.get('display', {}).get('display_durations', {}) or {}
         override = display_durations.get(mode_key)
@@ -1362,8 +1393,22 @@ class DisplayController:
             return float(override)
 
         plugin_instance = self.plugin_modes.get(mode_key)
-        if plugin_instance is not None and hasattr(plugin_instance, 'get_display_duration'):
-            return plugin_instance.get_display_duration()
+        if plugin_instance is None or not hasattr(plugin_instance, 'get_display_duration'):
+            return 30
+        try:
+            value = plugin_instance.get_display_duration()
+        except Exception as err:  # pylint: disable=broad-except
+            problem = f"get_display_duration() raised {type(err).__name__}: {err}"
+        else:
+            seconds = _finite_seconds(value)
+            if seconds is not None:
+                return seconds
+            problem = f"display duration {value!r} is not a number"
+        plugin_id = getattr(plugin_instance, 'plugin_id', None) or mode_key
+        if plugin_id not in self._duration_warned:
+            self._duration_warned = self._duration_warned | {plugin_id}
+            logger.warning("Plugin %s: %s; showing its modes for 30s (logged once)",
+                           plugin_id, problem)
         return 30
 
     def _get_global_dynamic_cap(self) -> Optional[float]:

@@ -346,6 +346,52 @@ class TestSubscriptionStore:
         assert client.snapshot_loop_age(snap, now_mono=104.0) is None
 
 
+class TestReconnectBackoff:
+    """StateSubscription._run's waits between connections, without a socket."""
+
+    def test_a_connection_that_got_a_snapshot_starts_the_backoff_over(self, hub,
+                                                                       monkeypatch):
+        """Three failed tries, then the display is back twice, restarting
+        each time, then gone again. Each restart is retried after the
+        shortest wait, not after whatever the waits had grown to."""
+        sub = client.StateSubscription(paths=['/nowhere'])
+        script = ['refused', 'refused', 'refused', 'snapshot', 'snapshot', 'refused']
+        waits = []
+
+        def follow():
+            step = script.pop(0)
+            if step == 'snapshot':      # subscribed, then the display restarted
+                sub._store(hub.snapshot(), full=True)
+                raise client.ControlError('closed', 'the display closed the connection')
+            raise client.ControlError(step)
+
+        def wait(seconds):
+            waits.append(seconds)
+            return not script           # True ends _run, as stop() would
+
+        monkeypatch.setattr(sub, '_follow', follow)
+        monkeypatch.setattr(sub._stop, 'wait', wait)
+        sub._run()
+        first = client._RECONNECT_MIN_SECONDS
+        assert waits == [first, 2 * first, 4 * first, first, first, 2 * first]
+
+    def test_a_display_without_the_stream_is_still_retried_slowly(self, monkeypatch):
+        sub = client.StateSubscription(paths=['/nowhere'])
+        waits = []
+
+        def follow():
+            raise client.ControlError('unknown_command')
+
+        def wait(seconds):
+            waits.append(seconds)
+            return len(waits) == 2
+
+        monkeypatch.setattr(sub, '_follow', follow)
+        monkeypatch.setattr(sub._stop, 'wait', wait)
+        sub._run()
+        assert waits == [client._RECONNECT_MAX_SECONDS] * 2
+
+
 # --- a real socket ------------------------------------------------------------------
 
 def _wait_until(predicate, timeout=5.0):

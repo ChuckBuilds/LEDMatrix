@@ -18,7 +18,7 @@ the extra guard only stops a None size raising TypeError.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -338,10 +338,46 @@ def format_game_date(config: Optional[Dict[str, Any]], logger, date_text: str,
     if not raw:
         return ""
     fmt = str(scroll_card_option(config, "date_format", "abbrev") or "abbrev")
-    return _format_date_as(fmt, raw, lambda: weekday_for(config, logger, game))
+    return _format_date_as(fmt, raw, lambda: weekday_for(config, logger, game),
+                           game=game)
 
 
-def _format_date_as(fmt: str, raw: str, weekday, months=MONTH_ABBR) -> str:
+def _printed_weekday(game: Optional[Dict], month: int, day: int) -> str:
+    """The weekday of the date a card prints as month/day, or '' if unknown.
+
+    The extractor prints "M/D" in the plugin's resolved zone (its own setting,
+    else the global one, else the system zone). The card cannot see that zone:
+    it is handed the plugin's config, whose ``timezone`` ships as "", so
+    card_tzinfo answers UTC and an evening kickoff in the Americas got the
+    next day's weekday ("Sat Oct 2" for a Friday game). Every zone is within
+    a day of UTC, so the printed date is the start's UTC date or a neighbour
+    of it; the one with that month and day is the date on the card.
+    """
+    if not isinstance(game, dict):
+        return ""
+    raw = game.get("start_time_utc") or game.get("start_time")
+    if not raw:
+        return ""
+    try:
+        start = raw if isinstance(raw, datetime) else datetime.fromisoformat(
+            str(raw).replace("Z", "+00:00"))
+        if start.utcoffset() is None:
+            return ""  # naive: no instant to place the date against
+        utc_day = start.astimezone(timezone.utc).date()
+    except (ValueError, TypeError, OverflowError):
+        return ""
+    for offset in (0, -1, 1):
+        try:
+            candidate = utc_day + timedelta(days=offset)
+        except OverflowError:
+            continue
+        if (candidate.month, candidate.day) == (month, day):
+            return WEEKDAY_ABBR[candidate.weekday()]
+    return ""
+
+
+def _format_date_as(fmt: str, raw: str, weekday, months=MONTH_ABBR,
+                    game: Optional[Dict] = None) -> str:
     """Render a stripped, non-empty "M/D" *raw* in style *fmt*.
 
     The body both date formatters share. They differ in which setting names the
@@ -349,6 +385,9 @@ def _format_date_as(fmt: str, raw: str, weekday, months=MONTH_ABBR) -> str:
     ``SportsCoreSharedMixin._format_game_date``), so those arrive as arguments:
     *weekday* is a zero-argument callable, only called for the "weekday" style.
     *months* lets the mixin keep reading its (overridable) ``_MONTH_ABBR``.
+    With *game*, the "weekday" style names the printed date's own weekday
+    (:func:`_printed_weekday`), and *weekday* is only the fallback for a
+    date its start time cannot place.
     """
     if fmt == "numeric":
         return raw
@@ -364,7 +403,7 @@ def _format_date_as(fmt: str, raw: str, weekday, months=MONTH_ABBR) -> str:
     if fmt == "day_first":
         return f"{day} {name}"
     if fmt == "weekday":
-        day_name = weekday()
+        day_name = _printed_weekday(game, month, day) or weekday()
         return f"{day_name} {name} {day}" if day_name else f"{name} {day}"
     return f"{name} {day}"
 

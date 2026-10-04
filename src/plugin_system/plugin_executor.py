@@ -92,7 +92,10 @@ class PluginExecutor:
                 with plugin_scope(plugin_id):
                     result_container['value'] = operation()
                 result_container['completed'] = True
-            except Exception as e:
+            except BaseException as e:  # pylint: disable=broad-except
+                # asyncio.CancelledError and SystemExit too: uncaught, one
+                # ended this thread with 'completed' unset, and an operation
+                # that failed at once was reported as timing out.
                 result_container['exception'] = e
                 result_container['completed'] = True
         

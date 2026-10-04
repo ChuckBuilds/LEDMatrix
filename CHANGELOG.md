@@ -488,6 +488,23 @@ policies are unchanged.
 
 ### Fixes
 
+- A cache key too long to be a filename is now cached. The calendar
+  plugin's key joins every calendar id the user picked; on a real install
+  it passed 300 bytes, ext4 refuses names over 255, and every write failed
+  with `File name too long` — logged as "(permission denied)", so it read
+  like a cache-directory ownership problem. `DiskCache.get_cache_path` now
+  keeps a key of up to 200 UTF-8 bytes as its filename, as before, and
+  turns a longer one into its first bytes plus a hash of the whole key. The
+  web UI's cache list and delete keep working, because the shortened name
+  maps back to the same file. A failed write now names the real error.
+- The cache's memory tier no longer serves data older than the reader asked
+  for. A record loaded from disk was timed in memory from the load, not
+  from when it was written, so `get(key, max_age=300)` could return data
+  close to 600 s old (after a restart, after the hourly memory sweep, or in
+  the other process, which only ever loads the record from disk), and a
+  stored `ttl` was stretched the same way. A memory hit is now also checked against
+  the record's own timestamp, and a stale one falls through to disk, which
+  returns a newer write if there is one.
 - An on-demand request that names a `*_live` mode now shows that mode. On
   ledpi, `{"plugin_id": "football-scoreboard", "mode": "ncaa_fb_live"}` with
   15 college games on answered 200 and showed `nfl_recent`. The session's
@@ -518,6 +535,16 @@ policies are unchanged.
   `DisplayManager.cleanup()` (reached from SIGTERM through `run()`'s
   `finally`) unregisters it with the frame recorder. New
   `frame_timing.uninstall_gc_monitor()`.
+- The web interface's state subscription (`StateSubscription`,
+  `src/ipc/client.py`) resubscribes about 1 s after a display restart, every
+  time. Its reconnect wait went back to the minimum only when the
+  subscription was stopped. A disconnect after a working connection kept
+  doubling the wait, so successive display restarts were followed by waits
+  of 1, 2, 4, 8, 16 and then 30 s for good.
+  During each wait the web answered from one-shot `state.get` connections
+  instead of its copy. The wait now resets once a connection has stored a
+  snapshot. A display that does not offer the stream is still retried
+  slowly.
 - A plugin reload after a store update (`plugin.reload`, #720) no longer
   freezes the panel during Vegas. On ledpi a football reload froze it for
   3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
@@ -534,6 +561,25 @@ policies are unchanged.
   for the plugin is refused (`plugin-reloading`), and a config reconcile
   neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
   out a reload for the lock skips the old instance.
+- A plugin display duration that is not a number no longer stops the
+  display. Several plugins (clock-simple, calendar, countdown) return their
+  `display_duration` setting as it is in config.json, so a value saved as
+  `"20"` or `null` (the raw config editor, a hand edit) reached the run loop
+  as a string or None. Comparing it with 0 raised a TypeError that no
+  handler in the loop caught: the display service exited when that plugin's
+  screen came up, and systemd restarted it into the same crash. The
+  controller now reads the plugin's answer as a number: a numeric string
+  counts, and anything else (or a `get_display_duration()` that raises)
+  shows the mode for 30 s, with one warning per plugin.
+- A scroll strip narrower than the panel scrolls instead of raising on every
+  frame. When a frame ran off the end of the strip, `ScrollHelper` copied
+  the strip's tail and then the rest of the frame from its head, which
+  assumed the head was that wide; for a narrower strip that raised
+  `ValueError: could not broadcast` at every position, so nothing was drawn
+  and each frame logged a traceback. Vegas builds such a strip, with no
+  lead-in, when its content is narrower than the chain. A frame that runs
+  off the strip now continues from its head column by column, so a narrow
+  strip repeats across the panel; a wide strip wraps exactly as before.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
@@ -543,6 +589,46 @@ policies are unchanged.
   scroller or Vegas) were counted as 0.5-1 s freezes and logged as a
   `Render stall ... mid-scroll`. The controller now ends the scroll state
   before drawing either.
+- A plugin that keeps helpers in a package (elections' `providers/`,
+  flights' `enrichment/`, olympics' `data/` and `renderers/`) now runs its
+  updated helpers after a reload. Unloading dropped the package itself but
+  left its modules (`providers.feed`) in `sys.modules`, so the reload after a
+  store update imported the new `manager.py` and got the old helpers back from
+  the cache until the display restarted. `PluginLoader` now drops a plugin's
+  package modules when it unloads, and when a load fails part-way.
+- Uninstalling a dev plugin that `scripts/dev/dev_plugin_setup.sh` linked
+  into the plugins directory now removes the link and leaves the checkout
+  alone. The store's removal passed the link to `shutil.rmtree`, which
+  refuses a symlink; its fallback then walked through the link and chmodded
+  every directory and file of the linked checkout to 0700, and the sudo stage
+  refused a path outside the plugins directory, so the uninstall failed with
+  the link still in place. The same removal discards the set-aside copy after
+  an install or update. A symlink, dangling or not, is now unlinked.
+- A dev plugin linked in under a name its checkout does not share now loads.
+  `dev_plugin_setup.sh link-github foo <url>` clones `ledmatrix-foo` (the
+  repository naming convention) and links it as `plugins/foo`. The loader's
+  containment check for dependency installs resolved the link and looked for
+  `ledmatrix-foo` among the plugins directory's entries, found none, and
+  refused the plugin, so the load failed with "Dependency installation
+  failed" even when it had no `requirements.txt`. The check now looks for the
+  entry the path itself names in the plugins directory, the link, and still
+  only ever answers with an entry it found there.
+- A plugin whose `update()` raises `asyncio.CancelledError` or `SystemExit`
+  no longer goes dark until a restart. Both derive from `BaseException`, not
+  `Exception`, and the update worker's bookkeeping caught only `Exception`:
+  the plugin kept its lock and stayed RUNNING, so it was never updated again
+  and every `display()` was skipped as busy. It is now recorded as that
+  update's failure, the same as any other raise. The plugin executor
+  reported such a call as a timeout; it now reports it as a failure.
+- Saving a config change no longer freezes the panel while a plugin is busy.
+  `ConfigService` told its subscribers about a change while holding its lock,
+  and the display's per-plugin subscriber waits up to 5 s for a plugin in the
+  middle of an update. A save that enables or disables a plugin also queues a
+  reconcile, which the render thread runs, and its `get_config()` and
+  `unsubscribe()` waited behind every one of those callbacks. Subscribers now
+  run after the lock is released. One reload's notifications still finish
+  before the next one's start, and a callback `unsubscribe()` removed is not
+  running, and will not run, once it returns.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
@@ -580,6 +666,48 @@ policies are unchanged.
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- Check & Update All updates what is installed now. A second run in the
+  same page sent the plugins the first run had seen, so a plugin uninstalled
+  since then failed with "plugin not found" and one installed since was
+  skipped. After a run the installed cards and the Updates badge show the
+  new versions; they kept offering "Update to vX" for what had just been
+  updated until the page was reloaded.
+- The Run On-Demand dialog lists a plugin's display modes, so a mode other
+  than the first can be started, and pinned. `/api/v3/plugins/installed`
+  never sent `display_modes`, which the dialog reads, so every plugin
+  offered only its own id under "This plugin exposes a single display
+  mode", and the display started its first mode. Each entry now carries
+  `display_modes`, the modes its manifest declares.
+- Installing Weather, Music, Stocks or Leaderboard from the Plugin Store
+  enables it, as installing any other plugin does. Each installs under the
+  id its manifest declares (`ledmatrix-weather` for the store's `weather`),
+  but the store enabled the store id, which `/api/v3/plugins/toggle`
+  answered with "Plugin not found": the plugin stayed disabled behind
+  "installed, but enabling it failed". `POST /api/v3/plugins/install` now
+  answers with the installed `plugin_id` (in the operation's result when it
+  is queued), and the store enables that.
+- Reinstalling a plugin from the Plugin Store leaves it enabled or disabled
+  as it was. Reinstall enabled it as a fresh install does, so a plugin the
+  user had switched off came back on.
+- A Plugin Store install that takes more than a minute is no longer
+  reported as failed. The store stopped waiting after 60 s and showed
+  "Install operation timed out" while the server, which allows the
+  plugin's dependency install 300 s on its own, carried on and usually
+  succeeded; the plugin was then neither enabled nor listed until the page
+  was reloaded. The store now waits up to 10 minutes, and if it still has
+  no answer it reloads the installed list and says the install may still
+  be running.
+- The Plugin Store's category filter lists every category its plugins
+  have. It offered a fixed seven while the registry uses about twenty, so
+  plugins filed under productivity, utility, transit and the rest could not
+  be filtered to, and "Financial" missed the plugin filed under "finance".
+  The choices are now built from the store's plugins, as the Starlark
+  section's are.
+- The Install button under Install Single Plugin (Plugin Manager > Install
+  from GitHub) runs one handler per click. It also had an inline `onclick`
+  whose handler threw a `ReferenceError` on every click; only the other
+  handler's request went out, and making the inline one work would have
+  sent every install twice. The inline handler is gone.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render
@@ -591,6 +719,17 @@ policies are unchanged.
   heartbeat when the service stops), is `stale` at once instead of `live`
   for up to 180 s. No new files or writes: both checks are on the reading
   side.
+- A scoreboard's scroll and Vegas cards with `scroll_card.date_format:
+  "weekday"` now show the printed date's own weekday. A Friday 8 PM ET game
+  read "Sat Oct 2". The card took the weekday in the plugin's own
+  `timezone` setting, which ships blank, so it fell back to UTC, while the
+  "Oct 2" beside it came from the zone the plugin actually resolves (its
+  setting, then the global one, then the system zone). Every zone is within a
+  day of UTC, so the card now finds which day near the start's UTC date has
+  the printed month and day and names that one. Games east of UTC (Auckland,
+  Kiritimati) were off by a day the other way and are fixed the same way.
+  The switch-mode scorebug, which already used the plugin's resolved zone,
+  shares the same formatter and draws what it drew before.
 - `/api/v3/display/current-status` reflects a wake from scheduled-off, a
   schedule-off blank, or an on-demand session starting or ending at once,
   even when the mode name stays the same. The display republished its

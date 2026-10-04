@@ -1163,7 +1163,7 @@ class PluginManager:
     def _record_update_failure(
         self,
         plugin_id: str,
-        exc: Optional[Exception] = None,
+        exc: Optional[BaseException] = None,
         log: bool = True,
         count_failure: bool = True,
     ) -> None:
@@ -1187,7 +1187,7 @@ class PluginManager:
         """
         failure_time = time.time()
         if exc is not None:
-            err: Exception = exc
+            err: BaseException = exc
             error_type = type(exc).__name__
         else:
             err = Exception(f"Plugin {plugin_id} execution failed (timeout or executor error)")
@@ -1653,7 +1653,7 @@ class PluginManager:
         finish_guard = threading.Lock()
         finished = {'done': False}
 
-        def _finish(success: bool, exc: Optional[Exception] = None) -> None:
+        def _finish(success: bool, exc: Optional[BaseException] = None) -> None:
             with finish_guard:
                 if finished['done']:
                     return
@@ -1727,7 +1727,13 @@ class PluginManager:
                     self.resource_monitor.monitor_call(plugin_id, plugin_instance.update)
                 else:
                     plugin_instance.update()
-            except Exception as exc:
+            except BaseException as exc:  # pylint: disable=broad-except
+                # BaseException, not just Exception: asyncio.CancelledError
+                # and SystemExit derive from it. Either one skipped _finish,
+                # so the plugin kept its lock and stayed RUNNING for good --
+                # never rescheduled, and every display() skipped as busy.
+                # Re-raised for the executor, which reports it as this
+                # update's failure.
                 _finish(False, exc=exc)
                 raise
             else:
