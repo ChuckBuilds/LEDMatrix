@@ -1131,9 +1131,17 @@ class TestPixletEditorHostDefaultsButDoesNotOverride:
         class FakeProcess:
             pid = 424242
 
+        real_popen = mod.subprocess.Popen
+
         def fake_popen(cmd, *args, env=None, **kwargs):
-            if env is not None:
-                captured['env'] = env
+            # Only the editor launch is faked. Patching subprocess.Popen
+            # patches it for the whole request, and the captive-portal
+            # before_request hook runs `systemctl is-active hostapd` through
+            # subprocess.run whenever its 30s cache has expired -- which
+            # needs a real process (run() uses it as a context manager).
+            if str(script) not in cmd:
+                return real_popen(cmd, *args, env=env, **kwargs)
+            captured['env'] = env
             return FakeProcess()
 
         with patch.object(mod, '_validate_starlark_app_path',
