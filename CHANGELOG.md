@@ -538,6 +538,15 @@ policies are unchanged.
   refused a path outside the plugins directory, so the uninstall failed with
   the link still in place. The same removal discards the set-aside copy after
   an install or update. A symlink, dangling or not, is now unlinked.
+- A dev plugin linked in under a name its checkout does not share now loads.
+  `dev_plugin_setup.sh link-github foo <url>` clones `ledmatrix-foo` (the
+  repository naming convention) and links it as `plugins/foo`. The loader's
+  containment check for dependency installs resolved the link and looked for
+  `ledmatrix-foo` among the plugins directory's entries, found none, and
+  refused the plugin, so the load failed with "Dependency installation
+  failed" even when it had no `requirements.txt`. The check now looks for the
+  entry the path itself names in the plugins directory, the link, and still
+  only ever answers with an entry it found there.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and

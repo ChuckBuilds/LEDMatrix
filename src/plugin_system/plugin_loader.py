@@ -199,9 +199,22 @@ def contained_plugin_dir(plugin_dir: Path, plugins_dir: Path) -> Optional[str]:
     name that came out of ``os.scandir()`` on the trusted root carries no
     taint, which is a real containment guarantee (and one CodeQL's
     path-injection query can follow), not a string sanitiser.
+
+    The entry looked for is the one ``plugin_dir`` itself names when it sits
+    directly in ``plugins_dir``: for a dev plugin symlinked in under its id,
+    the link's name. Resolving the link first and looking for the target's
+    folder name refused ``plugins/foo -> ~/.ledmatrix-dev-plugins/ledmatrix-foo``
+    (what ``dev_plugin_setup.sh link-github foo <url>`` makes), so the plugin
+    never loaded. Any other path is resolved and matched by its final name,
+    as before.
     """
-    plugin_dir_real = os.path.realpath(str(plugin_dir))
     plugins_dir_real = os.path.realpath(str(plugins_dir))
+    plugin_dir_abs = os.path.abspath(str(plugin_dir))
+    if os.path.realpath(os.path.dirname(plugin_dir_abs)) == plugins_dir_real:
+        matched_name = find_trusted_subdir(plugins_dir_real, os.path.basename(plugin_dir_abs))
+        if matched_name is not None:
+            return os.path.join(plugins_dir_real, matched_name)
+    plugin_dir_real = os.path.realpath(str(plugin_dir))
     matched_name = find_trusted_subdir(plugins_dir_real, os.path.basename(plugin_dir_real))
     if matched_name is None:
         return None
