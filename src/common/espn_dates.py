@@ -134,11 +134,14 @@ _chunk_slots = threading.BoundedSemaphore(ESPN_CHUNK_WORKERS)
 def _eastern_zone() -> Optional[tzinfo]:
     """US Eastern, the zone ESPN's ``dates=YYYYMMDD`` means, or None when
     this Python has no time zone data (no edge month is trimmed then)."""
+    zone: Optional[tzinfo] = None
     try:
         from zoneinfo import ZoneInfo
-        return ZoneInfo("America/New_York")
+        zone = ZoneInfo("America/New_York")
     except Exception:  # noqa: BLE001 - no zoneinfo module or no tz database
-        pass
+        zone = None
+    if zone is not None:
+        return zone
     try:
         import pytz
         return cast(tzinfo, pytz.timezone("America/New_York"))
