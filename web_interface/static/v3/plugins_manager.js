@@ -2409,8 +2409,43 @@ function getStoreFilter() {
     return _storeFilter;
 }
 
+// The category filter offers the categories the store's plugins have, as the
+// Starlark section does. The template ships only "All Categories": a fixed
+// list offered 7 of the registry's ~20 categories, so most plugins could not
+// be filtered to, and "Financial" missed the plugin filed under "finance".
+// One option per category whatever its case (the filter ignores case), and
+// rebuilt only when the set changes, or for a select freshly swapped in.
+function syncStoreCategoryOptions() {
+    const select = document.getElementById('plugin-category');
+    if (!select) return;
+    const ctl = getStoreFilter();
+    const selected = String((ctl ? ctl.state.filterCategory : select.value) || '');
+    const byKey = new Map();
+    (pluginStoreCache || []).forEach(plugin => {
+        const category = plugin && typeof plugin.category === 'string' ? plugin.category : '';
+        if (category.trim() && !byKey.has(category.toLowerCase())) {
+            byKey.set(category.toLowerCase(), category);
+        }
+    });
+    // The current choice stays selectable even if no plugin has it any more.
+    if (selected && !byKey.has(selected.toLowerCase())) byKey.set(selected.toLowerCase(), selected);
+    const categories = [...byKey.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const key = categories.join('\n');
+    if (select._storeCategories === key) return;
+    select._storeCategories = key;
+    select.innerHTML = '<option value="">All Categories</option>';
+    categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category.charAt(0).toUpperCase() + category.slice(1);
+        select.appendChild(option);
+    });
+    select.value = selected;
+}
+
 function applyStoreFiltersAndSort(skipPageReset) {
     if (!pluginStoreCache) return;
+    syncStoreCategoryOptions();
     const ctl = getStoreFilter();
     if (ctl) {
         ctl.apply(skipPageReset);

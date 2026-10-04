@@ -591,6 +591,12 @@ policies are unchanged.
   was reloaded. The store now waits up to 10 minutes, and if it still has
   no answer it reloads the installed list and says the install may still
   be running.
+- The Plugin Store's category filter lists every category its plugins
+  have. It offered a fixed seven while the registry uses about twenty, so
+  plugins filed under productivity, utility, transit and the rest could not
+  be filtered to, and "Financial" missed the plugin filed under "finance".
+  The choices are now built from the store's plugins, as the Starlark
+  section's are.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render

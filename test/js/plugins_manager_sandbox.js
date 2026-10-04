@@ -120,8 +120,11 @@ function create({ route } = {}) {
 
   const timers = [];
   const ctx = {
-    console,
+    // Warnings are the script noting elements this fake page doesn't have.
+    console: { log: console.log.bind(console), error: console.error.bind(console),
+               warn: () => {}, info: () => {}, debug: () => {} },
     debugLog: () => {},
+    addEventListener() {},
     document: {
       readyState: 'loading',
       body: { addEventListener() {} },
