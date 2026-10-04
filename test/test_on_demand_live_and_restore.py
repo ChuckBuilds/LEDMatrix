@@ -21,6 +21,18 @@ SPORTS_MODES = ['nfl_live', 'nfl_recent', 'nfl_upcoming',
                 'ncaa_fb_live', 'ncaa_fb_recent', 'ncaa_fb_upcoming']
 
 
+def _last_write(cache_manager, key):
+    """The last ``cache_manager.set(key, ...)`` call.
+
+    Not simply the last ``set`` call: the controller's font-usage publisher
+    thread writes ``font_usage_snapshot`` to the same cache manager whenever
+    it wakes, so on a slow runner it can land after the write under test.
+    """
+    writes = [c for c in cache_manager.set.call_args_list if c.args and c.args[0] == key]
+    assert writes, f"nothing was written to {key!r}"
+    return writes[-1]
+
+
 def _sports_plugin(has_live_content=False):
     plugin = MagicMock(spec=['display', 'has_live_content', 'has_live_priority',
                              'get_live_modes'])
@@ -87,8 +99,7 @@ class TestANamedLiveModeIsShown:
     def test_the_named_mode_survives_a_restart(self, football):
         football._activate_on_demand({'plugin_id': 'football-scoreboard',
                                       'mode': 'ncaa_fb_live'})
-        saved = football.cache_manager.set.call_args_list[-1]
-        assert saved.args[0] == 'display_on_demand_config'
+        saved = _last_write(football.cache_manager, 'display_on_demand_config')
         config = saved.args[1]
         assert config['named_mode'] == 'ncaa_fb_live'
 
@@ -120,8 +131,7 @@ class TestARestoreWithNothingToResume:
     def test_it_is_reported_as_an_error(self, restored):
         assert restored.on_demand_status == 'error'
         assert restored.on_demand_last_error == 'restore-failed'
-        published = restored.cache_manager.set.call_args_list[-1]
-        assert published.args[0] == 'display_on_demand_state'
+        published = _last_write(restored.cache_manager, 'display_on_demand_state')
         assert published.args[1]['status'] == 'error'
         assert published.args[1]['error'] == 'restore-failed'
 
