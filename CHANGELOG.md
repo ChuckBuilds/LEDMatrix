@@ -515,6 +515,16 @@ policies are unchanged.
   `DisplayManager.cleanup()` (reached from SIGTERM through `run()`'s
   `finally`) unregisters it with the frame recorder. New
   `frame_timing.uninstall_gc_monitor()`.
+- The web interface's state subscription (`StateSubscription`,
+  `src/ipc/client.py`) resubscribes about 1 s after a display restart, every
+  time. Its reconnect wait went back to the minimum only when the
+  subscription was stopped. A disconnect after a working connection kept
+  doubling the wait, so successive display restarts were followed by waits
+  of 1, 2, 4, 8, 16 and then 30 s for good.
+  During each wait the web answered from one-shot `state.get` connections
+  instead of its copy. The wait now resets once a connection has stored a
+  snapshot. A display that does not offer the stream is still retried
+  slowly.
 - A plugin reload after a store update (`plugin.reload`, #720) no longer
   freezes the panel during Vegas. On ledpi a football reload froze it for
   3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
