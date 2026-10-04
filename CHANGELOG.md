@@ -572,6 +572,17 @@ policies are unchanged.
   offered only its own id under "This plugin exposes a single display
   mode", and the display started its first mode. Each entry now carries
   `display_modes`, the modes its manifest declares.
+- Installing Weather, Music, Stocks or Leaderboard from the Plugin Store
+  enables it, as installing any other plugin does. Each installs under the
+  id its manifest declares (`ledmatrix-weather` for the store's `weather`),
+  but the store enabled the store id, which `/api/v3/plugins/toggle`
+  answered with "Plugin not found": the plugin stayed disabled behind
+  "installed, but enabling it failed". `POST /api/v3/plugins/install` now
+  answers with the installed `plugin_id` (in the operation's result when it
+  is queued), and the store enables that.
+- Reinstalling a plugin from the Plugin Store leaves it enabled or disabled
+  as it was. Reinstall enabled it as a fresh install does, so a plugin the
+  user had switched off came back on.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render

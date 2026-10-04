@@ -2114,9 +2114,10 @@ function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
 
                 if (status === 'completed') {
                     // The operation's result says whether the display picks
-                    // the change up by itself or needs a restart.
+                    // the change up by itself or needs a restart, and for an
+                    // install which id the plugin was installed as.
                     window.noteRestartRequired(operation.result);
-                    onComplete();
+                    onComplete(operation.result);
                 } else if (status === 'failed') {
                     onFailed(operation.error || operation.message);
                 } else {
@@ -2270,10 +2271,18 @@ function showStoreLoading(show) {
 // ── Plugin Store: Client-Side Filter/Sort/Pagination ────────────────────────
 
 function isStorePluginInstalled(pluginIdOrPlugin) {
+    return Boolean(findInstalledStorePlugin(pluginIdOrPlugin));
+}
+
+// The installed-list entry for a store plugin, or undefined. A registry entry
+// can be installed under another id -- `weather` is listed as the
+// `ledmatrix-weather` its manifest declares -- so its own id is tried first,
+// then its plugin_path name, then its aliases.
+function findInstalledStorePlugin(pluginIdOrPlugin) {
     const installed = window.installedPlugins || installedPlugins || [];
     // Accept either a plain ID string or a store plugin object (which may have plugin_path)
     if (typeof pluginIdOrPlugin === 'string') {
-        return installed.some(p => p.id === pluginIdOrPlugin);
+        return installed.find(p => p.id === pluginIdOrPlugin);
     }
     const storeId = pluginIdOrPlugin.id;
     // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
@@ -2281,8 +2290,9 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
     const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
     // Newer registries also list the other ids outright (the manifest id).
     const aliases = Array.isArray(pluginIdOrPlugin.aliases) ? pluginIdOrPlugin.aliases : [];
-    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId)
-        || aliases.includes(p.id));
+    return installed.find(p => p.id === storeId)
+        || (pathDerivedId ? installed.find(p => p.id === pathDerivedId) : undefined)
+        || installed.find(p => aliases.includes(p.id));
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
@@ -2510,11 +2520,45 @@ window.installPlugin = function(pluginId, branch = null) {
         requestBody.branch = branch;
     }
 
-    function enableAfterInstall() {
+    const storeEntry = (pluginStoreCache || []).find(p => p && p.id === pluginId) || { id: pluginId };
+    // Decided before the install changes the list, by the same match that
+    // labelled the button Install or Reinstall. A reinstall keeps the plugin
+    // as the user had it: enabling it here switched a deliberately disabled
+    // plugin back on.
+    const isReinstall = isStorePluginInstalled(storeEntry);
+
+    // The id the plugin was installed as, which can differ from the store's:
+    // `weather` installs as the `ledmatrix-weather` its manifest declares,
+    // and that is the id /plugins/toggle knows. The install answer names it
+    // (plugin_id); from one that doesn't, the installed entry the store
+    // entry matches, as for the Installed badge.
+    function installedPluginId(result) {
+        if (result && typeof result.plugin_id === 'string' && result.plugin_id) {
+            return result.plugin_id;
+        }
+        const match = findInstalledStorePlugin(storeEntry);
+        return match ? match.id : pluginId;
+    }
+
+    function afterInstall(result) {
+        // Reload first, so the new card exists (and, without plugin_id in the
+        // answer, so the installed id can be found), then redraw the store's
+        // badges from that list.
+        loadInstalledPlugins(true).catch(() => {}).then(() => {
+            applyStoreFiltersAndSort(true);
+            if (isReinstall) {
+                showNotification(`${pluginId} reinstalled`, 'success');
+                return;
+            }
+            enableAfterInstall(installedPluginId(result));
+        });
+    }
+
+    function enableAfterInstall(installedId) {
         // Enable immediately so install -> enable is one step; only nudge
         // for a restart once enablement actually succeeded (persistent
         // toast; duration 0 = stays until dismissed).
-        Promise.resolve(window.togglePlugin(pluginId, true)).then(toggleResult => {
+        Promise.resolve(window.togglePlugin(installedId, true)).then(toggleResult => {
             if (toggleResult && toggleResult.status === 'success') {
                 showNotification(
                     `${pluginId} installed and enabled — restart the display to show it`,
@@ -2532,9 +2576,6 @@ window.installPlugin = function(pluginId, branch = null) {
                 );
             }
         });
-        // Refresh installed plugins list, then re-render store to update badges
-        loadInstalledPlugins().catch(() => {});
-        setTimeout(() => applyStoreFiltersAndSort(true), 500);
     }
 
     fetch('/api/v3/plugins/install', {
@@ -2555,14 +2596,14 @@ window.installPlugin = function(pluginId, branch = null) {
             // live: "installation queued" followed immediately by a failed
             // enable). Wait for the operation to actually finish first.
             pollOperationStatus(data.data.operation_id, pluginId, pluginId, {
-                onComplete: enableAfterInstall,
+                onComplete: afterInstall,
                 onFailed: (errorMsg) => showNotification(errorMsg || `Failed to install ${pluginId}`, 'error'),
                 onTimeout: () => showNotification(`Install operation timed out for ${pluginId}`, 'error')
             });
         } else {
             // No operation queue configured - install already completed synchronously.
             window.noteRestartRequired(data);
-            enableAfterInstall();
+            afterInstall(data);
         }
     })
     .catch(error => {
