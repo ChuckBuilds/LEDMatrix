@@ -573,6 +573,12 @@ policies are unchanged.
   function as JSON. An install queued behind another plugin's install
   failed every status poll until the first one finished. Parameters whose
   name starts with `_` are internal and are no longer in the answer.
+- A second click on Install while that plugin is still installing, or an
+  Uninstall during its install, now answers 409 "already has an install,
+  update or uninstall in progress" instead of 500 "An error occurred". The
+  first operation carried on either way. The uninstall route also stopped
+  recording a failed uninstall in the operation history for an uninstall
+  that never started.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end
