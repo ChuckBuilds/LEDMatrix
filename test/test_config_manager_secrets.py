@@ -143,7 +143,10 @@ class TestLoadFastPath:
         manager = make_manager(tmp_path, config={"timezone": "UTC"})
         first = manager.load_config()
         second = manager.load_config()
-        assert second is first  # same aliased dict, no re-read
+        # A copy of the cached dict, never the dict itself; that it is not
+        # re-read is test_config_load_cache's test_unchanged_files_are_not_reread
+        assert second == first
+        assert second is not first
 
     def test_touching_secrets_file_invalidates_cache(self, tmp_path):
         manager = make_manager(

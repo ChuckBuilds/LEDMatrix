@@ -34,8 +34,8 @@
  *
  * Layout: a few handlers defined up front, outside any IIFE, because the
  * cards and other scripts call them through window (configurePlugin,
- * togglePlugin, the GitHub token helpers, handleGitHubPluginInstall,
- * checkGitHubAuthStatus); then the plugin-manager IIFE (private state:
+ * togglePlugin, the GitHub token helpers, checkGitHubAuthStatus); then the
+ * plugin-manager IIFE (private state:
  * installedPlugins, the store cache, the on-demand poller); then the
  * Starlark IIFE.
  *
@@ -385,103 +385,6 @@ window.toggleGithubTokenContent = function(e) {
         debugLog('[toggleGithubTokenContent] Content hidden - added hidden, removed block, set display:none');
     }
 };
-
-// Simple standalone handler for GitHub plugin installation
-// Defined early and globally to ensure it's always available
-debugLog('[DEFINE] Defining handleGitHubPluginInstall function...');
-window.handleGitHubPluginInstall = function() {
-    debugLog('[handleGitHubPluginInstall] Function called!');
-
-    const urlInput = document.getElementById('github-plugin-url');
-    const statusDiv = document.getElementById('github-plugin-status');
-    const branchInput = document.getElementById('plugin-branch-input');
-    const installBtn = document.getElementById('install-plugin-from-url');
-
-    if (!urlInput) {
-        console.error('[handleGitHubPluginInstall] URL input not found');
-        alert('Error: Could not find URL input field');
-        return;
-    }
-
-    const repoUrl = urlInput.value.trim();
-    debugLog('[handleGitHubPluginInstall] Repo URL:', repoUrl);
-
-    if (!repoUrl) {
-        if (statusDiv) {
-            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a GitHub URL</span>';
-        }
-        return;
-    }
-
-    if (!isGithubUrl(repoUrl)) {
-        if (statusDiv) {
-            statusDiv.innerHTML = '<span class="text-red-600"><i class="fas fa-exclamation-circle mr-1"></i>Please enter a valid GitHub URL</span>';
-        }
-        return;
-    }
-
-    // Disable button and show loading
-    if (installBtn) {
-        installBtn.disabled = true;
-        installBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Installing...';
-    }
-    if (statusDiv) {
-        statusDiv.innerHTML = '<span class="text-blue-600"><i class="fas fa-spinner fa-spin mr-1"></i>Installing plugin...</span>';
-    }
-
-    const branch = branchInput?.value?.trim() || null;
-    const requestBody = { repo_url: repoUrl };
-    if (branch) {
-        requestBody.branch = branch;
-    }
-
-    debugLog('[handleGitHubPluginInstall] Sending request:', requestBody);
-
-    fetch('/api/v3/plugins/install-from-url', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-    })
-    .then(response => {
-        debugLog('[handleGitHubPluginInstall] Response status:', response.status);
-        return response.json();
-    })
-    .then(data => {
-        debugLog('[handleGitHubPluginInstall] Response data:', data);
-        if (data.status === 'success') {
-            if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.LEDEscape.html(data.plugin_id)}</span>`;
-            }
-            urlInput.value = '';
-
-            showNotification(`Plugin ${data.plugin_id} installed successfully`, 'success');
-            window.noteRestartRequired(data);
-
-            setTimeout(() => window.pluginManager.loadInstalledPlugins(true).catch(() => {}), 1000);
-        } else {
-            if (statusDiv) {
-                statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
-            }
-            showNotification(data.message || 'Installation failed', 'error');
-        }
-    })
-    .catch(error => {
-        console.error('[handleGitHubPluginInstall] Error:', error);
-        if (statusDiv) {
-            statusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
-        }
-        showNotification('Error installing plugin: ' + error.message, 'error');
-    })
-    .finally(() => {
-        if (installBtn) {
-            installBtn.disabled = false;
-            installBtn.innerHTML = '<i class="fas fa-download mr-2"></i>Install';
-        }
-    });
-};
-debugLog('[DEFINE] handleGitHubPluginInstall defined and ready');
 
 // GitHub Authentication Status - Define early so it's available in IIFE
 // Shows warning banner only when token is missing or invalid
@@ -2083,6 +1986,13 @@ window.uninstallPlugin = function(pluginId) {
     });
 }
 
+// How many times the store's Install polls a queued install, a second apart.
+// The server allows the plugin's dependency install 300 s on its own
+// (install_requirements_file in src/plugin_system/store_install.py), after a
+// download that fetches the plugin a file at a time; the 60 the poller
+// defaults to reported installs that then succeeded as timed out.
+const INSTALL_POLL_MAX_ATTEMPTS = 600;
+
 function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
     const maxAttempts = options.maxAttempts || 60;
     const attempt = options.attempt || 0;
@@ -2114,9 +2024,10 @@ function pollOperationStatus(operationId, pluginId, pluginName, options = {}) {
 
                 if (status === 'completed') {
                     // The operation's result says whether the display picks
-                    // the change up by itself or needs a restart.
+                    // the change up by itself or needs a restart, and for an
+                    // install which id the plugin was installed as.
                     window.noteRestartRequired(operation.result);
-                    onComplete();
+                    onComplete(operation.result);
                 } else if (status === 'failed') {
                     onFailed(operation.error || operation.message);
                 } else {
@@ -2270,10 +2181,18 @@ function showStoreLoading(show) {
 // ── Plugin Store: Client-Side Filter/Sort/Pagination ────────────────────────
 
 function isStorePluginInstalled(pluginIdOrPlugin) {
+    return Boolean(findInstalledStorePlugin(pluginIdOrPlugin));
+}
+
+// The installed-list entry for a store plugin, or undefined. A registry entry
+// can be installed under another id -- `weather` is listed as the
+// `ledmatrix-weather` its manifest declares -- so its own id is tried first,
+// then its plugin_path name, then its aliases.
+function findInstalledStorePlugin(pluginIdOrPlugin) {
     const installed = window.installedPlugins || installedPlugins || [];
     // Accept either a plain ID string or a store plugin object (which may have plugin_path)
     if (typeof pluginIdOrPlugin === 'string') {
-        return installed.some(p => p.id === pluginIdOrPlugin);
+        return installed.find(p => p.id === pluginIdOrPlugin);
     }
     const storeId = pluginIdOrPlugin.id;
     // Derive the actual installed directory name from plugin_path (e.g. "plugins/ledmatrix-weather" → "ledmatrix-weather")
@@ -2281,8 +2200,9 @@ function isStorePluginInstalled(pluginIdOrPlugin) {
     const pathDerivedId = pluginPath ? pluginPath.split('/').pop() : null;
     // Newer registries also list the other ids outright (the manifest id).
     const aliases = Array.isArray(pluginIdOrPlugin.aliases) ? pluginIdOrPlugin.aliases : [];
-    return installed.some(p => p.id === storeId || (pathDerivedId && p.id === pathDerivedId)
-        || aliases.includes(p.id));
+    return installed.find(p => p.id === storeId)
+        || (pathDerivedId ? installed.find(p => p.id === pathDerivedId) : undefined)
+        || installed.find(p => aliases.includes(p.id));
 }
 
 // ── Plugin Store: search / filter / sort ────────────────────────────────
@@ -2392,8 +2312,43 @@ function getStoreFilter() {
     return _storeFilter;
 }
 
+// The category filter offers the categories the store's plugins have, as the
+// Starlark section does. The template ships only "All Categories": a fixed
+// list offered 7 of the registry's ~20 categories, so most plugins could not
+// be filtered to, and "Financial" missed the plugin filed under "finance".
+// One option per category whatever its case (the filter ignores case), and
+// rebuilt only when the set changes, or for a select freshly swapped in.
+function syncStoreCategoryOptions() {
+    const select = document.getElementById('plugin-category');
+    if (!select) return;
+    const ctl = getStoreFilter();
+    const selected = String((ctl ? ctl.state.filterCategory : select.value) || '');
+    const byKey = new Map();
+    (pluginStoreCache || []).forEach(plugin => {
+        const category = plugin && typeof plugin.category === 'string' ? plugin.category : '';
+        if (category.trim() && !byKey.has(category.toLowerCase())) {
+            byKey.set(category.toLowerCase(), category);
+        }
+    });
+    // The current choice stays selectable even if no plugin has it any more.
+    if (selected && !byKey.has(selected.toLowerCase())) byKey.set(selected.toLowerCase(), selected);
+    const categories = [...byKey.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const key = categories.join('\n');
+    if (select._storeCategories === key) return;
+    select._storeCategories = key;
+    select.innerHTML = '<option value="">All Categories</option>';
+    categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category.charAt(0).toUpperCase() + category.slice(1);
+        select.appendChild(option);
+    });
+    select.value = selected;
+}
+
 function applyStoreFiltersAndSort(skipPageReset) {
     if (!pluginStoreCache) return;
+    syncStoreCategoryOptions();
     const ctl = getStoreFilter();
     if (ctl) {
         ctl.apply(skipPageReset);
@@ -2510,11 +2465,45 @@ window.installPlugin = function(pluginId, branch = null) {
         requestBody.branch = branch;
     }
 
-    function enableAfterInstall() {
+    const storeEntry = (pluginStoreCache || []).find(p => p && p.id === pluginId) || { id: pluginId };
+    // Decided before the install changes the list, by the same match that
+    // labelled the button Install or Reinstall. A reinstall keeps the plugin
+    // as the user had it: enabling it here switched a deliberately disabled
+    // plugin back on.
+    const isReinstall = isStorePluginInstalled(storeEntry);
+
+    // The id the plugin was installed as, which can differ from the store's:
+    // `weather` installs as the `ledmatrix-weather` its manifest declares,
+    // and that is the id /plugins/toggle knows. The install answer names it
+    // (plugin_id); from one that doesn't, the installed entry the store
+    // entry matches, as for the Installed badge.
+    function installedPluginId(result) {
+        if (result && typeof result.plugin_id === 'string' && result.plugin_id) {
+            return result.plugin_id;
+        }
+        const match = findInstalledStorePlugin(storeEntry);
+        return match ? match.id : pluginId;
+    }
+
+    function afterInstall(result) {
+        // Reload first, so the new card exists (and, without plugin_id in the
+        // answer, so the installed id can be found), then redraw the store's
+        // badges from that list.
+        loadInstalledPlugins(true).catch(() => {}).then(() => {
+            applyStoreFiltersAndSort(true);
+            if (isReinstall) {
+                showNotification(`${pluginId} reinstalled`, 'success');
+                return;
+            }
+            enableAfterInstall(installedPluginId(result));
+        });
+    }
+
+    function enableAfterInstall(installedId) {
         // Enable immediately so install -> enable is one step; only nudge
         // for a restart once enablement actually succeeded (persistent
         // toast; duration 0 = stays until dismissed).
-        Promise.resolve(window.togglePlugin(pluginId, true)).then(toggleResult => {
+        Promise.resolve(window.togglePlugin(installedId, true)).then(toggleResult => {
             if (toggleResult && toggleResult.status === 'success') {
                 showNotification(
                     `${pluginId} installed and enabled — restart the display to show it`,
@@ -2532,9 +2521,6 @@ window.installPlugin = function(pluginId, branch = null) {
                 );
             }
         });
-        // Refresh installed plugins list, then re-render store to update badges
-        loadInstalledPlugins().catch(() => {});
-        setTimeout(() => applyStoreFiltersAndSort(true), 500);
     }
 
     fetch('/api/v3/plugins/install', {
@@ -2555,14 +2541,25 @@ window.installPlugin = function(pluginId, branch = null) {
             // live: "installation queued" followed immediately by a failed
             // enable). Wait for the operation to actually finish first.
             pollOperationStatus(data.data.operation_id, pluginId, pluginId, {
-                onComplete: enableAfterInstall,
+                onComplete: afterInstall,
                 onFailed: (errorMsg) => showNotification(errorMsg || `Failed to install ${pluginId}`, 'error'),
-                onTimeout: () => showNotification(`Install operation timed out for ${pluginId}`, 'error')
+                maxAttempts: INSTALL_POLL_MAX_ATTEMPTS,
+                // Out of patience is not a failure: the server may still be
+                // installing. Show the list as it is now and say so; nothing
+                // is enabled without the operation's answer.
+                onTimeout: () => {
+                    showNotification(
+                        `${pluginId} is still installing — it will appear in the installed list when it finishes`,
+                        'warning'
+                    );
+                    loadInstalledPlugins(true).catch(() => {})
+                        .then(() => applyStoreFiltersAndSort(true));
+                }
             });
         } else {
             // No operation queue configured - install already completed synchronously.
             window.noteRestartRequired(data);
-            enableAfterInstall();
+            afterInstall(data);
         }
     })
     .catch(error => {

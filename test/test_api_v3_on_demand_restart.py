@@ -37,6 +37,7 @@ from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401
 START_URL = "/api/v3/display/on-demand/start"
 STOP_URL = "/api/v3/display/on-demand/stop"
 MAILBOX = "display_on_demand_request"
+DISPLAY = "web_interface.blueprints.api_v3.display"
 
 
 @pytest.fixture
@@ -148,6 +149,102 @@ class TestStartWhileTheServiceIsStopped:
         response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
         assert response.status_code == 500
         assert response.get_json()["status"] == "error"
+
+
+class _Mailbox:
+    """The CacheManager calls the routes make, over a dict."""
+
+    def __init__(self):
+        self.entries = {}
+
+    def set(self, key, value, ttl=None):
+        self.entries[key] = value
+
+    def get(self, key, max_age=300, memory_ttl=None):
+        return self.entries.get(key)
+
+    def delete(self, key):
+        self.entries.pop(key, None)
+
+
+class TestARefusedStartLeavesNoRequestBehind:
+    """A start the route answers with an error must not run later.
+
+    The request was posted (to the mailbox, with the display stopped) before
+    the route refused it, and the display reads the mailbox for an hour
+    without looking at a request's age. So "Display service is not running"
+    (start_service off) or "Failed to start display service" left the
+    request waiting, and the next time the display started -- minutes later,
+    by hand -- it ran that plugin, pinned if the request said so.
+
+    A socket acknowledgement is the other side of it: the display answered,
+    so it is running and has the request, whatever systemd says (a display
+    run by hand or in the emulator has no active unit). That is a success,
+    not "not running", and no unit is started beside it.
+    """
+
+    @pytest.fixture
+    def mailbox(self, api_v3_module, service):
+        box = _Mailbox()
+        api_v3_module.api_v3.cache_manager = box
+        service["state"]["active"] = False
+        return box
+
+    @pytest.mark.parametrize("body", [
+        {"plugin_id": "weather", "start_service": False},
+        {"plugin_id": "weather"},                           # start_service defaults on
+    ])
+    def test_a_socket_ack_is_a_success_whatever_systemd_says(
+            self, api_v3_client, service, mailbox, body):
+        with patch(f"{DISPLAY}.control_client.on_demand_start",
+                   side_effect=lambda request_id, *a: {"accepted": True}):
+            response = api_v3_client.post(START_URL, json=body)
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()["data"]["transport"] == "socket"
+        assert MAILBOX not in mailbox.entries
+        assert _systemctl_verbs(service["systemctl"]) == [], (
+            "a unit was started beside a display that answered the socket")
+
+    def test_without_start_service_the_request_is_taken_back(
+            self, api_v3_client, service, mailbox):
+        response = api_v3_client.post(START_URL, json={
+            "plugin_id": "weather", "pinned": True, "start_service": False})
+        assert response.status_code == 400
+        assert response.get_json()["status"] == "error"
+        assert MAILBOX not in mailbox.entries
+
+    def test_a_start_that_fails_takes_its_request_back(self, api_v3_client, service, mailbox):
+        service["systemctl"].side_effect = lambda args: {
+            "returncode": 1, "stdout": "", "stderr": "denied"}
+        response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+        assert response.status_code == 500
+        assert MAILBOX not in mailbox.entries
+
+    def test_a_newer_request_is_left_alone_on_the_400(self, api_v3_client, service, mailbox):
+        newer = {"request_id": "someone-else", "action": "start", "plugin_id": "clock"}
+
+        def stopped_and_another_post_lands(*args):
+            mailbox.entries[MAILBOX] = newer
+            return {"active": False}
+
+        with patch(f"{DISPLAY}._get_display_service_status",
+                   side_effect=stopped_and_another_post_lands):
+            response = api_v3_client.post(START_URL, json={
+                "plugin_id": "weather", "start_service": False})
+        assert response.status_code == 400
+        assert mailbox.entries[MAILBOX] is newer
+
+    def test_a_newer_request_is_left_alone_on_the_500(self, api_v3_client, service, mailbox):
+        newer = {"request_id": "someone-else", "action": "start", "plugin_id": "clock"}
+
+        def start_fails_after_another_post(args):
+            mailbox.entries[MAILBOX] = newer
+            return {"returncode": 1, "stdout": "", "stderr": "denied"}
+
+        service["systemctl"].side_effect = start_fails_after_another_post
+        response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+        assert response.status_code == 500
+        assert mailbox.entries[MAILBOX] is newer
 
 
 class TestStop:

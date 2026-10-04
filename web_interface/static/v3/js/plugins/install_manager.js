@@ -48,12 +48,15 @@ const PluginInstallManager = {
      * @returns {Promise<Array>} Update results, one per plugin sent
      */
     async updateAll(onProgress, options = {}) {
-        // Prefer PluginStateManager if populated, fall back to window.installedPlugins
-        // (plugins_manager.js populates window.installedPlugins independently)
-        const stateManagerPlugins = window.PluginStateManager && window.PluginStateManager.installedPlugins;
-        const listed = (stateManagerPlugins && stateManagerPlugins.length > 0)
-            ? stateManagerPlugins
-            : (window.installedPlugins || []);
+        // window.installedPlugins is the live list: plugins_manager.js
+        // republishes it after every install, uninstall and refresh.
+        // PluginStateManager's copy is written only by the refresh at the end
+        // of a run, so preferring it sent a second run the first run's
+        // plugins -- an uninstalled one failed, a new one was skipped. It is
+        // the fallback for a page without the plugin manager.
+        const listed = Array.isArray(window.installedPlugins)
+            ? window.installedPlugins
+            : ((window.PluginStateManager && window.PluginStateManager.installedPlugins) || []);
         // Snapshot: the list can be replaced while this loop is awaiting.
         const plugins = this.updatablePlugins(listed);
 
@@ -102,10 +105,18 @@ const PluginInstallManager = {
         }
 
         // Reload plugin list once at the end. A failed refresh must not
-        // lose the results: they carry the restart flags.
-        if (window.PluginStateManager) {
+        // lose the results: they carry the restart flags. The plugin
+        // manager's load, forced past its caches, also redraws the installed
+        // grid and its Updates badge; PluginStateManager's only replaced
+        // window.installedPlugins, so the cards kept offering "Update to vX"
+        // for what had just been updated.
+        const pluginManager = window.pluginManager;
+        const refresh = (pluginManager && typeof pluginManager.loadInstalledPlugins === 'function')
+            ? () => pluginManager.loadInstalledPlugins(true)
+            : (window.PluginStateManager ? () => window.PluginStateManager.loadInstalledPlugins() : null);
+        if (refresh) {
             try {
-                await window.PluginStateManager.loadInstalledPlugins();
+                await refresh();
             } catch (error) {
                 console.warn('Could not refresh the installed plugin list after updating:', error);
             }

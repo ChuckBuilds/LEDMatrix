@@ -396,9 +396,9 @@ class StateSubscription:
     def _run(self) -> None:
         backoff = _RECONNECT_MIN_SECONDS
         while not self._stop.is_set():
+            snapshots = self.snapshots
             try:
                 self._follow()
-                backoff = _RECONNECT_MIN_SECONDS
             except ControlError as e:
                 self.last_error = e.reason
                 if e.reason in _SLOW_RETRY_REASONS:
@@ -414,6 +414,11 @@ class StateSubscription:
                         sock.close()
                     except OSError:
                         pass
+            if self.snapshots != snapshots:
+                # This connection got as far as the display's state: whatever
+                # ended it (a restart, most often), it was working, so the
+                # next try starts from the shortest wait again.
+                backoff = _RECONNECT_MIN_SECONDS
             if self._stop.wait(backoff):
                 return
             backoff = min(backoff * 2, _RECONNECT_MAX_SECONDS)

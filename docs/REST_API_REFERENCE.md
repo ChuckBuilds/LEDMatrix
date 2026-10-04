@@ -159,14 +159,16 @@ there an unchecked checkbox — which the browser omits — is saved as
 }
 ```
 
-`restart_required` is always true here: display hardware, rotation,
-durations and general settings take effect when the display restarts, and
-the web UI shows its restart banner on the flag. (Plugin sections saved
-through this route reach the running plugin live, like
-`POST /plugins/config`.)
+`restart_required` is true when the save changed a setting that takes
+effect when the display restarts: display hardware, rotation order,
+timezone, general settings and the rest. The web UI shows its restart banner
+on the flag. It is false when the save changed only what the running display
+applies by itself, or nothing: `brightness`, the per-mode durations
+(`duration__<mode>`, `display.display_durations`) and plugin sections, which
+reach the running plugin live, like `POST /plugins/config`.
 
-A saved `brightness` is the exception: it reaches the panel without a
-restart. The route also sends it to the running display over the control
+A saved `brightness` reaches the panel without a restart. The route also
+sends it to the running display over the control
 socket (`brightness.set`), which puts it on the panel at once, and the
 response adds `"brightness_transport": "socket"`. Otherwise it is
 `"config"`, with `brightness_socket_error` giving the reason, and the
@@ -246,7 +248,10 @@ Replace the schedule configuration.
 ```
 
 A day whose `<day>_enabled` key is absent counts as enabled, with default
-times `07:00`-`23:00`. At least one day must be enabled.
+times `07:00`-`23:00`. An enabled schedule needs at least one day enabled; a
+disabled one (`"enabled": false`) may have every day off, as
+`config.template.json` ships it. A day that is off keeps the times sent for
+it, when they are valid `HH:MM`.
 
 **Response**:
 ```json
@@ -343,7 +348,11 @@ control socket ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), and `cache`
 when it came from the `display_current_state` cache key (no socket: the
 display is stopped or older, or this is Windows). A display whose render
 loop has not refreshed its state for 120 seconds is reported with every
-field `null`, either way.
+field `null`, either way. So is a stopped display: when the socket does not
+answer and the render loop's heartbeat
+(`/run/ledmatrix/display-heartbeat.json`) is absent, stale or from a process
+that is gone, the cache's last entry is not used. A display still beating
+without a socket, Windows, or a socket switched off reads the cache.
 
 ### List Display Modes
 
@@ -2281,7 +2290,11 @@ display snapshot. `data.status` is `healthy` or `degraded`, with
 (with `heartbeat_age_seconds`), `stalled` (no heartbeat for 60s: the panel is
 frozen even if the service is active; the status turns `degraded`), or
 `not_reported` when the display writes none (not started yet, the dev server,
-Windows), which does not affect the status. Its `source` is `socket` when the
+Windows), which does not affect the status, or `stopped` (with `source:
+"service"`) when the display service is not active, the control socket does
+not answer and there is no live heartbeat; the status then turns
+`degraded`. A platform with no control socket (Windows) or a socket switched
+off never reports `stopped`. Its `source` is `socket` when the
 age came from the display's state stream over the control socket (measured
 in memory by the display) and `heartbeat_file` when it came from
 `/run/ledmatrix/display-heartbeat.json`.
@@ -2344,8 +2357,9 @@ Replace the dim schedule. `dim_brightness` is 0-100 (default 30). In
 `per-day` mode the days can be sent either as the `days` object that GET
 returns, or as the web form's flat fields (`monday_enabled`,
 `monday_start`, `monday_end`, ...). A day that is not sent counts as
-enabled with default times `20:00`-`07:00`; at least one day must be
-enabled.
+enabled with default times `20:00`-`07:00`. As for the schedule above, an
+enabled dim schedule needs at least one day enabled and a disabled one may
+have every day off.
 
 ---
 

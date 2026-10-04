@@ -11,7 +11,7 @@ _SAFE_PLUGIN_ID_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WEB_UI_FILE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.html$')
 _SAFE_WIDGET_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 _SAFE_WIDGET_SCRIPT_RE = re.compile(r'^[a-zA-Z0-9_-]{1,64}\.js$')
-from src.web_interface.secret_helpers import mask_secret_fields
+from src.web_interface.secret_helpers import mask_all_secret_values, mask_secret_fields
 from src.plugin_system.schema_manager import plugin_config_defaults, prepare_plugin_config
 from src.common.path_safety import resolve_under, safe_path_component
 from src.pi5_matrix_support import is_raspberry_pi_5
@@ -623,9 +623,14 @@ def _load_raw_json_partial():
         main_config_data = pages_v3.config_manager.get_raw_file_content('main')
         # The web login section (password and token hashes) is managed in
         # General > Security, never in this editor; its save keeps it.
+        # The rest is masked, as GET /api/v3/config/secrets masks it: this
+        # page is served to anyone who can reach the port while the web
+        # login is off, and it was handing them every credential in the
+        # file. The save strips the masks and merges onto the stored file
+        # (save_raw_secrets_config), so a value left masked stays as it is.
         from web_interface.auth import strip_auth_section
-        secrets_config_data = strip_auth_section(
-            pages_v3.config_manager.get_raw_file_content('secrets'))
+        secrets_config_data = mask_all_secret_values(strip_auth_section(
+            pages_v3.config_manager.get_raw_file_content('secrets')))
         main_config_json = json.dumps(main_config_data, indent=4)
         secrets_config_json = json.dumps(secrets_config_data, indent=4)
 

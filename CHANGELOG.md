@@ -19,6 +19,21 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixed
+
+- The web preview and `/api/v3/display/current` no longer stay black for a
+  whole screen that draws its card once and then holds it. The snapshot is
+  written from `update_display()` at most once per write interval, so a frame
+  pushed inside that interval was skipped and left for the next
+  `update_display()` -- which such a screen never makes. Soccer's
+  recent/upcoming cards skip redundant redraws, and the first one after an
+  on-demand start lands a few milliseconds after the start's clear wrote a
+  black frame: on ledpi the preview showed 0 lit pixels for the whole 15 s
+  while the panel showed the card. `DisplayManager` now remembers a skipped
+  changed frame, and the render loop writes it (`write_owed_snapshot()`)
+  once the interval has passed. The cadence is unchanged, and nothing extra
+  runs when no frame is owed.
+
 ### ESPN date-range fetches: fewer requests, fewer at once
 
 A soccer board (8 leagues, ESPN rejecting `dates=` ranges) logged ~90
@@ -511,6 +526,71 @@ policies are unchanged.
 
 ### Fixes
 
+- A cache key too long to be a filename is now cached. The calendar
+  plugin's key joins every calendar id the user picked; on a real install
+  it passed 300 bytes, ext4 refuses names over 255, and every write failed
+  with `File name too long` — logged as "(permission denied)", so it read
+  like a cache-directory ownership problem. `DiskCache.get_cache_path` now
+  keeps a key of up to 200 UTF-8 bytes as its filename, as before, and
+  turns a longer one into its first bytes plus a hash of the whole key. The
+  web UI's cache list and delete keep working, because the shortened name
+  maps back to the same file. A failed write now names the real error.
+- The cache's memory tier no longer serves data older than the reader asked
+  for. A record loaded from disk was timed in memory from the load, not
+  from when it was written, so `get(key, max_age=300)` could return data
+  close to 600 s old (after a restart, after the hourly memory sweep, or in
+  the other process, which only ever loads the record from disk), and a
+  stored `ttl` was stretched the same way. A memory hit is now also checked against
+  the record's own timestamp, and a stale one falls through to disk, which
+  returns a newer write if there is one.
+- An on-demand request that names a `*_live` mode now shows that mode. On
+  ledpi, `{"plugin_id": "football-scoreboard", "mode": "ncaa_fb_live"}` with
+  15 college games on answered 200 and showed `nfl_recent`. The session's
+  mode list kept a live mode only when the plugin's `has_live_content()`
+  said so. That method answers the live-priority question, and the sports
+  plugins answer it for favourite teams only. A mode the request names
+  (not one resolved from a bare plugin id) now leads the session, with the
+  plugin's other modes after it. If it has nothing to draw, the session
+  moves on to the next of those modes, like any empty on-demand mode. The
+  name is saved with the session (`named_mode` in
+  `display_on_demand_config`), so a restart resumes on it.
+- A restart during an on-demand session whose plugin then fails to load no
+  longer leaves a session with no modes. On ledpi, `clock-simple` failed
+  config validation after a crash. The display logged `No valid display
+  modes found for on-demand plugin 'clock-simple' after restoration` and
+  kept reporting the session as active until its first pass ended it as
+  `idle`. The cached request stayed behind for the next restart. The session
+  now ends at startup with status `error` and error `restore-failed`, which
+  `/display/on-demand/status` reports, and the cached request is dropped. The
+  same applies when the plugin system itself fails to start.
+- `POST /api/v3/config/schedule` and `/config/dim-schedule` accept a
+  disabled per-day schedule with every day off. That is the shape
+  `config.template.json` ships, so posting back what GET returned on a fresh
+  install answered 400 "At least one day must be enabled". An enabled per-day
+  schedule still needs a day on. A day that is off now keeps the times it
+  was posted with (the schedule picker sends them). Before, saving dropped
+  them, so turning the day back on showed the defaults.
+- `POST /api/v3/config/main` answers `restart_required: true` only when the
+  save changed a setting the running display does not apply by itself.
+  Brightness (`brightness.set` and the config watcher), the per-mode
+  durations and plugin sections are applied live. A brightness-only save,
+  such as the MQTT bridge's slider, or a save that changed nothing, no longer
+  shows the restart banner. Hardware, rotation order, timezone and every
+  other setting still ask for the restart.
+- `GET /api/v3/health` reports `degraded` when the display service is
+  stopped. Before, only the sub-checks changed, and the overall status stayed
+  `healthy` for as long as the last preview frame was under 60 s old.
+  `checks.display_loop.status` is now `stopped` when three things agree:
+  systemd says the service is not active, the control socket does not
+  answer, and there is no live heartbeat. Where the platform has no socket
+  (Windows) or it is switched off, nothing changes.
+- `GET /api/v3/display/current-status` no longer reports the stopped
+  display's last state (`is_display_active: true`) from the cache for up to
+  120 s. When the control socket does not answer and the render loop's
+  heartbeat is absent, stale, or from a process that is gone (#726's rules),
+  the answer is unknown, with every field `null`. A display that still beats
+  without a socket, Windows and a socket switched off read the cache as
+  before. New `web_interface.display_state.display_gone()`.
 - The garbage-collection timer (`GcMonitor`, above) no longer prints
   `Exception ignored while calling GC callback ... 'NoneType' object has no
   attribute 'perf_counter'` when the display service or a test run exits.
@@ -521,6 +601,16 @@ policies are unchanged.
   `DisplayManager.cleanup()` (reached from SIGTERM through `run()`'s
   `finally`) unregisters it with the frame recorder. New
   `frame_timing.uninstall_gc_monitor()`.
+- The web interface's state subscription (`StateSubscription`,
+  `src/ipc/client.py`) resubscribes about 1 s after a display restart, every
+  time. Its reconnect wait went back to the minimum only when the
+  subscription was stopped. A disconnect after a working connection kept
+  doubling the wait, so successive display restarts were followed by waits
+  of 1, 2, 4, 8, 16 and then 30 s for good.
+  During each wait the web answered from one-shot `state.get` connections
+  instead of its copy. The wait now resets once a connection has stored a
+  snapshot. A display that does not offer the stream is still retried
+  slowly.
 - A plugin reload after a store update (`plugin.reload`, #720) no longer
   freezes the panel during Vegas. On ledpi a football reload froze it for
   3.0 s (`Render stall over: no frame for 3043ms`). The reload ran on the
@@ -537,6 +627,25 @@ policies are unchanged.
   for the plugin is refused (`plugin-reloading`), and a config reconcile
   neither loads it twice nor unloads it mid-load. A Vegas fetch that waited
   out a reload for the lock skips the old instance.
+- A plugin display duration that is not a number no longer stops the
+  display. Several plugins (clock-simple, calendar, countdown) return their
+  `display_duration` setting as it is in config.json, so a value saved as
+  `"20"` or `null` (the raw config editor, a hand edit) reached the run loop
+  as a string or None. Comparing it with 0 raised a TypeError that no
+  handler in the loop caught: the display service exited when that plugin's
+  screen came up, and systemd restarted it into the same crash. The
+  controller now reads the plugin's answer as a number: a numeric string
+  counts, and anything else (or a `get_display_duration()` that raises)
+  shows the mode for 30 s, with one warning per plugin.
+- A scroll strip narrower than the panel scrolls instead of raising on every
+  frame. When a frame ran off the end of the strip, `ScrollHelper` copied
+  the strip's tail and then the rest of the frame from its head, which
+  assumed the head was that wide; for a narrower strip that raised
+  `ValueError: could not broadcast` at every position, so nothing was drawn
+  and each frame logged a traceback. Vegas builds such a strip, with no
+  lead-in, when its content is narrower than the chain. A frame that runs
+  off the strip now continues from its head column by column, so a narrow
+  strip repeats across the panel; a wide strip wraps exactly as before.
 - The schedule-off blank and the WiFi notice no longer start with a
   scroller's leftovers. Both are drawn by the display controller rather than
   dispatched to a plugin, so #716's handover never reached them: drawn while
@@ -546,6 +655,46 @@ policies are unchanged.
   scroller or Vegas) were counted as 0.5-1 s freezes and logged as a
   `Render stall ... mid-scroll`. The controller now ends the scroll state
   before drawing either.
+- A plugin that keeps helpers in a package (elections' `providers/`,
+  flights' `enrichment/`, olympics' `data/` and `renderers/`) now runs its
+  updated helpers after a reload. Unloading dropped the package itself but
+  left its modules (`providers.feed`) in `sys.modules`, so the reload after a
+  store update imported the new `manager.py` and got the old helpers back from
+  the cache until the display restarted. `PluginLoader` now drops a plugin's
+  package modules when it unloads, and when a load fails part-way.
+- Uninstalling a dev plugin that `scripts/dev/dev_plugin_setup.sh` linked
+  into the plugins directory now removes the link and leaves the checkout
+  alone. The store's removal passed the link to `shutil.rmtree`, which
+  refuses a symlink; its fallback then walked through the link and chmodded
+  every directory and file of the linked checkout to 0700, and the sudo stage
+  refused a path outside the plugins directory, so the uninstall failed with
+  the link still in place. The same removal discards the set-aside copy after
+  an install or update. A symlink, dangling or not, is now unlinked.
+- A dev plugin linked in under a name its checkout does not share now loads.
+  `dev_plugin_setup.sh link-github foo <url>` clones `ledmatrix-foo` (the
+  repository naming convention) and links it as `plugins/foo`. The loader's
+  containment check for dependency installs resolved the link and looked for
+  `ledmatrix-foo` among the plugins directory's entries, found none, and
+  refused the plugin, so the load failed with "Dependency installation
+  failed" even when it had no `requirements.txt`. The check now looks for the
+  entry the path itself names in the plugins directory, the link, and still
+  only ever answers with an entry it found there.
+- A plugin whose `update()` raises `asyncio.CancelledError` or `SystemExit`
+  no longer goes dark until a restart. Both derive from `BaseException`, not
+  `Exception`, and the update worker's bookkeeping caught only `Exception`:
+  the plugin kept its lock and stayed RUNNING, so it was never updated again
+  and every `display()` was skipped as busy. It is now recorded as that
+  update's failure, the same as any other raise. The plugin executor
+  reported such a call as a timeout; it now reports it as a failure.
+- Saving a config change no longer freezes the panel while a plugin is busy.
+  `ConfigService` told its subscribers about a change while holding its lock,
+  and the display's per-plugin subscriber waits up to 5 s for a plugin in the
+  middle of an update. A save that enables or disables a plugin also queues a
+  reconcile, which the render thread runs, and its `get_config()` and
+  `unsubscribe()` waited behind every one of those callbacks. Subscribers now
+  run after the lock is released. One reload's notifications still finish
+  before the next one's start, and a callback `unsubscribe()` removed is not
+  running, and will not run, once it returns.
 - A plugin whose `display()` raises now opens its circuit breaker. The first
   frame of each screen goes through the plugin executor, which caught the
   exception and returned False. The display read that as "no content" and
@@ -555,6 +704,57 @@ policies are unchanged.
   the plugin leaves rotation until the cooldown ends, the same as a raising
   `update()`. The display still moves straight on to the next mode. A hung
   `display()` is still recorded once, as a hang.
+- A plugin settings save that failed validation no longer leaks into the next
+  save. `ConfigManager.load_config()` returned its cached config itself (the
+  fast path from #410), so the form save's edits went into the cache before
+  validation ran, and a refused save left them there. The next save of any
+  other setting (another plugin's, a plugin toggle, the schedule) wrote them
+  to config.json: the refused value, and a nested secret typed into the same
+  form (`mqtt.password`, `league.espn_s2`, `flightaware.api_key`) in plain
+  text, because it had never reached config_secrets.json to be stripped.
+  The form also reloaded showing the refused values. `load_config()` now
+  returns a private copy, and the saves keep one, so nothing a caller edits
+  reaches the cache unless it is saved. The copy duplicates only the dicts
+  and lists (every other JSON value is immutable): 2.1 ms for a real 60 KiB
+  config on a Pi 4, against 6.8 ms for `copy.deepcopy`.
+- `GET /api/v3/plugins/config` no longer returns secrets. It sent back the
+  plugin's section with config_secrets.json merged in, API keys and tokens
+  in plain text: the masking #276 added was dropped in #330. It also took
+  any id, so `?plugin_id=web_auth` returned the login's cookie-signing key
+  and password hash and `?plugin_id=github` the Plugin Store token. Secret
+  fields now come back blank, as the settings page renders them, and a
+  plugin with no schema has its credential-named fields blanked, as
+  `GET /config/main` does. Blank rather than the `••••••••` of
+  `GET /config/secrets`, because the save reads a blank secret as
+  "unchanged", so a client can post the response back without erasing
+  one. Core sections and malformed ids get a 400, as they already did from
+  reset and uninstall.
+- Plugin settings with a table (a list of rows, such as geochron's cities
+  or the countdowns) save again when a text cell is blank or holds only
+  digits. A row posts its cells as `cities.0.timezone`, and the schema
+  lookup stopped at the list, so each cell was parsed with no schema: a
+  blank optional text cell became null, and a name like "2027" became a
+  number. Either failed validation, and every save of the page failed for
+  as long as the row existed. A plugin with a secret in its rows could not
+  be saved from the page at all, since the secret cell is drawn blank. The
+  lookup now steps from the index into the list's item schema.
+- A plugin whose API key is required and has no default (youtube-stats)
+  can be saved from its settings page without typing the key in again. The
+  page draws a stored secret blank and posts the blank back; for a required
+  secret the save read that blank as null, failed validation, and refused
+  every save of the page. A blank secret field now means "unchanged", as it
+  already did for an optional one.
+- `POST /api/v3/plugins/config` refuses a core section or a malformed
+  plugin id with a 400, as reset and uninstall already did.
+  `{"plugin_id": "display", ...}` merged unvalidated values into the core
+  display section (and added `"enabled": true` to it), and an id that was
+  not a string answered with a 500.
+- A plugin text setting saves what was typed when that looks like a
+  boolean or JSON. The form save tried `true`/`false` and `[...]`/`{...}`
+  before it looked at the schema, so a text field holding "true", "False",
+  "[1, 2]" or "{}" was stored as a boolean, list or object, and the save
+  failed validation. Text fields, nullable ones included, are now taken as
+  typed; other types convert as before.
 - A WiFi notice (such as "Connected to HomeNet" or "AP mode on") now shows
   within about a second of being posted. It was only checked between
   screens, so a 5 s notice posted during a 20 s screen expired before that
@@ -563,6 +763,42 @@ policies are unchanged.
   notice is what shows next, and Vegas resumes after it; before, a rotation
   screen showed instead and the notice expired behind it. An active
   on-demand session still holds the panel until it ends.
+- The Config Editor tab no longer shows API keys and tokens in plain
+  text. Its `config_secrets.json` editor (`/partials/raw-json`) was filled
+  with the file as it is on disk, so while the web login is off (the
+  default) anyone who could reach the port could read every credential,
+  although `GET /api/v3/config/secrets` masks them. The editor now shows the
+  same masked values. Saving it unchanged changes nothing, because the save
+  drops the masks and merges onto the stored file; to change a secret,
+  replace its mask. A list of secrets still needs every entry's real value
+  to be changed. The `config.json` editor is unchanged: its save writes the
+  file as given, so a mask there would be stored.
+- A disabled plugin keeps its place in the rotation order and its Vegas
+  exclusion when the Display or Rotation & Durations tab is saved. The order
+  lists show enabled plugins only and rewrite their hidden inputs from those
+  rows as soon as they are drawn, so any save of either tab stored the lists
+  without the disabled plugin. Once re-enabled, it came back at the end of
+  the rotation and scrolling in Vegas again. A disabled plugin's saved id
+  now stays in its saved place (`widgets/plugin-order-list.js`); the id of
+  a plugin that is no longer installed is still dropped.
+- Restoring a backup with "Reinstall missing plugins" installs only the
+  plugins that are missing. Every plugin the backup listed was sent to the
+  store's install, which replaces an installed copy with a fresh download,
+  so a restore onto the same device re-downloaded all of them in one
+  request. A plugin installed from its own URL is not in the registry, so
+  its "reinstall" failed and the restore answered "Restore failed" while
+  the plugin sat there installed. An installed plugin, found by the store's
+  own lookup (registry aliases included), is now listed under Skipped as
+  `plugin:<id> (installed)`.
+- `POST /api/v3/config/main` answers a JSON body that does not parse with
+  400 `Invalid JSON in request body`, as `/config/raw/main` does, and an
+  empty JSON body with 400 `No data provided`. Both were a 500
+  `CONFIG_SAVE_FAILED` suggesting file permissions and disk space, with a
+  traceback logged at ERROR: `get_json()` raised inside the handler's
+  catch-all.
+- Fonts restored from a backup show up in the Fonts tab and the font
+  pickers straight away. The font catalog is cached for five minutes, and
+  upload and delete cleared it but a restore did not.
 - A game that goes live now takes over the panel within about a second.
   Live priority was only checked between screens, so a game that went live
   during a 30 s screen waited for that screen to end. The frame loops and the
@@ -572,6 +808,45 @@ policies are unchanged.
   screen showed first and the game came after it. Each check also asks each
   plugin `has_live_content()` once, where a plugin registered under several
   modes used to be asked once per mode.
+- A plugin action whose params hold `true`, `false` or `null` runs again.
+  `/api/v3/plugins/action` wrote the params into the source of the wrapper
+  that runs the plugin's script, and those JSON words are not Python, so the
+  wrapper stopped with a NameError and the action answered "Action failed".
+  The plugin file manager's category toggle sends `"enabled": true`, so
+  turning a category on or off in of-the-day always failed. The params now
+  reach the wrapper on its stdin; the script still receives them as JSON on
+  its own stdin, as before.
+- An on-demand request that `/api/v3/display/on-demand/start` refuses no
+  longer runs later. With the display stopped the request goes to the
+  display's mailbox, and the display reads that mailbox for an hour without
+  looking at a request's age. So with "Start display service" unticked, the
+  answer was "Display service is not running", yet the next time the
+  display was started it ran that plugin, pinned if the request said so.
+  The same happened after "Failed to start display service". On either
+  refusal the route now takes its request back out of the mailbox, unless a
+  newer one has replaced it. A request the display acknowledges over the
+  control socket is now a success whatever systemd reports: a display run
+  by hand or in the emulator was told "not running" for a request it had
+  already taken, and with "Start display service" ticked the route tried to
+  start the service beside it.
+- `/api/v3/plugins/operation/<id>` reports a queued operation as `pending`
+  instead of answering 500. The queue keeps an operation's callback among
+  its parameters until it runs, and the status route tried to send that
+  function as JSON. An install queued behind another plugin's install
+  failed every status poll until the first one finished. Parameters whose
+  name starts with `_` are internal and are no longer in the answer.
+- A second click on Install while that plugin is still installing, or an
+  Uninstall during its install, now answers 409 "already has an install,
+  update or uninstall in progress" instead of 500 "An error occurred". The
+  first operation carried on either way. The uninstall route also stopped
+  recording a failed uninstall in the operation history for an uninstall
+  that never started.
+- `/api/v3/plugins/<plugin_id>/static/<path>` serves images and other
+  binary files. It opened every file as UTF-8 text, so a plugin's icon or
+  preview image answered 500 `UnicodeDecodeError`. Files are now sent as
+  they are on disk, an image with its own content type; HTML, JavaScript,
+  CSS, JSON and other text keep the types they had. The path checks are
+  unchanged.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end
@@ -579,10 +854,77 @@ policies are unchanged.
   the panel went off at 23:00 or at 23:01 depending on when in the minute
   that check ran. Windows that cross midnight and per-day schedules follow
   the same rule, and so does the dim schedule.
+- The MQTT bridge settings on the Tools tab can save a broker password with
+  TLS off. The server refuses that unless `allow_insecure_mqtt` is set, and
+  the form had no way to set it, so a password-protected broker on a home
+  network without TLS could not be saved from the web UI, and once such a
+  password was stored every later save failed too. While "Use TLS" is
+  unchecked the form now shows "Allow without TLS (trusted network)",
+  prefilled from the saved settings. It is off until ticked, so the server
+  still refuses a cleartext password by default.
+- The Overview's plugin-config warning check stops polling. It asked
+  `/api/v3/plugins/reconciliation-status` every 2 s until startup
+  reconciliation reported done, and the route reports not done whenever its
+  status file is missing: reconciliation raised before writing it, or /tmp
+  was cleaned under a long-running web service. The page then sent that
+  request every 2 s for as long as it stayed open, whichever tab was showing.
+  It now gives up after a minute and only polls while the Overview is on
+  screen.
+- Moving the Brightness slider on the Display tab no longer throws an error
+  in the browser console on every step. Its handler also updated a "LED
+  brightness" line that was removed from the page in #387; the lookup is
+  gone.
+- Creating an API token on the General tab no longer leaves the page asking
+  "Leave site?" on reload. The unsaved-changes guard marks a form when you
+  type in it and clears the mark only after an htmx save, and the token form
+  saves with a plain request, so it stayed marked after the token was
+  created. It is cleared once the token is saved.
 - An on-demand session that ends during scheduled-off hours, by expiring or
   being stopped, blanks the panel within about a second. It used to stay on
   until the next minute, because the once-a-minute schedule check had
   already run that minute and the session had overridden its answer.
+- Check & Update All updates what is installed now. A second run in the
+  same page sent the plugins the first run had seen, so a plugin uninstalled
+  since then failed with "plugin not found" and one installed since was
+  skipped. After a run the installed cards and the Updates badge show the
+  new versions; they kept offering "Update to vX" for what had just been
+  updated until the page was reloaded.
+- The Run On-Demand dialog lists a plugin's display modes, so a mode other
+  than the first can be started, and pinned. `/api/v3/plugins/installed`
+  never sent `display_modes`, which the dialog reads, so every plugin
+  offered only its own id under "This plugin exposes a single display
+  mode", and the display started its first mode. Each entry now carries
+  `display_modes`, the modes its manifest declares.
+- Installing Weather, Music, Stocks or Leaderboard from the Plugin Store
+  enables it, as installing any other plugin does. Each installs under the
+  id its manifest declares (`ledmatrix-weather` for the store's `weather`),
+  but the store enabled the store id, which `/api/v3/plugins/toggle`
+  answered with "Plugin not found": the plugin stayed disabled behind
+  "installed, but enabling it failed". `POST /api/v3/plugins/install` now
+  answers with the installed `plugin_id` (in the operation's result when it
+  is queued), and the store enables that.
+- Reinstalling a plugin from the Plugin Store leaves it enabled or disabled
+  as it was. Reinstall enabled it as a fresh install does, so a plugin the
+  user had switched off came back on.
+- A Plugin Store install that takes more than a minute is no longer
+  reported as failed. The store stopped waiting after 60 s and showed
+  "Install operation timed out" while the server, which allows the
+  plugin's dependency install 300 s on its own, carried on and usually
+  succeeded; the plugin was then neither enabled nor listed until the page
+  was reloaded. The store now waits up to 10 minutes, and if it still has
+  no answer it reloads the installed list and says the install may still
+  be running.
+- The Plugin Store's category filter lists every category its plugins
+  have. It offered a fixed seven while the registry uses about twenty, so
+  plugins filed under productivity, utility, transit and the rest could not
+  be filtered to, and "Financial" missed the plugin filed under "finance".
+  The choices are now built from the store's plugins, as the Starlark
+  section's are.
+- The Install button under Install Single Plugin (Plugin Manager > Install
+  from GitHub) runs one handler per click. It also had an inline `onclick`
+  whose handler threw a `ReferenceError` on every click; only the other
+  handler's request went out, and making the inline one work would have
+  sent every install twice. The inline handler is gone.
 - `/api/v3/plugins/installed` no longer reports the display's plugins as
   `live` while `/api/v3/health` says `display_loop: stalled`. The runtime
   snapshot is written from its own thread, which kept going while the render
@@ -594,6 +936,17 @@ policies are unchanged.
   heartbeat when the service stops), is `stale` at once instead of `live`
   for up to 180 s. No new files or writes: both checks are on the reading
   side.
+- A scoreboard's scroll and Vegas cards with `scroll_card.date_format:
+  "weekday"` now show the printed date's own weekday. A Friday 8 PM ET game
+  read "Sat Oct 2". The card took the weekday in the plugin's own
+  `timezone` setting, which ships blank, so it fell back to UTC, while the
+  "Oct 2" beside it came from the zone the plugin actually resolves (its
+  setting, then the global one, then the system zone). Every zone is within a
+  day of UTC, so the card now finds which day near the start's UTC date has
+  the printed month and day and names that one. Games east of UTC (Auckland,
+  Kiritimati) were off by a day the other way and are fixed the same way.
+  The switch-mode scorebug, which already used the plugin's resolved zone,
+  shares the same formatter and draws what it drew before.
 - `/api/v3/display/current-status` reflects a wake from scheduled-off, a
   schedule-off blank, or an on-demand session starting or ending at once,
   even when the mode name stays the same. The display republished its

@@ -360,14 +360,16 @@ class SportsCoreSharedMixin:
         The formatting is sports_card's. What differs from the card's
         ``format_game_date`` is passed in: the setting (``switch_date_format``,
         see :meth:`_switch_date_format`) and the weekday, which comes from
-        :meth:`_weekday_for` and so from this plugin's resolved timezone.
+        :meth:`_weekday_for` and so from this plugin's resolved timezone
+        when the game's start cannot place the printed date. The game goes
+        in too, so both formatters name the printed date's own weekday.
         """
         raw = str(date_text or "").strip()
         if not raw:
             return raw
         return _card._format_date_as(self._switch_date_format(), raw,
                                      lambda: self._weekday_for(game),
-                                     self._MONTH_ABBR)
+                                     self._MONTH_ABBR, game=game)
 
     def _weekday_for(self, game: Optional[Dict]) -> str:
         """Weekday abbreviation from the game's start time, or ''."""

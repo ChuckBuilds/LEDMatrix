@@ -13,6 +13,8 @@ body. That is what let all eight adopt this with byte-identical renders.
 import logging
 import json
 import os
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -167,6 +169,95 @@ class TestDateAndTime:
         """A typo in config should not blank the card."""
         from datetime import timezone
         assert C.card_tzinfo({"timezone": "Not/AZone"}, log) is timezone.utc
+
+
+class TestWeekdayMatchesThePrintedDate:
+    """The weekday is the printed date's, whichever zone printed it.
+
+    The extractor prints "M/D" in the plugin's resolved zone (its own
+    setting, else the global one, else the system zone). The card is handed
+    only the plugin's config, whose ``timezone`` ships as "" -- so a weekday
+    taken in card_tzinfo's zone was UTC's, and an evening kickoff in the
+    Americas read "Sat Oct 2" for a Friday game.
+    """
+
+    WEEKDAY = {"timezone": "", "scroll_card": {"date_format": "weekday"}}
+
+    @staticmethod
+    def _as_printed(start_utc, zone):
+        """The game dict and the date text, as the extractor builds them."""
+        local = datetime.fromisoformat(start_utc).astimezone(ZoneInfo(zone))
+        game = {"start_time_utc": datetime.fromisoformat(start_utc),
+                "game_date": f"{local.month}/{local.day}"}
+        want = f"{C.WEEKDAY_ABBR[local.weekday()]} {C.MONTH_ABBR[local.month - 1]} {local.day}"
+        return game, want
+
+    @pytest.mark.parametrize("start_utc, zone, want", [
+        # Friday 8 PM EDT is Saturday in UTC.
+        ("2026-10-03T00:00:00+00:00", "America/New_York", "Fri Oct 2"),
+        # The night US clocks go back: 8:30 PM EDT Saturday, then 11 PM EST
+        # Sunday, each the next day in UTC.
+        ("2026-11-01T00:30:00+00:00", "America/New_York", "Sat Oct 31"),
+        ("2026-11-02T04:00:00+00:00", "America/New_York", "Sun Nov 1"),
+        # New Year's Eve on the west coast is New Year's Day in UTC.
+        ("2027-01-01T04:00:00+00:00", "America/Los_Angeles", "Thu Dec 31"),
+        # Just east of the date line: Pago Pago's Friday evening.
+        ("2026-10-03T05:00:00+00:00", "Pacific/Pago_Pago", "Fri Oct 2"),
+        # Just west of it, the other way: Saturday morning in Auckland is
+        # Friday in UTC -- and the 10 AM game on the day NZ clocks go forward.
+        ("2026-10-02T20:00:00+00:00", "Pacific/Auckland", "Sat Oct 3"),
+        ("2026-09-26T21:00:00+00:00", "Pacific/Auckland", "Sun Sep 27"),
+        # UTC+14, the furthest any zone sits from UTC.
+        ("2026-10-02T11:00:00+00:00", "Pacific/Kiritimati", "Sat Oct 3"),
+        # A zone on UTC's own date needs nothing.
+        ("2026-10-02T19:00:00+00:00", "Europe/London", "Fri Oct 2"),
+    ])
+    def test_the_shipped_blank_timezone(self, log, start_utc, zone, want):
+        game, printed = self._as_printed(start_utc, zone)
+        assert printed == want  # the case says what the extractor prints
+        assert C.format_game_date(self.WEEKDAY, log, game["game_date"], game) == want
+
+    def test_an_iso_string_start_reads_the_same(self, log):
+        game = {"start_time_utc": "2026-10-03T00:00:00Z"}
+        assert C.format_game_date(self.WEEKDAY, log, "10/2", game) == "Fri Oct 2"
+        assert C.format_game_date(self.WEEKDAY, log, "10/02", game) == "Fri Oct 2"
+
+    def test_a_plugin_level_zone_still_agrees(self, log):
+        game, want = self._as_printed("2026-10-03T00:00:00+00:00", "America/Chicago")
+        cfg = dict(self.WEEKDAY, timezone="America/Chicago")
+        assert C.format_game_date(cfg, log, game["game_date"], game) == want == "Fri Oct 2"
+
+    def test_a_date_no_zone_could_print_keeps_the_zone_weekday(self, log):
+        """More than a day from the start: nothing to anchor to, so the
+        weekday is card_tzinfo's, as it always was."""
+        game = {"start_time_utc": datetime(2026, 10, 3, 0, 0, tzinfo=timezone.utc)}
+        assert C.format_game_date(self.WEEKDAY, log, "10/9", game) == "Sat Oct 9"
+
+    def test_a_start_without_an_offset_keeps_the_zone_weekday(self, log):
+        """A naive time names no instant, so it cannot place the date."""
+        game = {"start_time_utc": datetime(2026, 10, 2, 20, 0)}
+        assert C.format_game_date(self.WEEKDAY, log, "10/3", game) == \
+            f"{C.weekday_for(self.WEEKDAY, log, game)} Oct 3"
+
+    @pytest.mark.parametrize("game", [None, {}, {"start_time_utc": "garbage"}])
+    def test_no_usable_start_draws_no_weekday(self, log, game):
+        assert C.format_game_date(self.WEEKDAY, log, "10/2", game) == "Oct 2"
+
+    def test_the_scorebug_twin_formats_the_same(self, log):
+        """Switch mode (SportsCoreSharedMixin) shares the formatter body."""
+        from src.common.sports_shared import SportsCoreSharedMixin
+
+        class Host(SportsCoreSharedMixin):
+            config = {"scroll_card": {"date_format": "weekday",
+                                      "switch_date_format": "inherit"}}
+            logger = log
+
+            def _get_timezone(self):
+                return ZoneInfo("America/New_York")
+
+        game, want = self._as_printed("2026-11-01T00:30:00+00:00", "America/New_York")
+        assert Host()._format_game_date(game["game_date"], game) == want
+        assert C.format_game_date(Host.config, log, game["game_date"], game) == want
 
 
 class TestFontSizing:

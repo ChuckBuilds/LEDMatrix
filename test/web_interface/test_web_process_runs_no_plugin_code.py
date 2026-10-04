@@ -221,7 +221,9 @@ class TestTheWebProcessNeverRunsAPlugin:
     def test_saving_its_section_through_the_main_config(self, web):
         body = web.post("/api/v3/config/main", {PLUGIN_ID: {"message": "via main"}})
         assert web.stored()["message"] == "via main"
-        assert body["restart_required"] is True
+        # The display's config watcher hands the section to the running
+        # plugin (on_config_change), as for /plugins/config: no restart.
+        assert body["restart_required"] is False
         assert web.ran() == []
 
     def test_resetting_its_config(self, web):
