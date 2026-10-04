@@ -23,7 +23,7 @@ const ok = (label, cond, extra) => cond
 
 function webLoginScript() {
   const html = fs.readFileSync(PARTIAL, 'utf8');
-  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(m => m[1]);
   const found = scripts.find(s => s.includes('window.webLogin = {'));
   if (!found) throw new Error('webLogin script not found in general.html');
   return found;

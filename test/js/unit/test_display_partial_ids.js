@@ -23,8 +23,8 @@ const ok = (label, cond, extra) => cond
   : (fail++, console.log('  FAIL ' + label + (extra !== undefined ? '  ' + JSON.stringify(extra) : '')));
 
 const html = fs.readFileSync(PARTIAL, 'utf8');
-const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-const markup = html.replace(/<script>[\s\S]*?<\/script>/g, '');
+const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(m => m[1]);
+const markup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi, '');
 const rendered = new Set([...markup.matchAll(/\bid="([^"{}]+)"/g)].map(m => m[1]));
 
 console.log('\n── Display partial: element lookups ──');

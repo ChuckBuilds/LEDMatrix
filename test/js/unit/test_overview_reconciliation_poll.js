@@ -25,7 +25,7 @@ const ok = (label, cond, extra) => cond
 
 function bannerScript() {
   const html = fs.readFileSync(PARTIAL, 'utf8');
-  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)].map(m => m[1]);
   const found = scripts.find(s => s.includes('ledmatrix-recon-dismissed'));
   if (!found) throw new Error('reconciliation banner script not found in overview.html');
   return found;
