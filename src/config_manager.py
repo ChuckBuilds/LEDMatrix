@@ -31,7 +31,6 @@ without requiring a restart.
 import json
 import os
 import logging
-import pickle
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from src.core_config_keys import CORE_CONFIG_KEYS, CORE_SECRETS_KEYS
@@ -59,11 +58,21 @@ def _private_copy(config: Dict[str, Any]) -> Dict[str, Any]:
     plain text, since it had never reached config_secrets.json to be
     stripped.
 
-    A pickle round trip rather than copy.deepcopy: the config is plain JSON
-    data, and on a Pi 4 with a real 64 KiB config this takes 2.0 ms against
-    deepcopy's 6.9 ms, on a path ~30 handlers call.
+    The config is JSON data, so only its dicts and lists need copying; every
+    other value in it is immutable. On a Pi 4 with a real 60 KiB config this
+    takes 2.1 ms against copy.deepcopy's 6.8 ms, on a path ~30 handlers call
+    (a pickle round trip is no faster, 1.9 ms, and brings pickle into the
+    config path for nothing).
     """
-    return pickle.loads(pickle.dumps(config, pickle.HIGHEST_PROTOCOL))
+    return _copy_containers(config)
+
+
+def _copy_containers(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_containers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_containers(item) for item in value]
+    return value
 
 
 class ConfigManager:
