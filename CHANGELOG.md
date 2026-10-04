@@ -722,6 +722,45 @@ policies are unchanged.
   screen showed first and the game came after it. Each check also asks each
   plugin `has_live_content()` once, where a plugin registered under several
   modes used to be asked once per mode.
+- A plugin action whose params hold `true`, `false` or `null` runs again.
+  `/api/v3/plugins/action` wrote the params into the source of the wrapper
+  that runs the plugin's script, and those JSON words are not Python, so the
+  wrapper stopped with a NameError and the action answered "Action failed".
+  The plugin file manager's category toggle sends `"enabled": true`, so
+  turning a category on or off in of-the-day always failed. The params now
+  reach the wrapper on its stdin; the script still receives them as JSON on
+  its own stdin, as before.
+- An on-demand request that `/api/v3/display/on-demand/start` refuses no
+  longer runs later. With the display stopped the request goes to the
+  display's mailbox, and the display reads that mailbox for an hour without
+  looking at a request's age. So with "Start display service" unticked, the
+  answer was "Display service is not running", yet the next time the
+  display was started it ran that plugin, pinned if the request said so.
+  The same happened after "Failed to start display service". On either
+  refusal the route now takes its request back out of the mailbox, unless a
+  newer one has replaced it. A request the display acknowledges over the
+  control socket is now a success whatever systemd reports: a display run
+  by hand or in the emulator was told "not running" for a request it had
+  already taken, and with "Start display service" ticked the route tried to
+  start the service beside it.
+- `/api/v3/plugins/operation/<id>` reports a queued operation as `pending`
+  instead of answering 500. The queue keeps an operation's callback among
+  its parameters until it runs, and the status route tried to send that
+  function as JSON. An install queued behind another plugin's install
+  failed every status poll until the first one finished. Parameters whose
+  name starts with `_` are internal and are no longer in the answer.
+- A second click on Install while that plugin is still installing, or an
+  Uninstall during its install, now answers 409 "already has an install,
+  update or uninstall in progress" instead of 500 "An error occurred". The
+  first operation carried on either way. The uninstall route also stopped
+  recording a failed uninstall in the operation history for an uninstall
+  that never started.
+- `/api/v3/plugins/<plugin_id>/static/<path>` serves images and other
+  binary files. It opened every file as UTF-8 text, so a plugin's icon or
+  preview image answered 500 `UnicodeDecodeError`. Files are now sent as
+  they are on disk, an image with its own content type; HTML, JavaScript,
+  CSS, JSON and other text keep the types they had. The path checks are
+  unchanged.
 - The display schedule turns the panel off at exactly the end time. A window
   now runs from its start time up to, but not including, its end time: with
   07:00-23:00 the panel is on at 07:00 and off at 23:00. Before, the end

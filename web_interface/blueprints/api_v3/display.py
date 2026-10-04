@@ -69,6 +69,26 @@ def _deliver_on_demand(payload):
     return 'mailbox', reason
 
 
+def _withdraw_on_demand(request_id):
+    """Take a start request the route has refused back out of the mailbox.
+
+    The display reads the mailbox for an hour without looking at a
+    request's age, so one left there after an error answer ran whenever the
+    display next started. Only this request is removed: the mailbox is
+    re-read and cleared only while it still holds this request_id, as the
+    display's _consume_on_demand_request does, so a newer request posted in
+    the meantime stays for the display to take.
+    """
+    cache = _cache_manager()
+    try:
+        current = cache.get('display_on_demand_request', max_age=3600, memory_ttl=0)
+        if isinstance(current, dict) and current.get('request_id') == request_id:
+            cache.delete('display_on_demand_request')
+    except Exception:  # the route is answering an error already
+        logger.warning("Could not withdraw on-demand request %s from the mailbox",
+                       request_id, exc_info=True)
+
+
 @api_v3.route('/display/current', methods=['GET'])
 def get_display_current():
     """The latest display preview, as the /stream/display SSE stream sends it.
@@ -259,9 +279,26 @@ def start_on_demand_display():
     }
     transport, socket_error = _deliver_on_demand(request_payload)
 
+    # A socket acknowledgement is the display itself answering: it is
+    # running and has the request queued, whatever systemd says (a display
+    # run by hand or in the emulator has no active unit). So nothing is
+    # checked or started for it -- that answered "not running" for a request
+    # that had already taken effect. The service is still reported the way
+    # _ensure_display_service_running reports a running one.
+    if transport == 'socket':
+        service_result = (dict(_get_display_service_status(), started=False)
+                          if start_service else None)
+        return _on_demand_started(request_id, resolved_plugin, resolved_mode,
+                                  duration, pinned, service_result, transport,
+                                  socket_error)
+
     service_status = _get_display_service_status()
 
     if not service_status.get('active') and not start_service:
+        # The request is in the mailbox, and the display reads it whenever
+        # it next starts: taken back out, or a request answered with this
+        # error ran later anyway.
+        _withdraw_on_demand(request_id)
         return jsonify({
             'status': 'error',
             'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
@@ -285,16 +322,25 @@ def start_on_demand_display():
         service_result = _ensure_display_service_running()
         # Check if service actually started
         if service_result and not service_result.get('active'):
+            _withdraw_on_demand(request_id)
             return jsonify({
                 'status': 'error',
                 'message': 'Failed to start display service. Please check service logs or start it manually.',
                 'service_result': service_result
             }), 500
 
+    return _on_demand_started(request_id, resolved_plugin, resolved_mode,
+                              duration, pinned, service_result, transport,
+                              socket_error)
+
+
+def _on_demand_started(request_id, plugin_id, mode, duration, pinned,
+                       service_result, transport, socket_error):
+    """The success answer of /display/on-demand/start."""
     response_data = {
         'request_id': request_id,
-        'plugin_id': resolved_plugin,
-        'mode': resolved_mode,
+        'plugin_id': plugin_id,
+        'mode': mode,
         'duration': duration,
         'pinned': pinned,
         'service': service_result,
