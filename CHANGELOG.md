@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### A scrolling screen held by its plugin's update() is reported
+
+- While a plugin's `update()` runs it holds the plugin's lock, and that
+  plugin's frames are skipped: on a scroller, a frozen strip, with nothing
+  logged (and a freeze of 5 s or more is a gap, not a freeze, to the frame
+  stats). The high-FPS loop now times each run of skipped frames; one of
+  250 ms or more logs `Display of <plugin> held N ms by its update()`
+  (rate-limited per plugin) when it ends, and is recorded on the plugin's
+  health as a `display hold` busy skip, which never counts toward the
+  circuit breaker. The 1 Hz loop is left out: its frames are a second apart,
+  so one skipped frame there measures nothing and freezes nothing visible.
+
 ### Fixed
 
 - The web preview and `/api/v3/display/current` no longer stay black for a
