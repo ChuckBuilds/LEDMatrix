@@ -13,7 +13,9 @@ tmp_path so the assertions are against files on disk rather than mock
 calls.
 """
 
+import html
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -221,3 +223,66 @@ class TestRawEndpointsBypassSecretSeparation:
         env.client.post(MAIN, json={"weather": {"api_key": "PLAINTEXT-KEY"}})
         # Nothing was moved aside into the secrets file.
         assert not env.secrets_file.exists() or "PLAINTEXT-KEY" not in env.secrets_file.read_text()
+
+
+class TestConfigEditorRoundTrip:
+    """The Config Editor tab (/partials/raw-json) and the save it posts to.
+
+    The secrets editor is shown masked, like GET /config/secrets: the page is
+    served to anyone who can reach the port while the optional web login is
+    off. Its save strips the masks and merges onto the stored file, so a
+    masked editor saved back as it is changes nothing.
+    """
+
+    STORED = {
+        "github": {"api_token": "ghp_REAL_TOKEN_1234"},
+        "ledmatrix-weather": {"api_key": "WEATHER_KEY_abcdef", "units_id": 42},
+        "calendar": {"accounts": [{"name": "home", "token": "CAL_TOKEN_9"}]},
+        "youtube": {"api_key": "YOUR_YOUTUBE_API_KEY", "channel_secret": ""},
+    }
+    REAL_VALUES = ("ghp_REAL_TOKEN_1234", "WEATHER_KEY_abcdef", "CAL_TOKEN_9")
+
+    @pytest.fixture
+    def editor(self, env, monkeypatch):
+        from web_interface.blueprints import pages_v3 as pages_module
+        env.secrets_file.write_text(json.dumps(self.STORED))
+        monkeypatch.setattr(pages_module.pages_v3, "config_manager",
+                            env.config_manager, raising=False)
+        app = Flask(__name__, template_folder=str(project_root / "web_interface" / "templates"))
+        app.config["TESTING"] = True
+        app.register_blueprint(pages_module.pages_v3)
+        app.register_blueprint(api_v3, url_prefix="/api/v3")
+        return app.test_client()
+
+    @staticmethod
+    def _secrets_textarea(client):
+        page = client.get("/partials/raw-json")
+        assert page.status_code == 200
+        match = re.search(r'<textarea id="secrets-config-editor"[^>]*>(.*?)</textarea>',
+                          page.get_data(as_text=True), re.S)
+        assert match, "the secrets editor is missing from the partial"
+        return html.unescape(match.group(1))
+
+    def test_the_editor_shows_no_secret_value(self, editor):
+        text = self._secrets_textarea(editor)
+        for value in self.REAL_VALUES:
+            assert value not in text
+        shown = json.loads(text)
+        assert shown["github"]["api_token"] == "\u2022" * 8
+        # Same shape as the file, and "not set" still reads as not set.
+        assert shown["calendar"]["accounts"][0]["name"] == "\u2022" * 8
+        assert shown["youtube"] == {"api_key": "YOUR_YOUTUBE_API_KEY", "channel_secret": ""}
+
+    def test_saving_it_back_unchanged_keeps_every_secret(self, editor, env):
+        shown = json.loads(self._secrets_textarea(editor))
+        response = editor.post(SECRETS, json=shown)
+        assert response.status_code == 200
+        assert json.loads(env.secrets_file.read_text()) == self.STORED
+
+    def test_editing_one_secret_changes_only_that_one(self, editor, env):
+        shown = json.loads(self._secrets_textarea(editor))
+        shown["ledmatrix-weather"]["api_key"] = "NEW_WEATHER_KEY"
+        assert editor.post(SECRETS, json=shown).status_code == 200
+        expected = json.loads(json.dumps(self.STORED))
+        expected["ledmatrix-weather"]["api_key"] = "NEW_WEATHER_KEY"
+        assert json.loads(env.secrets_file.read_text()) == expected

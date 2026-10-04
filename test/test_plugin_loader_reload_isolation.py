@@ -58,3 +58,83 @@ def test_a_reloaded_plugin_still_gets_its_own_bare_module(plugins):
     assert reloaded.WHO == "alpha"
     assert sys.path.index(str(plugins["alpha"])) < sys.path.index(str(plugins["beta"]))
     assert sys.path.count(str(plugins["alpha"])) == 1
+
+
+# -- sub-packages ------------------------------------------------------------
+#
+# A plugin that keeps helpers in a package (``providers/feed.py``, imported as
+# ``from providers.feed import ...``) leaves dotted entries in sys.modules.
+# Only the bare ``providers`` used to be tracked, so ``providers.feed`` outlived
+# the plugin: a reload after a store update re-ran the new manager.py against
+# the old feed.py, until the display restarted. Elections (providers/),
+# flights (enrichment/) and olympics (data/, renderers/) ship packages.
+
+
+@pytest.fixture
+def package_plugin(tmp_path):
+    before_path = list(sys.path)
+    before_modules = set(sys.modules)
+    plugin_dir = tmp_path / "pkgdemo"
+    (plugin_dir / "providers").mkdir(parents=True)
+    (plugin_dir / "providers" / "__init__.py").write_text("", encoding="utf-8")
+    (plugin_dir / "providers" / "feed.py").write_text("VERSION = 'v1'\n", encoding="utf-8")
+    (plugin_dir / "manager.py").write_text(
+        "from providers.feed import VERSION\n", encoding="utf-8")
+    yield plugin_dir
+    sys.path[:] = before_path
+    for key in set(sys.modules) - before_modules:
+        sys.modules.pop(key, None)
+
+
+def test_a_reloaded_plugin_runs_its_updated_subpackage_module(package_plugin):
+    loader = PluginLoader()
+    assert loader.load_module("pkgdemo", package_plugin, "manager.py").VERSION == "v1"
+
+    _unload(loader, "pkgdemo")
+    # The store update: a different size, so no cached bytecode can match.
+    (package_plugin / "providers" / "feed.py").write_text(
+        "VERSION = 'v2 from the update'\n", encoding="utf-8")
+    reloaded = loader.load_module("pkgdemo", package_plugin, "manager.py")
+
+    assert reloaded.VERSION == "v2 from the update"
+
+
+def test_unload_drops_the_plugins_subpackage_modules(package_plugin):
+    loader = PluginLoader()
+    loader.load_module("pkgdemo", package_plugin, "manager.py")
+    # Still importable while the plugin runs, as before.
+    assert "providers.feed" in sys.modules
+
+    _unload(loader, "pkgdemo")
+
+    assert not [k for k in sys.modules if k.startswith("providers")]
+
+
+def test_a_failed_load_leaves_no_subpackage_module_behind(package_plugin):
+    (package_plugin / "manager.py").write_text(
+        "from providers.feed import VERSION\nraise RuntimeError('broken')\n",
+        encoding="utf-8")
+    loader = PluginLoader()
+
+    with pytest.raises(RuntimeError):
+        loader.load_module("pkgdemo", package_plugin, "manager.py")
+
+    assert not [k for k in sys.modules if k.startswith("providers")]
+
+
+def test_unload_leaves_packages_from_outside_the_plugin_alone(package_plugin, tmp_path):
+    # A library the plugin imports is not the plugin's to drop.
+    lib_root = tmp_path / "site"
+    (lib_root / "extlib").mkdir(parents=True)
+    (lib_root / "extlib" / "__init__.py").write_text("", encoding="utf-8")
+    (lib_root / "extlib" / "sub.py").write_text("X = 1\n", encoding="utf-8")
+    sys.path.append(str(lib_root))
+    (package_plugin / "manager.py").write_text(
+        "import extlib.sub\nfrom providers.feed import VERSION\n", encoding="utf-8")
+    loader = PluginLoader()
+    loader.load_module("pkgdemo", package_plugin, "manager.py")
+
+    _unload(loader, "pkgdemo")
+
+    assert "extlib.sub" in sys.modules
+    assert "extlib" in sys.modules

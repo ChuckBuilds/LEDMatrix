@@ -213,8 +213,9 @@ def list_installed_plugins(project_root: Path) -> List[Dict[str, Any]]:
     The plugins are the ``manifest.json`` files in the configured plugin
     directory (see :func:`_plugins_directory`), with the manifest's version;
     ``enabled`` is config.json's flag by the display's rule (a missing flag
-    is disabled). A restore reinstalls every listed plugin and takes enabled
-    state from the restored config.json, so ``enabled`` is informational.
+    is disabled). A restore installs each listed plugin that is missing and
+    takes enabled state from the restored config.json, so ``enabled`` is
+    informational.
 
     ``data/plugin_state.json`` is not read: it only ever repeated config's
     enabled flags and the manifests' versions, and is retired (nothing

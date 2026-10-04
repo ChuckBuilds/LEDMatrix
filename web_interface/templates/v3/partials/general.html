@@ -404,6 +404,10 @@
                 document.getElementById('web-login-new-token-value').textContent = res.d.data.token;
                 document.getElementById('web-login-new-token').classList.remove('hidden');
                 form.reset();
+                // app.js marks a form dirty on input and clears the mark only
+                // after an htmx save; this one posts with fetch, so clear it
+                // here or a reload asks "Leave site?" about a saved token.
+                form.removeAttribute('data-dirty');
                 notify(res.d.message || 'Token created', 'success');
             }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
         },

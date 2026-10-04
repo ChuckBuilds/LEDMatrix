@@ -48,12 +48,19 @@ class PluginOperation:
     completed_at: Optional[datetime] = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert operation to dictionary for serialization."""
+        """Convert operation to dictionary for serialization.
+
+        Parameters whose name starts with ``_`` are internal and left out:
+        PluginOperationQueue keeps the operation's callback there as
+        ``_callback`` until its worker runs it, and a pending operation's
+        status answered 500 because that function cannot be serialized.
+        """
         return {
             'operation_id': self.operation_id,
             'operation_type': self.operation_type.value,
             'plugin_id': self.plugin_id,
-            'parameters': self.parameters,
+            'parameters': {key: value for key, value in self.parameters.items()
+                           if not str(key).startswith('_')},
             'status': self.status.value,
             'progress': self.progress,
             'message': self.message,

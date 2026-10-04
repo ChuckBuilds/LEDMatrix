@@ -145,6 +145,14 @@ def get_installed_plugins():
         vegas_participation, vegas_participation_source = _vegas_participation(
             plugin_id, plugin_config, plugin_info)
 
+        # The modes the manifest declares, from the catalog as /display/modes
+        # and on-demand/start read them. The on-demand modal offers these;
+        # without them it offered only the plugin id, which the display
+        # turns into the first mode. Strings only: a manifest is hand-edited.
+        declared_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id)
+        display_modes = ([m for m in declared_modes if isinstance(m, str)]
+                         if isinstance(declared_modes, list) else [])
+
         return {
             'id': plugin_id,
             'name': plugin_info.get('name', plugin_id),
@@ -158,6 +166,7 @@ def get_installed_plugins():
             # The tab nav uses this as the <i> element's Font Awesome class
             # (app-shell.js / app-early.js); only a string can be one.
             'icon': plugin_info.get('icon') if isinstance(plugin_info.get('icon'), str) else None,
+            'display_modes': display_modes,
             'enabled': enabled,
             'verified': verified,
             # loaded, state, error_info, loaded_version, loaded_at: the
@@ -430,6 +439,10 @@ sys.exit(proc.returncode)
                     import tempfile
                     import json as json_lib
 
+                    # The params reach the wrapper on its stdin, never in
+                    # its source: written there as `params = <JSON>`, a
+                    # true, false or null was an undefined name and the
+                    # wrapper died with a NameError before the script ran.
                     params_json = json_lib.dumps(action_params)
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
                         wrapper.write(f'''import sys
@@ -439,6 +452,9 @@ import json
 
 # Set LEDMATRIX_ROOT
 os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# The params, as JSON on this wrapper's own stdin
+params = json.loads(sys.stdin.read())
 
 # Run the script and provide params as JSON via stdin
 proc = subprocess.Popen(
@@ -451,7 +467,6 @@ proc = subprocess.Popen(
 )
 
 # Send params as JSON to stdin
-params = {params_json}
 stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
 print(stdout)
 sys.exit(proc.returncode)
@@ -461,6 +476,7 @@ sys.exit(proc.returncode)
                     try:
                         result = subprocess.run(
                             ['python3', wrapper_path],
+                            input=params_json,
                             capture_output=True,
                             text=True,
                             timeout=120,

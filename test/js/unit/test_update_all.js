@@ -52,7 +52,7 @@ function fakeApi(behaviour = {}) {
   };
 }
 
-function setup(api, { stateList, windowList } = {}) {
+function setup(api, { stateList, windowList, pluginManager } = {}) {
   global.window = {
     PluginAPI: api,
     installedPlugins: windowList,
@@ -60,6 +60,7 @@ function setup(api, { stateList, windowList } = {}) {
       installedPlugins: stateList,
       loadInstalledPlugins: async () => stateList,
     },
+    pluginManager,
   };
 }
 
@@ -93,11 +94,67 @@ const noSleep = { sleep: async () => {} };
        progress.length === EXPECTED.length && progress.every(([, n]) => n === EXPECTED.length), progress);
   }
   {
+    // A page without the plugin manager has no window.installedPlugins.
+    const api = fakeApi();
+    setup(api, { stateList: INSTALLED });
+    await Manager.updateAll(null, noSleep);
+    ok('the PluginStateManager list (no live list) is filtered the same way',
+       JSON.stringify(api.calls) === JSON.stringify(EXPECTED), api.calls);
+  }
+
+  console.log('\na second run sends the live list, not the first run\'s snapshot');
+  {
+    // Run 1 leaves PluginStateManager holding a, b, c. Then c is uninstalled
+    // and d installed: plugins_manager.js publishes that only as
+    // window.installedPlugins. Run 2 used to send a, b, c -- c failed as
+    // "plugin not found" and d, which had an update waiting, was skipped.
+    const api = fakeApi({
+      c: () => { throw { error_code: 'PLUGIN_UPDATE_FAILED', message: 'Plugin update failed: plugin not found' }; },
+    });
+    const stale = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+    setup(api, { stateList: stale, windowList: [{ id: 'a' }, { id: 'b' }, { id: 'd' }] });
+    const results = await Manager.updateAll(null, noSleep);
+    ok('sends exactly what is installed now',
+       JSON.stringify(api.calls) === JSON.stringify(['a', 'b', 'd']), api.calls);
+    ok('...so nothing fails over an uninstalled plugin', results.every(r => r.success), results);
+  }
+  {
     const api = fakeApi();
     setup(api, { stateList: INSTALLED, windowList: [] });
+    const results = await Manager.updateAll(null, noSleep);
+    ok('an empty live list means nothing is installed: nothing is sent',
+       api.calls.length === 0 && results.length === 0, api.calls);
+  }
+
+  console.log('\nthe end-of-run refresh redraws the installed grid');
+  {
+    // PluginStateManager's refresh replaced window.installedPlugins and
+    // nothing else: the cards kept "Update to vX" and the Updates badge
+    // kept its count. The plugin manager's load renders the grid.
+    const loads = [];
+    let stateLoads = 0;
+    const pluginManager = { loadInstalledPlugins: async (force) => { loads.push(force); } };
+    setup(fakeApi(), { stateList: INSTALLED, windowList: INSTALLED, pluginManager });
+    window.PluginStateManager.loadInstalledPlugins = async () => { stateLoads++; };
     await Manager.updateAll(null, noSleep);
-    ok('the PluginStateManager list is filtered the same way',
-       JSON.stringify(api.calls) === JSON.stringify(EXPECTED), api.calls);
+    ok('reloads through the plugin manager once, forced past its caches',
+       JSON.stringify(loads) === JSON.stringify([true]), loads);
+    ok('...instead of PluginStateManager', stateLoads === 0, stateLoads);
+  }
+  {
+    const pluginManager = { loadInstalledPlugins: async () => { throw new Error('offline'); } };
+    const answer = { status: 'success', data: { update_status: 'updated' }, restart_required: true };
+    setup(fakeApi({ 'ledmatrix-flights': () => answer }), { windowList: INSTALLED, pluginManager });
+    const warn = console.warn;
+    console.warn = () => {};
+    let results;
+    try {
+      results = await Manager.updateAll(null, noSleep);
+    } finally {
+      console.warn = warn;
+    }
+    ok('a failed plugin-manager reload still returns the results with their restart flag',
+       Array.isArray(results) && Manager.restartRequest(results) === answer);
   }
   {
     const api = fakeApi();

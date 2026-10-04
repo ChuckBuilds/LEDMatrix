@@ -14,7 +14,7 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Tuple
 from collections import defaultdict
 import logging
 import hashlib
@@ -52,7 +52,18 @@ class ConfigService:
         
         # Thread safety
         self._lock: threading.RLock = threading.RLock()
-        
+        # Held across a whole reload -- read, swap, notify -- so one reload's
+        # notifications finish before the next one's start. Subscribers run
+        # under this lock and never under _lock: the display's per-plugin
+        # subscriber can wait seconds for a busy plugin, and get_config(),
+        # subscribe() and unsubscribe() -- called from the render thread --
+        # must not wait behind it.
+        self._notify_lock: threading.RLock = threading.RLock()
+        # (key, callback, thread id) of the callback a notification is running,
+        # so unsubscribe() can wait for that one call; signalled on its return.
+        self._running_callback: Optional[Tuple[str, Callable[..., None], int]] = None
+        self._callback_done = threading.Condition(self._lock)
+
         # Current configuration
         self._current_config: Dict[str, Any] = {}
         self._current_checksum: Optional[str] = None
@@ -87,32 +98,33 @@ class ConfigService:
             True if config changed, False otherwise
         """
         try:
-            new_config = self.config_manager.load_config()
-            new_checksum = self._calculate_checksum(new_config)
-            
-            with self._lock:
-                # Check if config actually changed
-                if new_checksum == self._current_checksum:
-                    self.logger.debug("Configuration unchanged, skipping reload")
-                    return False
-                
-                # Store old config for change detection
-                old_config = self._current_config.copy()
-                
-                # Update current config
-                self._current_config = new_config
-                self._current_checksum = new_checksum
-                
-                # Notify subscribers
+            with self._notify_lock:
+                new_config = self.config_manager.load_config()
+                new_checksum = self._calculate_checksum(new_config)
+
+                with self._lock:
+                    # Check if config actually changed
+                    if new_checksum == self._current_checksum:
+                        self.logger.debug("Configuration unchanged, skipping reload")
+                        return False
+
+                    # Store old config for change detection
+                    old_config = self._current_config.copy()
+
+                    # Update current config
+                    self._current_config = new_config
+                    self._current_checksum = new_checksum
+
+                # Notify subscribers, outside _lock (see _notify_lock)
                 self._notify_subscribers(old_config, new_config)
-                
+
                 self.logger.info(
                     "Configuration reloaded (checksum: %s)",
                     new_checksum[:8]
                 )
-                
+
                 return True
-                
+
         except ConfigError as e:
             self.logger.error("Error loading configuration: %s", e, exc_info=True)
             return False
@@ -127,35 +139,64 @@ class ConfigService:
         Args:
             old_config: Previous configuration
             new_config: New configuration
+
+        Called without _lock held. The subscriber lists are copied under it,
+        and each callback is checked against them again just before it runs.
         """
+        with self._lock:
+            subscribers = {key: list(callbacks) for key, callbacks in self._subscribers.items()}
+
         # Notify global subscribers (key: '*')
-        for callback in self._subscribers.get('*', []):
-            try:
-                callback(old_config, new_config)
-            except Exception as e:
-                self.logger.error("Error in global config change callback: %s", e, exc_info=True)
-        
+        for callback in subscribers.get('*', []):
+            self._call_subscriber('*', callback, old_config, new_config)
+
         # Notify plugin-specific subscribers
-        for plugin_id in self._subscribers.keys():
+        for plugin_id, callbacks in subscribers.items():
             if plugin_id == '*':
                 continue
-            
+
             old_plugin_config = old_config.get(plugin_id, {})
             new_plugin_config = new_config.get(plugin_id, {})
-            
+
             # Only notify if plugin config actually changed
             if old_plugin_config != new_plugin_config:
-                for callback in self._subscribers[plugin_id]:
-                    try:
-                        callback(old_plugin_config, new_plugin_config)
-                    except Exception as e:
-                        self.logger.error(
-                            "Error in config change callback for %s: %s",
-                            plugin_id,
-                            e,
-                            exc_info=True
-                        )
-    
+                for callback in callbacks:
+                    self._call_subscriber(plugin_id, callback,
+                                          old_plugin_config, new_plugin_config)
+
+    def _call_subscriber(
+        self,
+        key: str,
+        callback: Callable[[Dict[str, Any], Dict[str, Any]], None],
+        old_config: Dict[str, Any],
+        new_config: Dict[str, Any],
+    ) -> None:
+        """Run one callback, unless it was unsubscribed since the snapshot.
+
+        unsubscribe() promises that once it returns the callback is neither
+        running nor will run: the display unloads the plugin straight after.
+        """
+        with self._lock:
+            if callback not in self._subscribers.get(key, ()):
+                return
+            self._running_callback = (key, callback, threading.get_ident())
+        try:
+            callback(old_config, new_config)
+        except Exception as e:
+            if key == '*':
+                self.logger.error("Error in global config change callback: %s", e, exc_info=True)
+            else:
+                self.logger.error(
+                    "Error in config change callback for %s: %s",
+                    key,
+                    e,
+                    exc_info=True
+                )
+        finally:
+            with self._lock:
+                self._running_callback = None
+                self._callback_done.notify_all()
+
     def _check_file_changes(self) -> bool:
         """
         Check if configuration files have been modified.
@@ -276,6 +317,11 @@ class ConfigService:
         """
         Unsubscribe from configuration changes.
         
+        Once this returns the callback is not running and will not be called
+        again. A notification that is running this very callback is waited
+        for (unless the callback is the caller); one running any other
+        callback is not.
+
         Args:
             callback: Callback function to remove
             plugin_id: Optional plugin ID (must match subscription)
@@ -285,6 +331,10 @@ class ConfigService:
             if callback in self._subscribers[key]:
                 self._subscribers[key].remove(callback)
                 self.logger.debug("Unsubscribed from config changes for %s", key)
+            while (self._running_callback is not None
+                   and self._running_callback[:2] == (key, callback)
+                   and self._running_callback[2] != threading.get_ident()):
+                self._callback_done.wait()
     
     def shutdown(self) -> None:
         """Shutdown the configuration service."""

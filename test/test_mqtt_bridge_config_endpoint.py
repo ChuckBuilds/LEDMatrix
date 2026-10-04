@@ -136,3 +136,22 @@ class TestCleartextCredentialsNeedAnExplicitOptIn:
                              "allow_insecure_mqtt": "false"})
         assert r.status_code == 400
 
+    def test_the_settings_read_reports_the_opt_in(self, client, monkeypatch):
+        """The Tools form prefills its "Allow without TLS" box from the GET.
+
+        Off until someone saves it on, so an untouched form sends false and
+        the guard above still refuses a cleartext password.
+        """
+        c, _ = client
+        monkeypatch.setattr(misc, "_mqtt_bridge_service_state",
+                            lambda: {"installed": False, "active": False, "enabled": False})
+
+        def read():
+            return c.get("/api/v3/integrations/mqtt-bridge").get_json()["data"]["config"]
+
+        assert read()["allow_insecure_mqtt"] is False
+        r = c.put(URL, json={"mqtt_password": "hunter2", "mqtt_tls": False,
+                             "allow_insecure_mqtt": True})
+        assert r.status_code == 200, r.get_json()
+        assert read()["allow_insecure_mqtt"] is True
+

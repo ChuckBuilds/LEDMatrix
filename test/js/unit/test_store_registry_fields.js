@@ -52,7 +52,8 @@ global.installedPlugins = [];
 // eslint-disable-next-line no-eval
 eval([
   'function escapeHtml(text) {', 'function escapeAttribute(text) {', 'function jsStringAttr(value) {',
-  'function isStorePluginInstalled(pluginIdOrPlugin) {', 'function renderPluginStore(plugins) {',
+  'function isStorePluginInstalled(pluginIdOrPlugin) {',
+  'function findInstalledStorePlugin(pluginIdOrPlugin) {', 'function renderPluginStore(plugins) {',
 ].map(extract).join('\n') + '\nglobal.renderPluginStore = renderPluginStore;'
   + '\nglobal.isStorePluginInstalled = isStorePluginInstalled;');
 

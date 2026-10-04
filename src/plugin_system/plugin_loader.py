@@ -199,9 +199,22 @@ def contained_plugin_dir(plugin_dir: Path, plugins_dir: Path) -> Optional[str]:
     name that came out of ``os.scandir()`` on the trusted root carries no
     taint, which is a real containment guarantee (and one CodeQL's
     path-injection query can follow), not a string sanitiser.
+
+    The entry looked for is the one ``plugin_dir`` itself names when it sits
+    directly in ``plugins_dir``: for a dev plugin symlinked in under its id,
+    the link's name. Resolving the link first and looking for the target's
+    folder name refused ``plugins/foo -> ~/.ledmatrix-dev-plugins/ledmatrix-foo``
+    (what ``dev_plugin_setup.sh link-github foo <url>`` makes), so the plugin
+    never loaded. Any other path is resolved and matched by its final name,
+    as before.
     """
-    plugin_dir_real = os.path.realpath(str(plugin_dir))
     plugins_dir_real = os.path.realpath(str(plugins_dir))
+    plugin_dir_abs = os.path.abspath(str(plugin_dir))
+    if os.path.realpath(os.path.dirname(plugin_dir_abs)) == plugins_dir_real:
+        matched_name = find_trusted_subdir(plugins_dir_real, os.path.basename(plugin_dir_abs))
+        if matched_name is not None:
+            return os.path.join(plugins_dir_real, matched_name)
+    plugin_dir_real = os.path.realpath(str(plugin_dir))
     matched_name = find_trusted_subdir(plugins_dir_real, os.path.basename(plugin_dir_real))
     if matched_name is None:
         return None
@@ -243,6 +256,10 @@ class PluginLoader:
         self.logger = logger or get_logger(__name__)
         self._loaded_modules: Dict[str, Any] = {}
         self._plugin_module_registry: Dict[str, set] = {}  # Maps plugin_id to set of module names
+        # plugin_id -> {dotted name: module} for the modules of the plugin's
+        # own packages (``providers.feed``). They keep their names while the
+        # plugin runs and are dropped with it; see _iter_plugin_submodules.
+        self._plugin_submodules: Dict[str, Dict[str, Any]] = {}
         # Lock to serialize module loading when plugins share module names
         # (e.g., scroll_display.py, game_renderer.py across sport plugins).
         # During exec_module, bare-name sub-modules temporarily appear in
@@ -449,6 +466,45 @@ class PluginLoader:
                 continue
         return result
 
+    @staticmethod
+    def _iter_plugin_submodules(
+        plugin_dir: Path, before_keys: set
+    ) -> list:
+        """Return dotted-name modules from plugin_dir added after before_keys.
+
+        The modules of a package the plugin ships (``providers.feed`` from
+        ``providers/feed.py``). _iter_plugin_bare_modules skips them, so the
+        bare ``providers`` was namespaced and dropped on unload while
+        ``providers.feed`` stayed in sys.modules: a reload after a store update
+        imported a fresh ``providers`` and then got the old ``feed`` back from
+        the cache, running the new manager.py against the old helpers until the
+        display restarted.
+
+        A module counts when its ``__file__`` -- or, for a namespace package,
+        which has none, every ``__path__`` entry -- is inside plugin_dir, so a
+        library the plugin imports (``requests.adapters``) never does.
+
+        Returns a list of (mod_name, module) tuples.
+        """
+        resolved_dir = plugin_dir.resolve()
+        result = []
+        for key in set(sys.modules.keys()) - before_keys:
+            if "." not in key:
+                continue
+            mod = sys.modules.get(key)
+            if mod is None:
+                continue
+            mod_file = getattr(mod, "__file__", None)
+            locations = [mod_file] if mod_file else list(getattr(mod, "__path__", None) or [])
+            if not locations:
+                continue
+            try:
+                if all(Path(loc).resolve().is_relative_to(resolved_dir) for loc in locations):
+                    result.append((key, mod))
+            except (ValueError, TypeError, OSError):
+                continue
+        return result
+
     def _evict_stale_bare_modules(self, plugin_dir: Path) -> dict:
         """Temporarily remove bare-name sys.modules entries from other plugins.
 
@@ -527,6 +583,13 @@ class PluginLoader:
         # Track for cleanup during unload
         self._plugin_module_registry[plugin_id] = namespaced_names
 
+        # The modules of the plugin's own packages keep their dotted names
+        # while it runs -- as they always have, so the package and its
+        # children stay a matching set in sys.modules -- and are dropped
+        # with the plugin by unregister_plugin_modules().
+        self._plugin_submodules[plugin_id] = dict(
+            self._iter_plugin_submodules(plugin_dir, before_keys))
+
         if namespaced_names:
             self.logger.info(
                 "Namespace-isolated %d module(s) for plugin %s",
@@ -537,10 +600,16 @@ class PluginLoader:
         """Remove namespaced sub-modules and cached module for a plugin from sys.modules.
 
         Called by PluginManager during unload to clean up all module entries
-        that were created when the plugin was loaded.
+        that were created when the plugin was loaded, including the dotted
+        modules of its packages. A dotted name is dropped only while it still
+        holds this plugin's module: the name is not namespaced, so another
+        plugin may have put its own there since.
         """
         for ns_name in self._plugin_module_registry.pop(plugin_id, set()):
             sys.modules.pop(ns_name, None)
+        for name, mod in self._plugin_submodules.pop(plugin_id, {}).items():
+            if sys.modules.get(name) is mod:
+                sys.modules.pop(name, None)
         self._loaded_modules.pop(plugin_id, None)
 
     def load_module(
@@ -646,10 +715,12 @@ class PluginLoader:
                     if evicted_name not in sys.modules:
                         sys.modules[evicted_name] = evicted_mod
                 # Clean up the partially-initialized main module and any
-                # bare-name sub-modules that were added during exec_module
-                # so they don't leak into subsequent plugin loads.
+                # bare-name or package sub-modules that were added during
+                # exec_module so they don't leak into subsequent plugin loads.
                 sys.modules.pop(module_name, None)
                 for key, _ in self._iter_plugin_bare_modules(plugin_dir, before_keys):
+                    sys.modules.pop(key, None)
+                for key, _ in self._iter_plugin_submodules(plugin_dir, before_keys):
                     sys.modules.pop(key, None)
                 raise
 

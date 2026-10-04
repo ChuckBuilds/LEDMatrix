@@ -253,6 +253,32 @@ class TestVegasCycleDurations:
         assert saved['config']['display']['display_durations'] == {'clock': 45}
 
 
+class TestMalformedBody:
+    """A JSON body that does not parse is the caller's mistake: a 400.
+
+    get_json() raised Werkzeug's BadRequest inside the handler's try, whose
+    catch-all answered 500 CONFIG_SAVE_FAILED with "check file permissions"
+    advice and logged a traceback at ERROR.
+    """
+
+    def test_is_a_400_in_the_raw_routes_shape(self, api_v3_client, saved, api_v3_module):
+        api_v3_module.api_v3.config_manager.get_raw_file_content.return_value = {}
+        resp = api_v3_client.post('/api/v3/config/main', data='{not json',
+                                  content_type='application/json')
+        assert resp.status_code == 400
+        assert resp.get_json() == {'status': 'error', 'message': 'Invalid JSON in request body'}
+        assert 'config' not in saved
+        raw = api_v3_client.post('/api/v3/config/raw/main', data='{not json',
+                                 content_type='application/json')
+        assert (raw.status_code, raw.get_json()) == (400, resp.get_json())
+
+    def test_an_empty_json_post_is_still_no_data(self, api_v3_client, saved):
+        resp = api_v3_client.post('/api/v3/config/main', data='',
+                                  content_type='application/json')
+        assert resp.status_code == 400
+        assert resp.get_json()['message'] == 'No data provided'
+
+
 class TestRawSaveStartsAutoUpdateSetup:
     @pytest.fixture
     def raw_env(self, api_v3_module, monkeypatch):
