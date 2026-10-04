@@ -489,3 +489,171 @@ class TestConcurrency:
 
         assert live["peak"] <= espn_dates.ESPN_CHUNK_WORKERS
         assert live["peak"] > 1, "chunks should actually overlap"
+
+
+class TestEdgeMonths:
+    """A window's partial edge months are asked whole and trimmed.
+
+    The default scoreboard window -- a fortnight either side of today -- spans
+    two partial months, so it used to cost 29 day requests per league. ESPN's
+    ``dates=YYYYMMDD`` means a US Eastern day (verified against the live API
+    on 2026-10-03, 417 of 417 soccer events), so a month answer trimmed to
+    the window's Eastern days is what the day requests returned.
+    """
+
+    def test_a_fortnight_either_side_is_two_requests(self):
+        planned = espn_dates.espn_request_chunks(date(2026, 9, 20), date(2026, 10, 18))
+        assert planned == [
+            ("202609", (date(2026, 9, 20), date(2026, 9, 30))),
+            ("202610", (date(2026, 10, 1), date(2026, 10, 18))),
+        ]
+
+    def test_a_live_polls_two_days_stay_two_days(self):
+        planned = espn_dates.espn_request_chunks(date(2026, 10, 2), date(2026, 10, 3))
+        assert planned == [("20261002", None), ("20261003", None)]
+
+    def test_the_threshold_is_inclusive(self):
+        n = espn_dates.ESPN_MONTH_COVER_MIN_DAYS
+        short = espn_dates.espn_request_chunks(date(2026, 10, 1), date(2026, 10, n - 1))
+        assert [chunk for chunk, _ in short] == [
+            "202610%02d" % day for day in range(1, n)]
+        enough = espn_dates.espn_request_chunks(date(2026, 10, 1), date(2026, 10, n))
+        assert enough == [("202610", (date(2026, 10, 1), date(2026, 10, n)))]
+
+    def test_whole_months_and_short_edges_are_unchanged(self):
+        planned = espn_dates.espn_request_chunks(date(2026, 8, 30), date(2026, 10, 2))
+        assert planned == [
+            ("20260830", None), ("20260831", None), ("202609", None),
+            ("20261001", None), ("20261002", None),
+        ]
+
+    def test_without_time_zone_data_edges_stay_days(self, monkeypatch):
+        monkeypatch.setattr(espn_dates, "_EASTERN", None)
+        planned = espn_dates.espn_request_chunks(date(2026, 9, 20), date(2026, 10, 18))
+        assert len(planned) == 29
+        assert all(trim is None for _, trim in planned)
+
+    @pytest.mark.parametrize("start,end", [
+        (date(2026, 9, 20), date(2026, 10, 18)),
+        (date(2026, 1, 25), date(2026, 3, 3)),
+        (date(2026, 12, 20), date(2027, 1, 9)),
+        (date(2026, 10, 5), date(2026, 10, 9)),
+    ])
+    def test_the_planned_requests_still_cover_every_day_exactly_once(self, start, end):
+        covered = []
+        for chunk, trim in espn_dates.espn_request_chunks(start, end):
+            if trim is None:
+                covered.extend(days_covered_by([chunk]))
+            else:
+                assert chunk == trim[0].strftime("%Y%m") == trim[1].strftime("%Y%m")
+                covered.extend(trim[0] + timedelta(days=offset)
+                               for offset in range((trim[1] - trim[0]).days + 1))
+        expected = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+        assert covered == expected
+
+    def test_a_trimmed_month_keeps_only_the_windows_eastern_days(self):
+        september = [
+            # 03:30Z on the 20th is still the 19th in New York: outside.
+            {"id": "before", "date": "2026-09-20T03:30Z"},
+            {"id": "first", "date": "2026-09-20T14:00Z"},
+            {"id": "late", "date": "2026-09-30T23:30Z"},
+        ]
+        october = [
+            {"id": "oct1", "date": "2026-10-01T19:00Z"},
+            # 03:30Z on the 19th is the evening of the 18th in New York: inside.
+            {"id": "last", "date": "2026-10-19T03:30Z"},
+            {"id": "after", "date": "2026-10-19T14:00Z"},
+            {"id": "undated"},
+        ]
+        session = FakeSession({"202609": september, "202610": october})
+
+        data = fetch_espn_date_chunks(session, URL, params={"dates": "20260920-20261018"})
+
+        assert sorted(call["dates"] for call in session.calls) == ["202609", "202610"]
+        # An event with no readable date is kept, never dropped on a guess.
+        assert [e["id"] for e in data["events"]] == ["first", "late", "oct1", "last", "undated"]
+
+    def test_eastern_standard_time_is_honoured_after_the_clocks_change(self):
+        # 2026-11-01 ends daylight saving: Eastern is UTC-5 from then on.
+        november = [
+            {"id": "out", "date": "2026-11-15T04:30Z"},  # Nov 14, 23:30 EST
+            {"id": "in", "date": "2026-11-15T05:30Z"},   # Nov 15, 00:30 EST
+        ]
+        session = FakeSession({"202611": november})
+        data = fetch_espn_date_chunks(session, URL, params={"dates": "20261115-20261121"})
+        assert [e["id"] for e in data["events"]] == ["in"]
+
+    def test_a_capped_edge_month_re_asks_only_the_windows_days(self):
+        full = [{"id": "cap%d" % i, "date": "2026-10-05T18:00Z"} for i in range(ESPN_MAX_LIMIT)]
+        by_chunk = {"202610": full}
+        by_chunk.update({"202610%02d" % day: [{"id": "o%02d" % day}] for day in range(1, 32)})
+        session = FakeSession(by_chunk)
+
+        data = fetch_espn_date_chunks(session, URL, params={"dates": "20261001-20261010"})
+
+        sent = [call["dates"] for call in session.calls]
+        assert sent[0] == "202610"
+        assert sorted(sent[1:]) == ["202610%02d" % day for day in range(1, 11)]
+        assert [e["id"] for e in data["events"]] == ["o%02d" % day for day in range(1, 11)]
+
+
+class TestProcessWideChunkCap:
+    """The chunk cap holds across windows, not per window.
+
+    A soccer board starting eight leagues fetches sixteen windows at once.
+    With a pool of ``ESPN_CHUNK_WORKERS`` each, ~40 requests were in flight
+    and every one past a session's pool opened a connection -- and a DNS
+    lookup. On ledpi that was ~90 NameResolutionErrors per start.
+    """
+
+    def test_concurrent_windows_share_one_budget(self):
+        live = {"now": 0, "peak": 0}
+        guard = threading.Lock()
+
+        class CountingSession(FakeSession):
+            def get(self, url, params=None, headers=None, timeout=None):
+                with guard:
+                    live["now"] += 1
+                    live["peak"] = max(live["peak"], live["now"])
+                try:
+                    time.sleep(0.01)
+                    return super().get(url, params=params, headers=headers, timeout=timeout)
+                finally:
+                    with guard:
+                        live["now"] -= 1
+
+        sessions = [CountingSession() for _ in range(6)]
+        # Six leagues, so the fetch service cannot merge them into one, on a
+        # host with no token bucket: earlier tests may have spent ESPN's
+        # burst, and a bucket paced at 20/s would serialise these by itself.
+        threads = [
+            threading.Thread(target=fetch_espn_date_chunks,
+                             args=(session, "https://scores.example.test/league%d" % index),
+                             kwargs={"params": {"dates": "20260101-20261231"}})
+            for index, session in enumerate(sessions)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert all(len(session.calls) == 12 for session in sessions)
+        assert live["peak"] <= espn_dates.ESPN_CHUNK_WORKERS
+        assert live["peak"] > 1, "chunks should still overlap"
+
+
+def test_a_fresh_process_skips_the_doomed_range_request():
+    """Every start used to spend one 400 per window learning that ranges are
+    still rejected -- eleven at once from a soccer board. A new process now
+    starts inside the retry period instead."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import src.common.espn_dates as e; print(e._ranges_known_rejected())"],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.stdout.strip() == "True", out.stderr
