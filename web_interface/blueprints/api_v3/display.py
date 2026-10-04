@@ -262,18 +262,6 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
-    # Checked before anything is delivered: a request posted and then
-    # refused here stayed in the mailbox and ran when the display was next
-    # started, long after the caller was told it had failed.
-    service_status = _get_display_service_status()
-
-    if not service_status.get('active') and not start_service:
-        return jsonify({
-            'status': 'error',
-            'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
-            'service_status': service_status
-        }), 400
-
     # Deliver the request over the control socket, or post it to the
     # mailbox the display process polls (DisplayController.
     # _poll_on_demand_requests). Done before any service start: a stopped
@@ -290,6 +278,32 @@ def start_on_demand_display():
         'timestamp': _pkg.time.time()
     }
     transport, socket_error = _deliver_on_demand(request_payload)
+
+    # A socket acknowledgement is the display itself answering: it is
+    # running and has the request queued, whatever systemd says (a display
+    # run by hand or in the emulator has no active unit). So nothing is
+    # checked or started for it -- that answered "not running" for a request
+    # that had already taken effect. The service is still reported the way
+    # _ensure_display_service_running reports a running one.
+    if transport == 'socket':
+        service_result = (dict(_get_display_service_status(), started=False)
+                          if start_service else None)
+        return _on_demand_started(request_id, resolved_plugin, resolved_mode,
+                                  duration, pinned, service_result, transport,
+                                  socket_error)
+
+    service_status = _get_display_service_status()
+
+    if not service_status.get('active') and not start_service:
+        # The request is in the mailbox, and the display reads it whenever
+        # it next starts: taken back out, or a request answered with this
+        # error ran later anyway.
+        _withdraw_on_demand(request_id)
+        return jsonify({
+            'status': 'error',
+            'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
+            'service_status': service_status
+        }), 400
 
     # start_service means "start it if it is not running", as the UI's
     # checkbox says; _ensure_display_service_running leaves a running service
@@ -308,18 +322,25 @@ def start_on_demand_display():
         service_result = _ensure_display_service_running()
         # Check if service actually started
         if service_result and not service_result.get('active'):
-            if transport == 'mailbox':
-                _withdraw_on_demand(request_id)
+            _withdraw_on_demand(request_id)
             return jsonify({
                 'status': 'error',
                 'message': 'Failed to start display service. Please check service logs or start it manually.',
                 'service_result': service_result
             }), 500
 
+    return _on_demand_started(request_id, resolved_plugin, resolved_mode,
+                              duration, pinned, service_result, transport,
+                              socket_error)
+
+
+def _on_demand_started(request_id, plugin_id, mode, duration, pinned,
+                       service_result, transport, socket_error):
+    """The success answer of /display/on-demand/start."""
     response_data = {
         'request_id': request_id,
-        'plugin_id': resolved_plugin,
-        'mode': resolved_mode,
+        'plugin_id': plugin_id,
+        'mode': mode,
         'duration': duration,
         'pinned': pinned,
         'service': service_result,

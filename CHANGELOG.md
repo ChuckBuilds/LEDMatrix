@@ -558,15 +558,18 @@ policies are unchanged.
   reach the wrapper on its stdin; the script still receives them as JSON on
   its own stdin, as before.
 - An on-demand request that `/api/v3/display/on-demand/start` refuses no
-  longer runs later. The route posted the request to the display's mailbox
-  before checking the service, and the display reads that mailbox for an
-  hour without looking at a request's age. So with "Start display service"
-  unticked and the display stopped, the answer was "Display service is not
-  running", yet the next time the display was started it ran that plugin,
-  pinned if the request said so. The same happened after "Failed to start
-  display service". The route now checks the service first and posts
-  nothing when it refuses, and a request it posted before a failed start is
-  taken back out of the mailbox, unless a newer one has replaced it.
+  longer runs later. With the display stopped the request goes to the
+  display's mailbox, and the display reads that mailbox for an hour without
+  looking at a request's age. So with "Start display service" unticked, the
+  answer was "Display service is not running", yet the next time the
+  display was started it ran that plugin, pinned if the request said so.
+  The same happened after "Failed to start display service". On either
+  refusal the route now takes its request back out of the mailbox, unless a
+  newer one has replaced it. A request the display acknowledges over the
+  control socket is now a success whatever systemd reports: a display run
+  by hand or in the emulator was told "not running" for a request it had
+  already taken, and with "Start display service" ticked the route tried to
+  start the service beside it.
 - `/api/v3/plugins/operation/<id>` reports a queued operation as `pending`
   instead of answering 500. The queue keeps an operation's callback among
   its parameters until it runs, and the status route tried to send that
