@@ -58,6 +58,7 @@ src/ipc/contract.py
 src/ipc/server.py
 src/logging_config.py
 src/logo_downloader.py
+src/malloc_tuning.py
 src/matrix_support.py
 src/pi5_matrix_support.py
 src/plugin_system/__init__.py

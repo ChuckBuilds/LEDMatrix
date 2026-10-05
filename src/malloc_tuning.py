@@ -53,14 +53,15 @@ def _load_libc() -> Optional[Any]:
         if sys.platform.startswith('linux'):
             try:
                 libc = ctypes.CDLL(None)
-                # gnu_get_libc_version is glibc-only: musl also lacks
-                # malloc_trim, but this says why without guessing.
-                libc.gnu_get_libc_version
-                libc.malloc_trim.argtypes = [ctypes.c_size_t]
-                libc.malloc_trim.restype = ctypes.c_int
-                libc.mallopt.argtypes = [ctypes.c_int, ctypes.c_int]
-                libc.mallopt.restype = ctypes.c_int
-                _libc = libc
+                # gnu_get_libc_version is glibc-only, so musl (which has
+                # mallopt but no malloc_trim) is left alone as a whole.
+                if all(hasattr(libc, name) for name in
+                       ('gnu_get_libc_version', 'malloc_trim', 'mallopt')):
+                    libc.malloc_trim.argtypes = [ctypes.c_size_t]
+                    libc.malloc_trim.restype = ctypes.c_int
+                    libc.mallopt.argtypes = [ctypes.c_int, ctypes.c_int]
+                    libc.mallopt.restype = ctypes.c_int
+                    _libc = libc
             except (OSError, AttributeError, TypeError):
                 logger.debug("glibc malloc controls unavailable", exc_info=True)
     return _libc
