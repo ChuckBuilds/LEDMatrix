@@ -394,6 +394,12 @@ class DisplayController:
         plugin_time = time.time()
         self.plugin_manager = None
         self._plugin_runtime_publisher = None
+        # On-demand requests plugins make in this process (BasePlugin.
+        # request_on_demand / end_on_demand), from any thread; the render
+        # thread drains them with the socket's commands. Created before the
+        # plugins load, because a plugin may ask from its first thread.
+        self._plugin_on_demand: deque = deque()
+        self._plugin_on_demand_lock = threading.Lock()
         self.plugin_modes = {}  # mode -> plugin_instance mapping for plugin-first dispatch
         self.mode_to_plugin_id: Dict[str, str] = {}
         self.plugin_display_modes: Dict[str, List[str]] = {}
@@ -508,6 +514,9 @@ class DisplayController:
                 cache_manager=self.cache_manager,
                 font_manager=self.font_manager
             )
+            # BasePlugin.request_on_demand() / end_on_demand() land here.
+            # Before any plugin loads: a plugin may ask from its first thread.
+            self.plugin_manager.set_on_demand_handler(self.submit_plugin_on_demand)
 
             # The web UI's loaded / state / error_info for each plugin read
             # what this publishes. Started before loading, so the loads that
@@ -1882,6 +1891,10 @@ class DisplayController:
     _on_demand_mailbox: Optional[MailboxWatch] = None
     #: Writers whose mailbox requests have been logged (_note_mailbox_request).
     _mailbox_writers_logged: FrozenSet[str] = frozenset()
+    #: Most plugin on-demand requests waiting for the render thread at once.
+    #: A plugin that asks faster than the display drains (four times a
+    #: second at worst) is refused, not queued without end.
+    PLUGIN_ON_DEMAND_QUEUE_SIZE = 32
 
     def _service_pending_changes(self) -> None:
         """Apply changes made elsewhere while the display thread is busy.
@@ -1906,7 +1919,7 @@ class DisplayController:
         # A command queued on the control socket skips the floor: it is in
         # memory, so applying it now costs no disk read.
         if (last is not None and now - last < self.PENDING_CHANGES_INTERVAL
-                and not (self._control_server and self._control_server.has_pending)):
+                and not self._control_command_pending()):
             return
         self._last_pending_service = now
 
@@ -2105,11 +2118,15 @@ class DisplayController:
         here. A plugin reload waits for the top of the next loop pass, where
         no plugin is on the stack (_apply_pending_plugin_reloads); until
         then the current screen ends early (_plugin_reload_pending).
+
+        Plugins' own on-demand requests (submit_plugin_on_demand) are
+        applied here too, after the socket's, with or without a socket.
         """
         server = self._control_server
-        if server is None or not server.has_pending:
-            return
-        for command in server.drain():
+        # drain() clears the wake flag before the plugin queue is read below,
+        # so a plugin request queued from here on wakes the next wait.
+        commands = server.drain() if server is not None and server.has_pending else []
+        for command in commands:
             try:
                 if command.cmd == ControlCommand.BRIGHTNESS_SET:
                     self._apply_control_brightness(command)
@@ -2121,24 +2138,78 @@ class DisplayController:
                 logger.exception("Failed to apply control socket command %s",
                                  command.request_id)
                 command.fail(ControlErrorCode.INTERNAL, 'the display failed to apply it')
+        self._drain_plugin_on_demand()
+
+    # -- plugins' in-process on-demand requests ---------------------------------
+
+    def submit_plugin_on_demand(self, request: Dict[str, Any]) -> bool:
+        """Queue a plugin's on-demand request for the render thread. Any thread.
+
+        ``PluginManager.request_on_demand`` / ``end_on_demand`` (which
+        BasePlugin's methods of the same names call) build ``request``: the
+        mailbox's shape, with ``source: 'plugin'`` and the asking plugin's
+        id. Nothing here touches the panel or the on-demand state; the render
+        thread applies the request where it applies a socket command
+        (_drain_control_commands), through _handle_on_demand_request, and is
+        woken for it when the control socket is up. True when it was queued;
+        False (logged) when the queue is full.
+        """
+        pending = self.__dict__.get('_plugin_on_demand')
+        lock = self.__dict__.get('_plugin_on_demand_lock')
+        if pending is None or lock is None:
+            return False   # a controller built without __init__ (tests)
+        with lock:
+            if len(pending) >= self.PLUGIN_ON_DEMAND_QUEUE_SIZE:
+                logger.warning("Plugin on-demand queue full; refusing %s %s from %s",
+                               request.get('action'), request.get('request_id'),
+                               request.get('plugin_id'))
+                return False
+            pending.append(dict(request))
+        server = self._control_server
+        if server is not None:
+            server.wake()
+        return True
+
+    def _plugin_on_demand_pending(self) -> bool:
+        """A plugin's on-demand request is waiting. A length check: no lock."""
+        return bool(self.__dict__.get('_plugin_on_demand'))
+
+    def _drain_plugin_on_demand(self) -> None:
+        """Apply the plugins' queued on-demand requests, oldest first. Render thread."""
+        pending = self.__dict__.get('_plugin_on_demand')
+        while pending:
+            try:
+                request = pending.popleft()
+            except IndexError:
+                break
+            try:
+                self._handle_on_demand_request(request)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to apply on-demand request %s from plugin %s",
+                                 request.get('request_id'), request.get('plugin_id'))
 
     def _wait_for_control(self, timeout: float) -> bool:
         """Sleep up to ``timeout``, waking early for a control socket command.
 
         True when a command is waiting. Without a socket (Windows, switched
-        off, tests) this is the plain sleep it replaces.
+        off, tests) this is the plain sleep it replaces, unless a plugin's
+        on-demand request is already waiting.
         """
         server = self._control_server
         wait = getattr(server, 'wait_for_command', None) if server is not None else None
         if wait is None:
+            if self._plugin_on_demand_pending():
+                return True
             time.sleep(timeout)
             return False
         return bool(wait(timeout))
 
     def _control_command_pending(self) -> bool:
-        """A socket command is queued: Vegas checks this every frame."""
+        """A socket command or a plugin's on-demand request is queued: Vegas
+        checks this every frame."""
         server = self._control_server
-        return bool(server is not None and server.has_pending)
+        return bool((server is not None and server.has_pending)
+                    or self._plugin_on_demand_pending())
 
     def _wait_frame_interval(self, interval: float, screen: Screen) -> Optional[ScreenPlan]:
         """The static screen's sleep between frames, woken by socket commands.
@@ -2450,21 +2521,36 @@ class DisplayController:
     def _handle_on_demand_request(self, request: Dict[str, Any]) -> None:
         """Process one on-demand request, from the mailbox or the control socket.
 
-        A socket command carries ``source: 'socket'``. Only a mailbox request
-        is removed from the mailbox afterwards: a socket command never put
-        anything there, so that would be a disk read and maybe a delete for
-        nothing.
+        A socket command carries ``source: 'socket'``, and a plugin's own
+        request (submit_plugin_on_demand) ``source: 'plugin'``. Only a
+        mailbox request is removed from the mailbox afterwards: the others
+        never put anything there, so that would be a disk read and maybe a
+        delete for nothing.
+
+        A plugin's stop ends only that plugin's own session: a plugin
+        releasing the screen must not end one the user started for
+        another plugin. (A stop through the mailbox ends any session, as it
+        always has.)
         """
         request_id = request.get('request_id')
         if not request_id:
             return
-        from_mailbox = request.get('source') != 'socket'
+        source = request.get('source')
+        from_mailbox = source not in ('socket', 'plugin')
 
         action = request.get('action')
         
         # For stop requests, always process them (don't check processed_id)
         # This allows stopping even if the same stop request was sent before
         if action == 'stop':
+            if source == 'plugin' and not (
+                    self.on_demand_active
+                    and self.on_demand_plugin_id == request.get('plugin_id')):
+                logger.debug("On-demand stop %s from plugin %s ignored: it does not own "
+                             "the screen (on-demand %s, plugin %s)", request_id,
+                             request.get('plugin_id'), self.on_demand_status,
+                             self.on_demand_plugin_id)
+                return
             logger.info("Received on-demand stop request %s", request_id)
             # Always process stop requests, even if same request_id (user might click multiple times)
             if self.on_demand_active:
@@ -2507,8 +2593,9 @@ class DisplayController:
                 self._consume_on_demand_request(request_id)
             return
 
-        logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s)",
-                   request_id, action, request.get('plugin_id'), request.get('mode'))
+        logger.info("Received on-demand request %s: %s (plugin_id=%s, mode=%s, via %s)",
+                   request_id, action, request.get('plugin_id'), request.get('mode'),
+                   'mailbox' if from_mailbox else source)
 
         # Mark as processed BEFORE processing (to prevent duplicate processing)
         self.cache_manager.set('display_on_demand_processed_id', request_id, ttl=3600)

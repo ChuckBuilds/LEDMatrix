@@ -772,8 +772,22 @@ class ControlServer:
         """
         return self._pending.wait(timeout)
 
+    def wake(self) -> None:
+        """Wake the render thread as a queued command would, with nothing queued.
+
+        For work that reaches the display another way in the same process (a
+        plugin's on-demand request, ``DisplayController.submit_plugin_on_demand``):
+        the render thread returns from :meth:`wait_for_command` and drains,
+        and reads the caller's own queue there. Safe from any thread.
+        """
+        self._pending.set()
+
     def drain(self) -> List[QueuedCommand]:
-        """Every queued command, oldest first. Called from the render thread."""
+        """Every queued command, oldest first. Called from the render thread.
+
+        Clears the wake flag first, so anything queued (or woken for) while
+        this runs wakes the next wait again.
+        """
         commands: List[QueuedCommand] = []
         self._pending.clear()
         while True:

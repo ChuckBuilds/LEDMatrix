@@ -488,6 +488,78 @@ working for the plugin itself. `get_vegas_segment_width()` read the
 `vegas_panel_count` config value, which has never affected Vegas — a card's
 width comes from `get_vegas_content()` and `vegas_width_pct`.
 
+### On-demand display
+
+A plugin that reacts to something outside the rotation (an MQTT message, a
+timer, a detection) can take the screen for it, and give it back. Both
+methods are safe from any thread, including an MQTT callback: they only
+queue the request, and the display applies it on its render thread within a
+frame or so, exactly like an on-demand start or stop from the web interface.
+
+#### `request_on_demand(mode=None, duration=None, pinned=False) -> Optional[str]`
+
+Show this plugin now.
+
+- `mode`: one of the plugin's display modes; `None` for its first.
+- `duration`: seconds before the rotation resumes; `None` (or `0`) for no
+  limit, until `end_on_demand()` or the user stops it.
+- `pinned`: stay on `mode` instead of cycling through the plugin's other
+  modes.
+
+Returns the request id once the display has queued it, or `None` when
+there is no display in this process to ask (the web interface's plugin
+manager, `scripts/check_plugin.py`) or its queue is full. A bad argument
+(a `mode` that is not a string, a `duration` that is not a number) raises
+`ValueError`.
+
+#### `end_on_demand() -> Optional[str]`
+
+Give the screen back. Ends only a session this plugin owns: a session the
+user started for another plugin, or one that already ended, is left alone.
+Returns the request id once queued, or `None` as above.
+
+#### Older cores: feature detection
+
+These methods are new after core 3.8.0 (see `CHANGELOG.md`). Before them,
+plugins wrote the `display_on_demand_request` cache key (the "mailbox")
+themselves. The display reads it only once a second while the control
+socket is up, and it will be removed in a future release (see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md), stage 5). A plugin that
+must keep working on older cores checks for the method, and writes the
+mailbox only when the method is missing or answers `None`:
+
+```python
+import time, uuid
+
+def _show_alert(self):
+    if hasattr(self, "request_on_demand") and self.request_on_demand(
+            mode="my_alert", duration=15):
+        return
+    # Older core, or no display in this process: the mailbox, as before.
+    self.cache_manager.set("display_on_demand_request", {
+        "request_id": str(uuid.uuid4()), "action": "start",
+        "plugin_id": self.plugin_id, "mode": "my_alert",
+        "duration": 15, "pinned": False, "timestamp": time.time(),
+    })
+
+def _release(self):
+    if hasattr(self, "end_on_demand") and self.end_on_demand():
+        return
+    self.cache_manager.set("display_on_demand_request", {
+        "request_id": str(uuid.uuid4()), "action": "stop",
+        "plugin_id": self.plugin_id, "timestamp": time.time(),
+    })
+```
+
+Keep `ledmatrix_min_version` where it is: the fallback is what keeps the
+plugin working on older cores. A mailbox stop ends any on-demand session,
+whoever started it; `end_on_demand()` ends only the plugin's own.
+
+Both methods answer a request id only when the plugin manager returned a
+string, so a test that gives the plugin a `MagicMock()` plugin manager gets
+`None` and exercises the mailbox path. To test the new path, set
+`plugin_manager.request_on_demand.return_value = "some-id"`.
+
 > The full source for `BasePlugin` lives in
 > `src/plugin_system/base_plugin.py`. If a method here disagrees with the
 > source, the source wins — please open an issue or PR to fix the doc.
@@ -965,6 +1037,14 @@ info = self.plugin_manager.get_plugin_info("weather")
 if info:
     self.logger.info(f"Plugin: {info['name']}, Version: {info.get('version')}")
 ```
+
+#### `request_on_demand(plugin_id, mode=None, duration=None, pinned=False)` / `end_on_demand(plugin_id)`
+
+What `BasePlugin.request_on_demand()` and `end_on_demand()` call, with the
+plugin's own id. Call those instead; see
+[On-demand display](#on-demand-display). The display controller routes them
+to itself with `set_on_demand_handler()`; a plugin manager without a
+display behind it answers `None`.
 
 #### `get_all_plugin_info() -> List[Dict[str, Any]]`
 
