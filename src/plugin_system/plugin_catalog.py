@@ -15,7 +15,8 @@ reads through a catalog unchanged. It has nothing that runs a plugin: no
 ``load_plugin``, ``get_plugin`` or ``plugins``.
 
 Runtime state -- whether the display has a plugin loaded, its health, its
-errors -- is not here either. The display process publishes what it knows to
+errors -- is not here either, with one exception: given a ``runtime_source``,
+the mode lookups prefer the modes the running display registered. The display process publishes what it knows to
 the shared cache (health and resource metrics, the current mode, the error
 aggregator snapshot), and the web routes read those publications. What the
 display does not publish (which plugins it has loaded, its plugin state
@@ -26,8 +27,9 @@ See docs/ARCHITECTURE.md ("Web and display processes").
 
 import json
 import threading
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from src.common.permission_utils import (
     ensure_directory_permissions, get_plugin_dir_mode,
@@ -39,6 +41,10 @@ from src.plugin_system.plugin_dirs import (
 
 PathLike = Union[str, Path]
 
+#: How long one read of the display's runtime view answers mode lookups. A
+#: listing asks once per plugin; the cache copy is a file read each time.
+_RUNTIME_VIEW_TTL_SECONDS = 1.0
+
 
 class PluginCatalog:
     """Manifests, schemas, config and versions of the installed plugins.
@@ -49,10 +55,17 @@ class PluginCatalog:
     """
 
     def __init__(self, plugins_dir: PathLike, config_manager: Optional[Any] = None,
-                 schema_manager: Optional[Any] = None) -> None:
+                 schema_manager: Optional[Any] = None,
+                 runtime_source: Optional[Callable[[], Any]] = None) -> None:
         self.plugins_dir: Path = Path(plugins_dir)
         self.config_manager = config_manager
         self.schema_manager = schema_manager
+        # Returns the display's PluginRuntimeView
+        # (src/plugin_system/plugin_runtime.py). Its live view carries the
+        # modes the display registered, which the mode lookups below prefer
+        # to the manifest's. None: manifests only.
+        self.runtime_source = runtime_source
+        self._runtime_view_memo: Optional[tuple] = None
         self.logger = get_logger(__name__)
 
         # Guards plugin_manifests/plugin_directories: request threads read
@@ -172,22 +185,65 @@ class PluginCatalog:
             by_manifest=False)
         return str(plugin_dir) if plugin_dir is not None else None
 
-    def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
-        """The manifest's ``display_modes``, or [].
+    def _runtime_view(self) -> Any:
+        """The display's runtime view, read at most once a second; None
+        without a source or when reading it fails."""
+        if self.runtime_source is None:
+            return None
+        now = time.monotonic()
+        memo = self._runtime_view_memo
+        if memo is not None and now - memo[0] < _RUNTIME_VIEW_TTL_SECONDS:
+            return memo[1]
+        try:
+            view = self.runtime_source()
+        except Exception as exc:  # a lookup must still answer from manifests
+            self.logger.debug("Could not read the display's runtime view: %s", exc)
+            view = None
+        self._runtime_view_memo = (now, view)
+        return view
 
-        What the display actually rotates can differ: a plugin may compute
-        its modes at run time (``plugin.modes``). This is the declared list.
+    def _live_display_modes(self, plugin_id: str) -> Optional[List[str]]:
+        """The modes the running display registered for ``plugin_id``, or None."""
+        view = self._runtime_view()
+        lookup = getattr(view, 'display_modes', None)
+        if not callable(lookup):
+            return None
+        try:
+            modes = lookup(plugin_id)
+        except Exception as exc:
+            self.logger.debug("Could not read display modes for %s: %s", plugin_id, exc)
+            return None
+        return list(modes) if isinstance(modes, list) and modes else None
+
+    def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
+        """The modes the display registered for the plugin, else the
+        manifest's ``display_modes``, else [].
+
+        A plugin may compute its modes at run time (``plugin.modes``): each
+        league soccer-scoreboard's ``custom_leagues`` adds is a mode no
+        manifest can list ahead of time (#668). The running display
+        publishes what it registered, and that wins while the display is
+        live and has the plugin loaded. Otherwise -- display stopped, plugin
+        disabled -- the declared list is the best answer there is.
         """
+        live = self._live_display_modes(plugin_id)
+        if live is not None:
+            return live
         with self._lock:
             manifest = self.plugin_manifests.get(plugin_id)
         modes = (manifest or {}).get('display_modes', [])
         return list(modes) if isinstance(modes, list) else []
 
     def find_plugin_for_mode(self, mode: str) -> Optional[str]:
-        """The plugin whose manifest declares ``mode`` (case-insensitive)."""
+        """The plugin that registered ``mode`` on the running display, else
+        the one whose manifest declares it (case-insensitive both ways)."""
         wanted = mode.strip().lower()
         with self._lock:
             manifests = dict(self.plugin_manifests)
+        for plugin_id in manifests:
+            live = self._live_display_modes(plugin_id)
+            if live and any(m.lower() == wanted for m in live):
+                return plugin_id
         for plugin_id, manifest in manifests.items():
             modes = manifest.get('display_modes')
             if isinstance(modes, list) and any(

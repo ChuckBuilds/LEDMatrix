@@ -153,10 +153,12 @@ def get_display_modes():
     same list the force-display dialog offers, from the source that owns it.
 
     Knowing each mode's plugin_id also matters because /display/on-demand/start
-    falls back to find_plugin_for_mode when plugin_id is omitted, and that
-    lookup only sees modes declared in a static manifest -- a plugin whose
-    modes are generated (each installed Starlark app is one) 404s there.
-    Sending the plugin_id from this list skips the lookup entirely.
+    falls back to find_plugin_for_mode when plugin_id is omitted. While the
+    display is running, both that lookup and this list use the modes it
+    registered, so modes a plugin generates from its config (each installed
+    Starlark app, each soccer custom league) are found (#668); with the
+    display stopped they see only what manifests declare. Sending the
+    plugin_id from this list skips the lookup entirely.
 
     Query params:
         include_disabled: '1' to list modes of disabled plugins too. They can
