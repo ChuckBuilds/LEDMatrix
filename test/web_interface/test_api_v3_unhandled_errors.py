@@ -81,7 +81,6 @@ REMOVED_CATCH_ALLS = [
     ("GET", "/api/v3/config/main", None),
     ("GET", "/api/v3/config/secrets", None),
     ("GET", "/api/v3/display/modes", None),
-    ("POST", "/api/v3/display/on-demand/stop", {}),
     ("GET", "/api/v3/cache/list", None),
     ("GET", "/api/v3/plugins/installed", None),
     ("GET", "/api/v3/plugins/health", None),

@@ -144,6 +144,12 @@ class TestSent:
     def test_a_client_without_the_socket_is_not_waiting_for_a_display(self, reason):
         assert not client.display_not_listening(client.ControlError(reason))
 
+    @pytest.mark.parametrize('reason', sorted(client.NOT_LISTENING_REASONS))
+    def test_a_request_that_was_sent_had_a_display(self, reason):
+        # Only a request that never left can be waited on and sent again: one
+        # that was sent may have been applied.
+        assert not client.display_not_listening(client.ControlError(reason, sent=True))
+
     def test_a_client_bug_is_not_a_missing_display(self):
         assert not client.display_not_listening(RuntimeError('boom'))
 

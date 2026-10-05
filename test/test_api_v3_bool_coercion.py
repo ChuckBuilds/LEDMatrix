@@ -54,7 +54,10 @@ class TestOnDemandStart:
     def service(self, api_v3_module):
         api_v3_module.api_v3.plugin_catalog = None
         api_v3_module.api_v3.config_manager = None
-        with patch("web_interface.blueprints.api_v3.display._get_display_service_status",
+        # The display answers the control socket (the only way in).
+        with patch("web_interface.blueprints.api_v3.display.control_client.on_demand_start",
+                   side_effect=lambda request_id, *a: {"accepted": True}), \
+             patch("web_interface.blueprints.api_v3.display._get_display_service_status",
                    return_value={"active": True}), \
              patch("web_interface.blueprints.api_v3.display._stop_display_service") as stop, \
              patch("web_interface.blueprints.api_v3.display._ensure_display_service_running",
