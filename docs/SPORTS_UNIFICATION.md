@@ -319,28 +319,32 @@ were pixel-identical. `src/common/sports_game_over.py` holds the body;
 
 ### Family 6: favourite matching (core done; adoption waits for a release)
 
-ledmatrix-plugins `scripts/test_favourite_matching.py` (#634) pinned 208 rows
+ledmatrix-plugins `scripts/test_favourite_matching.py` (#634) pinned 204 rows
 across the nine plugins first: `_is_favorite_game` on each manager role, the
 two selection methods, the real `update()` with favourites-only on and off,
-and the INFO summary. The reconcile (ledmatrix-plugins
+and the INFO summary; the reconcile extends it to 217 (a lower-case and a
+padded favourite through `update()`, and the live favourite boost). The reconcile (ledmatrix-plugins
 `claude/family6-reconcile`) made `_is_favorite_game` one body on `SportsCore`
 (afl and soccer's `SportsUpcoming` copies and five `SportsLive` copies, all
 redundant, are gone), added `_favorite_code` beside it, and gave nrl a
-`_favorite_key` override instead of its own copies. Of 3,816 cells only those
-the decisions above explain changed: case and spaces in eight plugins (30-33
-each), the id-less duplicate fix (6-8 each), nrl's key (6) and its "None"
-match (6), and the INFO line in baseball, football and ufc. The harness
-renders were byte-identical. `src/common/sports_favorites.py` holds the
+`_favorite_key` override instead of its own copies. So that a lower-case
+favourite works on a favourites-only Upcoming board, the Upcoming `update()`'s
+favourites-only pre-filter and the basketball, hockey and lacrosse live boost
+now ask `_is_favorite_game` too (a one-line change each; `update()` itself is
+family 13). Of 3,897 cells only those the decisions above explain changed:
+case and spaces in eight plugins (30-40 each), the id-less duplicate fix (6-8
+each), nrl's key (6) and its "None" match (6), and the INFO line in baseball,
+football and ufc. The harness renders were byte-identical. `src/common/sports_favorites.py` holds the
 bodies, one mixin per carrying class; `test/test_sports_favorites_parity.py`
 compares them with the plugin copies and checks that only nrl overrides
 `_favorite_key`.
 
-Left for later families, because they sit outside these methods: the
-Upcoming `update()`'s favourites-only pre-filter and the basketball, hockey
-and lacrosse live boost still compare abbreviations exactly, and
+Left for later families: the live screens' favourites-only filter
+(`_classify_live_game` and its inline copies) and favourites-first sort still
+compare abbreviations exactly, and
 `SportsCoreSharedMixin._round_robin_favorites` groups favourites by raw
 abbreviation (or by `_team_in` where a plugin has one) instead of through
-`_favorite_key`.
+`_favorite_key`. The result-colour helpers also wait (decision above).
 
 ### Why the method changes
 
