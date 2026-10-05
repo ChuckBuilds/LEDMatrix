@@ -44,6 +44,7 @@ Rules for the package:
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
+| [`sports_favorites`](#sports_favorites) | Which games involve a favourite team, and the favourites-only picks | Yes (scoreboards) | next release |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
 | [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
@@ -279,6 +280,19 @@ list it before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
 (`_filtered_or_all()`, the no-favourites quality filter that fails open, and
 `_effective_live_duration()`, the shorter dwell for a non-favourite live
 game).
+
+### sports_favorites
+
+[`sports_favorites.py`](sports_favorites.py). Sports family 6, one mixin per
+class that carried the methods: `SportsFavoritesMixin` (`SportsCore`:
+`_is_favorite_game(game)` and `_favorite_code(value)`),
+`SportsUpcomingFavoritesMixin` (`_select_games_for_display`) and
+`SportsRecentFavoritesMixin` (`_select_recent_games_for_display`). Each side
+of a game is named by `_favorite_key` (from `SportsHelpersMixin`; NRL
+overrides it with the team id) and compared with `favorite_teams` stripped and
+upper-cased. The selection methods give each favourite up to the per-team
+limit, count a game between two favourites for both, and treat only games
+with an id as possible duplicates.
 
 ### sports_fetch
 
