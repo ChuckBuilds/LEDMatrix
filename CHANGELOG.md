@@ -194,6 +194,20 @@ Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
   (`refresh_registry_in_background()`, backing off for a minute after an
   offline failure), so a later load has them. The store, install and update
   paths still fetch as before.
+- A sports live manager's idle back-off now honours every pending kickoff,
+  not just the first. `_note_scheduled_start_candidate()` kept one kickoff
+  and, while it was inside its 15-minute grace, refused every later one; by
+  the time the grace ended the later one had passed and was refused again.
+  So of two favourites kicking off within 15 minutes of each other, the
+  second lost its own grace: if the first game was not live by then (a rain
+  delay, a postponement, ESPN slow to flip it) and ESPN had not flipped the
+  second either, the back-off went back to its ceiling and the second game
+  was noticed up to the ceiling (15 minutes by default) late. Later
+  kickoffs now wait in a short queue (`_later_scheduled_starts`, the
+  earliest 8) and each takes over with a grace of its own when the one
+  before it expires. A kickoff still
+  holds the live cadence for at most its own grace, so a postponed game
+  costs the same quarter of an hour as before.
 
 ### ESPN date-range fetches: fewer requests, fewer at once
 

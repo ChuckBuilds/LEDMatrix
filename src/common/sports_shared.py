@@ -120,6 +120,32 @@ _DEFAULT_LIVE_IDLE_MAX_SECONDS = 900
 _KICKOFF_GRACE_SECONDS = 900
 #: Fallback cadence around a kickoff when the manager has no update_interval.
 _KICKOFF_POLL_FLOOR = 30
+#: How many kickoffs after the current one a live manager remembers. Only the
+#: earliest few can matter before the next look refreshes the list, so this
+#: bounds the memory without dropping a kickoff the board would wait for.
+_KICKOFF_QUEUE_MAX = 8
+
+
+def _current_scheduled_start(host: Any, now: float) -> Optional[float]:
+    """The kickoff a live manager is honouring now, promoting the next queued one.
+
+    ``_next_scheduled_start_ts`` is the kickoff being honoured: the earliest
+    one ahead of us, or one that has just passed and is inside its grace.
+    Kickoffs behind it wait in ``_later_scheduled_starts``. When the current
+    one's grace runs out, the earliest queued kickoff that is not itself past
+    its grace takes over -- including one that has already passed, so a
+    second kickoff inside the first one's grace still gets a grace of its own.
+    """
+    current: Optional[float] = getattr(host, "_next_scheduled_start_ts", None)
+    if current and current > now - _KICKOFF_GRACE_SECONDS:
+        return current
+    queued: Optional[List[float]] = getattr(host, "_later_scheduled_starts", None)
+    if queued:
+        alive = sorted(s for s in queued if s > now - _KICKOFF_GRACE_SECONDS)
+        current = alive.pop(0) if alive else None
+        host._later_scheduled_starts = alive
+        host._next_scheduled_start_ts = current
+    return current if current and current > now - _KICKOFF_GRACE_SECONDS else None
 
 
 def _resolve_font_path(path: str) -> str:
@@ -1294,11 +1320,11 @@ class SportsLiveSharedMixin:
           otherwise look like another empty check and escalate the back-off
           again, right when the game is actually starting.
         """
-        start = getattr(self, "_next_scheduled_start_ts", None)
+        now = time.time()
+        start = _current_scheduled_start(self, now)
         if not start:
             return interval
         live = getattr(self, "update_interval", None) or _KICKOFF_POLL_FLOOR
-        now = time.time()
         if now < start:
             return max(live, min(interval, int(start - now)))
         if now - start <= _KICKOFF_GRACE_SECONDS:
@@ -1313,6 +1339,16 @@ class SportsLiveSharedMixin:
         already has. Self-correcting: a stored start that has passed is
         replaced by the next one offered, so a postponed game cannot pin the
         cadence to a kickoff that never happens.
+
+        Every pending kickoff is honoured, not just the first. A kickoff that
+        arrives while an earlier one is inside its grace is queued in
+        ``_later_scheduled_starts`` (the earliest _KICKOFF_QUEUE_MAX of them)
+        and takes over when that grace ends, with a grace of its own. Keeping
+        only the one kickoff dropped the second of two favourites starting
+        within the grace of each other: it was refused while the first held
+        the slot, and refused again once it had passed, so if ESPN had not
+        flipped it live by the end of the first grace the back-off went
+        straight back to its ceiling and the game was noticed up to that late.
         """
         if not isinstance(details, dict):
             return
@@ -1329,7 +1365,7 @@ class SportsLiveSharedMixin:
         now = time.time()
         if candidate <= now:
             return
-        current = getattr(self, "_next_scheduled_start_ts", None)
+        current = _current_scheduled_start(self, now)
         # A kickoff that has only just passed is *kept*, not replaced by the
         # next one on the card. Replacing it immediately is what made the grace
         # window in _clamp_to_scheduled_start dead code: the moment 13:00 came
@@ -1339,10 +1375,20 @@ class SportsLiveSharedMixin:
         # polled at 13:00:45, found nothing live because ESPN had not flipped
         # the status yet, and then went quiet for the next quarter of an hour,
         # which is the behaviour this whole clamp exists to prevent.
-        if (current is None
-                or current <= now - _KICKOFF_GRACE_SECONDS
-                or candidate < current):
+        #
+        # Nor is it forgotten: whichever kickoff loses is queued behind the
+        # one honoured now, so it gets its own grace when that one's ends.
+        if current is None:
             self._next_scheduled_start_ts = candidate
+            return
+        if candidate == current:
+            return
+        if candidate < current:
+            self._next_scheduled_start_ts, candidate = candidate, current
+        queued = getattr(self, "_later_scheduled_starts", None) or []
+        if candidate not in queued:
+            self._later_scheduled_starts = sorted(
+                [*queued, candidate])[:_KICKOFF_QUEUE_MAX]
 
     #: How long a game that finished live is still reported by
     #: finished_games_snapshot(): long enough for the recent-games list, which
