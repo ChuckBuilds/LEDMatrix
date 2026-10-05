@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # pylint: disab
 import pytz
 
 from src import display_watchdog
+from src.malloc_tuning import MallocTrimmer
 from src.display_arbiter import (
     Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
     ScreenPlan, Source, WifiNotice, live_pick, live_takeover, on_demand_bound, rotation_plan,
@@ -4127,12 +4128,18 @@ class DisplayController:
             logger.info(f"Initial mode set to: {self.current_display_mode} (index: {self.current_mode_index}, total modes: {len(self.available_modes)})")
             self._publish_current_mode_state()
             runner = ScreenRunner(_MODULE_CLOCK, _ScreenHost(self), logger)
+            trimmer = MallocTrimmer()
 
             while True:
                 # Arms the watchdog after the first frame -- or after the
                 # first full pass, when there is nothing to draw -- and pings
                 # it from then on.
                 display_watchdog.watchdog.loop_pass()
+
+                # Between screens, nothing being drawn: every few minutes hand
+                # the memory glibc is holding for freed images back to the OS
+                # (src/malloc_tuning.py). A clock read when none is due.
+                trimmer.maybe_trim()
 
                 # Apply plugin enable/disable edits saved via the web UI. The
                 # config-watcher thread only sets the flag; loading/unloading and
