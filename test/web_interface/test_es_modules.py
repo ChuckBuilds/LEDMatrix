@@ -43,7 +43,7 @@ def _url(path):
 def test_the_module_directories_hold_modules():
     assert {p.name for p in MODULES} >= {"boot.js", "registry.js", "api.js", "facade.js", "cache.js",
                                          "durations.js", "operation-history.js", "raw-json.js",
-                                         "backup-restore.js"}
+                                         "backup-restore.js", "schedule.js", "general.js"}
     for directory in MODULE_DIRS:
         # node needs this to import them in the JS tests; browsers ignore it.
         assert '"type": "module"' in (directory / "package.json").read_text(encoding="utf-8")
@@ -104,6 +104,8 @@ CONVERTED = {
     "operation-history": ("operation_history.html", "/partials/operation-history"),
     "raw-json": ("raw_json.html", "/partials/raw-json"),
     "backup-restore": ("backup_restore.html", "/partials/backup-restore"),
+    "schedule": ("schedule.html", "/partials/schedule"),
+    "general": ("general.html", "/partials/general"),
 }
 
 # Old window.* names that moved into a page module. Each stays as a
@@ -114,6 +116,8 @@ ALIASES = {
                  "saveMainConfig", "saveSecretsConfig"],
     "backup-restore": ["exportBackup", "loadBackupList", "validateRestoreFile",
                        "clearRestore", "runRestore"],
+    "schedule": ["handleScheduleResponse", "handleDimScheduleResponse"],
+    "general": ["webLogin"],
 }
 
 
@@ -155,12 +159,15 @@ def test_moved_globals_stay_as_aliases(name):
         assert f"'{global_name}'" in boot, f"boot.js does not alias {global_name}"
         assert re.search(rf"^export (?:function|const) {global_name}\b", module, re.M), (
             f"pages/{name}.js does not export {global_name}")
-    # No template defines them any more.
+    # No template defines them any more, or calls them (an inline handler
+    # would reach the page only through the deprecated alias).
     for partial in PARTIALS.glob("*.html"):
         text = partial.read_text(encoding="utf-8")
         for global_name in ALIASES[name]:
             assert f"window.{global_name} =" not in text, partial.name
             assert f"function {global_name}(" not in text, partial.name
+            assert not re.search(rf"\b{global_name}\b", text), (
+                f"{partial.name} still names {global_name}")
 
 
 def test_every_registered_page_has_its_module_and_partial():
@@ -180,3 +187,32 @@ def test_converted_partials_carry_no_inline_script():
         if "data-page=" in text:
             assert "<script" not in text.lower(), (
                 f"{partial.name} is a page module now; its code belongs in js/pages/")
+
+
+def test_the_schedule_page_reads_its_config_back_intact():
+    """schedule.html hands both saved schedules to pages/schedule.js as JSON in
+    single-quoted data attributes; a value with quotes or markup must neither
+    end the attribute nor change on the way."""
+    from html.parser import HTMLParser
+    import json
+    import web_interface.app as web_app
+    from flask import render_template
+
+    hostile = {"mode": "per-day", "start_time": "07:00", "note": "it's a \"<b>\" & '</div>"}
+
+    class Root(HTMLParser):
+        attrs = None
+
+        def handle_starttag(self, tag, attrs):
+            if dict(attrs).get("data-page") == "schedule":
+                self.attrs = dict(attrs)
+
+    with web_app.app.test_request_context():
+        html = render_template("v3/partials/schedule.html", schedule_config=hostile,
+                               dim_schedule_config=None, normal_brightness=90)
+    parser = Root()
+    parser.feed(html)
+    assert parser.attrs is not None
+    assert json.loads(parser.attrs["data-schedule-config"]) == hostile
+    # A missing dim schedule arrives as null; the page treats that as {}.
+    assert json.loads(parser.attrs["data-dim-schedule-config"]) is None

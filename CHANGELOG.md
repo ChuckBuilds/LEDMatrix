@@ -19,6 +19,34 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: Schedule and General are ES-module pages (stage 3)
+
+- The Schedule and General tabs follow stage 2 (#727): their inline
+  `<script>` blocks are now `static/v3/js/pages/schedule.js` and
+  `pages/general.js`, started once per swap-in by the page registry and
+  stopped on swap-out. Neither partial has an inline script, `onclick`,
+  `onsubmit` or `oninput` any more.
+- Schedule: both pickers are drawn from the saved config the partial
+  carries as JSON in `data-schedule-config` / `data-dim-schedule-config`.
+  The forms' `hx-on` save handlers became one `htmx:afterRequest` listener
+  on the page; the forms are marked `data-reports-result`, which `app.js`
+  now honours like an `hx-on` after-request handler, so a save still shows
+  one notification.
+- General: the timezone picker reads the saved zone from `data-timezone`.
+  The Security section's forms and buttons carry `data-action` and use one
+  delegated submit and one delegated click listener, so a token row added
+  after a create needs no listener of its own. Requests go through
+  `core/api.js`: the optional login's "sign in again" answer no longer
+  flashes an error while the page navigates to the login form. A login
+  change made just before a swap is still reported.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `handleScheduleResponse`,
+  `handleDimScheduleResponse`, and `webLogin` (its five methods).
+- New DOM suites `test/js/dom/test_{schedule,general}_page.js`;
+  `unit/test_general_web_login_token.js` imports the module instead of
+  slicing the template, and `unit/test_restart_banner.js` covers
+  `data-reports-result`.
+
 ### The control socket carries every web command; the mailboxes are a fallback
 
 Stage 4 of the web → display control socket (`docs/IPC_CONTROL_SOCKET.md`).

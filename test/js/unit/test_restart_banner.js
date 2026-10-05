@@ -19,7 +19,7 @@ const ok = (label, cond, extra) => cond
   ? (pass++, console.log('  ok   ' + label))
   : (fail++, console.log('  FAIL ' + label + (extra !== undefined ? '  ' + JSON.stringify(extra) : '')));
 
-function load() {
+function load(notes) {
   const handlers = {};
   const listen = (target) => (type, fn) => { (handlers[target + ':' + type] ||= []).push(fn); };
   const banner = { style: { display: 'none' } };
@@ -43,14 +43,18 @@ function load() {
       removeItem: (k) => { delete store[k]; },
       getItem: (k) => (k in store ? store[k] : null),
     },
-    showNotification: () => {},
+    showNotification: (m, t) => { if (notes) notes.push([m, t]); },
     setTimeout: () => 0,
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(V3, 'app.js'), 'utf8'), context);
   const afterRequest = (handlers['body:htmx:afterRequest'] || [])[0];
-  const fire = ({ status = 200, body, path: reqPath = '/api/v3/anything', reportsItself = false }) => {
-    const elt = { closest: () => (reportsItself ? {} : null) };
+  // `marks`: the attribute selectors the requesting element (or its form)
+  // matches, for app.js's elt.closest(<selector list>).
+  const fire = ({ status = 200, body, path: reqPath = '/api/v3/anything', reportsItself = false, marks = [] }) => {
+    const elt = {
+      closest: (sel) => (reportsItself || sel.split(',').some(s => marks.includes(s.trim())) ? {} : null),
+    };
     afterRequest({
       target: { closest: () => null },
       detail: {
@@ -98,6 +102,21 @@ console.log('\nhtmx after-request follows the flag, not the URL');
   t.fire({ path: '/api/v3/config/main', reportsItself: true,
            body: { status: 'success', message: 'Configuration saved successfully', restart_required: true } });
   ok('a flagged answer raises it, even from a form that reports itself', t.banner.style.display === 'block');
+}
+
+console.log('\nthe server message toast');
+{
+  const notes = [];
+  const t = load(notes);
+  const answer = { status: 'success', message: 'Schedule saved' };
+  t.fire({ body: answer });
+  ok('a plain htmx request shows the server message', notes.length === 1 && notes[0][0] === 'Schedule saved', notes);
+  t.fire({ body: answer, marks: ['[hx-on\\:htmx\\:after-request]'] });
+  ok('a form with its own hx-on after-request handler does not', notes.length === 1, notes);
+  // Page modules (js/pages/schedule.js) report a form's save from a listener
+  // and mark the form data-reports-result instead of an hx-on attribute.
+  t.fire({ body: answer, marks: ['[data-reports-result]'] });
+  ok('nor does a form a page module reports for (data-reports-result)', notes.length === 1, notes);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
