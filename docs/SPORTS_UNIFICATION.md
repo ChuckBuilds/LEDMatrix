@@ -324,7 +324,7 @@ across the nine plugins first: `_is_favorite_game` on each manager role, the
 two selection methods, the real `update()` with favourites-only on and off,
 and the INFO summary; the reconcile extends it to 217 (a lower-case and a
 padded favourite through `update()`, and the live favourite boost). The reconcile (ledmatrix-plugins
-`claude/family6-reconcile`) made `_is_favorite_game` one body on `SportsCore`
+#635) made `_is_favorite_game` one body on `SportsCore`
 (afl and soccer's `SportsUpcoming` copies and five `SportsLive` copies, all
 redundant, are gone), added `_favorite_code` beside it, and gave nrl a
 `_favorite_key` override instead of its own copies. So that a lower-case
