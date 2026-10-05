@@ -19,6 +19,13 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixes
+
+- A failed on-demand request no longer comes back after a restart as the
+  session it ended. A failed request ends any running session, but the
+  saved copy of that session (`display_on_demand_config`) was left behind,
+  so the next restart of the display resumed it.
+
 ## 3.8.2
 
 The display hands freed memory back to the OS (#774), and sports consolidation
