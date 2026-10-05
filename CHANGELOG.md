@@ -1590,6 +1590,17 @@ read any of them:
 
 ### Fixes
 
+- Updating a plugin from the store no longer deletes the files it wrote
+  beside itself. A monorepo update replaces the plugin directory with the
+  fresh download and deletes the old copy, so calendar's Google OAuth files
+  (`token.pickle`, `credentials.json`) were lost on every update and the
+  calendar stopped until they were restored by hand. Before the old copy is
+  removed, the update now copies over anything the plugin's `.gitignore`
+  excludes plus known secret/state files (`*.pickle`, `token.json`,
+  `credentials.json`, `config_secrets.json`, `.pkce_code_verifier`); files the
+  new release ships are never overwritten, and byte code is not carried. A
+  plugin updated with `git pull` no longer sweeps an untracked token into the
+  auto-stash, which is never popped (`src/plugin_system/plugin_local_files.py`).
 - Quieter routine logging. Every rotation logged each mode twice
   ("Switching to mode", then "Processing mode"), and a mode with nothing to
   show added "display() returned False" and "No content to display". Those
