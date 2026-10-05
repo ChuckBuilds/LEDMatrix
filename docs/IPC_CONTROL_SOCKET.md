@@ -489,7 +489,7 @@ restart banner, as before.
 
 | Mailbox | Written by | Read by the display | While the socket is up |
 |---|---|---|---|
-| `display_on_demand_request` | the web interface, only on fallback; four plugins directly (birdnet-go, mqtt-notifications, on-air, pomodoro-timer) | the render thread, `_poll_on_demand_requests()` | looked at every 1 s (`MAILBOX_POLL_INTERVAL_WITH_SOCKET`), 0.25 s without a socket |
+| `display_on_demand_request` | the web interface, only on fallback; plugins that predate `BasePlugin.request_on_demand()`, or run on a core without it | the render thread, `_poll_on_demand_requests()` | looked at every 1 s (`MAILBOX_POLL_INTERVAL_WITH_SOCKET`), 0.25 s without a socket |
 | `plugin_error_clear_request` | the web interface, only on fallback | the error publisher's thread, every 5 s tick | unchanged rate |
 
 A look is one `stat()` of the mailbox file (`CacheManager.file_signature`):
@@ -502,8 +502,25 @@ the mailbox instead of being re-read until it expires.
 
 A request that comes through the on-demand mailbox while the socket is up
 is logged once per writer (`came through the file mailbox although the
-control socket is up`), which names the plugins that still need an
-in-process way in before the mailbox is removed.
+control socket is up`), which names the plugins that still write it.
+
+### Plugins in the display process
+
+A plugin asks for the screen with `BasePlugin.request_on_demand()` and gives
+it back with `end_on_demand()` (see "On-demand display" in
+[PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md)). Neither goes through
+the socket or a file: `PluginManager` hands the mailbox-shaped request,
+marked `source: 'plugin'`, to `DisplayController.submit_plugin_on_demand`,
+which queues it in memory (at most `PLUGIN_ON_DEMAND_QUEUE_SIZE`, 32) from
+whatever thread the plugin called on, and wakes the render thread through
+the socket's queue flag (`ControlServer.wake()`). The render thread applies
+it in `_drain_control_commands`, after the socket's commands, through the
+same `_handle_on_demand_request`, so it lands within a frame like a socket
+command. Without a socket it lands on the next pending-changes pass (typically
+within 0.25 s). A plugin's stop ends only a session that plugin owns. The four
+plugins that wrote the mailbox (birdnet-go, mqtt-notifications, on-air,
+pomodoro-timer) use it where the core has it and write the mailbox
+otherwise.
 
 ## Robustness
 
@@ -659,9 +676,11 @@ device never touches the live display.
      running display (their routes say so); they are not mailboxes.
 5. **Remove the mailboxes (next release).** Once every device has run a
    display with stage 4, the web interface stops writing both mailboxes and
-   the display stops reading them. The four plugins that write
-   `display_on_demand_request` need an in-process way to ask for the screen
-   first. The display also stops writing `display_current_state`,
+   the display stops reading them. The four plugins that wrote
+   `display_on_demand_request` now have an in-process way to ask for the
+   screen (`BasePlugin.request_on_demand()` / `end_on_demand()`, see
+   "Plugins in the display process"); they keep the mailbox write only as
+   their fallback on older cores. The display also stops writing `display_current_state`,
    `display_on_demand_state` and `plugin_runtime_snapshot` once the web
    interface no longer falls back to them.
 

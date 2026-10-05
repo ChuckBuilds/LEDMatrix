@@ -15,6 +15,7 @@ import sys
 import time
 import threading
 import types
+import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Any, Tuple, Union
 import logging
@@ -214,6 +215,9 @@ class PluginManager:
         # add_update_listener(). A tuple, replaced rather than mutated, so the
         # worker can iterate it without a lock.
         self._update_listeners: Tuple[Callable[[str], None], ...] = ()
+        # Where plugins' on-demand requests go: the display controller's
+        # submit_plugin_on_demand. See set_on_demand_handler().
+        self._on_demand_handler: Optional[Callable[[Dict[str, Any]], bool]] = None
         # Config changes that found the plugin's lock busy, latest per plugin,
         # with the instance they were meant for. See apply_config_change().
         self._deferred_config_changes: Dict[str, Tuple[Any, Dict[str, Any]]] = {}
@@ -1844,3 +1848,73 @@ class PluginManager:
             done = sorted(self._completed_updates)
             self._completed_updates.clear()
             return done
+
+    # -- on-demand requests from plugins -------------------------------------
+
+    def set_on_demand_handler(
+            self, handler: Optional[Callable[[Dict[str, Any]], bool]]) -> None:
+        """Route plugins' on-demand requests to ``handler`` (None: nowhere).
+
+        The display controller sets its ``submit_plugin_on_demand`` here
+        before any plugin loads. The handler takes a mailbox-shaped request
+        from any thread, queues it for the render thread and returns True,
+        or False when it could not. A plugin manager with no handler (the
+        web interface's, a test's, scripts/check_plugin.py's) has no screen
+        to give, so request_on_demand() there answers None.
+        """
+        self._on_demand_handler = handler
+
+    def request_on_demand(self, plugin_id: str, mode: Optional[str] = None,
+                          duration: Optional[float] = None,
+                          pinned: bool = False) -> Optional[str]:
+        """Ask the display to show ``plugin_id`` now. Safe from any thread.
+
+        BasePlugin.request_on_demand() lands here; see it for the arguments.
+        Returns the request id once the display has queued the request (it
+        is applied on the render thread within a frame or so), or None when
+        this process has no display to ask or its queue is full.
+        """
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ValueError('plugin_id is required')
+        if mode is not None and (not isinstance(mode, str) or not mode):
+            raise ValueError('mode must be a non-empty string or None')
+        if duration is not None:
+            if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+                raise ValueError('duration must be a number of seconds or None')
+            if not math.isfinite(duration) or duration <= 0:
+                duration = None   # the display reads these as "no limit" too
+            else:
+                duration = float(duration)
+        return self._submit_on_demand({
+            'action': 'start', 'plugin_id': plugin_id, 'mode': mode,
+            'duration': duration, 'pinned': bool(pinned)})
+
+    def end_on_demand(self, plugin_id: str) -> Optional[str]:
+        """Give the screen back, if ``plugin_id``'s on-demand session has it.
+
+        BasePlugin.end_on_demand() lands here. A session the plugin does not
+        own (the user started another plugin from the web interface, say) is
+        left alone. Returns the request id once queued, or None as
+        request_on_demand() does.
+        """
+        if not isinstance(plugin_id, str) or not plugin_id:
+            raise ValueError('plugin_id is required')
+        return self._submit_on_demand({'action': 'stop', 'plugin_id': plugin_id})
+
+    def _submit_on_demand(self, request: Dict[str, Any]) -> Optional[str]:
+        # __dict__.get: tests build bare managers with PluginManager.__new__.
+        handler = self.__dict__.get('_on_demand_handler')
+        if handler is None:
+            return None
+        request_id = str(uuid.uuid4())
+        request.update({'request_id': request_id, 'timestamp': time.time(),
+                        'source': 'plugin'})
+        try:
+            accepted = handler(request)
+        except Exception as exc:  # pylint: disable=broad-except
+            self._warn_rate_limited(
+                "on-demand-handler",
+                "The on-demand request from plugin %s failed: %r",
+                request.get('plugin_id'), exc)
+            return None
+        return request_id if accepted else None

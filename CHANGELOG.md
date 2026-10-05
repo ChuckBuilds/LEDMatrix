@@ -19,6 +19,30 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Plugins ask for the screen in-process: `request_on_demand()` / `end_on_demand()`
+
+The in-process way in that stage 5 of the control socket needed
+(`docs/IPC_CONTROL_SOCKET.md`, "Plugins in the display process").
+
+- **`BasePlugin.request_on_demand(mode=None, duration=None, pinned=False)`**
+  shows the plugin now, and **`BasePlugin.end_on_demand()`** gives the
+  screen back. Both are safe from any thread (an MQTT callback, a timer
+  thread): `PluginManager.request_on_demand()` / `end_on_demand()` hand the
+  request to `DisplayController.submit_plugin_on_demand()`, which only
+  queues it (at most 32) and wakes the render thread through the control
+  socket's flag (`ControlServer.wake()`). The render thread applies it with
+  the socket's commands, through the same handler as a web on-demand
+  request, so it lands within a frame rather than on the mailbox's
+  once-a-second look. Both return the request id, or `None` when no display
+  runs in the process (the web interface, `scripts/check_plugin.py`) or the
+  queue is full.
+- **A plugin's stop ends only its own session.** A mailbox stop still ends
+  any session, whoever started it.
+- **Older cores.** Plugins detect the methods with `hasattr` and write the
+  `display_on_demand_request` mailbox when they are missing or answer
+  `None`; the pattern is in `docs/PLUGIN_API_REFERENCE.md` ("On-demand
+  display"). The display still reads the mailbox for plugins that write it.
+
 ### Web UI: Schedule and General are ES-module pages (stage 3)
 
 - The Schedule and General tabs follow stage 2 (#727): their inline
