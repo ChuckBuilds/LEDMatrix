@@ -57,7 +57,9 @@ Methods that stay per-plugin, because they are not identical across the eight
 ``_get_layout_offset``, ``_by_importance``, ``_other_games_window``,
 ``_upcoming_date_and_time_text``, ``_extract_game_details_common``,
 ``_load_division_team_ids``, ``_get_timezone``, ``_is_favorite_game``,
-``_is_game_really_over``, ``_is_ranked_game``, ``_passes_other_filters``.
+``_is_ranked_game``, ``_passes_other_filters``. (``_is_game_really_over``,
+which ``_detect_stale_games`` below calls, was here too until the plugins
+reconciled it; it is now ``src.common.sports_game_over``.)
 
 Of the fourteen shared class constants, thirteen are identical everywhere and
 live here. Only ``_SCORE_PROBE_TEXT`` varies -- afl and basketball reach three digits

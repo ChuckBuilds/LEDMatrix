@@ -26,7 +26,9 @@ since 3.8.0. Highlights: the default 50 px/s and every other held-frame speed
 now scroll cleanly (below), Raspberry Pi OS Bookworm is supported alongside
 Trixie, updates refresh the systemd units, the display control socket gains
 stages 2 and 3, the shared fetch service lands (stages 1 and 2), and a run of
-web UI and Plugin Manager fixes. The new modules are core-internal and set no
+web UI and Plugin Manager fixes. One new module is for plugins:
+`src.common.sports_game_over` (sports family 5), which the scoreboards adopt
+by flooring on 3.8.1; the other new modules are core-internal and set no
 `ledmatrix_min_version` floor.
 
 ### Scroll speed
@@ -53,7 +55,156 @@ so only speeds of one pixel per refresh looked right.
   half a refresh, since the second blit has to land before the next vsync.
   (#711)
 
+### Plugins ask for the screen in-process: `request_on_demand()` / `end_on_demand()`
+
+The in-process way in that stage 5 of the control socket needed
+(`docs/IPC_CONTROL_SOCKET.md`, "Plugins in the display process").
+
+- **`BasePlugin.request_on_demand(mode=None, duration=None, pinned=False)`**
+  shows the plugin now, and **`BasePlugin.end_on_demand()`** gives the
+  screen back. Both are safe from any thread (an MQTT callback, a timer
+  thread): `PluginManager.request_on_demand()` / `end_on_demand()` hand the
+  request to `DisplayController.submit_plugin_on_demand()`, which only
+  queues it (at most 32) and wakes the render thread through the control
+  socket's flag (`ControlServer.wake()`). The render thread applies it with
+  the socket's commands, through the same handler as a web on-demand
+  request, so it lands within a frame rather than on the mailbox's
+  once-a-second look. Both return the request id, or `None` when no display
+  runs in the process (the web interface, `scripts/check_plugin.py`) or the
+  queue is full.
+- **A plugin's stop ends only its own session.** A mailbox stop still ends
+  any session, whoever started it.
+- **Older cores.** Plugins detect the methods with `hasattr` and write the
+  `display_on_demand_request` mailbox when they are missing or answer
+  `None`; the pattern is in `docs/PLUGIN_API_REFERENCE.md` ("On-demand
+  display"). The display still reads the mailbox for plugins that write it.
+
+### Web UI: Schedule and General are ES-module pages (stage 3)
+
+- The Schedule and General tabs follow stage 2 (#727): their inline
+  `<script>` blocks are now `static/v3/js/pages/schedule.js` and
+  `pages/general.js`, started once per swap-in by the page registry and
+  stopped on swap-out. Neither partial has an inline script, `onclick`,
+  `onsubmit` or `oninput` any more.
+- Schedule: both pickers are drawn from the saved config the partial
+  carries as JSON in `data-schedule-config` / `data-dim-schedule-config`.
+  The forms' `hx-on` save handlers became one `htmx:afterRequest` listener
+  on the page; the forms are marked `data-reports-result`, which `app.js`
+  now honours like an `hx-on` after-request handler, so a save still shows
+  one notification.
+- General: the timezone picker reads the saved zone from `data-timezone`.
+  The Security section's forms and buttons carry `data-action` and use one
+  delegated submit and one delegated click listener, so a token row added
+  after a create needs no listener of its own. Requests go through
+  `core/api.js`: the optional login's "sign in again" answer no longer
+  flashes an error while the page navigates to the login form. A login
+  change made just before a swap is still reported.
+- Old globals keep working as deprecated aliases through `window.LEDMatrix`
+  (one console warning each): `handleScheduleResponse`,
+  `handleDimScheduleResponse`, and `webLogin` (its five methods).
+- New DOM suites `test/js/dom/test_{schedule,general}_page.js`;
+  `unit/test_general_web_login_token.js` imports the module instead of
+  slicing the template, and `unit/test_restart_banner.js` covers
+  `data-reports-result`.
+
+### The control socket carries every web command; the mailboxes are a fallback
+
+Stage 4 of the web → display control socket (`docs/IPC_CONTROL_SOCKET.md`).
+
+- **Mailbox only when the socket cannot carry it.** The on-demand routes
+  (`POST /api/v3/display/on-demand/start` and `/stop`) write the
+  `display_on_demand_request` mailbox only when the display never had the
+  request: no socket (a stopped display, one older than the socket), a
+  refused or timed-out connect, or a display too old to know the command.
+  A display that had it and refused or did not answer (a full queue, bad
+  arguments, silence after the send) is answered `503` (`400` for bad
+  arguments) with `socket_error`, and no mailbox copy is written: the
+  display may have applied it, or would refuse the copy too. A stop with
+  `stop_service` still stops the service. `src.ipc.client.should_fall_back()`
+  holds the rule; `ControlError.sent` says whether the display had the
+  request.
+- **`errors.clear`.** `POST /api/v3/errors/clear` goes over the socket: the
+  display clears its error records and republishes its error snapshot
+  before it answers, so the response says `applied: true` with the
+  display's own `cleared_count`. The `plugin_error_clear_request` mailbox
+  is written only on the same fallback rule (a display from before this
+  release answers `unknown_command`, and gets the mailbox). A display that
+  had it and failed answers `503`. The error snapshot gains
+  `applied_clear_cutoff`, so an older mailbox request is not shown as
+  pending once a wider clear has been applied.
+- **The display looks at the mailboxes less, and more cheaply.** While the
+  control socket is up, the on-demand mailbox is looked at once a second
+  instead of every 0.25 s (`MAILBOX_POLL_INTERVAL_WITH_SOCKET`), and both
+  mailboxes are read only when their file changed since the last look:
+  otherwise a look is one `stat()` (`CacheManager.file_signature`,
+  `MailboxWatch`). A socket command no longer reads or deletes the mailbox
+  file. A duplicate already processed is taken out of the mailbox, rather
+  than re-read for an hour. Without a socket (Windows,
+  `LEDMATRIX_CONTROL_SOCKET=off`) the mailbox is read every 0.25 s as before.
+- **Kept for one release.** The display still reads both mailboxes, so an
+  older web interface (or a web user not yet in the socket's group) keeps
+  working during an upgrade, and still writes `display_current_state`,
+  `display_on_demand_state` and `plugin_runtime_snapshot` for the readers'
+  fallback. A request that comes through the on-demand mailbox while the
+  socket is up is logged once per writer: plugins that write
+  `display_on_demand_request` themselves (birdnet-go, mqtt-notifications,
+  on-air, pomodoro-timer) now get the screen within a second rather than a
+  quarter second, and need an in-process way in before the mailbox goes.
+
+### Display loop stage 3: a ScreenRunner, and the Arbiter decides every screen
+
+Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
+
+- Each screen runs in `ScreenRunner` (`src/screen_runner.py`): the first
+  frame, the 125 Hz or 1 Hz frame loop, the make-up dwell and the
+  dynamic-duration exit, moved out of `DisplayController.run()` with their
+  pacing unchanged. It paces with an injected clock and returns an
+  `Outcome` whose `ExitReason` is `DURATION`, `CYCLE_COMPLETE`, `EMPTY`,
+  `ERROR`, `DISPLAY_FALSE`, `RELOAD` or `PREEMPTED`. `PREEMPTED` replaces
+  the five "did the mode change under this screen?" re-checks.
+- `Arbiter.decide()` now answers for on-demand, live priority and the
+  rotation too (Sources `ON_DEMAND`, `LIVE`, `ROTATION`); `LEGACY` means
+  only Vegas, whose iteration moves to stage 4. The on-demand session, the
+  rotation's position and the live resume point are snapshotted into
+  `ArbiterState`, whose pure transitions (`next_on_demand`, `claim_live`,
+  `release_live`, `after`) replace the bookkeeping in `_resolve_active_mode`,
+  `_apply_live_priority` and `_advance_after_screen`.
+- Between frames, the runner's service points make one
+  `decide(..., running=plan)` call instead of `_check_live_takeover`,
+  `_screen_preempted` and `_wifi_notice_pending` one after another. The
+  WiFi notice file is still read exactly where it was (the read is
+  throttled and deletes an expired file).
+- A Vegas pass scans the live-priority plugins once instead of twice at the
+  same instant.
+- The golden traces are byte-identical, and a capture of all 67 harness
+  runs in the suite (every sleep, frame, read and scan) matches `main`
+  apart from the duplicate scan above and one moment: in the 125 Hz loop a
+  live takeover's state change is made after the frame's 8 ms sleep rather
+  than before it, ending the screen at the same frame as before.
+- New module: `src/screen_runner.py`. Core-internal: plugins have no reason
+  to import it, so it sets no `ledmatrix_min_version` floor.
+
+### A scrolling screen held by its plugin's update() is reported
+
+- While a plugin's `update()` runs it holds the plugin's lock, and that
+  plugin's frames are skipped: on a scroller, a frozen strip, with nothing
+  logged (and a freeze of 5 s or more is a gap, not a freeze, to the frame
+  stats). The high-FPS loop now times each run of skipped frames; one of
+  250 ms or more logs `Display of <plugin> held N ms by its update()`
+  (rate-limited per plugin) when it ends, and is recorded on the plugin's
+  health as a `display hold` busy skip, which never counts toward the
+  circuit breaker. The 1 Hz loop is left out: its frames are a second apart,
+  so one skipped frame there measures nothing and freezes nothing visible.
+
 ### Fixed
+
+- Unloading a plugin now forgets the fonts its manifest registered, not only
+  the fonts it reported using. Its `plugin_id::family` entries kept resolving
+  and their cached font objects stayed alive until a restart, and a family a
+  reinstalled plugin's manifest dropped stayed registered. The new
+  `FontManager.forget_plugin_fonts(plugin_id)` does the cleanup;
+  `PluginManager.unload_plugin()` and a failed load call it alongside
+  `forget_manager_fonts()`, and a reload registers the manifest's fonts again.
 
 - The web preview and `/api/v3/display/current` no longer stay black for a
   whole screen that draws its card once and then holds it. The snapshot is
@@ -67,6 +218,18 @@ so only speeds of one pixel per refresh looked right.
   changed frame, and the render loop writes it (`write_owed_snapshot()`)
   once the interval has passed. The cadence is unchanged, and nothing extra
   runs when no frame is owed.
+- The installed-plugins list (`GET /api/v3/plugins/installed`) no longer
+  waits on GitHub. Its comment said the registry lookup made no network call,
+  but on a cold or expired cache `get_registry_info()` downloads plugins.json
+  (10 s timeout, three attempts), and with nothing cached to fall back on
+  every plugin's lookup repeated that: offline, 5 plugins took 11 s with DNS
+  failing and 2 plugins 65 s with the route black-holed, on every load. The
+  list now reads the registry copy already in memory, however old
+  (`get_cached_registry_info()`); with none yet it returns without update or
+  verified badges and starts one background refresh
+  (`refresh_registry_in_background()`, backing off for a minute after an
+  offline failure), so a later load has them. The store, install and update
+  paths still fetch as before.
 
 ### ESPN date-range fetches: fewer requests, fewer at once
 
@@ -90,6 +253,18 @@ soccer-scoreboard 2.39.2, alternating runs: **~450 requests per start, peak
 - A new process starts as if a range had just been rejected, so it no longer
   spends one doomed 400 per window at every start (eleven at once from a
   soccer board); the range is still retried `RANGE_RETRY_SECONDS` in.
+
+### Fetch stats: bytes on the wire, not just decoded
+
+`GET /api/v3/plugins/fetch-stats` reported only `bytes`, the decoded body
+size, and that read as the download volume. ESPN gzips every scoreboard, so
+it overstated what crossed the network about 14x: a college football
+Saturday's scoreboard is 865 KB decoded and 63 KB on the wire, and ledpi's
+"643 MB in 6 hours" of football was ~47 MB of actual traffic. Every counter
+set (totals, per plugin, per host) now has `wire_bytes` too, read from
+urllib3's count of the raw bytes it took off the socket. A response with no
+urllib3 response behind it is counted at its decoded size. `bytes` keeps its
+meaning.
 
 ### Cheap per-frame and per-fetch savings
 
@@ -529,6 +704,16 @@ policies are unchanged.
 - `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
   Core-internal: plugins have no reason to import it, so it sets no
   `ledmatrix_min_version` floor.
+- `src/common/sports_game_over.py` -- `SportsGameOverMixin`, sports
+  consolidation family 5: `_is_game_really_over`, the scoreboards'
+  `SportsLive` check that drops a game ESPN still lists as live, once the
+  plugins made their five bodies one. Over on a final period text, or on a
+  0:00 clock from period `FINAL_PERIOD` on unless the score is level (a tie
+  at the end of regulation goes to overtime). `FINAL_PERIOD` is the per-sport
+  class attribute, `None` by default (the clock never ends a game); the
+  scoreboards declare 3 (hockey), 4 (basketball, football, lacrosse) or
+  `None`. List the mixin before `SportsLiveSharedMixin`. A plugin may import
+  it once it floors on 3.8.1, and deletes its copy then. (#770)
 
 ### Tooling
 
@@ -1439,6 +1624,17 @@ read any of them:
 
 ### Fixes
 
+- Updating a plugin from the store no longer deletes the files it wrote
+  beside itself. A monorepo update replaces the plugin directory with the
+  fresh download and deletes the old copy, so calendar's Google OAuth files
+  (`token.pickle`, `credentials.json`) were lost on every update and the
+  calendar stopped until they were restored by hand. Before the old copy is
+  removed, the update now copies over anything the plugin's `.gitignore`
+  excludes plus known secret/state files (`*.pickle`, `token.json`,
+  `credentials.json`, `config_secrets.json`, `.pkce_code_verifier`); files the
+  new release ships are never overwritten, and byte code is not carried. A
+  plugin updated with `git pull` no longer sweeps an untracked token into the
+  auto-stash, which is never popped (`src/plugin_system/plugin_local_files.py`).
 - Quieter routine logging. Every rotation logged each mode twice
   ("Switching to mode", then "Processing mode"), and a mode with nothing to
   show added "display() returned False" and "No content to display". Those

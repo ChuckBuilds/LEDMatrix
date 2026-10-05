@@ -3,8 +3,13 @@
 Every failure -- no socket (the display is stopped, or predates the socket),
 a refused or timed-out connection, a reply that breaks the contract, or an
 error the display returned -- raises :class:`ControlError` with a short
-``reason``, and the caller falls back to the file mailbox. Nothing here
-blocks for longer than ``timeout`` in total.
+``reason``. Nothing here blocks for longer than ``timeout`` in total.
+
+Whether the caller may then write the file mailbox instead is
+:func:`should_fall_back`: only when the display never took the request (it
+could not be reached, or it is too old to know the command). A display that
+took the request and then failed, refused or went quiet is answered as
+that, not posted a second time through the mailbox.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from src.ipc.contract import (
     SUBSCRIBE_KEEPALIVE_SECONDS,
     SUPPORTED_VERSIONS,
     Command,
+    ErrorCode,
     FrameReader,
     ProtocolError,
     Request,
@@ -49,15 +55,47 @@ class ControlError(Exception):
     ``refused``, ``timeout``, ``closed``, ``bad_response``, ``invalid_request``.
     When the display answered with an error, ``reason`` is that error's
     :class:`~src.ipc.contract.ErrorCode` (``busy``, ``unknown_command``, ...).
+
+    ``sent`` is True once the whole request was written to a connected
+    display, which may then have acted on it. A refusal the display sends
+    before it reads anything (``forbidden``, too many connections) carries
+    no request id and leaves ``sent`` False.
     """
 
-    def __init__(self, reason: str, message: str = ''):
+    def __init__(self, reason: str, message: str = '', *, sent: bool = False):
         super().__init__(reason, message)
         self.reason = reason
         self.message = message
+        self.sent = sent
 
     def __str__(self) -> str:
         return f'{self.reason}: {self.message}' if self.message else self.reason
+
+
+#: Answers from a display that read the request but does not speak it: one
+#: older than the command (an upgrade in progress) or the protocol version.
+#: It did nothing, so the mailbox is the way to reach it.
+UPGRADE_REASONS = frozenset({ErrorCode.UNKNOWN_COMMAND, ErrorCode.UNSUPPORTED_VERSION})
+
+
+def should_fall_back(error: BaseException) -> bool:
+    """May the caller write the file mailbox after ``error``?
+
+    Yes when the display never took the request: there is no socket (the
+    display is stopped, predates the socket, or it is switched off), the
+    connection was refused or timed out, the display turned the connection
+    away before reading it, or it is too old to know the command
+    (:data:`UPGRADE_REASONS`). Also for an error that is not a
+    :class:`ControlError` (a bug in the client), as before.
+
+    No once the display had the request: a ``busy`` queue, ``invalid_args``,
+    an ``internal`` error, or a timeout or hang-up after the request was
+    sent. The display may have applied it, or would refuse it from the
+    mailbox too, so a second copy there only hides the failure.
+    """
+    if not isinstance(error, ControlError):
+        return True
+    return not error.sent or error.reason in UPGRADE_REASONS
 
 
 def request(cmd: str, args: Optional[Mapping[str, Any]] = None, *,
@@ -93,11 +131,14 @@ def request(cmd: str, args: Optional[Mapping[str, Any]] = None, *,
     # A refusal before the request was read (forbidden, too many
     # connections) carries no id.
     if response.id != request_id and not (response.id is None and not response.ok):
-        raise ControlError('bad_response', 'the reply is for a different request')
+        raise ControlError('bad_response', 'the reply is for a different request', sent=True)
     if not response.ok:
         error = response.error
+        # No id: refused at the door (forbidden, too many connections),
+        # before the display read the request.
         raise ControlError(error.code if error else 'bad_response',
-                           error.message if error else '')
+                           error.message if error else '',
+                           sent=response.id is not None)
     return dict(response.result or {})
 
 
@@ -142,26 +183,31 @@ def _connect(paths: Sequence[str], deadline: float) -> socket.socket:
 
 
 def _exchange(sock: socket.socket, payload: bytes, deadline: float) -> Response:
+    """Send ``payload`` and read the reply. A failure once the whole request
+    is written raises with ``sent=True``: the display may have it."""
+    sent = False
     try:
         sock.settimeout(_remaining(deadline))
         sock.sendall(payload)
+        sent = True
         reader = FrameReader(MAX_MESSAGE_BYTES)
         while True:
             sock.settimeout(_remaining(deadline))
             data = sock.recv(4096)
             if not data:
-                raise ControlError('closed', 'the display closed the connection')
+                raise ControlError('closed', 'the display closed the connection', sent=sent)
             lines = reader.feed(data)
             if lines:
                 return Response.from_dict(decode_message(lines[0]))
     except socket.timeout:
-        raise ControlError('timeout', 'no reply in time') from None
+        raise ControlError('timeout', 'no reply in time', sent=sent) from None
     except ProtocolError as e:
-        raise ControlError('bad_response', e.message) from None
-    except ControlError:
+        raise ControlError('bad_response', e.message, sent=sent) from None
+    except ControlError as e:
+        e.sent = e.sent or sent
         raise
     except OSError as e:
-        raise ControlError('closed', str(e)) from None
+        raise ControlError('closed', str(e), sent=sent) from None
 
 
 # -- commands ---------------------------------------------------------------------------
@@ -225,6 +271,21 @@ def plugin_reload(plugin_id: str, *, timeout: Optional[float] = None,
     return request(Command.PLUGIN_RELOAD, {'plugin_id': plugin_id},
                    timeout=_awaited_timeout(Command.PLUGIN_RELOAD) if timeout is None
                    else timeout, paths=paths)
+
+
+def errors_clear(request_id: str, cutoff: float, *,
+                 timeout: float = DEFAULT_TIMEOUT_SECONDS,
+                 paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Have the display forget the plugin errors recorded at or before
+    ``cutoff`` (epoch seconds) and publish its error snapshot again.
+
+    Returns :class:`~src.ipc.contract.ErrorsClearResult` once it is done.
+    Raises :class:`ControlError`: ``unknown_command`` from a display older
+    than the command, which still reads the ``plugin_error_clear_request``
+    mailbox.
+    """
+    return request(Command.ERRORS_CLEAR, {'cutoff': cutoff}, request_id=request_id,
+                   timeout=timeout, paths=paths)
 
 
 def ping(*, timeout: float = DEFAULT_TIMEOUT_SECONDS,

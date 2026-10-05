@@ -106,8 +106,13 @@ def get_installed_plugins():
             plugin_config = {}
         enabled = bool(plugin_config.get('enabled', False))
 
-        # Verified + latest published version from registry (no network call)
-        store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
+        # Verified + latest published version from the registry copy already
+        # in memory. Never a fetch: on a cold cache get_registry_info would
+        # download plugins.json, and offline wait out its timeout and retries
+        # for every plugin. With no copy yet these are absent (no update or
+        # verified badge) and a background refresh fills them in for a
+        # later load.
+        store_info = api_v3.plugin_store_manager.get_cached_registry_info(plugin_id)
         verified = store_info.get('verified', False) if store_info else False
         latest_version = store_info.get('latest_version', '') if store_info else ''
         installed_version = plugin_info.get('version', '')

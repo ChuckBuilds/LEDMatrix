@@ -41,6 +41,15 @@ def _reload(plugin_id):
     return _command(Command.PLUGIN_RELOAD, PluginReloadArgs(plugin_id))
 
 
+def _screen(mode):
+    """A rotation screen of ``mode``, as the ScreenRunner hands it to the
+    1 Hz loop's frame wait."""
+    from src.display_arbiter import ArbiterState, rotation_plan
+    from src.screen_runner import Screen
+    plan = rotation_plan(ArbiterState(current_mode=mode))
+    return Screen(plan, plugin=None, accepts_display_mode=False, start=0.0)
+
+
 @pytest.fixture
 def dc(test_display_controller):
     c = test_display_controller
@@ -253,7 +262,8 @@ class TestRealTimeWake:
         dc.on_demand_active = False
         dc._activate_on_demand = MagicMock(
             side_effect=lambda request: setattr(dc, 'current_display_mode', 'weather'))
-        dc._wifi_notice_pending = MagicMock(return_value=False)
+        dc._wifi_notice_pending = MagicMock(return_value=False)   # the dwell's check
+        dc._read_wifi_notice = MagicMock(return_value=None)       # the frame wait's
         dc._tick_plugin_updates = MagicMock()
         dc._check_live_takeover = MagicMock()
         dc.cache_manager.get = MagicMock(return_value=None)
@@ -282,10 +292,10 @@ class TestRealTimeWake:
             dc.current_display_mode = 'clock'
             stamps = []
             t = self._post_later(server, self._start_line(f's{i}'), 0.05, stamps)
-            ended = dc._wait_frame_interval(1.0, 'clock')
+            ended = dc._wait_frame_interval(1.0, _screen('clock'))
             woke = time.monotonic()
             t.join()
-            assert ended is True
+            assert ended is not None
             latencies.append(woke - stamps[0])
         latencies.sort()
         print(f"static-screen wake latency: median {latencies[5] * 1000:.2f} ms, "
@@ -315,7 +325,7 @@ class TestRealTimeWake:
                            'args': {'brightness': 33}}).encode()
         started = time.monotonic()
         t = self._post_later(server, line, 0.1, stamps)
-        assert dc._wait_frame_interval(0.5, 'clock') is False
+        assert dc._wait_frame_interval(0.5, _screen('clock')) is None
         assert time.monotonic() - started >= 0.49
         t.join()
         dc.display_manager.set_brightness.assert_called_once_with(33)
@@ -323,7 +333,7 @@ class TestRealTimeWake:
     def test_without_a_socket_it_is_a_plain_sleep(self, dc):
         dc._control_server = None
         started = time.monotonic()
-        assert dc._wait_frame_interval(0.2, 'clock') is False
+        assert dc._wait_frame_interval(0.2, _screen('clock')) is None
         assert time.monotonic() - started >= 0.19
 
 

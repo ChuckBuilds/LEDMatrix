@@ -59,7 +59,10 @@ says how old with ``cache_max_age`` (``fetch_get(..., cache_max_age=ttl)``;
 Identical means what the validator store keys on: URL, query, effective
 headers and, for a session with cookies or auth, the session.
 
-**Counters.** Requests, merged requests, bytes, 304s, errors, HTTP errors,
+**Counters.** Requests, merged requests, bytes (``bytes`` decoded, as the
+caller reads them; ``wire_bytes`` as they crossed the network, which is
+what a metered connection pays for -- ESPN gzips, so the two differ ~14x),
+304s, errors, HTTP errors,
 adapter retries, throttled requests and seconds waited, plus requests
 answered without the network: ``memo_hits`` (the response cache) and
 ``cache_hits`` / ``legacy_cache_hits`` (a shared ESPN scoreboard cache entry,
@@ -201,6 +204,7 @@ _COUNTER_FIELDS = (
     "throttled",     # requests that waited for a host budget
     "overruns",      # requests that went after max_wait_seconds anyway
     "bytes",         # decoded response body bytes received
+    "wire_bytes",    # body bytes as they came off the socket (still compressed)
     "wait_seconds",  # time spent waiting for host budgets
     "memo_hits",     # answered from the response cache (max-age); nothing sent
     "cache_hits",    # scoreboard fetches answered from a shared ESPN cache entry
@@ -614,6 +618,30 @@ def _body_of(response: Any) -> Optional[bytes]:
         return None
     content = getattr(response, "_content", None)
     return content if isinstance(content, bytes) else None
+
+
+def _wire_bytes_of(response: Any, body: Optional[bytes]) -> int:
+    """How many body bytes came off the socket for ``response``: the
+    compressed size when the server sent gzip, which ESPN does for every
+    scoreboard (63 KB on the wire for an 865 KB college football Saturday).
+
+    urllib3's ``HTTPResponse.tell()`` counts the raw bytes read before
+    decoding. A response without one (a test double, an adapter that is not
+    urllib3) or one whose body was not read is counted at its decoded size,
+    or as 0, so the counter never claims less than it can prove.
+    """
+    if body is None:
+        return 0
+    raw = getattr(response, "raw", None)
+    tell = getattr(raw, "tell", None)
+    if callable(tell):
+        try:
+            read = tell()
+        except Exception:
+            read = None
+        if isinstance(read, int) and not isinstance(read, bool) and read > 0:
+            return read
+    return len(body)
 
 
 def _retries_of(response: Any) -> int:
@@ -1117,6 +1145,7 @@ class FetchService:
                         http_errors=int(status is not None and status >= 400),
                         retries=_retries_of(response),
                         bytes=len(body) if body is not None else 0,
+                        wire_bytes=_wire_bytes_of(response, body),
                         throttled=int(waited > 0), overruns=int(overrun),
                         wait_seconds=waited)
         except Exception:

@@ -42,11 +42,11 @@ each other. They share three things:
 | State | Where | Written by | Read by |
 |---|---|---|---|
 | On-demand command | control socket `/run/ledmatrix/control.sock` ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)) | web: `start_on_demand_display()` / `stop_on_demand_display()` in [`api_v3/display.py`](../web_interface/blueprints/api_v3/display.py), via [`src/ipc/client.py`](../src/ipc/client.py) | display: [`src/ipc/server.py`](../src/ipc/server.py) acks; the render thread applies it in `_poll_on_demand_requests()` |
-| On-demand request (fallback) | cache `display_on_demand_request` | web, when the socket fails; four plugins write it directly | display: `_poll_on_demand_requests()` |
+| On-demand request (fallback) | cache `display_on_demand_request` | web, only when the socket could not carry the request (`should_fall_back`); four plugins write it directly | display: `_poll_on_demand_requests()`, a `stat()` every 1 s while the socket is up (0.25 s without), read only when the file changed |
 | On-demand state | cache `display_on_demand_state` | display: `_publish_on_demand_state()` | web: `/api/v3/display/on-demand/status` |
 | Current screen | cache `display_current_state` | display | web: `/api/v3/display/current-status` |
 | Plugin errors | cache `plugin_error_snapshot` | display: `ErrorSnapshotPublisher` ([`src/error_aggregator.py`](../src/error_aggregator.py)) | web: `read_error_report()` for `/api/v3/errors/*` |
-| Error clear | cache `plugin_error_clear_request` | web | display |
+| Error clear | control socket `errors.clear`; cache `plugin_error_clear_request` as the fallback | web: `POST /api/v3/errors/clear` | display: applied before the socket answers; the mailbox on the error publisher's 5 s tick, read only when the file changed |
 | Font usage | cache `font_usage_snapshot` | display: `FontUsagePublisher` ([`src/font_usage.py`](../src/font_usage.py)) | web: Fonts tab |
 | Fetch statistics (requests per plugin and host) | cache `fetch_stats_snapshot` | display: `FetchStatsPublisher` ([`src/common/fetch_service.py`](../src/common/fetch_service.py)), at most once a minute on change | web: `read_fetch_stats()` for `/api/v3/plugins/fetch-stats` |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
@@ -58,11 +58,16 @@ each other. They share three things:
 
 The on-demand start route starts `ledmatrix.service` when it is not running
 (`start_service`, on by default) but never restarts a running one. The routes
-send the command over the display's control socket and get an ack; when that
-fails (a stopped display, one older than the socket) they write the mailbox
-instead, which the display reads every `ON_DEMAND_POLL_INTERVAL` (0.25s), from
-its dwell sleep, its render loops and Vegas's interrupt check as well as the
-main loop. Both ways end in the same handler, `_handle_on_demand_request()`.
+send the command over the display's control socket and get an ack; only when
+the socket could not carry it (a stopped display, one older than the socket
+or the command) do they write the mailbox instead. A display that had the
+request and refused it is answered with the error, not posted a mailbox
+copy. The display looks at the mailbox every
+`MAILBOX_POLL_INTERVAL_WITH_SOCKET` (1 s) while it serves the socket, and
+every `ON_DEMAND_POLL_INTERVAL` (0.25 s) without one, from its dwell sleep,
+its render loops and Vegas's interrupt check as well as the main loop; a
+look is one `stat()` unless the file changed. Both ways end in the same
+handler, `_handle_on_demand_request()`.
 The socket's handlers only queue; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)
 for the protocol, the permission model and the plan to retire the mailboxes.
 

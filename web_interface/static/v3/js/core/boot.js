@@ -43,18 +43,33 @@ const pages = {
     'operation-history': page(function() { return import('../pages/operation-history.js'); }),
     'raw-json': page(function() { return import('../pages/raw-json.js'); }),
     'backup-restore': page(function() { return import('../pages/backup-restore.js'); }),
+    'schedule': page(function() { return import('../pages/schedule.js'); }),
+    'general': page(function() { return import('../pages/general.js'); }),
 };
 Object.keys(pages).forEach(function(name) { registry.register(name, pages[name]); });
 
-/** Keep window[name] working: forward to the page module's export of the same name. */
-function alias(pageName, name, replacement) {
+/** A function that calls `pick(module)` with its arguments, loading the page's module if needed. */
+function forward(pageName, pick) {
     const loader = pages[pageName];
-    facade.deprecate(name, function() {
+    return function() {
         const args = arguments;
         const module = loader.loaded();
-        if (module) return module[name].apply(null, args);
-        return loader().then(function(loaded) { return loaded[name].apply(null, args); });
-    }, replacement);
+        if (module) return pick(module).apply(null, args);
+        return loader().then(function(loaded) { return pick(loaded).apply(null, args); });
+    };
+}
+
+/** Keep window[name] working: forward to the page module's export of the same name. */
+function alias(pageName, name, replacement) {
+    facade.deprecate(name, forward(pageName, function(module) { return module[name]; }), replacement);
+}
+
+/** The same for an old global object of functions: each method forwards to the export's method. */
+function aliasObject(pageName, name, methods, replacement) {
+    const target = Object.fromEntries(methods.map(function(method) {
+        return [method, forward(pageName, function(module) { return module[name][method]; })];
+    }));
+    facade.deprecate(name, Object.freeze(target), replacement);
 }
 
 // Old globals the converted pages used to define.
@@ -65,5 +80,10 @@ alias('cache', 'deleteCacheFile', "the Cache tab's Delete buttons");
 ['exportBackup', 'loadBackupList', 'validateRestoreFile', 'clearRestore', 'runRestore'].forEach(function(name) {
     alias('backup-restore', name, "the Backup & Restore tab's buttons");
 });
+['handleScheduleResponse', 'handleDimScheduleResponse'].forEach(function(name) {
+    alias('schedule', name, "the Schedule tab's own save handling");
+});
+aliasObject('general', 'webLogin', ['setPassword', 'disable', 'createToken', 'copyToken', 'revoke'],
+            "the General tab's Security buttons");
 
 registry.start();
