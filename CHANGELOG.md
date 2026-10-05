@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Tooling
+
+- `test/test_sports_helpers.py`'s parity tests pass again with
+  `LEDMATRIX_PLUGINS` set. The scoreboards deleted their copies of the
+  `sports_helpers` bodies and constants when they adopted `SportsHelpersMixin`
+  (ledmatrix-plugins #563/#564), and the 19 tests still expected them. A copy
+  that is gone now counts as adopted when the plugin imports
+  `src.common.sports_helpers`, as the stage 3/4 and game-over parity tests
+  already do; a copy that remains must still match.
+
 ## 3.8.2
 
 The display hands freed memory back to the OS (#774), and sports consolidation
