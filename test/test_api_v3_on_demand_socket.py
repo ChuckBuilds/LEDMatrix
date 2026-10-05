@@ -306,8 +306,11 @@ class TestNoDisplayListening:
             resp = api_v3_client.post(START_URL, json={"plugin_id": "clock"})
             assert resp.status_code == 200
             outcome = self._outcome()
-        assert sent == [resp.get_json()["data"]["request_id"]]
-        assert old not in sent
+        # The old start is cancelled before the new one is sent, and
+        # cancel() waits out a send of it in flight: nothing of it lands
+        # after the new one.
+        new = resp.get_json()["data"]["request_id"]
+        assert sent[-1] == new and sent.count(new) == 1
         assert outcome["status"] == "idle" and outcome["last_event"] == "superseded"
 
     def test_a_service_that_will_not_start_is_an_error(self, api_v3_client, service, clock):
@@ -478,13 +481,20 @@ class TestRealSocket:
         assert data["transport"] == "socket"
         assert [x.request_id for x in live.drain()] == [data["request_id"]]
 
-    def test_a_display_that_went_away_is_an_error(self, api_v3_client, service, live,
+    def test_a_display_that_went_away_is_given_up_on(self, api_v3_client, service, live,
                                                   monkeypatch):
+        from web_interface import on_demand_dispatch
         monkeypatch.setattr(f"{DISPLAY}.ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS", 0.3)
+        monkeypatch.setattr(on_demand_dispatch, "RETRY_INTERVAL", 0.01)
         live.close()
         resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert resp.status_code == 503
+        # The service still reads as running: answered at once, and the
+        # web process gives up once the wait is over.
+        assert resp.status_code == 202
         assert resp.get_json()["data"]["socket_error"] == "no_socket"
+        d = on_demand_dispatch.current()
+        assert _until(lambda: not d.pending())
+        assert d.status()["error"] == "start-timeout"
         assert _mailbox_writes(service["cache"]) == []
 
     def test_a_full_queue_is_reported_not_mailed(self, api_v3_client, service, monkeypatch):

@@ -63,6 +63,11 @@ class OnDemandDispatcher:
         self._clock = clock
         self._wall = wall_clock
         self._lock = threading.Lock()
+        # Held by the worker while it reads the pending start and sends it,
+        # so cancel() can wait out a send already in flight: a cancelled (or
+        # superseded) start must not reach the display after the request
+        # that replaced it. Never taken while holding _lock.
+        self._send_lock = threading.Lock()
         self._wake = threading.Event()
         # Bumped by every submit and cancel: a send that started under an
         # older generation does not report its result as the current one.
@@ -106,6 +111,10 @@ class OnDemandDispatcher:
             self._pending = None
             self._finish(self._describe('idle', pending, last_event=reason))
         self._wake.set()
+        # A send of it may be in flight (at most the client's timeout, 1 s):
+        # let it finish, so whatever the caller sends next lands after it.
+        with self._send_lock:
+            pass
         logger.info("On-demand start %s cancelled before the display took it (%s)",
                     pending.get('request_id'), reason)
         return pending.get('request_id')
@@ -152,13 +161,14 @@ class OnDemandDispatcher:
 
     def _run(self) -> None:
         while True:
-            with self._lock:
-                payload, generation = self._pending, self._generation
-                deadline = self._deadline
-                if payload is None:
-                    self._thread = None
-                    return
-            outcome, error = self._attempt(payload)
+            with self._send_lock:
+                with self._lock:
+                    payload, generation = self._pending, self._generation
+                    deadline = self._deadline
+                    if payload is None:
+                        self._thread = None
+                        return
+                outcome, error = self._attempt(payload)
             with self._lock:
                 if generation != self._generation:
                     continue          # superseded or cancelled meanwhile

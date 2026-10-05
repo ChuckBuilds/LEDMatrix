@@ -204,6 +204,29 @@ class TestOneAtATime:
         status = d.status()
         assert status["status"] == "idle" and status["last_event"] == "requested-stop"
 
+    def test_a_cancel_waits_for_a_send_in_flight(self, make):
+        # Whatever the caller sends after cancel() must land after the
+        # cancelled start, not race it to the display.
+        in_flight, release = threading.Event(), threading.Event()
+
+        def slow(payload):
+            in_flight.set()
+            release.wait(5)
+            raise _not_listening()
+
+        send = FakeSend(slow)
+        d = make(send)
+        d.submit(_payload("old"))
+        assert in_flight.wait(5)
+        done = threading.Event()
+        threading.Thread(target=lambda: (d.cancel("superseded"), done.set()),
+                         daemon=True).start()
+        assert not done.wait(0.1), "cancel returned while the old send was in flight"
+        release.set()
+        assert done.wait(5)
+        assert _settled(d)
+        assert send.sent == ["old"]
+
     def test_a_cancel_with_nothing_pending_does_nothing(self, make):
         d = make(FakeSend("ack"))
         assert d.cancel() is None
