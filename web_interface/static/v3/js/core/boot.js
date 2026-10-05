@@ -66,10 +66,9 @@ function alias(pageName, name, replacement) {
 
 /** The same for an old global object of functions: each method forwards to the export's method. */
 function aliasObject(pageName, name, methods, replacement) {
-    const target = {};
-    methods.forEach(function(method) {
-        target[method] = forward(pageName, function(module) { return module[name][method]; });
-    });
+    const target = Object.fromEntries(methods.map(function(method) {
+        return [method, forward(pageName, function(module) { return module[name][method]; })];
+    }));
     facade.deprecate(name, Object.freeze(target), replacement);
 }
 

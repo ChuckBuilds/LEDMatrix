@@ -26,14 +26,14 @@ const MAX_TRIES = 50;
 
 const PICKERS = [
     {
-        label: 'Schedule', container: 'schedule_picker_container', data: 'scheduleConfig',
+        label: 'Schedule', container: 'schedule_picker_container', data: 'data-schedule-config',
         fieldId: 'schedule', start: '07:00', end: '23:00',
         // The display schedule fills in days only when it has no "days" at
         // all; the dim schedule also when "days" is empty.
         fillEmptyDays: false,
     },
     {
-        label: 'DimSchedule', container: 'dim_schedule_picker_container', data: 'dimScheduleConfig',
+        label: 'DimSchedule', container: 'dim_schedule_picker_container', data: 'data-dim-schedule-config',
         fieldId: 'dim_schedule', start: '20:00', end: '07:00',
         fillEmptyDays: true,
     },
@@ -49,11 +49,11 @@ const WIDGET_OPTIONS = { showModeToggle: true, showEnableToggle: true, compactMo
 // The mounted page, for the deprecated aliases (boot.js).
 let active = null;
 
-function readConfig(root, key) {
+function readConfig(root, attribute) {
     try {
-        const parsed = JSON.parse(root.dataset[key] || 'null');
+        const parsed = JSON.parse(root.getAttribute(attribute) || 'null');
         return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch (error) {
+    } catch {
         return {};
     }
 }
@@ -77,10 +77,9 @@ export function widgetValue(config, spec) {
     };
     const noDays = !config.days || (spec.fillEmptyDays && Object.keys(config.days).length === 0);
     if (noDays) {
-        value.days = {};
-        DAYS.forEach(function(day) {
-            value.days[day] = { enabled: true, start_time: spec.start, end_time: spec.end };
-        });
+        value.days = Object.fromEntries(DAYS.map(function(day) {
+            return [day, { enabled: true, start_time: spec.start, end_time: spec.end }];
+        }));
     }
     return value;
 }
@@ -90,7 +89,7 @@ function report(notify, xhr, labels) {
     let response;
     try {
         response = JSON.parse(xhr.responseText);
-    } catch (e) {
+    } catch {
         response = { status: 'error', message: 'Invalid response from server' };
     }
     if (!response || typeof response !== 'object') {
