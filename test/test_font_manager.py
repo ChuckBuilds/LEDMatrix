@@ -185,6 +185,149 @@ class TestPluginFonts:
         assert fm.font_catalog["my-plugin::bundled"] == str(plugin_dir / "fonts" / "Bundled.ttf")
 
 
+class TestForgetPluginFonts:
+    """forget_plugin_fonts drops what a plugin's manifest registered. Before
+    it, unloading a plugin left its fonts resolvable and its cached font
+    objects alive until a restart."""
+
+    @staticmethod
+    def _register(fm, root, plugin_id, family="bundled"):
+        plugin_dir = root / plugin_id
+        (plugin_dir / "fonts").mkdir(parents=True, exist_ok=True)
+        font_file = plugin_dir / "fonts" / f"{family}.ttf"
+        if not font_file.exists():  # a loaded font may hold it open (Windows)
+            shutil.copy(resolve_asset_path("assets/fonts/PressStart2P-Regular.ttf"), font_file)
+        manifest = {"fonts": [{"family": family, "source": f"plugin://fonts/{family}.ttf"}]}
+        assert fm.register_plugin_fonts(plugin_id, manifest, plugin_dir=plugin_dir)
+        return plugin_dir
+
+    @staticmethod
+    def _entries_of(fm, plugin_id):
+        prefix = f"{plugin_id}::"
+        return {
+            "plugin_fonts": plugin_id in fm.plugin_fonts,
+            "plugin_font_catalogs": plugin_id in fm.plugin_font_catalogs,
+            "font_catalog": [k for k in fm.font_catalog if k.startswith(prefix)],
+            "font_cache": [k for k in fm.font_cache if k.startswith(prefix)],
+        }
+
+    NONE = {"plugin_fonts": False, "plugin_font_catalogs": False,
+            "font_catalog": [], "font_cache": []}
+
+    def test_unload_leaves_no_plugin_entries(self, fm, tmp_path):
+        self._register(fm, tmp_path, "alpha")
+        fm.resolve_font("alpha.title", "bundled", 8, plugin_id="alpha")
+        fm.get_font("alpha::bundled", 10)
+        assert self._entries_of(fm, "alpha")["font_cache"]  # cached before
+        gen = fm.cache_generation
+
+        assert fm.forget_plugin_fonts("alpha") is True
+
+        assert self._entries_of(fm, "alpha") == self.NONE
+        assert fm.cache_generation == gen + 1
+        # The family no longer resolves to the plugin's file.
+        assert fm.font_catalog.get("alpha::bundled") is None
+
+    def test_other_plugins_and_core_fonts_are_untouched(self, fm, tmp_path):
+        self._register(fm, tmp_path, "alpha")
+        self._register(fm, tmp_path, "beta")
+        # A plugin whose id is a prefix of another's must not take it along.
+        self._register(fm, tmp_path, "alpha-two")
+        for pid in ("alpha", "beta", "alpha-two"):
+            fm.get_font(f"{pid}::bundled", 8)
+        core_font = fm.get_font("press_start", 8)
+        beta_before = self._entries_of(fm, "beta")
+        alpha_two_before = self._entries_of(fm, "alpha-two")
+
+        fm.forget_plugin_fonts("alpha")
+
+        assert self._entries_of(fm, "beta") == beta_before
+        assert self._entries_of(fm, "alpha-two") == alpha_two_before
+        assert fm.get_font("press_start", 8) is core_font
+
+    def test_reload_re_registers_cleanly(self, fm, tmp_path):
+        plugin_dir = self._register(fm, tmp_path, "alpha")
+        old = fm.get_font("alpha::bundled", 8)
+        fm.forget_plugin_fonts("alpha")
+
+        self._register(fm, tmp_path, "alpha")
+
+        assert fm.font_catalog["alpha::bundled"] == str(plugin_dir / "fonts" / "bundled.ttf")
+        font = fm.resolve_font("alpha.title", "bundled", 8, plugin_id="alpha")
+        assert isinstance(font, ImageFont.FreeTypeFont)
+        assert font is not old  # loaded fresh, not the dropped cache entry
+
+    def test_a_family_the_new_manifest_drops_stops_resolving(self, fm, tmp_path):
+        self._register(fm, tmp_path, "alpha", family="old_face")
+        fm.forget_plugin_fonts("alpha")
+        self._register(fm, tmp_path, "alpha", family="new_face")
+
+        assert "alpha::old_face" not in fm.font_catalog
+        assert "alpha::new_face" in fm.font_catalog
+
+    def test_unknown_plugin_is_a_no_op(self, fm):
+        catalog = dict(fm.font_catalog)
+        gen = fm.cache_generation
+
+        assert fm.forget_plugin_fonts("never-registered") is False
+
+        assert fm.font_catalog == catalog
+        assert fm.cache_generation == gen
+
+
+class TestPluginManagerReloadFonts:
+    """Through PluginManager: unloading a plugin forgets its manifest fonts,
+    and reload_plugin (unload + load) registers them again so they resolve."""
+
+    PLUGIN_ID = "font-reload-demo"
+    MODULE = "plugin_font_reload_demo"
+
+    def test_unload_forgets_and_reload_resolves(self, tmp_path):
+        import sys
+        from src.plugin_system.plugin_manager import PluginManager
+
+        plugins_dir = tmp_path / "plugins"
+        plugin_dir = plugins_dir / self.PLUGIN_ID
+        (plugin_dir / "fonts").mkdir(parents=True)
+        shutil.copy(resolve_asset_path("assets/fonts/PressStart2P-Regular.ttf"),
+                    plugin_dir / "fonts" / "Bundled.ttf")
+        manifest = {"id": self.PLUGIN_ID, "name": "Demo", "class_name": "Demo",
+                    "entry_point": "manager.py",
+                    "fonts": {"fonts": [{"family": "bundled",
+                                         "source": "plugin://fonts/Bundled.ttf"}]}}
+        (plugin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (plugin_dir / "manager.py").write_text(
+            "class Demo:\n"
+            "    def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):\n"
+            "        self.enabled = True\n", encoding="utf-8")
+
+        pm = PluginManager(plugins_dir=str(plugins_dir))
+        fm = FontManager({})
+        pm.font_manager = fm
+        pm.plugin_manifests[self.PLUGIN_ID] = manifest
+        key = f"{self.PLUGIN_ID}::bundled"
+        try:
+            assert pm.load_plugin(self.PLUGIN_ID) is True
+            assert key in fm.font_catalog
+            fm.register_manager_font(self.PLUGIN_ID, "demo.title", "bundled", 8)
+            old = fm.resolve_font("demo.title", "bundled", 8, plugin_id=self.PLUGIN_ID)
+
+            assert pm.unload_plugin(self.PLUGIN_ID) is True
+            assert self.PLUGIN_ID not in fm.plugin_fonts
+            assert self.PLUGIN_ID not in fm.plugin_font_catalogs
+            assert key not in fm.font_catalog
+            assert not [k for k in fm.font_cache if k.startswith(f"{self.PLUGIN_ID}::")]
+            assert self.PLUGIN_ID not in fm.manager_fonts
+
+            assert pm.reload_plugin(self.PLUGIN_ID) is True
+            assert fm.font_catalog[key] == str(plugin_dir / "fonts" / "Bundled.ttf")
+            font = fm.resolve_font("demo.title", "bundled", 8, plugin_id=self.PLUGIN_ID)
+            assert isinstance(font, ImageFont.FreeTypeFont)
+            assert font is not old
+        finally:
+            sys.modules.pop(self.MODULE, None)
+
+
 class TestDownloadFont:
     """_download_font: plugin fonts declared by URL, cached in temp_font_dir."""
 

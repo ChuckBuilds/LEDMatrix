@@ -222,6 +222,39 @@ class FontManager:
             logger.error(f"Error registering fonts for plugin {plugin_id}: {e}", exc_info=True)
             return False
 
+    def forget_plugin_fonts(self, plugin_id: str) -> bool:
+        """Drop the fonts ``plugin_id``'s manifest registered: its manifest
+        and catalog, its ``plugin_id::family`` entries in font_catalog, and
+        cached font objects for those families. Called by core when a plugin
+        is unloaded, so a reload registers from its current manifest and a
+        removed plugin's fonts stop resolving.
+
+        FontManager takes no locks; like forget_manager_fonts this relies on
+        single dict operations being atomic and iterates snapshots, so a
+        render thread calling get_font() meanwhile cannot break it. Returns
+        True if the plugin had registered fonts.
+        """
+        prefix = f"{plugin_id}::"
+        manifest = self.plugin_fonts.pop(plugin_id, None)
+        catalog = self.plugin_font_catalogs.pop(plugin_id, None)
+        # Every namespaced entry, not just the families in the catalog: one
+        # whose file failed to load never made it into the catalog, and a
+        # caller may have added one directly.
+        for family in list(self.font_catalog):
+            if family.startswith(prefix):
+                self.font_catalog.pop(family, None)
+        # get_font() keys the cache f"{family}_{size_px}".
+        dropped = [key for key in list(self.font_cache) if key.startswith(prefix)]
+        for key in dropped:
+            self.font_cache.pop(key, None)
+        if dropped:
+            # Font objects someone may hold were dropped; see cache_generation.
+            self.cache_generation += 1
+        if manifest is None and catalog is None:
+            return False
+        logger.info("Forgot fonts of plugin %s", plugin_id)
+        return True
+
     def _validate_font_manifest(self, font_manifest: Dict[str, Any]) -> bool:
         """Validate the structure of a plugin's font manifest."""
         required_fields = ["fonts"]

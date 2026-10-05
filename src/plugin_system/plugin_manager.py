@@ -601,11 +601,21 @@ class PluginManager:
             self.plugin_loader.unregister_plugin_modules(plugin_id)
         except Exception as e:  # pragma: no cover - defensive
             self.logger.debug("Could not drop modules of %s: %s", plugin_id, e)
-        try:
-            if self.font_manager is not None and hasattr(self.font_manager, 'forget_manager_fonts'):
-                self.font_manager.forget_manager_fonts(plugin_id)
-        except Exception as e:
-            self.logger.debug("Could not forget fonts of %s: %s", plugin_id, e)
+        self._forget_plugin_fonts(plugin_id)
+
+    def _forget_plugin_fonts(self, plugin_id: str) -> None:
+        """Drop what the FontManager holds for a plugin: the fonts its
+        instance reported using (the Fonts tab's "Used by") and the fonts its
+        manifest registered. Never raises."""
+        if self.font_manager is None:
+            return
+        for name in ('forget_manager_fonts', 'forget_plugin_fonts'):
+            if not hasattr(self.font_manager, name):
+                continue
+            try:
+                getattr(self.font_manager, name)(plugin_id)
+            except Exception as e:
+                self.logger.debug("Could not forget fonts of %s (%s): %s", plugin_id, name, e)
     
     #: Config keys the **core** reads out of a plugin's own config block. The
     #: plugin never declares them, so a schema with
@@ -850,12 +860,9 @@ class PluginManager:
             # Delegate sub-module and cached-module cleanup to the loader
             self.plugin_loader.unregister_plugin_modules(plugin_id)
 
-            # Its font registrations go with it (the Fonts tab's "Used by").
-            try:
-                if self.font_manager is not None and hasattr(self.font_manager, 'forget_manager_fonts'):
-                    self.font_manager.forget_manager_fonts(plugin_id)
-            except Exception as e:
-                self.logger.debug("Could not forget fonts of %s: %s", plugin_id, e)
+            # Its font registrations go with it: the fonts it reported using
+            # and the ones its manifest registered.
+            self._forget_plugin_fonts(plugin_id)
 
             # Update state
             self.state_manager.set_state(plugin_id, PluginState.UNLOADED)

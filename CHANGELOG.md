@@ -162,6 +162,14 @@ Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
 
 ### Fixed
 
+- Unloading a plugin now forgets the fonts its manifest registered, not only
+  the fonts it reported using. Its `plugin_id::family` entries kept resolving
+  and their cached font objects stayed alive until a restart, and a family a
+  reinstalled plugin's manifest dropped stayed registered. The new
+  `FontManager.forget_plugin_fonts(plugin_id)` does the cleanup;
+  `PluginManager.unload_plugin()` and a failed load call it alongside
+  `forget_manager_fonts()`, and a reload registers the manifest's fonts again.
+
 - The web preview and `/api/v3/display/current` no longer stay black for a
   whole screen that draws its card once and then holds it. The snapshot is
   written from `update_display()` at most once per write interval, so a frame
