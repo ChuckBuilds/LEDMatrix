@@ -41,6 +41,7 @@ two hours in, resident memory was 551 MB on main (the second main arm was
 already at 651 MB after 1 h 44 min) against 412 and 386 MB with this change,
 and the 20-minute frame soaks came out at 0.147-0.165% late against main's
 0.151-0.188%.
+
 ## 3.8.1
 
 Smooth scrolling at the slower speeds, and the fixes and performance work
