@@ -59,7 +59,7 @@ class TestInstalledList:
         info = {"id": "demo", "name": "Demo", "version": "1.0.0",
                 "description": "stale cached copy", "loaded": False}
         api.plugin_catalog.get_all_plugin_info = MagicMock(return_value=[info])
-        api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
+        api.plugin_store_manager.get_cached_registry_info = MagicMock(return_value=None)
         api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
         api.config_manager.load_config = MagicMock(return_value={})
 

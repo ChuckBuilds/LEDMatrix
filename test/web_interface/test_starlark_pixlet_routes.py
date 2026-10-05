@@ -26,11 +26,42 @@ import pytest
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from web_interface import app as web_app
     from web_interface.app import app
+    # The captive-portal before_request hook shells out to systemctl/nmcli
+    # whenever its 30s cache is cold, so on a Linux host whether a request
+    # here runs subprocess depended on how long ago the previous one was --
+    # and several tests below stub subprocess. Pin it: no test in this file
+    # is about AP mode.
+    monkeypatch.setattr(web_app, 'is_ap_mode_active', lambda: False)
+    # GET /plugins/installed looks up each plugin's registry entry, and on a
+    # cold cache that fetches plugins.json from GitHub -- so without a
+    # connection those tests sat in the HTTP retry loop. No test in this
+    # file is about the registry.
+    monkeypatch.setattr(web_app.plugin_store_manager, 'fetch_registry',
+                        lambda *args, **kwargs: {'plugins': []})
     app.config['TESTING'] = True
     with app.test_client() as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def starlark_apps_dir(tmp_path, monkeypatch):
+    """Point every Starlark storage path at tmp_path for every test.
+
+    The manifest, its directory and the lock file are three separate module
+    constants. Fixtures that redirected the first two but not the lock left
+    the lock pointing at the repo, and on Linux (where the lock is taken)
+    each test created starlark-apps/manifest.json.lock in the checkout. The
+    directory is not created here; tests that need it make it.
+    """
+    from web_interface.blueprints import api_v3 as module
+    apps_dir = tmp_path / "starlark-apps"
+    monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
+    monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
+    monkeypatch.setattr(module, '_STARLARK_MANIFEST_LOCK_FILE', apps_dir / 'manifest.json.lock')
+    return apps_dir
 
 
 class TestRoutesAreRegistered:
@@ -391,13 +422,9 @@ class TestTheManifestSurvivesConcurrentWriters:
     """
 
     @pytest.fixture
-    def starlark_dir(self, tmp_path, monkeypatch):
-        from web_interface.blueprints import api_v3 as module
-        apps_dir = tmp_path / "starlark-apps"
-        apps_dir.mkdir()
-        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
-        return apps_dir
+    def starlark_dir(self, starlark_apps_dir):
+        starlark_apps_dir.mkdir()
+        return starlark_apps_dir
 
     def test_each_writer_gets_its_own_temp_file(self, starlark_dir):
         from web_interface.blueprints import api_v3 as module
@@ -553,13 +580,9 @@ class TestTheManifestStaysRelocatable:
     """
 
     @pytest.fixture
-    def starlark_dir(self, tmp_path, monkeypatch):
-        from web_interface.blueprints import api_v3 as module
-        apps_dir = tmp_path / "starlark-apps"
-        apps_dir.mkdir()
-        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
-        return apps_dir
+    def starlark_dir(self, starlark_apps_dir):
+        starlark_apps_dir.mkdir()
+        return starlark_apps_dir
 
     def _install(self, tmp_path):
         from web_interface.blueprints import api_v3 as module
@@ -599,13 +622,10 @@ class TestManifestLockPreventsLostUpdates:
     """
 
     @pytest.fixture
-    def starlark_dir(self, tmp_path, monkeypatch):
+    def starlark_dir(self, starlark_apps_dir):
         from web_interface.blueprints import api_v3 as module
-        apps_dir = tmp_path / "starlark-apps"
+        apps_dir = starlark_apps_dir
         apps_dir.mkdir()
-        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_LOCK_FILE', apps_dir / 'manifest.json.lock')
         module._write_starlark_manifest({'apps': {}})
         return apps_dir
 
@@ -693,12 +713,10 @@ class TestConfigAndManifestStayInSync:
     """
 
     @pytest.fixture
-    def app_dir(self, tmp_path, monkeypatch):
+    def app_dir(self, starlark_apps_dir):
         from web_interface.blueprints import api_v3 as module
-        apps_dir = tmp_path / "starlark-apps"
+        apps_dir = starlark_apps_dir
         apps_dir.mkdir()
-        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
         one_app_dir = apps_dir / 'demo'
         one_app_dir.mkdir()
         module._write_starlark_manifest({'apps': {'demo': {'name': 'Demo', 'enabled': True}}})
@@ -1042,13 +1060,18 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
     /plugins/store/github-status reported `authenticated: true` with a
     rate_limit of 5000 while /starlark/repository/browse reported a limit of
     60 -- the store going blank was that 60 running out.
+
+    The managers are attributes web_interface/app.py hangs on the blueprint
+    when it is imported, so they exist only once some earlier test has
+    imported the app. Every patch here passes create=True: these tests must
+    not depend on which test ran before them.
     """
 
     def test_the_store_managers_token_is_used(self):
         from web_interface.blueprints import api_v3 as mod
 
         with patch.object(mod.api_v3, 'plugin_store_manager',
-                          MagicMock(github_token='ghp_configured')):
+                          MagicMock(github_token='ghp_configured'), create=True):
             assert mod._starlark_github_token() == 'ghp_configured'
 
     def test_a_hand_edited_config_key_still_works(self):
@@ -1057,8 +1080,8 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
         cfg = MagicMock()
         cfg.load_config.return_value = {'github_token': 'ghp_by_hand'}
         with patch.object(mod.api_v3, 'plugin_store_manager',
-                          MagicMock(github_token=None)), \
-             patch.object(mod.api_v3, 'config_manager', cfg):
+                          MagicMock(github_token=None), create=True), \
+             patch.object(mod.api_v3, 'config_manager', cfg, create=True):
             assert mod._starlark_github_token() == 'ghp_by_hand'
 
     def test_no_token_anywhere_is_not_an_error(self):
@@ -1067,8 +1090,8 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
         cfg = MagicMock()
         cfg.load_config.return_value = {}
         with patch.object(mod.api_v3, 'plugin_store_manager',
-                          MagicMock(github_token=None)), \
-             patch.object(mod.api_v3, 'config_manager', cfg):
+                          MagicMock(github_token=None), create=True), \
+             patch.object(mod.api_v3, 'config_manager', cfg, create=True):
             assert mod._starlark_github_token() is None
 
     def test_an_unreadable_config_does_not_take_the_store_down(self):
@@ -1077,8 +1100,8 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
         cfg = MagicMock()
         cfg.load_config.side_effect = OSError("config.json is unreadable")
         with patch.object(mod.api_v3, 'plugin_store_manager',
-                          MagicMock(github_token=None)), \
-             patch.object(mod.api_v3, 'config_manager', cfg):
+                          MagicMock(github_token=None), create=True), \
+             patch.object(mod.api_v3, 'config_manager', cfg, create=True):
             assert mod._starlark_github_token() is None
 
     def test_browse_hands_the_token_to_the_repository(self, client):
@@ -1092,7 +1115,7 @@ class TestTheStoreUsesTheTokenTheUserConfigured:
         repo.return_value.get_rate_limit_info.return_value = {'remaining': 4999}
 
         with patch.object(mod.api_v3, 'plugin_store_manager',
-                          MagicMock(github_token='ghp_configured')), \
+                          MagicMock(github_token='ghp_configured'), create=True), \
              patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
                    return_value=repo):
             client.get('/api/v3/starlark/repository/browse')
@@ -1136,12 +1159,23 @@ class TestPixletEditorHostDefaultsButDoesNotOverride:
                 captured['env'] = env
             return FakeProcess()
 
+        # Swap the route module's own ``subprocess`` binding, not the shared
+        # ``subprocess.Popen``: patching the attribute on the real module is
+        # process-wide, and the app's before_request hook (the captive-portal
+        # check) runs ``subprocess.run`` -- ``with Popen(...)`` -- whenever its
+        # 30s AP-mode cache is cold on a host with systemctl. On the Linux CI
+        # runner that handed it this FakeProcess and 500'd the request, but
+        # only when the previous request was more than 30s earlier.
+        fake_subprocess = types.ModuleType('subprocess')
+        fake_subprocess.__dict__.update(mod.subprocess.__dict__)
+        fake_subprocess.Popen = fake_popen
+
         with patch.object(mod, '_validate_starlark_app_path',
                           return_value=(app_dir, None)), \
              patch.object(mod, '_PIXLET_EDITOR_SCRIPT', script), \
              patch.object(mod, '_PIXLET_EDITOR_STATE', state_file), \
              patch.object(mod, '_find_pixlet_binary', return_value='/usr/bin/pixlet'), \
-             patch.object(mod.subprocess, 'Popen', side_effect=fake_popen), \
+             patch.object(mod, 'subprocess', fake_subprocess), \
              patch.dict(os.environ):
             if operator_host is None:
                 os.environ.pop('PIXLET_EDITOR_HOST', None)
@@ -1171,15 +1205,13 @@ class TestStandaloneRenderUsesTheDeviceLocation:
     SCHEMA = {"schema": [{"typeOf": "location", "id": "location"}]}
 
     @pytest.fixture
-    def app_dir(self, tmp_path, monkeypatch):
+    def app_dir(self, starlark_apps_dir, monkeypatch):
         from web_interface.blueprints import api_v3 as module
-        apps_dir = tmp_path / "starlark-apps"
+        apps_dir = starlark_apps_dir
         app_dir = apps_dir / "weather"
         app_dir.mkdir(parents=True)
         (app_dir / "weather.star").write_text("# app")
         (app_dir / "schema.json").write_text(json.dumps(self.SCHEMA))
-        monkeypatch.setattr(module, '_STARLARK_APPS_DIR', apps_dir)
-        monkeypatch.setattr(module, '_STARLARK_MANIFEST_FILE', apps_dir / 'manifest.json')
         (apps_dir / 'manifest.json').write_text(json.dumps(
             {'apps': {'weather': {'star_file': 'weather.star'}}}))
         config_manager = MagicMock()

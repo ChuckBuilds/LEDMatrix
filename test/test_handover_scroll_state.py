@@ -709,6 +709,6 @@ class TestTheControllersOwnScreens:
         c._check_wifi_status_message.return_value = None
         inputs = DisplayController._arbiter_inputs(c)
         assert inputs.wifi_notice is None
-        assert Arbiter.decide(ArbiterState(), inputs, 0.0).source is Source.LEGACY
+        assert Arbiter.decide(ArbiterState(), inputs, 0.0).source is Source.ROTATION
         assert dm.is_currently_scrolling()
         assert dm._frame_hold == 2

@@ -63,6 +63,39 @@ Stage 4 of the web → display control socket (`docs/IPC_CONTROL_SOCKET.md`).
   on-air, pomodoro-timer) now get the screen within a second rather than a
   quarter second, and need an in-process way in before the mailbox goes.
 
+### Display loop stage 3: a ScreenRunner, and the Arbiter decides every screen
+
+Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
+
+- Each screen runs in `ScreenRunner` (`src/screen_runner.py`): the first
+  frame, the 125 Hz or 1 Hz frame loop, the make-up dwell and the
+  dynamic-duration exit, moved out of `DisplayController.run()` with their
+  pacing unchanged. It paces with an injected clock and returns an
+  `Outcome` whose `ExitReason` is `DURATION`, `CYCLE_COMPLETE`, `EMPTY`,
+  `ERROR`, `DISPLAY_FALSE`, `RELOAD` or `PREEMPTED`. `PREEMPTED` replaces
+  the five "did the mode change under this screen?" re-checks.
+- `Arbiter.decide()` now answers for on-demand, live priority and the
+  rotation too (Sources `ON_DEMAND`, `LIVE`, `ROTATION`); `LEGACY` means
+  only Vegas, whose iteration moves to stage 4. The on-demand session, the
+  rotation's position and the live resume point are snapshotted into
+  `ArbiterState`, whose pure transitions (`next_on_demand`, `claim_live`,
+  `release_live`, `after`) replace the bookkeeping in `_resolve_active_mode`,
+  `_apply_live_priority` and `_advance_after_screen`.
+- Between frames, the runner's service points make one
+  `decide(..., running=plan)` call instead of `_check_live_takeover`,
+  `_screen_preempted` and `_wifi_notice_pending` one after another. The
+  WiFi notice file is still read exactly where it was (the read is
+  throttled and deletes an expired file).
+- A Vegas pass scans the live-priority plugins once instead of twice at the
+  same instant.
+- The golden traces are byte-identical, and a capture of all 67 harness
+  runs in the suite (every sleep, frame, read and scan) matches `main`
+  apart from the duplicate scan above and one moment: in the 125 Hz loop a
+  live takeover's state change is made after the frame's 8 ms sleep rather
+  than before it, ending the screen at the same frame as before.
+- New module: `src/screen_runner.py`. Core-internal: plugins have no reason
+  to import it, so it sets no `ledmatrix_min_version` floor.
+
 ### A scrolling screen held by its plugin's update() is reported
 
 - While a plugin's `update()` runs it holds the plugin's lock, and that
@@ -89,6 +122,18 @@ Stage 4 of the web → display control socket (`docs/IPC_CONTROL_SOCKET.md`).
   changed frame, and the render loop writes it (`write_owed_snapshot()`)
   once the interval has passed. The cadence is unchanged, and nothing extra
   runs when no frame is owed.
+- The installed-plugins list (`GET /api/v3/plugins/installed`) no longer
+  waits on GitHub. Its comment said the registry lookup made no network call,
+  but on a cold or expired cache `get_registry_info()` downloads plugins.json
+  (10 s timeout, three attempts), and with nothing cached to fall back on
+  every plugin's lookup repeated that: offline, 5 plugins took 11 s with DNS
+  failing and 2 plugins 65 s with the route black-holed, on every load. The
+  list now reads the registry copy already in memory, however old
+  (`get_cached_registry_info()`); with none yet it returns without update or
+  verified badges and starts one background refresh
+  (`refresh_registry_in_background()`, backing off for a minute after an
+  offline failure), so a later load has them. The store, install and update
+  paths still fetch as before.
 
 ### ESPN date-range fetches: fewer requests, fewer at once
 

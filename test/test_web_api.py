@@ -551,7 +551,7 @@ class TestPluginsAPI:
         mock_plugin_catalog.get_all_plugin_info.return_value = [
             {'id': 'weather', 'name': 'Weather Plugin'}
         ]
-        api_v3.plugin_store_manager.get_registry_info.return_value = None
+        api_v3.plugin_store_manager.get_cached_registry_info.return_value = None
 
         response = client.get('/api/v3/plugins/installed')
 
@@ -571,7 +571,7 @@ class TestPluginsAPI:
             {'id': 'weather', 'name': 'Weather', 'version': '1.0.0'}
         ]
         # Registry advertises a newer version than the installed one.
-        api_v3.plugin_store_manager.get_registry_info.return_value = {
+        api_v3.plugin_store_manager.get_cached_registry_info.return_value = {
             'verified': True, 'latest_version': '1.2.0'
         }
 
@@ -592,7 +592,7 @@ class TestPluginsAPI:
         mock_plugin_catalog.get_all_plugin_info.return_value = [
             {'id': 'weather', 'name': 'Weather', 'version': '1.2.0'}
         ]
-        api_v3.plugin_store_manager.get_registry_info.return_value = {
+        api_v3.plugin_store_manager.get_cached_registry_info.return_value = {
             'verified': True, 'latest_version': '1.2.0'
         }
 

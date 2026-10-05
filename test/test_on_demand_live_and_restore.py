@@ -87,8 +87,10 @@ class TestANamedLiveModeIsShown:
     def test_the_named_mode_survives_a_restart(self, football):
         football._activate_on_demand({'plugin_id': 'football-scoreboard',
                                       'mode': 'ncaa_fb_live'})
-        saved = football.cache_manager.set.call_args_list[-1]
-        assert saved.args[0] == 'display_on_demand_config'
+        # The last on-demand config write, not the last write of any key: the
+        # font-usage publisher thread writes its own key at its own pace.
+        saved = [c for c in football.cache_manager.set.call_args_list
+                 if c.args and c.args[0] == 'display_on_demand_config'][-1]
         config = saved.args[1]
         assert config['named_mode'] == 'ncaa_fb_live'
 
