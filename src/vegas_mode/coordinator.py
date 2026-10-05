@@ -1076,23 +1076,23 @@ class VegasModeCoordinator:
             value = plugin.get_display_duration()
         except Exception as err:  # pylint: disable=broad-except
             problem = f"get_display_duration() raised {type(err).__name__}: {err}"
-            seconds = _UNREADABLE_DURATION
+            fallback = _UNREADABLE_DURATION
         else:
             seconds = finite_seconds(value)
             if seconds is not None and seconds > 0:
                 return seconds
             if seconds is None:
                 problem = f"display duration {value!r} is not a number"
-                seconds = _UNREADABLE_DURATION
+                fallback = _UNREADABLE_DURATION
             else:
                 problem = f"display duration {value!r} is not above zero"
-                seconds = _NOT_POSITIVE_DURATION
+                fallback = _NOT_POSITIVE_DURATION
         plugin_id = plugin.plugin_id
         if plugin_id not in self._duration_warned:
             self._duration_warned = self._duration_warned | {plugin_id}
             logger.warning("[%s] %s; its static pause lasts %.0fs (logged once)",
-                           plugin_id, problem, seconds)
-        return seconds
+                           plugin_id, problem, fallback)
+        return fallback
 
     def _end_static_pause(self) -> None:
         """End static pause and restore scroll state."""
