@@ -8,7 +8,9 @@
  *   destroy(root, ctx)   optional; undo anything `ctx.signal` does not.
  *
  * ctx is a per-mount object holding the shared services passed to
- * createRegistry({ context }) (boot.js passes `api` and `notify`) plus:
+ * createRegistry({ context }) (boot.js passes `api` and `notify`), the fields
+ * returned by createRegistry({ mountContext }) for this mount (boot.js adds
+ * `visibility`, core/visibility.js), plus:
  *   ctx.root     the data-page element
  *   ctx.name     the page name
  *   ctx.signal   an AbortSignal aborted on destroy. Pass it to
@@ -42,12 +44,16 @@ export const PAGE_ATTRIBUTE = 'data-page';
  * @param {object} [options]
  * @param {Document} [options.document]  the document to wire (default: globalThis.document)
  * @param {object} [options.context]     services copied onto every page's ctx
+ * @param {Function} [options.mountContext]  (ctx) => fields added to that mount's ctx;
+ *                                       for services bound to one page (they see
+ *                                       ctx.root, ctx.name and ctx.signal)
  * @param {{error: Function}} [options.logger]
  */
 export function createRegistry(options = {}) {
     const doc = options.document || globalThis.document;
     const logger = options.logger || console;
     const services = options.context || {};
+    const mountContext = options.mountContext || null;
     // The document's own AbortController: an element only accepts a signal
     // from its own realm (it matters for jsdom in the tests, not in a browser).
     const Controller = (doc && doc.defaultView && doc.defaultView.AbortController) || globalThis.AbortController;
@@ -105,6 +111,13 @@ export function createRegistry(options = {}) {
         const controller = new Controller();
         const ctx = Object.assign({}, services,
                                   { root: root, name: name, signal: controller.signal, state: {} });
+        if (mountContext) {
+            try {
+                Object.assign(ctx, mountContext(ctx));
+            } catch (error) {
+                logger.error('[LEDMatrix.pages] ' + name + ': mountContext failed:', error);
+            }
+        }
         const entry = { name: name, root: root, ctx: ctx, controller: controller,
                         module: null, initialised: false, destroyed: false, ready: null };
         mounted.set(root, entry);

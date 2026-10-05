@@ -1,21 +1,22 @@
-// The Display tab's inline script must only look up elements the partial
+// The Display tab's page module must only look up elements the partial
 // renders.
 //
-// Its brightness slider handler also wrote to #brightness-display, a "LED
-// brightness: N%" line that #387 removed from partials/display.html. The
+// Its brightness slider handler once also wrote to #brightness-display, a
+// "LED brightness: N%" line that #387 removed from partials/display.html. The
 // lookup returned null, so every movement of the slider threw a TypeError.
-// This checks every literal getElementById() in the partial's inline scripts
-// against the ids its markup renders, and runs the shipped script in a vm
-// with a fake DOM (null for an id the markup lacks, as in a browser) to move
-// the slider.
+// This imports the shipped module (static/v3/js/pages/display.js), starts it
+// on a fake root that answers only for the ids the partial's markup renders
+// (null for any other, as in a browser), fires every listener it registered,
+// and checks that every id it asked for exists. Then it moves the slider.
 //
 // No jsdom and no server needed.
 
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
+const { pathToFileURL } = require('url');
 
 const PARTIAL = path.resolve(__dirname, '../../../web_interface/templates/v3/partials/display.html');
+const JS = path.resolve(__dirname, '../../../web_interface/static/v3/js');
 
 let pass = 0, fail = 0;
 const ok = (label, cond, extra) => cond
@@ -23,86 +24,93 @@ const ok = (label, cond, extra) => cond
   : (fail++, console.log('  FAIL ' + label + (extra !== undefined ? '  ' + JSON.stringify(extra) : '')));
 
 const html = fs.readFileSync(PARTIAL, 'utf8');
-const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[^>]*>/gi)];
-const scripts = blocks.map(m => m[1]);
-// The markup is what lies between the script blocks (sliced around them, not
-// a replace(), which CodeQL reads as an incomplete HTML sanitizer).
-let markup = '';
-let from = 0;
-for (const m of blocks) {
-  markup += html.slice(from, m.index);
-  from = m.index + m[0].length;
-}
-markup += html.slice(from);
-const rendered = new Set([...markup.matchAll(/\bid="([^"{}]+)"/g)].map(m => m[1]));
+const rendered = new Set([...html.matchAll(/\bid="([^"{}]+)"/g)].map(m => m[1]));
 
-console.log('\n── Display partial: element lookups ──');
-
-// 1. Static: every literal lookup names an id the partial renders.
-const lookups = scripts.flatMap(s => [...s.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]));
-const missing = [...new Set(lookups.filter(id => !rendered.has(id)))];
-ok('the inline scripts look elements up', lookups.length > 0, lookups.length);
-ok('every looked-up id is rendered by the partial', missing.length === 0, missing);
-
-// 2. Behaviour: moving the brightness slider updates its label and throws nothing.
 function fakeElement(id) {
   const listeners = {};
   const classes = new Set();
   return {
-    id, value: '', textContent: '', min: '', max: '', checked: false,
+    id, value: '1', textContent: '', min: '', max: '', checked: false,
     style: {}, dataset: {}, className: '',
     classList: {
       add: c => classes.add(c), remove: c => classes.delete(c),
-      toggle: (c, on) => (on === undefined ? (classes.has(c) ? classes.delete(c) : classes.add(c)) : (on ? classes.add(c) : classes.delete(c))),
       contains: c => classes.has(c),
     },
     addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
     dispatchEvent() { return true; },
     appendChild() {},
+    getAttribute: () => null,
     listeners,
   };
 }
 
-const main = scripts.find(s => s.includes("getElementById('brightness')"));
-ok('found the script that wires the brightness slider', !!main);
-if (main) {
-  const elements = new Map();
-  const document = {
-    readyState: 'complete',
-    hidden: false,
-    getElementById: id => {
-      if (!rendered.has(id)) return null;
-      if (!elements.has(id)) elements.set(id, fakeElement(id));
-      return elements.get(id);
-    },
-    createElement: () => fakeElement(''),
-    createTextNode: () => ({}),
-    addEventListener() {},
-  };
-  const window = {
-    LEDEscape: { html: v => String(v), attr: v => String(v) },
-    LEDVisibility: { onActive() {} },
-  };
-  const context = {
-    window, document, console, URLSearchParams,
-    fetch: () => new Promise(() => {}),
-    setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
-  };
-  vm.createContext(context);
-  let loadError = null;
-  try { vm.runInContext(main, context); } catch (e) { loadError = e; }
-  ok('the script loads', !loadError, loadError && String(loadError));
+(async () => {
+  console.log('\n── Display page module: element lookups ──');
+  const display = await import(pathToFileURL(path.join(JS, 'pages/display.js')).href);
 
-  const slider = elements.get('brightness');
-  const handlers = (slider && slider.listeners.input) || [];
-  ok('the slider has an input handler', handlers.length > 0);
+  const asked = new Set();
+  const elements = new Map();
+  const timers = [];
+  const win = {
+    setTimeout: fn => { timers.push(fn); return timers.length; },
+    clearTimeout() {},
+    URLSearchParams,
+    Event: class { constructor(type) { this.type = type; } },
+    PluginOrderList: { init() {} },
+  };
+  const doc = { defaultView: win, createElement: () => fakeElement(''), createTextNode: () => ({}) };
+  const rootListeners = {};
+  const root = {
+    ownerDocument: doc,
+    querySelector(sel) {
+      const m = /^#([\w-]+)$/.exec(sel);
+      if (!m) throw new Error('unexpected selector ' + sel);
+      asked.add(m[1]);
+      if (!rendered.has(m[1])) return null;
+      if (!elements.has(m[1])) elements.set(m[1], fakeElement(m[1]));
+      return elements.get(m[1]);
+    },
+    addEventListener: (type, fn) => { (rootListeners[type] ||= []).push(fn); },
+    contains: () => true,
+  };
+  const never = () => new Promise(() => {});
+  const polls = [];
+  const ctx = {
+    root, name: 'display', state: {}, signal: { aborted: false },
+    api: { get: never },
+    visibility: { every: (ms, fn) => { polls.push(ms); fn(); return () => {}; } },
+  };
+
+  let loadError = null;
+  try { display.init(root, ctx); } catch (e) { loadError = e; }
+  ok('init() runs', !loadError, loadError && String(loadError));
+  ok('the sync status is polled through ctx.visibility', polls.length === 1 && polls[0] === 5000, polls);
+
+  // Fire everything it wired, so every lookup it can make is made.
   let thrown = null;
+  try {
+    for (const el of elements.values()) {
+      for (const fns of Object.values(el.listeners)) fns.forEach(fn => fn.call(el, { target: el }));
+    }
+    while (timers.length) timers.shift()();
+  } catch (e) { thrown = e; }
+  ok('its listeners and timers run without throwing', !thrown, thrown && String(thrown));
+
+  const missing = [...asked].filter(id => !rendered.has(id));
+  ok('it looks elements up', asked.size > 10, asked.size);
+  ok('every looked-up id is rendered by the partial', missing.length === 0, missing);
+
+  const slider = elements.get('brightness') || fakeElement('brightness');
+  const handlers = slider.listeners.input || [];
+  ok('the slider has an input handler', handlers.length > 0);
   slider.value = '42';
+  thrown = null;
   try { handlers.forEach(fn => fn.call(slider, { target: slider })); } catch (e) { thrown = e; }
   ok('moving the slider throws nothing', !thrown, thrown && String(thrown));
-  ok('...and shows the new value', elements.get('brightness-value').textContent === '42',
-     elements.get('brightness-value').textContent);
-}
+  const label = elements.get('brightness-value');
+  ok('...and shows the new value', !!label && label.textContent === '42', label && label.textContent);
 
-console.log(`\n${pass} passed, ${fail} failed\n`);
-process.exit(fail ? 1 : 0);
+  display.destroy(root, ctx);
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  process.exit(fail ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });

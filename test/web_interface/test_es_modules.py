@@ -43,7 +43,8 @@ def _url(path):
 def test_the_module_directories_hold_modules():
     assert {p.name for p in MODULES} >= {"boot.js", "registry.js", "api.js", "facade.js", "cache.js",
                                          "durations.js", "operation-history.js", "raw-json.js",
-                                         "backup-restore.js", "schedule.js", "general.js"}
+                                         "backup-restore.js", "schedule.js", "general.js",
+                                         "visibility.js", "display.js"}
     for directory in MODULE_DIRS:
         # node needs this to import them in the JS tests; browsers ignore it.
         assert '"type": "module"' in (directory / "package.json").read_text(encoding="utf-8")
@@ -106,6 +107,7 @@ CONVERTED = {
     "backup-restore": ("backup_restore.html", "/partials/backup-restore"),
     "schedule": ("schedule.html", "/partials/schedule"),
     "general": ("general.html", "/partials/general"),
+    "display": ("display.html", "/partials/display"),
 }
 
 # Old window.* names that moved into a page module. Each stays as a
@@ -118,6 +120,7 @@ ALIASES = {
                        "clearRestore", "runRestore"],
     "schedule": ["handleScheduleResponse", "handleDimScheduleResponse"],
     "general": ["webLogin"],
+    "display": ["updateSyncUI"],
 }
 
 
