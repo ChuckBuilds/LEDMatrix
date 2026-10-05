@@ -36,6 +36,7 @@ src/common/sports_card.py
 src/common/sports_card_wrappers.py
 src/common/sports_celebration.py
 src/common/sports_display_rules.py
+src/common/sports_favorites.py
 src/common/sports_fetch.py
 src/common/sports_font_path.py
 src/common/sports_game_over.py

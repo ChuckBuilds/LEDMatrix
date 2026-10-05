@@ -42,6 +42,19 @@ already at 651 MB after 1 h 44 min) against 412 and 386 MB with this change,
 and the 20-minute frame soaks came out at 0.147-0.165% late against main's
 0.151-0.188%.
 
+### New modules
+
+- `src/common/sports_favorites.py` -- sports consolidation family 6, once the
+  plugins made `_is_favorite_game` (seven bodies), `_select_games_for_display`
+  (two) and `_select_recent_games_for_display` (three) one each:
+  `SportsFavoritesMixin` (`SportsCore`: `_is_favorite_game`, `_favorite_code`),
+  `SportsUpcomingFavoritesMixin` and `SportsRecentFavoritesMixin` (the
+  favourites-only picks). Each side of a game is named by the 3.5.0
+  `_favorite_key` seam and compared with `favorite_teams` stripped and
+  upper-cased; nrl overrides the key with the ESPN team id. Only a game with an
+  id can be a duplicate. A plugin may inherit the mixins once it floors on the
+  release that ships this module, and deletes its copies then.
+
 ## 3.8.1
 
 Smooth scrolling at the slower speeds, and the fixes and performance work
