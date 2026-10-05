@@ -46,6 +46,7 @@ Rules for the package:
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
+| [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | next release |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
@@ -293,6 +294,16 @@ lookback) and `_wants_live_odds()` (odds only for games near the screen).
 path as given when it exists (relative to the cwd), else
 `font_layout.resolve_asset_path(path)`. What the scoreboards'
 `_resolve_font_path` copies return on a core that ships it.
+
+### sports_game_over
+
+[`sports_game_over.py`](sports_game_over.py). `SportsGameOverMixin`:
+`_is_game_really_over(game)`, the `SportsLive` check that drops a game ESPN
+still lists as live (`SportsLiveSharedMixin._detect_stale_games` calls it).
+Over on a final period text, or on a 0:00 clock from period `FINAL_PERIOD`
+on unless the score is level. `FINAL_PERIOD` is a class attribute the host
+sets per sport; the default `None` means the clock never ends a game. List
+it before `SportsLiveSharedMixin`.
 
 ### sports_game_renderer
 

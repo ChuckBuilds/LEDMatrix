@@ -668,6 +668,16 @@ policies are unchanged.
 - `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
   Core-internal: plugins have no reason to import it, so it sets no
   `ledmatrix_min_version` floor.
+- `src/common/sports_game_over.py` -- `SportsGameOverMixin`, sports
+  consolidation family 5: `_is_game_really_over`, the scoreboards'
+  `SportsLive` check that drops a game ESPN still lists as live, once the
+  plugins made their five bodies one. Over on a final period text, or on a
+  0:00 clock from period `FINAL_PERIOD` on unless the score is level (a tie
+  at the end of regulation goes to overtime). `FINAL_PERIOD` is the per-sport
+  class attribute, `None` by default (the clock never ends a game); the
+  scoreboards declare 3 (hockey), 4 (basketball, football, lacrosse) or
+  `None`. List the mixin before `SportsLiveSharedMixin`. A plugin may import
+  it once it floors on the release that ships it, and deletes its copy then.
 
 ### Tooling
 
