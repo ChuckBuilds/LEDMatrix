@@ -516,7 +516,10 @@ class DisplayController:
             )
             # BasePlugin.request_on_demand() / end_on_demand() land here.
             # Before any plugin loads: a plugin may ask from its first thread.
-            self.plugin_manager.set_on_demand_handler(self.submit_plugin_on_demand)
+            # getattr: tests and golden traces stand in simpler managers.
+            set_handler = getattr(self.plugin_manager, 'set_on_demand_handler', None)
+            if callable(set_handler):
+                set_handler(self.submit_plugin_on_demand)
 
             # The web UI's loaded / state / error_info for each plugin read
             # what this publishes. Started before loading, so the loads that
