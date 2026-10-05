@@ -464,7 +464,7 @@ Request a specific plugin to display on-demand.
 - `mode` (string, optional): Display mode name (plugin_id inferred if not provided)
 - `duration` (number, optional): Duration in seconds (0 = until stopped)
 - `pinned` (boolean, optional): Pin display (pause rotation)
-- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within about a quarter of a second. When false and the service is stopped, the route returns 400.
+- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within a frame over its control socket (within about a second through the mailbox fallback). When false and the service is stopped, the route returns 400.
 
 **Response**:
 ```json
@@ -489,10 +489,19 @@ display's control socket acknowledged it (it is queued for the render thread,
 which wakes for it and applies it within a frame; see
 [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
 written to the cache mailbox the display polls, as before the socket existed.
-With `"mailbox"`, `socket_error` gives the reason the socket was not used
-(`no_socket` when the display is stopped or predates the socket, `timeout`,
-`refused`, `busy`, ...). Either way the request is applied the same way;
-`request_id` is the same id in both.
+The mailbox is used only when the socket could not carry the request. With
+`"mailbox"`, `socket_error` gives the reason (`no_socket` when the display is
+stopped or predates the socket, `refused`, a connect `timeout`,
+`unknown_command` from a display too old for the command, ...). Either way
+the request is applied the same way; `request_id` is the same id in both.
+
+When the display had the request and did not take it -- a full queue
+(`busy`), bad arguments (`invalid_args`), no answer after the request was
+sent (`timeout`, `closed`) -- the route answers `503` (`400` for
+`invalid_args`) with `status: "error"` and `data: {request_id, transport:
+"socket", socket_error}`, and writes nothing to the mailbox. The stop route
+does the same, except that with `stop_service: true` it still stops the
+service and answers success.
 
 ### Stop On-Demand Display
 
@@ -2248,13 +2257,11 @@ error with `"all": true` (`max_age_hours` is then ignored).
 }
 ```
 
-The clear is asynchronous. The web interface records a request
-(`plugin_error_clear_request` in the shared cache), and the display service
-applies it within about 5 seconds, rebuilding its counts from the errors it
-keeps and republishing. Reads hide the cleared errors from the moment the
-request is recorded. Until the display service applies an age-based clear,
-`recent_errors` and `active_patterns` are already filtered but the counts
-are the old ones, and `clear_pending` is `true`.
+The clear goes to the display service over its control socket
+(`errors.clear`, see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), which
+applies it, rebuilding its counts from the errors it keeps, and republishes
+before it answers: `applied` is `true`, `transport` is `"socket"`, and
+`cleared_count` is the display's own count.
 
 ```json
 {
@@ -2262,17 +2269,30 @@ are the old ones, and `clear_pending` is `true`.
   "data": {
     "cleared_count": 13,
     "clear_requested": true,
+    "applied": true,
+    "transport": "socket",
     "request_id": "5f0c1e...",
     "cutoff": "2026-09-23T09:59:02.310000"
   },
-  "message": "Clear of all errors requested; the display service applies it within about 5 seconds"
+  "message": "Cleared all errors"
 }
 ```
 
-`cleared_count` is how many of the reported errors the clear hides. It is
+When the socket cannot carry it (the display is stopped, or older than
+`errors.clear`) the clear is asynchronous, as before: the web interface
+records a request (`plugin_error_clear_request` in the shared cache),
+`applied` is `false` and `transport` is `"mailbox"`, and the display service
+applies it within about 5 seconds. Reads hide the cleared errors from the
+moment the request is recorded. Until the display service applies an
+age-based clear, `recent_errors` and `active_patterns` are already filtered
+but the counts are the old ones, and `clear_pending` is `true`. Then
+`cleared_count` is how many of the reported errors the clear hides, and
 `null` when that cannot be known before the display service applies it (an
-age-based clear over more errors than the report lists). A request that
-could not be written to the shared cache answers `500`.
+age-based clear over more errors than the report lists).
+
+A request that could not be written to the shared cache answers `500`. A
+display that had the request and failed it (`internal`, a timeout after the
+request was sent) answers `503`, with `context.socket_error`.
 
 ---
 

@@ -33,16 +33,28 @@ def _cache_manager():
 
 
 
+class _NotDelivered(Exception):
+    """The display took an on-demand request over the socket and did not
+    accept it (``busy``, ``invalid_args``, ...) or did not answer in time."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _deliver_on_demand(payload):
     """Hand an on-demand request to the display: control socket, else mailbox.
 
     The socket (src/ipc) answers with an acknowledgement as soon as the
-    display has the command queued for its render thread. Any failure -- no
-    socket (the display is stopped or predates it), a timeout, a refusal --
-    writes the file mailbox instead, exactly as before the socket existed;
-    the display reads it within ON_DEMAND_POLL_INTERVAL. Both carry the same
-    request_id, so a request that reached the display both ways (a reply
-    that timed out after the command was queued) is still processed once.
+    display has the command queued for its render thread. The file mailbox
+    is written only when the socket could not carry the request at all
+    (``control_client.should_fall_back``): no socket (the display is stopped
+    or predates it), a refused connection, or a display too old to know the
+    command. The display reads it within its mailbox poll interval.
+
+    A display that had the request and refused it, or did not answer in
+    time, raises :class:`_NotDelivered`: a mailbox copy would be refused
+    the same way, or hide a stuck display behind a "success".
 
     Returns ``(transport, socket_error)``: ``'socket'`` and None, or
     ``'mailbox'`` and the socket failure's reason code.
@@ -57,6 +69,10 @@ def _deliver_on_demand(payload):
         return 'socket', None
     except control_client.ControlError as e:
         reason = _socket_reason_code(e.reason)
+        if not control_client.should_fall_back(e):
+            logger.warning("The display did not accept on-demand %s %s (%s)",
+                           payload['action'], payload['request_id'], e)
+            raise _NotDelivered(reason) from None
         if reason in _QUIET_SOCKET_REASONS:
             logger.debug("On-demand %s via the mailbox: %s", payload['action'], e)
         else:
@@ -67,6 +83,17 @@ def _deliver_on_demand(payload):
         reason = 'internal'
     _cache_manager().set('display_on_demand_request', payload)
     return 'mailbox', reason
+
+
+def _not_delivered_response(request_id, action, reason):
+    """The answer when the display had the request and did not accept it."""
+    status = 400 if reason == 'invalid_args' else 503
+    return jsonify({
+        'status': 'error',
+        'message': (f'The display service did not accept the on-demand {action} '
+                    f'request ({reason})'),
+        'data': {'request_id': request_id, 'transport': 'socket', 'socket_error': reason},
+    }), status
 
 
 def _withdraw_on_demand(request_id):
@@ -277,7 +304,10 @@ def start_on_demand_display():
         'pinned': pinned,
         'timestamp': _pkg.time.time()
     }
-    transport, socket_error = _deliver_on_demand(request_payload)
+    try:
+        transport, socket_error = _deliver_on_demand(request_payload)
+    except _NotDelivered as e:
+        return _not_delivered_response(request_id, 'start', e.reason)
 
     # A socket acknowledgement is the display itself answering: it is
     # running and has the request queued, whatever systemd says (a display
@@ -312,9 +342,10 @@ def start_on_demand_display():
     # MQTT on-demand command, which posts here with the default -- cold-
     # restarted the display process: every plugin reloaded and the panel was
     # blank for seconds. The restart bought nothing. The running process
-    # reads this mailbox every ON_DEMAND_POLL_INTERVAL (0.25s), from its
-    # dwell sleep, its render loops and Vegas's interrupt check as well as
-    # the main loop, and a restarted one got the request the same way: the
+    # looks at this mailbox at least once a second, from its dwell sleep,
+    # its render loops and Vegas's interrupt check as well as the main loop
+    # (DisplayController._mailbox_poll_interval), and a restarted one got
+    # the request the same way: the
     # startup path only restores a session the display itself saved
     # (display_on_demand_config), so it loaded nothing it would not have had.
     service_result = None
@@ -365,7 +396,14 @@ def stop_on_demand_display():
         'action': 'stop',
         'timestamp': _pkg.time.time()
     }
-    transport, socket_error = _deliver_on_demand(request_payload)
+    try:
+        transport, socket_error = _deliver_on_demand(request_payload)
+    except _NotDelivered as e:
+        if not stop_service:
+            return _not_delivered_response(request_id, 'stop', e.reason)
+        # Stopping the service ends on-demand too, whatever the display did
+        # with the request.
+        transport, socket_error = 'socket', e.reason
 
     service_result = None
     if stop_service:

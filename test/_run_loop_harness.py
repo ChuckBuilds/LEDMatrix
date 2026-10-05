@@ -143,12 +143,24 @@ class FakeCache:
     def __init__(self):
         self.data: Dict[str, Any] = {}
         self.cache_dir = "/nonexistent/run-loop-harness"
+        self._writes = 0
+        self._written: Dict[str, int] = {}
 
     def get(self, key, max_age=None, memory_ttl=None):
         return self.data.get(key)
 
     def set(self, key, data, ttl=None):
         self.data[key] = data
+        # Every write is a new file, as DiskCache's rename makes it.
+        self._writes += 1
+        self._written[key] = self._writes
+
+    def file_signature(self, key):
+        """CacheManager.file_signature: None without a file, else a value
+        that changes with every write."""
+        if key not in self.data:
+            return None
+        return (self._written.get(key, 0), 0, 0)
 
     def delete(self, key):
         self.data.pop(key, None)

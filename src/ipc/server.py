@@ -6,7 +6,9 @@ rendering: a command that changes the panel is validated, put on a bounded
 queue and acknowledged, and the render thread drains that queue at the point
 where it reads the file mailbox (``DisplayController._poll_on_demand_requests``),
 handing each command to the same code. Queries (``on_demand.status``) are
-answered from a snapshot callable the display provides.
+answered from a snapshot callable the display provides, and the few commands
+that touch nothing the render thread owns (``errors.clear``) by a handler the
+display registers, on the connection thread.
 
 The queue also wakes the render thread: :meth:`ControlServer.wait_for_command`
 is what it waits on in place of a sleep, so a command lands within a frame on
@@ -62,6 +64,7 @@ from src.ipc.contract import (
     AWAITED_COMMANDS,
     COMMANDS,
     DEFAULT_SOCKET_DIR,
+    DIRECT_COMMANDS,
     DEFAULT_SOCKET_PATH,
     MAX_MESSAGE_BYTES,
     MAX_SUBSCRIBERS,
@@ -107,7 +110,8 @@ MAX_CLIENTS = 8
 
 #: Commands waiting for the render thread. It drains them at least every
 #: 0.25 s, so a full queue means the render thread is stuck, and the client
-#: is told ``busy`` (and falls back to the mailbox) instead of piling up work.
+#: is told ``busy`` instead of piling up work. The mailbox would not be read
+#: either, so the web interface reports the failure rather than fall back.
 QUEUE_SIZE = 16
 
 #: Timeout for one recv()/send() on a connection.
@@ -552,6 +556,12 @@ def server_socket_path(environ: Optional[Mapping[str, str]] = None) -> Optional[
 
 StatusProvider = Callable[[], Dict[str, Any]]
 
+#: A handler for one of DIRECT_COMMANDS, ``(request_id, args) -> result``. It
+#: runs on the connection thread, so it must not touch what the render thread
+#: owns. It may raise ProtocolError to answer with that error's code; any
+#: other exception is answered ``internal``.
+DirectHandler = Callable[[str, Any], Mapping[str, Any]]
+
 
 class ControlServer:
     """Serves the control socket on background threads.
@@ -569,9 +579,12 @@ class ControlServer:
                  await_seconds: Optional[Mapping[str, float]] = None,
                  state_hub: Optional[StateHub] = None,
                  max_subscribers: int = MAX_SUBSCRIBERS,
-                 keepalive: float = SUBSCRIBE_KEEPALIVE_SECONDS):
+                 keepalive: float = SUBSCRIBE_KEEPALIVE_SECONDS,
+                 handlers: Optional[Mapping[str, DirectHandler]] = None):
         self.path = path
         self.state_hub = state_hub
+        self._handlers: Dict[str, DirectHandler] = {
+            cmd: fn for cmd, fn in (handlers or {}).items() if cmd in DIRECT_COMMANDS}
         self._subscriber_slots = threading.BoundedSemaphore(max_subscribers)
         self._keepalive = keepalive
         self._await_seconds: Dict[str, float] = dict(AWAIT_SECONDS)
@@ -1028,6 +1041,9 @@ class ControlServer:
                 snap = hub.snapshot()
             return Response.success(request.id, fit_snapshot(snap), v=request.v)
 
+        if request.cmd in DIRECT_COMMANDS:
+            return self._direct(request, args)
+
         if request.cmd in QUEUED_COMMANDS and isinstance(args, (
                 OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs)):
             awaited = request.cmd in AWAITED_COMMANDS
@@ -1055,6 +1071,25 @@ class ControlServer:
         return Response.failure(request.id, ErrorCode.INTERNAL,
                                 f'{request.cmd} is not implemented', v=request.v)
 
+    def _direct(self, request: Request, args: Any) -> Response:
+        """A command the display answers on this thread (DIRECT_COMMANDS)."""
+        handler = self._handlers.get(request.cmd)
+        if handler is None:
+            # Answered as an older display would, so the client falls back.
+            return Response.failure(request.id, ErrorCode.UNKNOWN_COMMAND,
+                                    f'{request.cmd} is not served by this display',
+                                    v=request.v)
+        try:
+            result = handler(request.id, args)
+        except ProtocolError as e:
+            return Response.failure(request.id, e.code, e.message, v=request.v)
+        except Exception:  # pylint: disable=broad-except
+            logger.exception("Control socket: %s %s failed", request.cmd, request.id)
+            return Response.failure(request.id, ErrorCode.INTERNAL,
+                                    'the display failed to apply it', v=request.v)
+        logger.info("Control socket applied %s %s", request.cmd, request.id)
+        return Response.success(request.id, dict(result), v=request.v)
+
     def _await_outcome(self, request: Request, outcome: CommandOutcome) -> Response:
         """Answer an awaited command once the render thread has applied it.
 
@@ -1079,7 +1114,9 @@ class ControlServer:
 def start_control_server(status_provider: Optional[StatusProvider] = None,
                          cache_dir: Optional[str] = None,
                          environ: Optional[Mapping[str, str]] = None,
-                         state_hub: Optional[StateHub] = None) -> Optional[ControlServer]:
+                         state_hub: Optional[StateHub] = None,
+                         handlers: Optional[Mapping[str, DirectHandler]] = None,
+                         ) -> Optional[ControlServer]:
     """Start the display's control socket, or return None when it can't run.
 
     None covers Windows, ``LEDMATRIX_CONTROL_SOCKET=off`` and any failure to
@@ -1091,7 +1128,7 @@ def start_control_server(status_provider: Optional[StatusProvider] = None,
         logger.debug("Control socket disabled or unsupported here; using the file mailbox only")
         return None
     server = ControlServer(path, status_provider, resolve_socket_group(cache_dir),
-                           state_hub=state_hub)
+                           state_hub=state_hub, handlers=handlers)
     return server if server.start() else None
 
 
