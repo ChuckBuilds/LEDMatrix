@@ -14,6 +14,7 @@ runs a real server on a temp socket (Linux/macOS only).
 
 import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -139,89 +140,175 @@ def _attempts(*outcomes, calls=None, clock=None):
     return attempt
 
 
+def _until(predicate, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
 def _no_socket():
     return control_client.ControlError("no_socket", "x", sent=False)
 
 
 class TestNoDisplayListening:
-    """No socket to talk to: the display is stopped, or still starting."""
+    """No socket to talk to: the display is stopped, or still starting.
+
+    The route answers at once (202, ``status: "starting"``) and the web
+    process's dispatcher (web_interface/on_demand_dispatch.py) sends the
+    request until the display acknowledges it; the status routes report the
+    outcome. The dispatcher runs on real time with short waits here.
+    """
+
+    @pytest.fixture(autouse=True)
+    def quick(self, monkeypatch, service):
+        from web_interface import on_demand_dispatch
+        monkeypatch.setattr(on_demand_dispatch, "RETRY_INTERVAL", 0.01)
+        monkeypatch.setattr(on_demand_dispatch, "START_WAIT_SECONDS", 2.0)
+        monkeypatch.setattr(f"{DISPLAY}.ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS", 1.0)
+        service["cache"].get.return_value = None   # the display has published nothing
+
+    @staticmethod
+    def _outcome(status=None):
+        from web_interface import on_demand_dispatch
+        d = on_demand_dispatch.current()
+        assert d is not None
+        assert _until(lambda: not d.pending()), "the dispatcher never finished"
+        return d.status()
 
     def test_a_display_still_starting_gets_the_request_once_it_listens(
-            self, api_v3_client, service, clock):
+            self, api_v3_client, service):
         calls = []
         with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=_attempts(_no_socket(), _no_socket(), "ack",
-                                         calls=calls, clock=clock)):
+                   side_effect=_attempts(_no_socket(), _no_socket(), "ack", calls=calls)):
             resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert resp.status_code == 200, resp.get_json()
-        data = resp.get_json()["data"]
-        assert data["transport"] == "socket" and "socket_error" not in data
-        assert data["service"]["started"] is False
+            assert resp.status_code == 202, resp.get_json()
+            body = resp.get_json()
+            assert body["status"] == "starting"
+            data = body["data"]
+            assert data["pending"] is True and data["socket_error"] == "no_socket"
+            assert data["service"]["started"] is False
+            outcome = self._outcome()
+        assert outcome["status"] == "delivered"
+        assert outcome["request_id"] == data["request_id"]
         assert len(calls) == 3
         assert not [c for c in service["calls"] if c[0] == "systemctl"]
         assert _mailbox_writes(service["cache"]) == []
 
-    def test_a_stopped_display_is_started_and_then_sent_the_request(
-            self, api_v3_client, service, clock):
+    def test_a_stopped_display_is_started_and_answered_at_once(self, api_v3_client, service):
         service["state"]["active"] = False
-        calls = []
         with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=_attempts(*[_no_socket()] * 6, "ack",
-                                         calls=calls, clock=clock)) as start:
+                   side_effect=_attempts(*[_no_socket()] * 6, "ack")) as start:
+            started = time.monotonic()
             resp = api_v3_client.post(START_URL, json={"plugin_id": "weather",
                                                        "duration": 30})
-        assert resp.status_code == 200, resp.get_json()
-        data = resp.get_json()["data"]
-        assert data["transport"] == "socket"
-        assert data["service"]["started"] is True
+            answered = time.monotonic() - started
+            assert resp.status_code == 202, resp.get_json()
+            data = resp.get_json()["data"]
+            assert data["service"]["started"] is True
+            from web_interface import on_demand_dispatch
+            assert data["wait_seconds"] == on_demand_dispatch.START_WAIT_SECONDS
+            outcome = self._outcome()
+        assert answered < 1.0, "the route waited for the display"
         assert service["calls"] == [("systemctl", "start")]
-        assert len(calls) == 7
+        assert outcome["status"] == "delivered"
         # The same request, the same id, every time.
         assert {call.args[0] for call in start.call_args_list} == {data["request_id"]}
         assert _mailbox_writes(service["cache"]) == []
 
-    def test_a_stopped_display_without_start_service_is_an_error(
-            self, api_v3_client, service, clock):
+    def test_while_pending_the_status_routes_say_starting(self, api_v3_client, service):
         service["state"]["active"] = False
-        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()) as start:
-            resp = api_v3_client.post(START_URL, json={"plugin_id": "weather",
-                                                       "start_service": False})
-        assert resp.status_code == 400
-        body = resp.get_json()
-        assert "not running" in body["message"]
-        assert body["data"]["socket_error"] == "no_socket"
-        assert start.call_count == 1 and clock.sleeps == 0
-        assert service["calls"] == []
+        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()):
+            rid = api_v3_client.post(START_URL, json={"plugin_id": "weather"}) \
+                .get_json()["data"]["request_id"]
+            status = api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
+            assert status["source"] == "web"
+            assert status["state"]["status"] == "starting"
+            assert status["state"]["request_id"] == rid
+            assert status["state"]["plugin_id"] == "weather"
+            current = api_v3_client.get("/api/v3/display/current-status").get_json()["data"]
+            assert current["on_demand_pending"]["status"] == "starting"
 
-    def test_a_display_that_never_comes_up_is_given_up_on(self, api_v3_client, service, clock):
-        from web_interface.blueprints.api_v3 import display
+    def test_a_display_that_never_comes_up_is_a_start_timeout(self, api_v3_client, service):
         service["state"]["active"] = False
-        calls = []
-        with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=_attempts(_no_socket(), calls=calls, clock=clock)):
+        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()):
             resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert resp.status_code == 503
-        body = resp.get_json()
-        assert body["data"]["socket_error"] == "no_socket"
-        assert body["data"]["service"]["started"] is True
-        assert "did not answer within 45 seconds" in body["message"]
-        waited = calls[-1] - calls[1]
-        assert display.ON_DEMAND_SOCKET_WAIT_SECONDS - 1 <= waited \
-            <= display.ON_DEMAND_SOCKET_WAIT_SECONDS
-        assert _mailbox_writes(service["cache"]) == []
+            assert resp.status_code == 202
+            outcome = self._outcome()
+        assert outcome["status"] == "error" and outcome["error"] == "start-timeout"
+        status = api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
+        assert status["state"]["status"] == "error"
+        assert status["state"]["error"] == "start-timeout"
+        current = api_v3_client.get("/api/v3/display/current-status").get_json()["data"]
+        assert current["on_demand_pending"]["error"] == "start-timeout"
+
+    def test_a_later_display_state_replaces_the_failure(self, api_v3_client, service):
+        service["state"]["active"] = False
+        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()):
+            api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+            failed_at = self._outcome()["last_updated"]
+        later = {"active": True, "status": "active", "plugin_id": "clock",
+                 "last_updated": failed_at + 5}
+        service["cache"].get.return_value = later
+        status = api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
+        assert status["state"]["plugin_id"] == "clock" and status["source"] == "cache"
 
     def test_a_running_service_without_a_socket_is_waited_for_less(
-            self, api_v3_client, service, clock):
-        from web_interface.blueprints.api_v3 import display
+            self, api_v3_client, service):
+        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()):
+            resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+            assert resp.status_code == 202
+            assert resp.get_json()["data"]["wait_seconds"] == 1.0
+            assert self._outcome()["error"] == "start-timeout"
+        assert not [c for c in service["calls"] if c[0] == "systemctl"]
+
+    def test_a_different_failure_while_waiting_ends_it(self, api_v3_client, service):
+        calls = []
+        busy = control_client.ControlError("busy", "x", sent=True)
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=_attempts(_no_socket(), _no_socket(), busy, calls=calls)):
+            assert api_v3_client.post(START_URL, json={"plugin_id": "weather"}).status_code == 202
+            outcome = self._outcome()
+        assert outcome["status"] == "error" and outcome["error"] == "busy"
+        assert len(calls) == 3
+
+    def test_a_stop_while_pending_cancels_it(self, api_v3_client, service):
+        service["state"]["active"] = False
         calls = []
         with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=_attempts(_no_socket(), calls=calls, clock=clock)):
-            resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert resp.status_code == 503
-        assert f"within {int(display.ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS)} seconds" \
-            in resp.get_json()["message"]
-        assert calls[-1] - calls[0] <= display.ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS
-        assert not [c for c in service["calls"] if c[0] == "systemctl"]
+                   side_effect=_attempts(_no_socket(), calls=calls)), \
+             patch(f"{CLIENT}.on_demand_stop", side_effect=_no_socket()):
+            rid = api_v3_client.post(START_URL, json={"plugin_id": "weather"}) \
+                .get_json()["data"]["request_id"]
+            resp = api_v3_client.post(STOP_URL, json={})
+            assert resp.status_code == 200, resp.get_json()
+            data = resp.get_json()["data"]
+            assert data["cancelled_request_id"] == rid
+            outcome = self._outcome()
+            n = len(calls)
+            time.sleep(0.05)
+            assert len(calls) == n, "the cancelled start was still being sent"
+        assert outcome["status"] == "idle" and outcome["last_event"] == "requested-stop"
+        status = api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
+        assert status["state"]["status"] == "idle" and status["source"] != "web"
+
+    def test_a_new_start_supersedes_the_pending_one(self, api_v3_client, service):
+        service["state"]["active"] = False
+        with patch(f"{CLIENT}.on_demand_start", side_effect=_no_socket()):
+            old = api_v3_client.post(START_URL, json={"plugin_id": "weather"}) \
+                .get_json()["data"]["request_id"]
+        sent = []
+        service["state"]["active"] = True
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=lambda rid, *a: sent.append(rid) or {"accepted": True}):
+            resp = api_v3_client.post(START_URL, json={"plugin_id": "clock"})
+            assert resp.status_code == 200
+            outcome = self._outcome()
+        assert sent == [resp.get_json()["data"]["request_id"]]
+        assert old not in sent
+        assert outcome["status"] == "idle" and outcome["last_event"] == "superseded"
 
     def test_a_service_that_will_not_start_is_an_error(self, api_v3_client, service, clock):
         service["state"]["active"] = False
@@ -232,17 +319,6 @@ class TestNoDisplayListening:
         assert resp.status_code == 500
         assert "Failed to start display service" in resp.get_json()["message"]
         assert start.call_count == 1
-
-    def test_a_different_failure_while_waiting_ends_the_wait(self, api_v3_client, service,
-                                                             clock):
-        calls = []
-        busy = control_client.ControlError("busy", "x", sent=True)
-        with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=_attempts(_no_socket(), busy, calls=calls, clock=clock)):
-            resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert resp.status_code == 503
-        assert resp.get_json()["data"]["socket_error"] == "busy"
-        assert len(calls) == 2
 
     def test_stop_with_no_display_running_is_an_error(self, api_v3_client, service, clock):
         service["state"]["active"] = False

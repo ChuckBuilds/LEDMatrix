@@ -62,8 +62,10 @@ send the command over the display's control socket and get an ack. That is
 the only way in: the cache-key mailboxes (`display_on_demand_request`,
 `plugin_error_clear_request`) are gone, and a write to either is dropped
 with a warning. When no display is listening yet, the start route starts the
-service (if asked) and sends the request again once the socket is up; any
-other failure is answered as an error. Socket commands and plugins'
+service (if asked) and answers `202`; the web process's dispatcher
+([`on_demand_dispatch.py`](../web_interface/on_demand_dispatch.py)) sends the
+request once the socket is up, and the status routes report the outcome.
+Any other failure is answered as an error. Socket commands and plugins'
 in-process requests end in the same handler, `_handle_on_demand_request()`.
 The socket's handlers only queue; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)
 for the protocol and the permission model.

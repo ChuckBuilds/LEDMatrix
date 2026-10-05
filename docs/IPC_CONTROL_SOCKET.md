@@ -472,19 +472,35 @@ request was never sent.
 
 | What happened | Example reasons | On-demand start | On-demand stop | `errors.clear` |
 |---|---|---|---|---|
-| No display listening | `no_socket`, `refused` | service stopped: `400` without `start_service`; with it, start the service and send again once the socket answers (up to 45 s), else `503`. Service running (still starting): send again for up to 10 s, else `503` | `503` ("not running" / "may still be starting"); with `stop_service` the service is stopped and the route succeeds | `503` ("not running"; its errors are the last run's, and the next run starts with none) |
+| No display listening | `no_socket`, `refused` | service stopped: `400` without `start_service`; with it, start the service and answer `202` (`status: "starting"`) at once; the dispatcher sends the request until the display takes it (up to 45 s), else `start-timeout`. Service running (still starting): the same `202`, sent for up to 10 s | `503` ("not running" / "may still be starting"); with `stop_service` the service is stopped and the route succeeds | `503` ("not running"; its errors are the last run's, and the next run starts with none) |
 | A display too old to know the command | `unknown_command`, `unsupported_version` | `503` | `503` | `503`, "restart it" |
 | No socket in this process | `disabled`, `unsupported` (Windows, `LEDMATRIX_CONTROL_SOCKET=off`) | `503` | `503` | `503` |
 | The display had it and failed, turned it away, or never answered | `busy`, `invalid_args`, `internal`, a timeout, a hang-up, `bad_response`, `forbidden` | `503` (`400` for `invalid_args`) | `503` (with `stop_service`: stopped anyway) | `503` |
 
 Every error answer carries `socket_error` (a reason code, or `other`).
-Nothing is written to the cache in any of these cases. The start route's
-waits are bounded (`ON_DEMAND_SOCKET_WAIT_SECONDS`,
-`ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS` in
-`web_interface/blueprints/api_v3/display.py`): the socket comes up when the
-display's run loop starts, after every plugin has loaded. A client with a
-shorter HTTP timeout (the MQTT bridge's is 15 s) can give up first while
-the route still delivers the request.
+Nothing is written to the cache in any of these cases.
+
+**Waiting for a display that is starting.** The socket comes up when the
+display's run loop starts, after every plugin has loaded, which can take
+longer than a client waits (the MQTT bridge gives up after 15 s). So the
+start route never waits: it answers `202` with `status: "starting"`, and
+hands the request to the web process's one dispatcher
+([`web_interface/on_demand_dispatch.py`](../web_interface/on_demand_dispatch.py)).
+Its worker thread sends the request every 0.5 s while nothing is listening,
+until the display acknowledges it or the wait runs out (45 s after a cold
+start, `START_WAIT_SECONDS`; 10 s for a service that was already running,
+`ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS`). Any other failure ends it at once.
+One start is pending at a time: a newer start replaces it, and a stop
+cancels it (the stop then succeeds even with no display listening, and
+reports `cancelled_request_id`).
+
+The outcome is reported where clients already look:
+`GET /display/on-demand/status` answers the pending start's state
+(`source: "web"`, `status: "starting"`, or `status: "error"` with `error:
+"start-timeout"` or the socket's reason) until the display publishes
+something newer, and `GET /display/current-status` adds it as
+`on_demand_pending`. Once the display has taken the request its own state
+is reported, as for any start.
 
 Brightness and plugin reload never had a mailbox: without the socket, the
 config watcher applies the saved brightness and a reload becomes the
@@ -676,8 +692,9 @@ device never touches the live display.
    interface no longer writes `display_on_demand_request` or
    `plugin_error_clear_request`, and the display no longer reads them (see
    "Without the socket"). When no display is listening, the start route
-   starts the service if asked and sends the request again once its socket
-   is up; every other failure is an error the route reports. A write to
+   starts the service if asked, answers `202`, and the web process's
+   dispatcher sends the request once the socket is up; every other failure
+   is an error the route reports. A write to
    either key is dropped with a one-time warning naming the writer. The
    display still writes `display_current_state`, `display_on_demand_state`
    and `plugin_runtime_snapshot`: the web interface reads them whenever the

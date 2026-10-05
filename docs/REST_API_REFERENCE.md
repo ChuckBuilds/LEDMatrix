@@ -466,7 +466,7 @@ Request a specific plugin to display on-demand.
 - `mode` (string, optional): Display mode name (plugin_id inferred if not provided)
 - `duration` (number, optional): Duration in seconds (0 = until stopped)
 - `pinned` (boolean, optional): Pin display (pause rotation)
-- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within a frame over its control socket. A stopped one is started and sent the request once its socket is up, which can take as long as the display takes to load its plugins (the route waits up to 45 s). When false and the service is stopped, the route returns 400.
+- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within a frame over its control socket. A stopped one is started, and the route answers `202` at once (see below); the request is sent once the display's socket is up, which can take as long as the display takes to load its plugins. When false and the service is stopped, the route returns 400.
 
 **Response**:
 ```json
@@ -492,15 +492,35 @@ applies it within a frame; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)).
 The `"mailbox"` value earlier releases could answer is gone with the
 mailbox: nothing is written to the cache.
 
-When the display did not take the request, the route answers an error with
-`status: "error"` and `data: {request_id, transport: "socket",
-socket_error}` (plus `service` when it started or checked the service):
+**No display listening yet** (`no_socket`, `refused`: the service is
+stopped, or still loading its plugins). With the service stopped and
+`start_service` false, `400`. Otherwise the route starts the service if
+needed and answers at once:
 
-- no display listening (`no_socket`, `refused`): with the service stopped
-  and `start_service` false, `400`; otherwise the route waits for the
-  display's socket (45 s after starting the service, 10 s when it was
-  already running and may still be starting) and answers `503` if it never
-  answers;
+```json
+{
+  "status": "starting",
+  "message": "The display service is starting; ...",
+  "data": {"request_id": "uuid-here", "plugin_id": "football-scoreboard", "mode": "nfl_live",
+           "duration": 45, "pinned": true, "service": {"active": true, "started": true},
+           "transport": "socket", "socket_error": "no_socket",
+           "pending": true, "wait_seconds": 45.0}
+}
+```
+
+with HTTP `202`. The web process sends the request until the display takes
+it, for up to `wait_seconds` (45 after a cold start, 10 when the service was
+already running). Follow it with `GET /api/v3/display/on-demand/status`:
+its `state` is `{status: "starting", source: "web", request_id, ...}` while
+it waits, the display's own state once delivered, or `{status: "error",
+error: "start-timeout"}` (or the socket's reason) if it never was;
+`GET /api/v3/display/current-status` carries the same as
+`on_demand_pending`. A newer start replaces a pending one; a stop cancels it.
+
+Otherwise, when the display did not take the request, the route answers an
+error with `status: "error"` and `data: {request_id, transport: "socket",
+socket_error}`:
+
 - a full queue (`busy`), no answer after the request was sent (`timeout`,
   `closed`), a display older than the command (`unknown_command`), no
   socket in the web process (`disabled`, `unsupported`): `503` at once;
@@ -509,7 +529,9 @@ socket_error}` (plus `service` when it started or checked the service):
 The stop route answers the same errors (`503` when no display is
 listening, with a message saying whether the service is stopped), except
 that with `stop_service: true` it still stops the service and answers
-success, with `socket_error` set.
+success, with `socket_error` set, and that a stop which cancelled a pending
+start succeeds with `cancelled_request_id` even when no display is
+listening.
 
 ### Stop On-Demand Display
 

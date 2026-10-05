@@ -42,11 +42,17 @@ to for one release are gone.
   pomodoro-timer still write the mailbox, but only as their fallback when
   those methods are missing or answer `None`.
 - **On-demand routes without a listening display.** `POST
-  /api/v3/display/on-demand/start` with the service stopped starts it (when
-  `start_service`, the default) and sends the request once the display's
-  socket answers, waiting up to 45 s (10 s for a service that is running but
-  has no socket yet); otherwise it answers `400` (`start_service` false) or
-  `503` with `socket_error`. Every other socket failure (`unknown_command`
+  /api/v3/display/on-demand/start` with no display listening starts the
+  service (when `start_service`, the default) and answers **`202`** with
+  `status: "starting"` at once; a single background worker in the web
+  process (`web_interface/on_demand_dispatch.py`) sends the request until
+  the display acknowledges it, for up to 45 s (10 s for a service that is
+  running but has no socket yet). `GET /display/on-demand/status` reports it
+  (`starting`, then the display's state, or `error` / `start-timeout`), and
+  `/display/current-status` adds `on_demand_pending`. A newer start replaces
+  a pending one and a stop cancels it (`cancelled_request_id`). The web UI
+  and the MQTT bridge treat `202` as taken. With the service stopped and
+  `start_service` false it answers `400`. Every other socket failure (`unknown_command`
   from an older display, `disabled`/`unsupported`, `busy`, a timeout) is a
   `503`. `/stop` answers `503` when no display is listening, unless
   `stop_service` stops the service. `transport` is always `"socket"`; the

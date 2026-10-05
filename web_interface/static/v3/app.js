@@ -355,9 +355,12 @@ window.previewPluginNow = function(pluginId) {
     })
     .then(r => r.json())
     .then(data => {
+        // 'starting' (202): the display service is starting and the request
+        // follows once it listens.
+        const starting = data.status === 'starting';
         showNotification(data.message || ('Previewing ' + pluginId + ' for 60 seconds'),
-                         data.status || 'success');
-        if (data.status === 'success') window.toggleFloatingPreview(true);
+                         starting ? 'info' : (data.status || 'success'));
+        if (data.status === 'success' || starting) window.toggleFloatingPreview(true);
     })
     .catch(err => {
         showNotification('Preview failed: ' + err.message, 'error');

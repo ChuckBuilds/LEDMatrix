@@ -16,7 +16,8 @@ This file previously pinned that restart path (it guarded a broken
 ``import _pkg.time`` inside it). The path is gone; these tests pin its
 replacement: a running service is left alone, a stopped one is started (only
 when start_service is set), and the request goes over the control socket
-either way -- to a stopped display once it has started and its socket is up.
+either way -- to a stopped display once it has started and its socket is up,
+sent by the web process's dispatcher after the route has answered 202.
 Nothing is ever written to the cache: the file mailbox is gone (stage 5).
 
 The service helpers are patched where they run. display.py binds
@@ -26,6 +27,7 @@ _run_systemctl_command is the one place a systemctl command is issued.
 """
 
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -157,10 +159,18 @@ class TestStartWhileTheServiceIsStopped:
     def test_start_service_starts_it_once_and_never_stops_it(self, api_v3_client, service):
         service["state"]["active"] = False
         response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert response.status_code == 200, response.get_json()
+        # Answered at once: the web process sends the request in the
+        # background once the started display listens.
+        assert response.status_code == 202, response.get_json()
+        assert response.get_json()["status"] == "starting"
         assert _systemctl_verbs(service["systemctl"]) == ["start"]
         service["stop_service"].assert_not_called()
-        # Sent once the started display's socket answered.
+        from web_interface import on_demand_dispatch
+        dispatcher = on_demand_dispatch.current()
+        deadline = time.monotonic() + 5
+        while dispatcher.pending() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert dispatcher.status()["status"] == "delivered"
         assert [s[0] for s in service["sent"]] == ["start"]
         assert _mailbox_writes(service["cache"]) == []
 
