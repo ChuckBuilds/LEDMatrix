@@ -162,6 +162,14 @@ class TestLifecycle:
         assert status['on_demand']['plugin_id'] == 'clock'
         c.encode_message(status)   # it has to fit on the wire
 
+    def test_the_state_names_the_request_it_answers(self, controller):
+        # The web interface keeps reporting a delivered start as "starting"
+        # until the display publishes state for that request id.
+        assert controller._on_demand_state()['request_id'] is None
+        controller._control_server = FakeServer(_start('sock-7'))
+        controller._poll_on_demand_requests()
+        assert controller._on_demand_state()['request_id'] == 'sock-7'
+
     def test_cleanup_closes_the_socket(self, controller):
         server = FakeServer()
         controller._control_server = server

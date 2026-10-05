@@ -47,15 +47,41 @@ def _dispatcher():
 
 
 def _pending_start_state():
-    """A start the dispatcher is still delivering, or one it gave up on:
-    the state the status routes report instead of the display's. None when
-    there is none (or it was delivered, after which the display's own
-    state is the truth)."""
+    """A start the dispatcher is still delivering, one it delivered but the
+    display has not acted on yet, or one it gave up on: what the status
+    routes report instead of the display's own state (see _shadows). None
+    when there is none.
+
+    A delivered start reads as ``status: "starting"`` with ``delivered:
+    true`` for at most DELIVERED_SHOWN_SECONDS: the display acknowledges it
+    when its socket opens and acts on it seconds later, and until then
+    publishes its own idle state, which would flash in the UI.
+    """
     dispatcher = on_demand_dispatch.current()
     status = dispatcher.status() if dispatcher is not None else None
-    if status is None or status.get('status') not in ('starting', 'error'):
+    if status is None:
+        return None
+    if status.get('status') == 'delivered':
+        delivered_at = status.get('last_updated') or 0
+        if _pkg.time.time() - delivered_at > on_demand_dispatch.DELIVERED_SHOWN_SECONDS:
+            return None
+        return dict(status, status='starting', delivered=True, delivered_at=delivered_at)
+    if status.get('status') not in ('starting', 'error'):
         return None
     return status
+
+
+def _display_on_demand_state(snapshot):
+    """The display's own on-demand state: (state, source). From the socket's
+    snapshot, else the cache key it also writes; state None when neither."""
+    state = display_state.on_demand_state(snapshot)
+    if state is not None:
+        return state, 'socket'
+    # memory_ttl=0: the display service writes this key, so only the file
+    # is current. This process's memory tier would keep serving the first
+    # copy it read for the full max_age -- "active" for two minutes after
+    # the display had already stopped.
+    return _cache_manager().get('display_on_demand_state', max_age=120, memory_ttl=0), 'cache'
 
 
 def _send_on_demand(payload):
@@ -202,20 +228,12 @@ def get_on_demand_status():
     available (``source: "socket"``), else the cache key it also writes
     (``source: "cache"``).
     """
-    state = display_state.on_demand_state(display_state.read_state())
-    source = 'socket'
+    state, source = _display_on_demand_state(display_state.read_state())
     pending = _pending_start_state()
-    if state is None:
-        source = 'cache'
-        cache = _cache_manager()
-        # memory_ttl=0: the display service writes this key, so only the file
-        # is current. This process's memory tier would keep serving the first
-        # copy it read for the full max_age -- "active" for two minutes after
-        # the display had already stopped.
-        state = cache.get('display_on_demand_state', max_age=120, memory_ttl=0)
     if pending is not None and _shadows(pending, state):
-        # A start the web process is still delivering, or gave up on
-        # (start-timeout): newer than anything the display has said.
+        # A start the web process is still delivering, has delivered but
+        # the display has not answered yet, or gave up on (start-timeout):
+        # newer than anything the display has said.
         state, source = pending, 'web'
     if state is None:
         state = {
@@ -233,11 +251,24 @@ def get_on_demand_status():
         }
     })
 def _shadows(pending, state):
-    """Whether the web process's pending start (or its failure) is newer
-    than the display's on-demand ``state``. While it is still being sent it
-    always is; a failure is, until the display publishes something later."""
-    if pending.get('status') == 'starting' or not isinstance(state, dict):
+    """Whether the web process's start (or its failure) is newer than the
+    display's on-demand ``state``.
+
+    * Still being sent: always.
+    * Delivered: until the display publishes the state that answers it.
+      A display that names its request (``request_id``) answers when the
+      id matches; its startup state, published as the socket opens and so
+      possibly after the acknowledgement, names no request or an older one
+      and does not count. An older display without the field answers with
+      any state published after the delivery.
+    * Failed: until the display publishes something later.
+    """
+    if not isinstance(state, dict):
         return True
+    if pending.get('status') == 'starting' and not pending.get('delivered'):
+        return True
+    if pending.get('delivered') and 'request_id' in state:
+        return state.get('request_id') != pending.get('request_id')
     shown = state.get('last_updated')
     if not isinstance(shown, (int, float)) or isinstance(shown, bool):
         return True
@@ -493,8 +524,9 @@ def get_current_display_status():
         }
     data = dict(state, source=source)
     pending = _pending_start_state()
-    if pending is not None:
-        # An on-demand start the web process is still delivering (or gave
-        # up on): what the panel is about to show, or why it will not.
+    if pending is not None and _shadows(pending, _display_on_demand_state(snapshot)[0]):
+        # An on-demand start the web process is still delivering, has
+        # delivered but the display has not acted on yet, or gave up on:
+        # what the panel is about to show, or why it will not.
         data['on_demand_pending'] = pending
     return jsonify({'status': 'success', 'data': data})

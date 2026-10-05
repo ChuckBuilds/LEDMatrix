@@ -48,7 +48,10 @@ to for one release are gone.
   process (`web_interface/on_demand_dispatch.py`) sends the request until
   the display acknowledges it, for up to 45 s (10 s for a service that is
   running but has no socket yet). `GET /display/on-demand/status` reports it
-  (`starting`, then the display's state, or `error` / `start-timeout`), and
+  (`starting`; still `starting` with `delivered: true` after the display
+  acknowledges it, until the display publishes the state for that
+  `request_id`, now part of its on-demand state, for at most 30 s; then the
+  display's state, or `error` / `start-timeout`), and
   `/display/current-status` adds `on_demand_pending`. A newer start replaces
   a pending one and a stop cancels it (`cancelled_request_id`). The web UI
   and the MQTT bridge treat `202` as taken. With the service stopped and

@@ -1777,6 +1777,9 @@ class DisplayController:
             'status': self.on_demand_status,
             'error': self.on_demand_last_error,
             'last_event': self.on_demand_last_event,
+            # The request this state answers: lets the web interface tell
+            # the outcome of a start it delivered from an older state.
+            'request_id': self.on_demand_request_id,
             'remaining': self._get_on_demand_remaining(),
             'last_updated': time.time()
         }

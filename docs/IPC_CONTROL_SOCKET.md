@@ -220,7 +220,8 @@ socket.
  }}
 ```
 
-- `display` and `on_demand` are the dicts the cache keys hold, `plugins` is
+- `display` and `on_demand` are the dicts the cache keys hold (`on_demand`
+  includes `request_id`, the request it answers), `plugins` is
   the runtime snapshot (`build_runtime_snapshot`), and `brightness` is the
   configured level, what the panel shows now, and whether the dim schedule
   has it dimmed. A section not published yet is `null`.
@@ -499,8 +500,18 @@ The outcome is reported where clients already look:
 (`source: "web"`, `status: "starting"`, or `status: "error"` with `error:
 "start-timeout"` or the socket's reason) until the display publishes
 something newer, and `GET /display/current-status` adds it as
-`on_demand_pending`. Once the display has taken the request its own state
-is reported, as for any start.
+`on_demand_pending`.
+
+A delivered start keeps reading as `status: "starting"`, now with
+`delivered: true`, until the display publishes the state that answers it.
+The display acknowledges a start as soon as its socket opens, but its run
+loop acts on it only after the first screen is built (about 5 s on ledpi,
+while Vegas renders its first strip), and meanwhile it publishes its own
+idle state. The display's on-demand state names the request it answers
+(`request_id`), so "answers it" means the id matches. A display older than
+that field answers with any state published after the delivery. Either
+way the delivered start is reported for at most 30 s
+(`DELIVERED_SHOWN_SECONDS`).
 
 Brightness and plugin reload never had a mailbox: without the socket, the
 config watcher applies the saved brightness and a reload becomes the

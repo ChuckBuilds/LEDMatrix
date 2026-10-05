@@ -512,7 +512,9 @@ with HTTP `202`. The web process sends the request until the display takes
 it, for up to `wait_seconds` (45 after a cold start, 10 when the service was
 already running). Follow it with `GET /api/v3/display/on-demand/status`:
 its `state` is `{status: "starting", source: "web", request_id, ...}` while
-it waits, the display's own state once delivered, or `{status: "error",
+it waits, and still `starting` with `delivered: true` once the display has
+acknowledged it but not yet published the state for that `request_id` (at
+most 30 s), then the display's own state, or `{status: "error",
 error: "start-timeout"}` (or the socket's reason) if it never was;
 `GET /api/v3/display/current-status` carries the same as
 `on_demand_pending`. A newer start replaces a pending one; a stop cancels it.

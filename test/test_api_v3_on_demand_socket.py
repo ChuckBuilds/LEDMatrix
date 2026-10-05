@@ -15,6 +15,7 @@ runs a real server on a temp socket (Linux/macOS only).
 import os
 import sys
 import time
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -293,6 +294,86 @@ class TestNoDisplayListening:
         assert outcome["status"] == "idle" and outcome["last_event"] == "requested-stop"
         status = api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
         assert status["state"]["status"] == "idle" and status["source"] != "web"
+
+    # -- delivered, but the display has not acted on it yet ----------------
+    # The display acknowledges a start when its socket opens and acts on it
+    # seconds later (Vegas builds its first strip first: ~5 s on ledpi);
+    # meanwhile it publishes its own idle state, which must not flash.
+
+    def _delivered(self, api_v3_client, service):
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=_attempts(_no_socket(), "ack")):
+            data = api_v3_client.post(START_URL, json={"plugin_id": "weather"})                 .get_json()["data"]
+            outcome = self._outcome()
+        assert outcome["status"] == "delivered"
+        return data["request_id"], outcome["last_updated"]
+
+    @staticmethod
+    def _status(api_v3_client):
+        return api_v3_client.get("/api/v3/display/on-demand/status").get_json()["data"]
+
+    def test_a_delivered_start_stays_starting_until_the_display_answers(
+            self, api_v3_client, service):
+        rid, delivered_at = self._delivered(api_v3_client, service)
+        # The display's startup state: idle, published after the ack, for
+        # no request (or an older one).
+        for older in (None, "an-older-request"):
+            service["cache"].get.return_value = {
+                "active": False, "status": "idle", "request_id": older,
+                "last_updated": delivered_at + 1}
+            data = self._status(api_v3_client)
+            assert data["source"] == "web", older
+            assert data["state"]["status"] == "starting"
+            assert data["state"]["delivered"] is True
+            assert data["state"]["request_id"] == rid
+            current = api_v3_client.get("/api/v3/display/current-status").get_json()["data"]
+            assert current["on_demand_pending"]["delivered"] is True
+
+    def test_the_display_state_for_the_request_takes_over(self, api_v3_client, service):
+        rid, delivered_at = self._delivered(api_v3_client, service)
+        service["cache"].get.return_value = {
+            "active": True, "status": "active", "plugin_id": "weather",
+            "request_id": rid, "last_updated": delivered_at + 5}
+        data = self._status(api_v3_client)
+        assert data["source"] == "cache" and data["state"]["status"] == "active"
+        current = api_v3_client.get("/api/v3/display/current-status").get_json()["data"]
+        assert "on_demand_pending" not in current
+
+    def test_its_error_takes_over_too(self, api_v3_client, service):
+        rid, delivered_at = self._delivered(api_v3_client, service)
+        service["cache"].get.return_value = {
+            "active": False, "status": "error", "error": "load-failed",
+            "request_id": rid, "last_updated": delivered_at + 5}
+        assert self._status(api_v3_client)["state"]["error"] == "load-failed"
+
+    def test_an_older_display_answers_with_any_newer_state(self, api_v3_client, service):
+        # A display before request_id was published: timestamps decide.
+        _, delivered_at = self._delivered(api_v3_client, service)
+        service["cache"].get.return_value = {"active": False, "status": "idle",
+                                             "last_updated": delivered_at - 1}
+        assert self._status(api_v3_client)["source"] == "web"
+        service["cache"].get.return_value = {"active": True, "status": "active",
+                                             "last_updated": delivered_at + 1}
+        assert self._status(api_v3_client)["source"] == "cache"
+
+    def test_a_delivered_start_is_shown_for_a_limited_time(
+            self, api_v3_client, service, monkeypatch):
+        from web_interface import on_demand_dispatch
+        _, delivered_at = self._delivered(api_v3_client, service)
+        service["cache"].get.return_value = {"active": False, "status": "idle",
+                                             "request_id": None,
+                                             "last_updated": delivered_at + 1}
+        cap = on_demand_dispatch.DELIVERED_SHOWN_SECONDS
+        assert cap == 30.0
+        clock = types.SimpleNamespace(time=lambda: delivered_at + cap - 1,
+                                      monotonic=time.monotonic, sleep=time.sleep)
+        monkeypatch.setattr("web_interface.blueprints.api_v3.time", clock)
+        assert self._status(api_v3_client)["source"] == "web"
+        clock.time = lambda: delivered_at + cap + 1
+        data = self._status(api_v3_client)
+        assert data["source"] == "cache" and data["state"]["status"] == "idle"
+        current = api_v3_client.get("/api/v3/display/current-status").get_json()["data"]
+        assert "on_demand_pending" not in current
 
     def test_a_new_start_supersedes_the_pending_one(self, api_v3_client, service):
         service["state"]["active"] = False

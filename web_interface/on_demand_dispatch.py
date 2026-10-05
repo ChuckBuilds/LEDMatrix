@@ -44,6 +44,14 @@ RETRY_INTERVAL = 0.5
 #: reported, so a client polling every few seconds sees it.
 OUTCOME_SECONDS = 120.0
 
+#: How long a delivered start is still reported as ``starting`` while the
+#: display has not published the state that answers it. The display
+#: acknowledges a start when its socket opens, but its run loop acts on it
+#: only after its first screen is built (about 5 s on a Pi 4 in Vegas), and
+#: until then it reports its own idle state. See
+#: ``web_interface/blueprints/api_v3/display.py:_pending_start_state``.
+DELIVERED_SHOWN_SECONDS = 30.0
+
 #: ``send(payload)`` hands the request to the display (the route's
 #: ``_send_on_demand``) and raises ``ControlError`` when it does not take it.
 Sender = Callable[[Dict[str, Any]], Any]
