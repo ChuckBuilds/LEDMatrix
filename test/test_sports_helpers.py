@@ -581,7 +581,15 @@ def _sports_source(root, sport):
 def _adopted(source):
     """Gone is fine once the plugin uses the module; otherwise the finder is
     not seeing its copy."""
-    return sports_helpers.__name__ in source
+    name = sports_helpers.__name__
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == name or any(
+                    f"{node.module}.{a.name}" == name for a in node.names):
+                return True
+        elif isinstance(node, ast.Import) and any(a.name == name for a in node.names):
+            return True
+    return False
 
 
 class TestParityWithPlugins:
