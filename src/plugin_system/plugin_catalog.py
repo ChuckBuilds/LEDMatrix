@@ -205,12 +205,11 @@ class PluginCatalog:
     def _live_display_modes(self, plugin_id: str) -> Optional[List[str]]:
         """The modes the running display registered for ``plugin_id``, or None."""
         view = self._runtime_view()
-        lookup = getattr(view, 'display_modes', None)
-        if not callable(lookup):
+        if view is None:
             return None
         try:
-            modes = lookup(plugin_id)
-        except Exception as exc:
+            modes = view.display_modes(plugin_id)
+        except Exception as exc:  # includes a source returning something else
             self.logger.debug("Could not read display modes for %s: %s", plugin_id, exc)
             return None
         return list(modes) if isinstance(modes, list) and modes else None
