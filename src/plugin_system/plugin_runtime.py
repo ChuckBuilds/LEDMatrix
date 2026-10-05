@@ -161,7 +161,9 @@ def _published_modes(modes: Any) -> Optional[List[str]]:
     """The registered display modes as a snapshot carries them, or None."""
     if not isinstance(modes, list):
         return None
-    return [_clip(m, _ID_CHARS) for m in modes[:_MAX_MODES] if isinstance(m, str)]
+    # A name is a key the display matches exactly: drop one too long to
+    # carry whole rather than clip it into a different name.
+    return [m for m in modes if isinstance(m, str) and len(m) <= _ID_CHARS][:_MAX_MODES]
 
 
 def build_runtime_snapshot(state_manager: Any, *, started_at: float,

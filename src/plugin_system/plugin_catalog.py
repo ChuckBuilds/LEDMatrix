@@ -244,6 +244,8 @@ class PluginCatalog:
             if live and any(m.lower() == wanted for m in live):
                 return plugin_id
         for plugin_id, manifest in manifests.items():
+            if self._live_display_modes(plugin_id):
+                continue  # the display's list is the truth for this plugin
             modes = manifest.get('display_modes')
             if isinstance(modes, list) and any(
                     isinstance(m, str) and m.lower() == wanted for m in modes):

@@ -165,6 +165,12 @@ class TestSnapshotAndView:
         published = snapshot["plugins"]["soccer-scoreboard"]["modes"]
         assert len(published) == rt._MAX_MODES
 
+    def test_a_mode_name_is_kept_whole_or_dropped(self):
+        long_mode = "x" * (rt._ID_CHARS + 1)
+        snapshot = build_runtime_snapshot(_loaded_states(["ok", long_mode]),
+                                          started_at=1.0, now=self.NOW)
+        assert snapshot["plugins"]["soccer-scoreboard"]["modes"] == ["ok"]
+
     def test_non_strings_from_a_hand_made_snapshot_are_dropped(self):
         snapshot = {"schema": rt.SNAPSHOT_SCHEMA, "running": True,
                     "published_at": self.NOW, "plugins": {
@@ -201,6 +207,13 @@ class TestCatalog:
         catalog = self._catalog(plugins_dir, web_cache)
         assert catalog.get_plugin_display_modes("clock-simple") == ["clock"]
         assert catalog.find_plugin_for_mode("clock") == "clock-simple"
+
+    def test_a_mode_the_display_dropped_does_not_resolve_by_manifest(
+            self, plugins_dir, shared_cache):
+        display_cache, web_cache = shared_cache
+        PluginRuntimePublisher(display_cache, _loaded_states(CUSTOM)).tick()
+        catalog = self._catalog(plugins_dir, web_cache)
+        assert catalog.find_plugin_for_mode("soccer_eng.1_live") is None
 
     def test_a_stopped_display_falls_back_to_manifests(self, plugins_dir, shared_cache):
         display_cache, web_cache = shared_cache
