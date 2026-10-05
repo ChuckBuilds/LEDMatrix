@@ -138,6 +138,11 @@ class PluginStoreManager(_RegistryMixin, _InstallMixin, _UpdateMixin):
         # the registry cache expires. Only one thread fetches; others wait and
         # then get the result from the warm cache (double-checked locking).
         self._registry_fetch_lock = threading.Lock()
+        # refresh_registry_in_background: the one refresh thread, and when
+        # an offline one may be retried (see that method).
+        self._registry_refresh_lock = threading.Lock()
+        self._registry_refresh_thread: Optional[threading.Thread] = None
+        self._registry_refresh_retry_after = 0.0
 
         # Per-plugin locks for _reinstall_with_rollback: the web UI runs
         # Flask with threaded=True, so two overlapping requests for the

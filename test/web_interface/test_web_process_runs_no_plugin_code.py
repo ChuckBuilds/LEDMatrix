@@ -128,6 +128,7 @@ class Web:
         store = api.plugin_store_manager
         store.plugins_dir = str(self.plugins_dir)
         store.get_registry_info.return_value = None
+        store.get_cached_registry_info.return_value = None
         store.get_plugin_info.return_value = None
         store._get_local_git_info.return_value = None
         store.install_plugin.return_value = True

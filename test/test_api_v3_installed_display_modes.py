@@ -29,7 +29,7 @@ def installed(api_v3_module, api_v3_client, tmp_path):
         api.plugin_catalog.plugins_dir = str(tmp_path)  # no manifest on disk
         api.plugin_catalog.get_all_plugin_info = MagicMock(return_value=[info])
         api.plugin_catalog.get_plugin_display_modes = MagicMock(return_value=declared_modes)
-        api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
+        api.plugin_store_manager.get_cached_registry_info = MagicMock(return_value=None)
         api.config_manager.load_config = MagicMock(return_value={})
         response = api_v3_client.get('/api/v3/plugins/installed')
         assert response.status_code == 200

@@ -45,6 +45,18 @@ accepts both, but the store flags the old spelling as deprecated
   changed frame, and the render loop writes it (`write_owed_snapshot()`)
   once the interval has passed. The cadence is unchanged, and nothing extra
   runs when no frame is owed.
+- The installed-plugins list (`GET /api/v3/plugins/installed`) no longer
+  waits on GitHub. Its comment said the registry lookup made no network call,
+  but on a cold or expired cache `get_registry_info()` downloads plugins.json
+  (10 s timeout, three attempts), and with nothing cached to fall back on
+  every plugin's lookup repeated that: offline, 5 plugins took 11 s with DNS
+  failing and 2 plugins 65 s with the route black-holed, on every load. The
+  list now reads the registry copy already in memory, however old
+  (`get_cached_registry_info()`); with none yet it returns without update or
+  verified badges and starts one background refresh
+  (`refresh_registry_in_background()`, backing off for a minute after an
+  offline failure), so a later load has them. The store, install and update
+  paths still fetch as before.
 
 ### ESPN date-range fetches: fewer requests, fewer at once
 
