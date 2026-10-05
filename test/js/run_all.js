@@ -37,7 +37,8 @@ const DOM = ['dom/test_installed_dom.js', 'dom/test_store_dom.js', 'dom/test_no_
              'dom/test_tools_sections.js', 'dom/test_cache_page.js',
              'dom/test_durations_page.js', 'dom/test_operation_history_page.js',
              'dom/test_raw_json_page.js', 'dom/test_backup_restore_page.js',
-             'dom/test_schedule_page.js', 'dom/test_general_page.js'];
+             'dom/test_schedule_page.js', 'dom/test_general_page.js',
+             'dom/test_visibility_service.js', 'dom/test_display_page.js'];
 
 function reachable(url) {
   return new Promise(res => {

@@ -19,6 +19,34 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Web UI: the Display tab is an ES-module page, with a page-visibility service (stage 4)
+
+- New `static/v3/js/core/visibility.js`: each page module gets
+  `ctx.visibility` with `whileVisible(start, stop)`, `every(ms, fn)` and
+  `isVisible()`. Work registered there runs only while the page's tab is the
+  active tab and the browser tab is visible, and ends when the page is
+  swapped out, with no teardown code in the page. It reads the active tab
+  from `window.LEDVisibility`, so it agrees with the classic partials that
+  still use that directly. The page registry gained a `mountContext` option
+  for services bound to one mounted page.
+- The Display tab's inline scripts are now `static/v3/js/pages/display.js`.
+  The partial has no inline script, `onclick` or `onchange` any more. The
+  multi-display sync status poll (every 5 s) runs through
+  `ctx.visibility.every`; the status and scroll-speed hint requests go
+  through `core/api.js` with the page's abort signal, and so does the Vegas
+  order widget's plugin-list request.
+- Behaviour differences: with sync on, opening the tab asks for the status
+  once instead of twice, and a Display tab loaded while not on screen waits
+  until it is. A login redirect during a poll no longer flashes "Sync status
+  unavailable". The `window.syncStatusInterval` timer id is gone (nothing
+  read it). A pending scroll-hint request or widget retry is dropped when
+  the partial is swapped out.
+- `window.updateSyncUI` keeps working as a deprecated alias through
+  `window.LEDMatrix` (one console warning).
+- New suites `test/js/dom/test_visibility_service.js` and
+  `dom/test_display_page.js`; `unit/test_display_partial_ids.js` imports the
+  module instead of slicing the template.
+
 ### Plugins ask for the screen in-process: `request_on_demand()` / `end_on_demand()`
 
 The in-process way in that stage 5 of the control socket needed

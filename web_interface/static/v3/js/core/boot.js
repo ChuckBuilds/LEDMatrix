@@ -11,13 +11,17 @@
 import { createApi } from './api.js';
 import { createFacade, installFacade } from './facade.js';
 import { createRegistry } from './registry.js';
+import { createVisibility } from './visibility.js';
 
 const api = createApi();
+const visibility = createVisibility({ window: window });
 const registry = createRegistry({
     context: {
         api: api,
         notify: function(message, type) { return window.LEDMatrix.notify(message, type); },
     },
+    // Bound to one mounted page: its timers stop when it is destroyed.
+    mountContext: function(ctx) { return { visibility: visibility.forPage(ctx) }; },
 });
 const facade = installFacade(window, createFacade(window, api, registry));
 
@@ -45,6 +49,7 @@ const pages = {
     'backup-restore': page(function() { return import('../pages/backup-restore.js'); }),
     'schedule': page(function() { return import('../pages/schedule.js'); }),
     'general': page(function() { return import('../pages/general.js'); }),
+    'display': page(function() { return import('../pages/display.js'); }),
 };
 Object.keys(pages).forEach(function(name) { registry.register(name, pages[name]); });
 
@@ -85,5 +90,6 @@ alias('cache', 'deleteCacheFile', "the Cache tab's Delete buttons");
 });
 aliasObject('general', 'webLogin', ['setPassword', 'disable', 'createToken', 'copyToken', 'revoke'],
             "the General tab's Security buttons");
+alias('display', 'updateSyncUI', "the Display tab's Role menu");
 
 registry.start();
