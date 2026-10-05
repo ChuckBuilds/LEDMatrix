@@ -1862,6 +1862,8 @@ class DisplayController:
 
     #: Class-level defaults for controllers built without __init__ (tests).
     _control_server: Optional[ControlServer] = None
+    #: The last on-demand request handled; published in _on_demand_state.
+    on_demand_request_id: Optional[str] = None
     #: Most plugin on-demand requests waiting for the render thread at once.
     #: A plugin that asks faster than the display drains (four times a
     #: second at worst) is refused, not queued without end.
