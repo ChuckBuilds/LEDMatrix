@@ -1,5 +1,5 @@
 {% import 'v3/partials/_macros.html' as ui %}
-<div class="bg-white rounded-lg shadow p-6">
+<div class="bg-white rounded-lg shadow p-6" data-page="display">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Display Settings</h2>
         <p class="mt-1 text-sm text-gray-600">Configure LED matrix hardware settings and display options.</p>
@@ -168,7 +168,8 @@
                         class="w-full bg-gray-100 hover:bg-gray-200 px-4 py-3 flex items-center justify-between text-left transition-colors rounded-t-lg"
                         aria-controls="display-section-advanced-hardware"
                         aria-expanded="false"
-                        onclick="toggleSection('display-section-advanced-hardware')">
+                        data-action="toggle-section"
+                        data-section="display-section-advanced-hardware">
                     <div class="flex-1">
                         <h4 class="font-semibold text-gray-900">
                             <i class="fas fa-sliders-h mr-1 text-gray-500"></i>Advanced Hardware &amp; Display Options (15)
@@ -394,42 +395,6 @@
         </div>
                 </div> <!-- /#display-section-advanced-hardware (nested-content) -->
             </div> <!-- /advanced hardware nested-section -->
-
-            <script>
-                // Live "Your display: W x H" readout - width = cols x chain_length,
-                // height = rows x parallel (same math as the chain-length tooltip),
-                // swapped for a 90/270 orientation. A custom pixel mapper config can
-                // change it further; src/display_geometry.py models those.
-                (function () {
-                    const ids = ['rows', 'cols', 'chain_length', 'parallel'];
-                    const out = document.getElementById('display-resolution-value');
-                    if (!out) return;
-                    function recompute() {
-                        const v = {};
-                        for (const id of ids) {
-                            const el = document.getElementById(id);
-                            v[id] = el ? parseInt(el.value, 10) : NaN;
-                        }
-                        if (Object.values(v).some(n => !Number.isFinite(n) || n <= 0)) {
-                            out.textContent = '—';
-                            return;
-                        }
-                        let w = v.cols * v.chain_length, h = v.rows * v.parallel;
-                        const orientation = document.getElementById('orientation');
-                        if (orientation && (orientation.value === '90' || orientation.value === '270')) {
-                            [w, h] = [h, w];
-                        }
-                        out.textContent = w + ' × ' + h + ' pixels';
-                    }
-                    for (const id of ids) {
-                        const el = document.getElementById(id);
-                        if (el) el.addEventListener('input', recompute);
-                    }
-                    const orientationSelect = document.getElementById('orientation');
-                    if (orientationSelect) orientationSelect.addEventListener('change', recompute);
-                    recompute();
-                })();
-            </script>
         </div>
 
         <!-- Vegas Scroll Mode Settings -->
@@ -830,7 +795,7 @@ With this off a live game takes over the whole display with the full-screen scor
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="form-group" id="setting-display-sync_role" data-setting-key="sync.role">
                     <label for="sync_role" class="block text-sm font-medium text-gray-700">Role{{ ui.help_tip('This unit\'s part in a two-display setup.\nStandalone = sync off. Set one Pi to Leader (drives the scroll) and the other to Follower (receives frames). Restart required after changing.', 'Sync Role') }}</label>
-                    <select id="sync_role" name="sync_role" class="form-control" onchange="updateSyncUI()">
+                    <select id="sync_role" name="sync_role" class="form-control">
                         <option value="standalone" {% if main_config.get('sync', {}).get('role', 'standalone') == 'standalone' %}selected{% endif %}>Standalone (disabled)</option>
                         <option value="leader"     {% if main_config.get('sync', {}).get('role', 'standalone') == 'leader'     %}selected{% endif %}>Leader (drives scroll)</option>
                         <option value="follower"   {% if main_config.get('sync', {}).get('role', 'standalone') == 'follower'   %}selected{% endif %}>Follower (receives frames)</option>
@@ -879,261 +844,3 @@ With this off a live game takes over the whole display with the full-screen scor
         </div>
     </form>
 </div>
-
-<script>
-// Update brightness display
-document.getElementById('brightness').addEventListener('input', function() {
-    document.getElementById('brightness-value').textContent = this.value;
-});
-
-
-// Vegas Scroll Mode Settings
-(function() {
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
-    function escapeAttr(text) { return window.LEDEscape.attr(text); }
-
-    // Toggle settings visibility
-    const vegasEnabledCheckbox = document.getElementById('vegas_scroll_enabled');
-    const vegasSettings = document.getElementById('vegas_scroll_settings');
-
-    if (vegasEnabledCheckbox && vegasSettings) {
-        vegasEnabledCheckbox.addEventListener('change', function() {
-            vegasSettings.style.display = this.checked ? 'block' : 'none';
-        });
-    }
-
-    // Double-sided: copies/axis only mean anything while the feature is on.
-    // Hidden rather than disabled so the fields keep submitting and the server
-    // still sees an 'off' state to persist.
-    const doubleSidedCheckbox = document.getElementById('double_sided_enabled');
-    const doubleSidedSettings = document.getElementById('double_sided_settings');
-
-    if (doubleSidedCheckbox && doubleSidedSettings) {
-        doubleSidedCheckbox.addEventListener('change', function() {
-            doubleSidedSettings.style.display = this.checked ? 'grid' : 'none';
-        });
-    }
-
-    // Declared before first use: let is not hoisted usably.
-    let scrollHintTimer = null;
-    let scrollHintSeq = 0;
-
-    // Update scroll speed display
-    const scrollSpeedSlider = document.getElementById('vegas_scroll_speed');
-    const scrollSpeedValue = document.getElementById('vegas_scroll_speed_value');
-
-    if (scrollSpeedSlider && scrollSpeedValue) {
-        scrollSpeedSlider.addEventListener('input', function() {
-            scrollSpeedValue.textContent = this.value;
-            refreshScrollSpeedHint();
-        });
-        refreshScrollSpeedHint();
-    }
-
-    // Tell the user what the panel will really do with this speed. Only
-    // speeds that advance a whole number of pixels per refresh look smooth,
-    // and which those are depends on the panel, so the server works it out.
-    function refreshScrollSpeedHint() {
-        clearTimeout(scrollHintTimer);
-        scrollHintTimer = setTimeout(function() {
-            const hint = document.getElementById('vegas_scroll_speed_hint');
-            if (!hint) return;
-            const seq = ++scrollHintSeq;
-            const q = new URLSearchParams({
-                speed: scrollSpeedSlider.value,
-                min: scrollSpeedSlider.min,
-                max: scrollSpeedSlider.max
-            });
-            fetch('/api/v3/config/scroll-speed-advice?' + q)
-                .then(function(r) { return r.json(); })
-                .then(function(body) {
-                    if (seq !== scrollHintSeq || body.status !== 'success') return;
-                    renderScrollSpeedHint(hint, body.data);
-                })
-                .catch(function() { hint.textContent = ''; });
-        }, 150);
-    }
-
-    function renderScrollSpeedHint(hint, a) {
-        const ap = a.applied;
-        const motion = ap.pixels_per_frame + ' px every ' + ap.frame_hold +
-            ' refresh' + (ap.frame_hold === 1 ? '' : 'es');
-        hint.textContent = '';
-        hint.className = 'mt-1 text-xs ' + (a.smooth && a.exact ? 'text-green-700' : 'text-amber-700');
-        const line = document.createElement('span');
-        if (a.smooth && a.exact) {
-            line.textContent = 'Smooth on this panel (' + motion + ', ' + a.refresh_hz + ' Hz).';
-        } else {
-            line.textContent = a.requested + ' px/s will run as ' + ap.pixels_per_second +
-                ' px/s (' + motion + ', ' + ap.steppiness + ') on this ' + a.refresh_hz +
-                ' Hz panel.' + (a.alternatives.length ? ' Smooth speeds: ' : '');
-        }
-        hint.appendChild(line);
-        a.alternatives.forEach(function(alt, i) {
-            if (i > 0) hint.appendChild(document.createTextNode(' '));
-            const value = Math.round(alt.pixels_per_second);
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'underline font-medium';
-            btn.textContent = value + ' px/s';
-            btn.addEventListener('click', function() {
-                scrollSpeedSlider.value = value;
-                scrollSpeedSlider.dispatchEvent(new Event('input', {bubbles: true}));
-            });
-            hint.appendChild(btn);
-        });
-    }
-
-    // Initialize plugin order list via the shared drag-and-drop module
-    // (static/v3/js/widgets/plugin-order-list.js) — the same component the
-    // Durations tab uses for the primary rotation order.
-    function initPluginOrderList(attempt) {
-        const container = document.getElementById('vegas_plugin_order');
-        if (!container) return;
-        if (!window.PluginOrderList) {
-            // Widget script is deferred; retry briefly, then surface a real
-            // error instead of waiting forever.
-            if ((attempt || 0) < 50) {
-                setTimeout(function() { initPluginOrderList((attempt || 0) + 1); }, 100);
-            } else {
-                container.textContent = 'Could not load the reorder widget — reload the page to try again.';
-                container.className = 'text-sm text-red-500';
-            }
-            return;
-        }
-        window.PluginOrderList.init({
-            containerId: 'vegas_plugin_order',
-            orderInputId: 'vegas_plugin_order_value',
-            excludedInputId: 'vegas_excluded_plugins_value',
-            showVegasModeBadge: true
-        });
-    }
-
-
-    // Initialize on DOM ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initPluginOrderList);
-    } else {
-        initPluginOrderList();
-    }
-})();
-
-// Multi-Display Sync UI
-(function() {
-    function updateSyncUI() {
-        const role = document.getElementById('sync_role').value;
-        const bar = document.getElementById('sync_status_bar');
-        const posGroup = document.getElementById('setting-display-sync_follower_position');
-        if (role === 'standalone') {
-            bar.classList.add('hidden');
-            document.getElementById('sync_error_detail').classList.add('hidden');
-            posGroup.style.display = 'none';
-        } else {
-            bar.classList.remove('hidden');
-            posGroup.style.display = role === 'follower' ? '' : 'none';
-            pollSyncStatus();
-        }
-    }
-    window.updateSyncUI = updateSyncUI;
-
-    function pollSyncStatus() {
-        const role = document.getElementById('sync_role') && document.getElementById('sync_role').value;
-        if (!role || role === 'standalone') return;
-
-        fetch('/api/v3/sync/status')
-            .then(r => r.json())
-            .then(resp => {
-                const d = resp.data || {};
-                renderSyncStatus(d);
-            })
-            .catch(() => {
-                renderSyncStatus({state: 'unknown'});
-            });
-    }
-
-    function renderSyncStatus(d) {
-        const content = document.getElementById('sync_status_content');
-        const errorDetail = document.getElementById('sync_error_detail');
-        const errorText = document.getElementById('sync_error_text');
-        if (!content) return;
-
-        const state = d.state || 'unknown';
-        const role  = d.role  || 'unknown';
-
-        let icon, colorClass, text;
-
-        if (state === 'connected' || state === 'follower') {
-            icon = '●';
-            colorClass = 'bg-green-50 border-green-200 text-green-800';
-            const peer = d.peer_ip || d.leader_ip || 'peer';
-            text = role === 'leader'
-                ? `Follower connected — ${peer} (chain ${d.peer_chain || '?'})`
-                : `Receiving from leader — ${peer}`;
-            errorDetail.classList.add('hidden');
-
-        } else if (state === 'incompatible') {
-            icon = '⚠';
-            colorClass = 'bg-yellow-50 border-yellow-200 text-yellow-800';
-            text = `Follower connected but incompatible panels`;
-            if (d.error) {
-                errorText.textContent = d.error;
-                errorDetail.classList.remove('hidden');
-            }
-
-        } else if (state === 'no_peer' || state === 'standalone') {
-            icon = '○';
-            colorClass = 'bg-gray-50 border-gray-200 text-gray-600';
-            text = role === 'leader' ? 'No follower detected' : 'Searching for leader…';
-            errorDetail.classList.add('hidden');
-
-        } else if (state === 'starting') {
-            icon = '○';
-            colorClass = 'bg-gray-50 border-gray-200 text-gray-500';
-            text = 'Display process starting…';
-            errorDetail.classList.add('hidden');
-
-        } else {
-            icon = '✕';
-            colorClass = 'bg-red-50 border-red-200 text-red-700';
-            text = 'Sync status unavailable';
-            errorDetail.classList.add('hidden');
-        }
-
-        content.className = `flex items-start space-x-2 p-3 rounded-lg border text-sm ${colorClass}`;
-        content.textContent = '';
-        const iconSpan = document.createElement('span');
-        iconSpan.className = 'font-bold text-lg leading-none';
-        iconSpan.textContent = icon;
-        const textSpan = document.createElement('span');
-        textSpan.textContent = text;
-        content.appendChild(iconSpan);
-        content.appendChild(textSpan);
-    }
-
-    // Initial UI state, then the 5s sync-status poll — only while the Display
-    // tab is active and the page is visible. LEDVisibility keys the
-    // registration, so a re-run of this partial replaces the previous timer.
-    function stopSyncTimer() {
-        if (window.syncStatusInterval) {
-            clearInterval(window.syncStatusInterval);
-            window.syncStatusInterval = null;
-        }
-    }
-    function startSyncTimer() {
-        stopSyncTimer();
-        pollSyncStatus();
-        window.syncStatusInterval = setInterval(pollSyncStatus, 5000);
-    }
-    function startSyncPolling() {
-        updateSyncUI();
-        window.LEDVisibility.onActive('display', startSyncTimer, stopSyncTimer, 'display-sync-status');
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startSyncPolling);
-    } else {
-        startSyncPolling();
-    }
-})();
-</script>

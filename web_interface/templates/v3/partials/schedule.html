@@ -1,4 +1,13 @@
 {% import 'v3/partials/_macros.html' as ui %}
+{# No inline script: static/v3/js/pages/schedule.js draws both schedule
+   pickers from the data-*-config attributes, reports each form's save and
+   keeps the dim brightness label current. The page registry
+   (static/v3/js/core/registry.js) starts it when this root appears and stops
+   it when the partial is swapped away. The forms carry data-reports-result so
+   app.js leaves the save notification to the page. #}
+<div data-page="schedule"
+     data-schedule-config='{{ schedule_config | tojson }}'
+     data-dim-schedule-config='{{ dim_schedule_config | tojson }}'>
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Schedule Settings</h2>
@@ -12,7 +21,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="handleScheduleResponse(event)"
+          data-reports-result
           class="space-y-6">
 
         <!-- Schedule Picker Widget Container -->
@@ -41,7 +50,7 @@
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
           hx-swap="none"
-          hx-on:htmx:after-request="handleDimScheduleResponse(event)"
+          data-reports-result
           class="space-y-6">
 
         <!-- Dim Brightness Level -->
@@ -56,8 +65,7 @@
                        min="0"
                        max="100"
                        value="{{ dim_schedule_config.dim_brightness | default(30) }}"
-                       class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                       oninput="document.getElementById('dim_brightness_display').textContent = this.value + '%'">
+                       class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
                 <span id="dim_brightness_display" class="text-sm font-medium text-gray-700 w-12 text-right">
                     {{ dim_schedule_config.dim_brightness | default(30) }}%
                 </span>
@@ -77,198 +85,4 @@
         </div>
     </form>
 </div>
-
-<script>
-(function() {
-    'use strict';
-
-    // Initialize schedule picker widget when DOM is ready
-    function initSchedulePicker() {
-        const container = document.getElementById('schedule_picker_container');
-        if (!container) {
-            console.error('[Schedule] Container not found');
-            return;
-        }
-
-        // Check if widget registry is available
-        if (typeof window.LEDMatrixWidgets === 'undefined') {
-            console.error('[Schedule] LEDMatrixWidgets registry not available');
-            return;
-        }
-
-        const widget = window.LEDMatrixWidgets.get('schedule-picker');
-        if (!widget) {
-            console.error('[Schedule] schedule-picker widget not registered');
-            return;
-        }
-
-        // Get schedule config from template data (injected by Jinja2)
-        // Default to empty object if null/undefined
-        const scheduleConfig = {{ schedule_config | tojson | safe }} || {};
-
-        // Determine mode: prefer explicit mode, then infer from days, then default to global
-        let mode = 'global';
-        if (scheduleConfig.mode) {
-            // Normalize mode value (handle both 'per_day' and 'per-day')
-            mode = scheduleConfig.mode.replace('-', '_');
-        } else if (scheduleConfig.days) {
-            mode = 'per_day';
-        }
-
-        // Convert flat config to nested format expected by widget
-        const widgetValue = {
-            enabled: scheduleConfig.enabled || false,
-            mode: mode,
-            start_time: scheduleConfig.start_time || '07:00',
-            end_time: scheduleConfig.end_time || '23:00',
-            days: scheduleConfig.days || {}
-        };
-
-        // If we have per-day data in the old flat format, convert it
-        if (!scheduleConfig.days) {
-            widgetValue.days = {};
-            const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-            days.forEach(function(day) {
-                widgetValue.days[day] = {
-                    enabled: true,
-                    start_time: '07:00',
-                    end_time: '23:00'
-                };
-            });
-        }
-
-        // Render the widget
-        widget.render(container, {
-            'x-options': {
-                showModeToggle: true,
-                showEnableToggle: true,
-                compactMode: false
-            }
-        }, widgetValue, {
-            fieldId: 'schedule'
-        });
-
-        debugLog('[Schedule] Schedule picker widget initialized');
-    }
-
-    // Handle form submission response
-    window.handleScheduleResponse = function(event) {
-        const xhr = event.detail.xhr;
-        let response;
-        try {
-            response = JSON.parse(xhr.responseText);
-        } catch (e) {
-            response = { status: 'error', message: 'Invalid response from server' };
-        }
-
-        const message = response.message || (response.status === 'success' ? 'Schedule settings saved' : 'Error saving schedule');
-        const type = response.status || 'info';
-
-        // Use global notification function if available
-        window.showNotification(message, type);
-    };
-
-    // Initialize when DOM is ready or if already loaded
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initSchedulePicker);
-    } else {
-        // Small delay to ensure widget scripts are loaded
-        setTimeout(initSchedulePicker, 50);
-    }
-})();
-
-// Dim Schedule Picker initialization
-(function() {
-    'use strict';
-
-    function initDimSchedulePicker() {
-        const container = document.getElementById('dim_schedule_picker_container');
-        if (!container) {
-            console.error('[DimSchedule] Container not found');
-            return;
-        }
-
-        // Check if widget registry is available
-        if (typeof window.LEDMatrixWidgets === 'undefined') {
-            console.error('[DimSchedule] LEDMatrixWidgets registry not available');
-            return;
-        }
-
-        const widget = window.LEDMatrixWidgets.get('schedule-picker');
-        if (!widget) {
-            console.error('[DimSchedule] schedule-picker widget not registered');
-            return;
-        }
-
-        // Get dim schedule config from template data (injected by Jinja2)
-        const dimScheduleConfig = {{ dim_schedule_config | tojson | safe }} || {};
-
-        // Determine mode
-        let mode = 'global';
-        if (dimScheduleConfig.mode) {
-            mode = dimScheduleConfig.mode.replace('-', '_');
-        } else if (dimScheduleConfig.days) {
-            mode = 'per_day';
-        }
-
-        // Convert config to widget format
-        const widgetValue = {
-            enabled: dimScheduleConfig.enabled || false,
-            mode: mode,
-            start_time: dimScheduleConfig.start_time || '20:00',
-            end_time: dimScheduleConfig.end_time || '07:00',
-            days: dimScheduleConfig.days || {}
-        };
-
-        // If no days config, initialize with defaults for dim schedule (20:00-07:00)
-        if (!dimScheduleConfig.days || Object.keys(dimScheduleConfig.days).length === 0) {
-            widgetValue.days = {};
-            const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-            days.forEach(function(day) {
-                widgetValue.days[day] = {
-                    enabled: true,
-                    start_time: '20:00',
-                    end_time: '07:00'
-                };
-            });
-        }
-
-        // Render the widget with a different field ID
-        widget.render(container, {
-            'x-options': {
-                showModeToggle: true,
-                showEnableToggle: true,
-                compactMode: false
-            }
-        }, widgetValue, {
-            fieldId: 'dim_schedule'
-        });
-
-        debugLog('[DimSchedule] Dim schedule picker widget initialized');
-    }
-
-    // Handle dim schedule form submission response
-    window.handleDimScheduleResponse = function(event) {
-        const xhr = event.detail.xhr;
-        let response;
-        try {
-            response = JSON.parse(xhr.responseText);
-        } catch (e) {
-            response = { status: 'error', message: 'Invalid response from server' };
-        }
-
-        const message = response.message || (response.status === 'success' ? 'Dim schedule settings saved' : 'Error saving dim schedule');
-        const type = response.status || 'info';
-
-        // Use global notification function if available
-        window.showNotification(message, type);
-    };
-
-    // Initialize when DOM is ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initDimSchedulePicker);
-    } else {
-        setTimeout(initDimSchedulePicker, 100);
-    }
-})();
-</script>
+</div>

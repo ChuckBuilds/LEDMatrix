@@ -465,6 +465,136 @@ class TestLiveMixin:
         # The safety property that makes it correct: 30s beats 600s.
         assert h._idle_live_interval() == h.update_interval
 
+    # ---- every pending kickoff is honoured, not just the first ------------
+    #
+    # One stored kickoff held the slot through its grace and refused every
+    # later one; a later one that had passed by the time the grace ended was
+    # refused again as "already past". So of two favourites kicking off ten
+    # minutes apart, the second lost its grace: if ESPN had not flipped it live
+    # by the end of the FIRST game's grace, the back-off returned to its
+    # ceiling and the game was noticed up to that late. That bites whenever the
+    # first game is not live by then -- a rain delay, a postponement, ESPN slow
+    # to flip it -- since a live first game keeps the live cadence anyway.
+
+    @staticmethod
+    def _replay(monkeypatch, kickoffs, flips, until, poll=30, ceiling=900):
+        """Drive a live manager's idle loop over a schedule on a fake clock.
+
+        ``kickoffs`` are start offsets in seconds from t=0 (the first look),
+        ``flips`` how long after its start ESPN reports each game live (None:
+        postponed, never live). Every
+        look offers each not-yet-live game, as the live loop does, then sleeps
+        for whatever the back-off returns. Returns, per game, how long after it
+        went live it was first seen live -- None if never.
+        """
+        clock = [1_800_000_000.0]
+        monkeypatch.setattr(sports_shared.time, "time", lambda: clock[0])
+        h = _LiveHost(no_data_interval=300)
+        h.live_idle_max_interval = ceiling
+        h.update_interval = poll
+        h._empty_live_streak = 30          # idle all morning: at the ceiling
+        t0 = clock[0]
+        seen = [None] * len(kickoffs)
+        while clock[0] - t0 < until:
+            now = clock[0] - t0
+            live = [f is not None and k + f <= now for k, f in zip(kickoffs, flips)]
+            for i, is_live in enumerate(live):
+                if is_live and seen[i] is None:
+                    seen[i] = now - (kickoffs[i] + flips[i])
+                start = datetime.fromtimestamp(t0 + kickoffs[i], tz=timezone.utc)
+                h._note_scheduled_start_candidate(
+                    {"is_live": is_live, "is_halftime": False,
+                     "start_time_utc": start})
+            # A real board keeps polling at the live cadence while anything is
+            # live; a game here stays live for an hour after it flips.
+            on = any(f is not None and k + f <= now < k + f + 3600
+                     for k, f in zip(kickoffs, flips))
+            h._note_live_fetch(on)
+            clock[0] += poll if on else h._idle_live_interval()
+            assert len(getattr(h, "_later_scheduled_starts", None) or ())                 <= sports_shared._KICKOFF_QUEUE_MAX
+        return seen
+
+    @pytest.mark.parametrize("kickoffs,flips", [
+        # (start offsets, ESPN's flip delay per game), both in seconds.
+        pytest.param([1800], [120], id="one kickoff, flipped 2 min late"),
+        pytest.param([1800, 2400], [0, 840],
+                     id="first live on time, the second flipped 14 min late"),
+        pytest.param([1800, 2400], [None, 840],
+                     id="first postponed, the second 10 min later flipped 14 min late"),
+        pytest.param([1800, 2400], [1200, 840],
+                     id="first in a 20 min delay, the second flipped 14 min late"),
+        pytest.param([1800, 2100, 2520], [None, None, 600],
+                     id="three inside one grace, the last flipped 10 min late"),
+        pytest.param([1800, 1800, 2400], [None, None, 700],
+                     id="two at the same time, then one 10 min later"),
+        pytest.param([1800, 2700], [None, 840],
+                     id="second kickoff 15 min later, flipped 14 min late"),
+        pytest.param([1800 + 60 * i for i in range(20)],
+                     [None] * 19 + [840],
+                     id="twenty kickoffs a minute apart overflow the queue"),
+    ])
+    def test_every_pending_kickoff_gets_its_grace(self, monkeypatch, kickoffs, flips):
+        seen = self._replay(monkeypatch, kickoffs, flips,
+                            until=max(kickoffs) + 3 * 3600)
+        late = [s for s, f in zip(seen, flips)
+                if f is not None and (s is None or s > 30)]
+        assert not late, "games noticed late (s after going live): %r" % (seen,)
+
+    def test_a_kickoff_that_never_flips_costs_one_grace_then_backs_off(self, monkeypatch):
+        # A postponed game keeps the live cadence for its grace and no longer:
+        # remembering more kickoffs must not pin the poll to dead ones.
+        clock = [1_800_000_000.0]
+        monkeypatch.setattr(sports_shared.time, "time", lambda: clock[0])
+        h = self._idle_host()
+        t0 = clock[0]
+        for offset in (600, 900):
+            h._note_scheduled_start_candidate(
+                {"start_time_utc": datetime.fromtimestamp(t0 + offset, tz=timezone.utc)})
+        clock[0] = t0 + 900 + sports_shared._KICKOFF_GRACE_SECONDS - 1
+        assert h._idle_live_interval() == h.update_interval
+        clock[0] = t0 + 900 + sports_shared._KICKOFF_GRACE_SECONDS + 1
+        assert h._idle_live_interval() == 900
+        assert not getattr(h, "_later_scheduled_starts", None)
+
+    def test_a_queued_kickoff_past_its_own_grace_is_skipped(self, monkeypatch):
+        # After a long sleep (or a run of looks that never woke the manager)
+        # several queued kickoffs may have gone stale at once. The one still
+        # inside its grace must win, not the first stale one in the queue.
+        clock = [1_800_000_000.0]
+        monkeypatch.setattr(sports_shared.time, "time", lambda: clock[0])
+        h = self._idle_host()
+        t0 = clock[0]
+        for offset in (600, 700, 1500):
+            h._note_scheduled_start_candidate(
+                {"start_time_utc": datetime.fromtimestamp(t0 + offset, tz=timezone.utc)})
+        clock[0] = t0 + 1500 + 150     # 600 and 700 are past their grace
+        assert h._idle_live_interval() == h.update_interval
+        assert h._next_scheduled_start_ts == t0 + 1500
+
+    def test_the_queue_keeps_the_earliest_kickoffs(self, monkeypatch):
+        clock = [1_800_000_000.0]
+        monkeypatch.setattr(sports_shared.time, "time", lambda: clock[0])
+        h = self._idle_host()
+        t0 = clock[0]
+        cap = sports_shared._KICKOFF_QUEUE_MAX
+        for offset in reversed(range(1, cap + 6)):          # latest first
+            h._note_scheduled_start_candidate(
+                {"start_time_utc": datetime.fromtimestamp(t0 + 600 * offset, tz=timezone.utc)})
+        assert h._next_scheduled_start_ts == t0 + 600
+        assert h._later_scheduled_starts == [t0 + 600 * i for i in range(2, cap + 2)]
+
+    def test_a_kickoff_offered_twice_is_kept_once(self, monkeypatch):
+        clock = [1_800_000_000.0]
+        monkeypatch.setattr(sports_shared.time, "time", lambda: clock[0])
+        h = self._idle_host()
+        t0 = clock[0]
+        for _ in range(3):
+            for offset in (600, 1200):
+                h._note_scheduled_start_candidate(
+                    {"start_time_utc": datetime.fromtimestamp(t0 + offset, tz=timezone.utc)})
+        assert h._next_scheduled_start_ts == t0 + 600
+        assert h._later_scheduled_starts == [t0 + 1200]
+
     def test_finding_a_live_game_resets_the_streak(self):
         h = _LiveHost()
         h._note_live_fetch(False)

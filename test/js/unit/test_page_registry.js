@@ -242,6 +242,46 @@ function recorder(log) {
     ok('has()', reg.has('dup') && !reg.has('nope'));
   }
 
+  console.log('\n10. mountContext adds per-mount fields, after the shared ones');
+  {
+    const doc = new Doc();
+    const panel = doc.body.appendChild(new El('div', { id: 'panel' }));
+    panel.appendChild(new El('div', { id: 'a', [PAGE_ATTRIBUTE]: 'demo' }));
+    const seen = [];
+    const made = [];
+    const reg = createRegistry({
+      document: doc, context: { api: 'shared' }, logger: quiet,
+      mountContext(ctx) {
+        made.push([ctx.name, ctx.root.getAttribute('id'), !!ctx.signal, ctx.api]);
+        return { bound: { root: ctx.root, signal: ctx.signal } };
+      },
+    });
+    reg.register('demo', { init(root, ctx) { seen.push(ctx); } });
+    await reg.start();
+    await tick();
+    ok('mountContext sees the mount\'s name, root, signal and the shared services',
+       made.length === 1 && made[0].join() === 'demo,a,true,shared', made);
+    ok('...and its fields reach init()', seen.length === 1 && seen[0].bound && seen[0].bound.root === seen[0].root, seen.length);
+    fire(panel, 'htmx:beforeSwap', { target: panel, shouldSwap: true });
+    panel.replaceChildren(new El('div', { id: 'b', [PAGE_ATTRIBUTE]: 'demo' }));
+    fire(panel, 'htmx:afterSwap', { target: panel });
+    await tick();
+    ok('called again for each new mount, with that mount\'s signal',
+       made.length === 2 && seen.length === 2 && !!seen[1].bound && seen[1].bound.signal === seen[1].signal
+         && seen[0].signal.aborted, made);
+
+    const errors = [];
+    const doc2 = new Doc();
+    doc2.body.appendChild(new El('div', { id: 'c', [PAGE_ATTRIBUTE]: 'demo' }));
+    const reg2 = createRegistry({ document: doc2, logger: { error: (...a) => errors.push(a.join(' ')) },
+                                  mountContext() { throw new Error('boom'); } });
+    let started = 0;
+    reg2.register('demo', { init() { started++; } });
+    await reg2.start();
+    await tick();
+    ok('a throwing mountContext is logged and the page still starts', started === 1 && errors.length === 1, errors);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

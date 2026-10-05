@@ -1070,6 +1070,65 @@ class BasePlugin(ABC):
         if callable(notify):
             notify(self.plugin_id)
 
+    def request_on_demand(self, mode: Optional[str] = None,
+                          duration: Optional[float] = None,
+                          pinned: bool = False) -> Optional[str]:
+        """
+        Take the screen now: show this plugin on demand. Safe from any thread.
+
+        For a plugin that reacts to something outside the rotation -- an MQTT
+        message, a timer, a detection -- and wants the panel for it. The
+        request goes straight to the display in this process and is applied
+        on its render thread within a frame or so, exactly like an on-demand
+        start from the web interface.
+
+        Args:
+            mode: One of this plugin's display modes; None for its first.
+            duration: Seconds to show it before the rotation resumes; None
+                (or zero) for no limit, until end_on_demand() or the user
+                stops it.
+            pinned: Stay on ``mode`` instead of cycling through the
+                plugin's other modes.
+
+        Returns:
+            The request id once the display has queued it, or None when
+            there is no display in this process to ask (the web interface,
+            scripts/check_plugin.py) or its queue is full. A plugin that
+            also runs on cores without this method writes the
+            ``display_on_demand_request`` mailbox on None, as before; see
+            "On-demand display" in docs/PLUGIN_API_REFERENCE.md.
+
+        Example::
+
+            if not (hasattr(self, 'request_on_demand')
+                    and self.request_on_demand(mode='my_alert', duration=15)):
+                self._write_on_demand_mailbox(...)   # older cores
+        """
+        request = getattr(getattr(self, 'plugin_manager', None), 'request_on_demand', None)
+        if not callable(request):
+            return None
+        request_id = request(self.plugin_id, mode=mode, duration=duration, pinned=pinned)
+        # Only a real id counts: a test's MagicMock manager answers a mock,
+        # which must read as "not taken" so the plugin's fallback runs.
+        return request_id if isinstance(request_id, str) else None
+
+    def end_on_demand(self) -> Optional[str]:
+        """
+        Give the screen back: end this plugin's on-demand session. Any thread.
+
+        Ends only a session this plugin owns. One the user started for
+        another plugin, or a session that already ended, is left alone. The
+        rotation resumes where it left off.
+
+        Returns:
+            The request id once queued, or None as request_on_demand() does.
+        """
+        end = getattr(getattr(self, 'plugin_manager', None), 'end_on_demand', None)
+        if not callable(end):
+            return None
+        request_id = end(self.plugin_id)
+        return request_id if isinstance(request_id, str) else None
+
     def get_vegas_participation(self) -> str:
         """
         How this plugin takes part in Vegas mode: ``'scroll'``, ``'pause'`` or

@@ -57,11 +57,13 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     // Show the server's message, unless the element that made the request
     // (or its form) has its own after-request handler: every such handler in
     // the templates reports the result itself, and this used to repeat it,
-    // so each save showed two toasts.
+    // so each save showed two toasts. A form whose page module reports the
+    // result instead (a js/pages/*.js listener for htmx:afterRequest) is
+    // marked data-reports-result.
     const response = event.detail.xhr;
     const elt = event.detail.elt;
     const reportsItself = elt && elt.closest &&
-        elt.closest('[hx-on\\:\\:after-request], [hx-on\\:htmx\\:after-request]');
+        elt.closest('[hx-on\\:\\:after-request], [hx-on\\:htmx\\:after-request], [data-reports-result]');
     if (!reportsItself && response && response.responseText) {
         try {
             const data = JSON.parse(response.responseText);

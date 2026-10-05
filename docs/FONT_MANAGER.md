@@ -203,6 +203,7 @@ Current methods:
 | `measure_text(text, font)` | `(width, height, baseline)` |
 | `get_font_height(font)` | Line height |
 | `register_plugin_fonts(plugin_id, font_manifest)` | Register a plugin's fonts (core calls it at load) |
+| `forget_plugin_fonts(plugin_id)` | Drop a plugin's manifest fonts and their cached objects (core calls it when a plugin unloads) |
 | `clear_cache()` | Drop cached fonts and metrics |
 | `font_catalog` (attribute) | Family name → file path |
 
@@ -218,5 +219,6 @@ Removed in 3.8.0, after logging a deprecation warning on first call since
 | `get_performance_stats()` | — |
 | `set_override()`, `remove_override()`, `get_overrides()` | a font field in your plugin's config schema |
 | `get_manager_fonts()`, `get_detected_fonts()` | — |
-| `get_plugin_fonts()`, `unregister_plugin_fonts()` | — |
+| `get_plugin_fonts()` | — |
+| `unregister_plugin_fonts()` | `forget_plugin_fonts()` (core calls it on unload) |
 | `add_font()`, `remove_font()`, `validate_font()` | the web UI's Fonts tab |
