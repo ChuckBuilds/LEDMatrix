@@ -19,6 +19,29 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### The display hands freed memory back to the OS
+
+The display process's resident memory climbed in steps for hours while the
+data it held stayed flat: glibc keeps what Python frees in per-thread malloc
+arenas and returns little of it. `src/malloc_tuning.py` (new, standard library
+only, a no-op off Linux/glibc) does two things in-process, so it reaches
+devices without re-running the installer:
+
+- **Arena cap at start-up.** `run.py` calls `mallopt(M_ARENA_MAX, 2)` before any
+  thread exists, the same cap as the unit's `Environment=MALLOC_ARENA_MAX=2`.
+  Units installed before that line never got it (systemd runs the copy in
+  `/etc/systemd/system`); a `MALLOC_ARENA_MAX` in the environment still wins.
+- **`malloc_trim(0)` between screens**, at most every 5 minutes, from the top of
+  the render loop where no frame is being drawn. Measured on a Pi 4: 2-11 ms
+  per call.
+
+On ledpi (Pi 4, 192x48, Vegas on, nine plugins, a unit without
+`MALLOC_ARENA_MAX`), alternated main / branch / branch / main arms of 2.5 h:
+two hours in, resident memory was 551 MB on main (the second main arm was
+already at 651 MB after 1 h 44 min) against 412 and 386 MB with this change,
+and the 20-minute frame soaks came out at 0.147-0.165% late against main's
+0.151-0.188%.
+
 ## 3.8.1
 
 Smooth scrolling at the slower speeds, and the fixes and performance work
