@@ -43,17 +43,20 @@ function quiet(error) {
 function showResolution(root) {
     const out = root.querySelector('#display-resolution-value');
     if (!out) return;
-    const v = {};
-    RESOLUTION_INPUTS.forEach(function(id) {
+    const read = function(id) {
         const el = root.querySelector('#' + id);
-        v[id] = el ? parseInt(el.value, 10) : NaN;
-    });
-    if (Object.values(v).some(function(n) { return !Number.isFinite(n) || n <= 0; })) {
+        return el ? parseInt(el.value, 10) : NaN;
+    };
+    const rows = read('rows');
+    const cols = read('cols');
+    const chain = read('chain_length');
+    const parallel = read('parallel');
+    if ([rows, cols, chain, parallel].some(function(n) { return !Number.isFinite(n) || n <= 0; })) {
         out.textContent = '—';
         return;
     }
-    let w = v.cols * v.chain_length;
-    let h = v.rows * v.parallel;
+    let w = cols * chain;
+    let h = rows * parallel;
     const orientation = root.querySelector('#orientation');
     if (orientation && (orientation.value === '90' || orientation.value === '270')) {
         [w, h] = [h, w];
@@ -306,12 +309,10 @@ export function init(root, ctx) {
 
 export function destroy(root, ctx) {
     const win = root.ownerDocument.defaultView;
-    ['hintTimer', 'orderTimer'].forEach(function(name) {
-        if (ctx.state[name]) {
-            win.clearTimeout(ctx.state[name]);
-            ctx.state[name] = null;
-        }
-    });
+    win.clearTimeout(ctx.state.hintTimer);
+    win.clearTimeout(ctx.state.orderTimer);
+    ctx.state.hintTimer = null;
+    ctx.state.orderTimer = null;
     // The sync poll is ctx.visibility's: it stops when ctx.signal aborts.
     if (active === ctx) active = null;
 }
