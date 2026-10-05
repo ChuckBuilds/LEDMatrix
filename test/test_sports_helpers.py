@@ -8,7 +8,9 @@ loses those tests with it.
 The parity class is what keeps "byte-identical" true after this lands. Point
 LEDMATRIX_PLUGINS at a ledmatrix-plugins checkout and every promoted body is
 compared, as a docstring-stripped AST, against every plugin copy that carries
-it. Without the variable it skips rather than fails, since core CI has no
+it. A copy that is gone counts as adopted when the plugin imports
+src.common.sports_helpers (plugins#563/#564 did that for every scoreboard).
+Without the variable it skips rather than fails, since core CI has no
 plugins checkout; ledmatrix-plugins CI runs the same comparison against core
 (scripts/check_sports_helpers_parity.py, ledmatrix-plugins#495).
 """
@@ -572,6 +574,16 @@ def _core_definitions():
     return out
 
 
+def _sports_source(root, sport):
+    return (root / f"{sport}-scoreboard" / "sports.py").read_text(encoding="utf-8")
+
+
+def _adopted(source):
+    """Gone is fine once the plugin uses the module; otherwise the finder is
+    not seeing its copy."""
+    return sports_helpers.__name__ in source
+
+
 class TestParityWithPlugins:
     @pytest.mark.parametrize("name", sorted(PROMOTED))
     def test_body_matches_every_plugin_copy(self, name):
@@ -580,11 +592,11 @@ class TestParityWithPlugins:
         ours = _dump(_core_definitions()[name])
         drifted, missing = [], []
         for sport in carriers:
-            defs = _definitions(ast.parse(
-                (root / f"{sport}-scoreboard" / "sports.py").read_text(encoding="utf-8")))
-            theirs = defs[where].get(plugin_name)
+            source = _sports_source(root, sport)
+            theirs = _definitions(ast.parse(source))[where].get(plugin_name)
             if theirs is None:
-                missing.append(sport)
+                if not _adopted(source):
+                    missing.append(sport)
             elif _dump(theirs) != ours:
                 drifted.append(sport)
         assert missing == [], f"{plugin_name} no longer in: {missing}"
@@ -594,10 +606,20 @@ class TestParityWithPlugins:
 
     @pytest.mark.parametrize("sport", SCOREBOARDS)
     def test_constants_match(self, sport):
-        root = _plugins_root()
-        defs = _definitions(ast.parse(
-            (root / f"{sport}-scoreboard" / "sports.py").read_text(encoding="utf-8")))
-        assert ast.literal_eval(defs["module"]["_MIN_WINDOW_DAYS"].value) == MIN_WINDOW_DAYS
-        assert ast.literal_eval(defs["module"]["_MAX_WINDOW_DAYS"].value) == MAX_WINDOW_DAYS
-        gap = defs["SportsCore"]["_DWELL_REENTRY_GAP_SECONDS"].value
-        assert math.isclose(ast.literal_eval(gap), SportsHelpersMixin._DWELL_REENTRY_GAP_SECONDS)
+        source = _sports_source(_plugins_root(), sport)
+        defs = _definitions(ast.parse(source))
+        expected = {
+            ("module", "_MIN_WINDOW_DAYS"): MIN_WINDOW_DAYS,
+            ("module", "_MAX_WINDOW_DAYS"): MAX_WINDOW_DAYS,
+            ("SportsCore", "_DWELL_REENTRY_GAP_SECONDS"):
+                SportsHelpersMixin._DWELL_REENTRY_GAP_SECONDS,
+        }
+        missing = []
+        for (where, name), value in expected.items():
+            node = defs[where].get(name)
+            if node is None:
+                if not _adopted(source):
+                    missing.append(name)
+            else:
+                assert math.isclose(ast.literal_eval(node.value), value), name
+        assert missing == [], f"not found in {sport}: {missing}"
