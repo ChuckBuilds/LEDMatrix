@@ -19,6 +19,42 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.1
+
+Smooth scrolling at the slower speeds, and the fixes and performance work
+since 3.8.0. Highlights: the default 50 px/s and every other held-frame speed
+now scroll cleanly (below), Raspberry Pi OS Bookworm is supported alongside
+Trixie, updates refresh the systemd units, the display control socket gains
+stages 2 and 3, the shared fetch service lands (stages 1 and 2), and a run of
+web UI and Plugin Manager fixes. One new module is for plugins:
+`src.common.sports_game_over` (sports family 5), which the scoreboards adopt
+by flooring on 3.8.1; the other new modules are core-internal and set no
+`ledmatrix_min_version` floor.
+
+### Scroll speed
+
+These two entries were the reason for this release: on 3.8.0 a slow scroll
+either stepped or showed a half-pixel tear across the middle of the panel,
+so only speeds of one pixel per refresh looked right.
+
+- The Vegas Scroll Speed slider now says what the panel will do with the speed
+  it is on, and offers the nearest smooth ones to click. Only speeds that advance
+  a whole number of pixels per refresh look smooth, and which those are depends
+  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
+  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
+  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
+- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
+  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
+  which move one pixel at a time. 100 Hz panels are unaffected. (#710)
+- A held-frame scroll (one pixel every two or more refreshes, such as 50 or
+  60 px/s on a 100-120 Hz panel) no longer shows a half-pixel step across the
+  middle of the panel. Scan-order compensation ran only at one frame per
+  refresh; a held frame is now presented as a sequence of swaps
+  (`scan_order.refresh_plan()`), so the half of the panel that scans later
+  steps one refresh after the rest. It is skipped when a blit takes more than
+  half a refresh, since the second blit has to land before the next vsync.
+  (#711)
+
 ### Web UI: the Display tab is an ES-module page, with a page-visibility service (stage 4)
 
 - New `static/v3/js/core/visibility.js`: each page module gets
@@ -719,7 +755,7 @@ policies are unchanged.
   class attribute, `None` by default (the clock never ends a game); the
   scoreboards declare 3 (hockey), 4 (basketball, football, lacrosse) or
   `None`. List the mixin before `SportsLiveSharedMixin`. A plugin may import
-  it once it floors on the release that ships it, and deletes its copy then.
+  it once it floors on 3.8.1, and deletes its copy then. (#770)
 
 ### Tooling
 
@@ -1372,18 +1408,6 @@ guard the import, since the loader's version check is advisory).
   change is needed. `LEDMATRIX_CONTROL_SOCKET` overrides the path for both
   processes, or turns the socket off with `off`. A non-root dev run uses a
   private per-user path under the temp directory.
-
-### Scroll speed
-
-- The Vegas Scroll Speed slider now says what the panel will do with the speed
-  it is on, and offers the nearest smooth ones to click. Only speeds that advance
-  a whole number of pixels per refresh look smooth, and which those are depends
-  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
-  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
-  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
-- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
-  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
-  which move one pixel at a time. 100 Hz panels are unaffected.
 
 ### Update channels
 
