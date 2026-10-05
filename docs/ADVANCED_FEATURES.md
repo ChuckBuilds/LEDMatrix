@@ -650,11 +650,10 @@ When nothing is running on demand, `data.state` is
 > above (or the web UI buttons). The API handlers
 > (`start_on_demand_display()` / `stop_on_demand_display()` in
 > `web_interface/blueprints/api_v3/display.py`) send the request over the
-> display's control socket ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)).
-> Only when the socket cannot carry it do they write it into the cache
-> manager under the `display_on_demand_request` key, which
-> `DisplayController._poll_on_demand_requests()`
-> (`src/display_controller.py`) picks up. A separate
+> display's control socket ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)),
+> the only way in (the `display_on_demand_request` cache-key mailbox is
+> gone). A plugin asks for the screen with `BasePlugin.request_on_demand()`
+> (see [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md)). A separate
 > `display_on_demand_config` key is used by the controller itself
 > during activation (`_activate_on_demand()`) to track what's
 > currently running, and is cleared by `_clear_on_demand()`.
@@ -737,29 +736,12 @@ keys helps troubleshoot stuck states.
 
 ### Cache Keys
 
-**1. display_on_demand_request** (TTL: 1 hour)
-```json
-{
-  "request_id": "uuid-string",
-  "action": "start|stop",
-  "plugin_id": "plugin-name",
-  "mode": "mode-name",
-  "duration": 30.0,
-  "pinned": true,
-  "timestamp": 1234567890.123
-}
-```
-**Purpose:** Communication from web interface to display controller, as the
-fallback when the control socket cannot carry the request (deprecated; it
-will be removed in a later release)
-**When Set:** API endpoint receives a request and the display's control
-socket is unavailable (display stopped, or older than the socket or the
-command); some plugins also write it directly
-**Read:** once a second while the display serves the control socket (0.25 s
-without it), and only when the file changed since the last look
-**Auto-Cleared:** After processing or 1 hour TTL
+Requests are not cache keys: they go over the control socket. The
+`display_on_demand_request` and `display_on_demand_processed_id` keys of
+earlier releases are no longer written or read; a leftover file is
+harmless and can be deleted.
 
-**2. display_on_demand_config** (No TTL)
+**1. display_on_demand_config** (No TTL)
 ```json
 {
   "mode": "mode-name",
@@ -771,7 +753,7 @@ without it), and only when the file changed since the last look
 **When Set:** Controller processes start request
 **Auto-Cleared:** When on-demand stops
 
-**3. display_on_demand_state** (Continuously updated)
+**2. display_on_demand_state** (Continuously updated)
 ```json
 {
   "active": true,
@@ -785,31 +767,24 @@ without it), and only when the file changed since the last look
 **When Set:** Every display loop iteration
 **Auto-Cleared:** Never (continuously updated)
 
-**4. display_on_demand_processed_id** (TTL: 1 hour)
-```text
-"uuid-string-of-last-processed-request"
-```
-**Purpose:** Prevents duplicate request processing
-**When Set:** After processing request
-**Auto-Cleared:** After 1 hour TTL
-
 ### When Manual Clearing is Needed
 
 **Scenario 1: Stuck in On-Demand State**
 - Symptom: Display stays on one plugin, won't return to rotation
-- Clear: `config`, `state`, `request`
+- Clear: `config`, `state`
 
 **Scenario 2: Mode Switching Issues**
 - Symptom: Can't change to different plugin
-- Clear: `request`, `processed_id`, `state`
+- Clear: `state`, then restart the display
 
 **Scenario 3: On-Demand Not Activating**
-- Symptom: Button click does nothing
-- Clear: `processed_id`, `request`
+- Symptom: Button click does nothing, or answers an error
+- Check the error's `socket_error` (see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md),
+  "Checking it on a device"); no cache key is involved
 
 **Scenario 4: After Service Crash**
 - Symptom: Strange behavior after crash/restart
-- Clear: All four keys
+- Clear: both keys
 
 ### Manual Recovery Procedures
 
@@ -846,8 +821,6 @@ from src.cache_manager import CacheManager
 cache = CacheManager()
 cache.clear_cache('display_on_demand_config')
 cache.clear_cache('display_on_demand_state')
-cache.clear_cache('display_on_demand_request')
-cache.clear_cache('display_on_demand_processed_id')
 ```
 
 > `CacheManager` also has a `delete(key)` method — a thin wrapper over

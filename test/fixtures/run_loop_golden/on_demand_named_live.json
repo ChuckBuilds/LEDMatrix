@@ -1,18 +1,18 @@
 {
   "screens": [
-    [0.0, "clock", 5.0, "on-demand-start", 6, false],
+    [0.0, "clock", 5.0, "on-demand-start", 5, false],
     [5.0, "sports_live", 15.0, "duration", 15, true],
     [20.0, "sports_recent", 15.0, "duration", 15, true],
-    [35.0, "sports_upcoming", 5.0, "on-demand-requested-stop", 6, true],
+    [35.0, "sports_upcoming", 5.0, "on-demand-requested-stop", 5, true],
     [40.0, "clock", 20.0, "duration", 20, true],
     [60.0, "sports_live", 15.0, "display-false", 11, true],
     [75.0, "sports_recent", 15.0, "duration", 15, true],
-    [90.0, "sports_upcoming", 10.0, "on-demand-start", 11, true],
+    [90.0, "sports_upcoming", 10.0, "on-demand-start", 10, true],
     [100.0, "sports_live", 0.0, "empty", 1, true],
     [100.0, "sports_recent", 15.0, "duration", 15, true],
     [115.0, "sports_upcoming", 15.0, "duration", 15, true],
     [130.0, "sports_live", 0.0, "empty", 1, true],
-    [130.0, "sports_recent", 10.0, "on-demand-requested-stop", 11, true],
+    [130.0, "sports_recent", 10.0, "on-demand-requested-stop", 10, true],
     [140.0, "sports_upcoming", 15.0, "duration", 15, true],
     [155.0, "clock", 5.0, "horizon", 5, true]
   ],

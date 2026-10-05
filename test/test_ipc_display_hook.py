@@ -1,14 +1,13 @@
 """DisplayController's side of the control socket.
 
-The server's handlers only queue; the render thread drains the queue where
-it reads the file mailbox (_poll_on_demand_requests) and hands each command
-to the mailbox's own handler (_handle_on_demand_request). These tests pin
-that hook:
+The server's handlers only queue; the render thread drains the queue
+(_poll_on_demand_requests) and hands each on-demand command to
+_handle_on_demand_request, which plugins' own requests use too. These tests
+pin that hook:
 
-* a socket command is applied by the same code as a mailbox request, with
-  its request id, and without waiting for the mailbox's 0.25 s read floor;
-* a request that arrives both ways (a client that timed out after the
-  command was queued, then wrote the mailbox) is activated once;
+* a socket command is applied with its request id, at once, and touches no
+  cache key (the file mailbox and the persisted processed id are gone);
+* a start sent twice with one request id is activated once;
 * a command that fails is contained, and the ones after it still run;
 * cleanup closes the socket; a disabled socket changes nothing.
 """
@@ -58,28 +57,15 @@ def controller(test_display_controller):
     c_ = test_display_controller
     c_.on_demand_active = False
     c_.on_demand_request_id = None
-    c_._last_on_demand_poll = None
-    mailbox = {'value': None}
-
-    def fake_get(key, *a, **kw):
-        if key == 'display_on_demand_request':
-            return mailbox['value']
-        return None
-
-    def fake_delete(key):
-        if key == 'display_on_demand_request':
-            mailbox['value'] = None
-
-    c_.cache_manager.get = MagicMock(side_effect=fake_get)
+    c_.cache_manager.get = MagicMock(return_value=None)
     c_.cache_manager.set = MagicMock()
-    c_.cache_manager.delete = MagicMock(side_effect=fake_delete)
+    c_.cache_manager.delete = MagicMock()
     c_._activate_on_demand = MagicMock()
-    c_.mailbox = mailbox
     return c_
 
 
 class TestDrain:
-    def test_a_socket_start_goes_through_the_mailbox_handler(self, controller):
+    def test_a_socket_start_is_activated_with_its_request_id(self, controller):
         controller._control_server = FakeServer(_start('sock-1', duration=30.0, pinned=True))
         controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_called_once()
@@ -89,47 +75,28 @@ class TestDrain:
         assert request['plugin_id'] == 'clock'
         assert request['duration'] == 30.0 and request['pinned'] is True
         assert controller.on_demand_request_id == 'sock-1'
-        # The same restart-replay guard as a mailbox request.
-        controller.cache_manager.set.assert_any_call(
-            'display_on_demand_processed_id', 'sock-1', ttl=3600)
+        # No mailbox, and no persisted processed id.
+        keys = {call.args[0] for m in (controller.cache_manager.get,
+                                       controller.cache_manager.set,
+                                       controller.cache_manager.delete)
+                for call in m.call_args_list}
+        assert not keys & {'display_on_demand_request', 'display_on_demand_processed_id'}
 
-    def test_socket_commands_skip_the_mailbox_floor(self, controller):
+    def test_socket_commands_land_at_once(self, controller):
         server = FakeServer()
         controller._control_server = server
-        controller._poll_on_demand_requests()          # reads the mailbox, sets the floor
-        reads = controller.cache_manager.get.call_count
+        controller._poll_on_demand_requests()
         server.commands.append(_start('quick'))
-        controller._poll_on_demand_requests()          # within the floor
-        controller._activate_on_demand.assert_called_once()
-        mailbox_reads = [call for call in controller.cache_manager.get.call_args_list[reads:]
-                         if call.args[0] == 'display_on_demand_request']
-        # Only _consume_on_demand_request's compare-before-delete re-read.
-        assert len(mailbox_reads) <= 1
-
-    def test_a_request_that_came_both_ways_is_activated_once(self, controller):
-        controller._control_server = FakeServer(_start('dup'))
-        controller.mailbox['value'] = {'request_id': 'dup', 'action': 'start',
-                                       'plugin_id': 'clock'}
-        controller._poll_on_demand_requests()
-        controller._last_on_demand_poll = None
-        controller._poll_on_demand_requests()
-        controller._activate_on_demand.assert_called_once()
-        assert controller.mailbox['value'] is None, "the duplicate was left in the mailbox"
-
-    def test_a_fallback_write_landing_later_is_ignored(self, controller):
-        controller._control_server = FakeServer(_start('late'))
-        controller._poll_on_demand_requests()
-        controller.mailbox['value'] = {'request_id': 'late', 'action': 'start',
-                                       'plugin_id': 'clock'}
-        controller._last_on_demand_poll = None
         controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_called_once()
 
-    def test_the_mailbox_still_works_alongside(self, controller):
-        controller._control_server = FakeServer()
-        controller.mailbox['value'] = {'request_id': 'mb', 'action': 'start', 'plugin_id': 'p'}
+    def test_a_start_sent_twice_is_activated_once(self, controller):
+        server = FakeServer(_start('dup'))
+        controller._control_server = server
         controller._poll_on_demand_requests()
-        assert controller._activate_on_demand.call_args.args[0]['request_id'] == 'mb'
+        server.commands.append(_start('dup'))
+        controller._poll_on_demand_requests()
+        controller._activate_on_demand.assert_called_once()
 
     def test_a_socket_stop_ends_on_demand(self, controller):
         controller.on_demand_active = True
@@ -159,10 +126,11 @@ class TestDrain:
         controller._poll_on_demand_requests()
         assert calls == ['bad', 'good']
 
-    def test_no_server_means_mailbox_only(self, controller):
+    def test_no_server_means_nothing_to_apply(self, controller):
         controller._control_server = None
         controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_not_called()
+        controller.cache_manager.get.assert_not_called()
 
 
 class TestPendingChangesFloor:

@@ -3,9 +3,9 @@
 A small threaded server on a Unix stream socket (``/run/ledmatrix/control.sock``
 by default; see :mod:`src.ipc.contract` for the protocol). It never touches
 rendering: a command that changes the panel is validated, put on a bounded
-queue and acknowledged, and the render thread drains that queue at the point
-where it reads the file mailbox (``DisplayController._poll_on_demand_requests``),
-handing each command to the same code. Queries (``on_demand.status``) are
+queue and acknowledged, and the render thread drains that queue
+(``DisplayController._poll_on_demand_requests``), handing each on-demand
+command to the code that handles plugins' own requests. Queries (``on_demand.status``) are
 answered from a snapshot callable the display provides, and the few commands
 that touch nothing the render thread owns (``errors.clear``) by a handler the
 display registers, on the connection thread.
@@ -110,8 +110,8 @@ MAX_CLIENTS = 8
 
 #: Commands waiting for the render thread. It drains them at least every
 #: 0.25 s, so a full queue means the render thread is stuck, and the client
-#: is told ``busy`` instead of piling up work. The mailbox would not be read
-#: either, so the web interface reports the failure rather than fall back.
+#: is told ``busy`` instead of piling up work, and the web interface reports
+#: the failure.
 QUEUE_SIZE = 16
 
 #: Timeout for one recv()/send() on a connection.
@@ -185,7 +185,7 @@ class QueuedCommand:
     outcome: Optional[CommandOutcome] = field(default=None, compare=False, repr=False)
 
     def as_on_demand_request(self) -> Dict[str, Any]:
-        """The mailbox-shaped payload the display's on-demand handler takes."""
+        """The on-demand request dict the display's on-demand handler takes."""
         if not isinstance(self.args, (OnDemandStartArgs, OnDemandStopArgs)):
             raise TypeError(f'{self.cmd} is not an on-demand command')
         return on_demand_request(self.request_id, self.args, self.received_at)
@@ -619,8 +619,8 @@ class ControlServer:
     def start(self) -> bool:
         """Bind and start serving. False (logged) when the socket cannot be served.
 
-        Never raises: without the socket the web interface uses the file
-        mailbox, exactly as before.
+        Never raises: without the socket the display runs, but the web
+        interface cannot send it commands.
         """
         if not socket_supported():
             logger.debug("Control socket not started: no Unix sockets on this platform")
@@ -632,7 +632,7 @@ class ControlServer:
             self._bind()
         except OSError as e:
             logger.warning("Control socket not started at %s (%s); the web interface "
-                           "will use the file mailbox", self.path, e)
+                           "cannot send this display commands", self.path, e)
             self._close_socket()
             return False
         self._stopping.clear()
@@ -1134,12 +1134,13 @@ def start_control_server(status_provider: Optional[StatusProvider] = None,
     """Start the display's control socket, or return None when it can't run.
 
     None covers Windows, ``LEDMATRIX_CONTROL_SOCKET=off`` and any failure to
-    bind; in every case the web interface falls back to the file mailbox
-    and to the cache keys the display still writes.
+    bind; in every case the web interface cannot send the display commands,
+    and reads the cache keys the display still writes.
     """
     path = server_socket_path(environ)
     if path is None:
-        logger.debug("Control socket disabled or unsupported here; using the file mailbox only")
+        logger.debug("Control socket disabled or unsupported here; the web interface "
+                     "cannot send this display commands")
         return None
     server = ControlServer(path, status_provider, resolve_socket_group(cache_dir),
                            state_hub=state_hub, handlers=handlers)

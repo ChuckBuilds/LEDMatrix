@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.cache_manager import CacheManager  # noqa: E402
 from src import error_aggregator as errors  # noqa: E402
 from src.error_aggregator import (  # noqa: E402
-    ERROR_CLEAR_REQUEST_KEY, ERROR_SNAPSHOT_KEY, ErrorAggregator,
+    ERROR_SNAPSHOT_KEY, ErrorAggregator,
     ErrorSnapshotPublisher,
 )
 from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401,E402
@@ -314,151 +314,36 @@ class TestRoutes:
             assert secret not in published, secret
 
 
-class TestClear:
-    def test_clear_is_applied_by_the_display_and_republished(self, web, display):
-        aggregator, publisher, _ = display
-        _fail(aggregator)
-        _fail(aggregator)
-        publisher.tick()
-        response = web.post("/api/v3/errors/clear", json={"all": True})
-        assert response.status_code == 200
-        body = response.get_json()["data"]
-        assert body["clear_requested"] is True
-        assert body["cleared_count"] == 2
-        # The display applies it on its next tick, throttle or not...
-        assert publisher.tick() is True
-        assert aggregator.get_error_summary()["total_errors"] == 0
-        data = _summary(web)
-        assert data["total_errors"] == 0 and data["clear_pending"] is False
-        # ...and only once.
-        assert publisher.tick() is False
-
-    def test_summary_hides_cleared_errors_before_the_display_applies_it(self, web, display):
-        aggregator, publisher, _ = display
-        for _ in range(5):
-            _fail(aggregator)
-        publisher.tick()
-        web.post("/api/v3/errors/clear", json={"all": True})
-        # No display tick yet.
-        data = _summary(web)
-        assert data["clear_pending"] is True
-        assert data["total_errors"] == 0
-        assert data["recent_errors"] == [] and data["active_patterns"] == {}
-        assert data["plugin_error_counts"] == {}
-        plugin = web.get("/api/v3/errors/plugin/p1").get_json()["data"]
-        assert plugin["status"] == "healthy" and plugin["total_errors"] == 0
-
-    def test_a_snapshot_written_just_before_the_clear_cannot_bring_errors_back(
-            self, web, display, shared_cache):
-        # The race: the display builds a snapshot, the user clicks Clear, and
-        # the display's write lands after the request.
-        aggregator, publisher, _ = display
-        display_cache, _, _ = shared_cache
-        for _ in range(3):
-            _fail(aggregator)
-        stale = aggregator.build_snapshot()
-        web.post("/api/v3/errors/clear", json={"all": True})
-        stale["applied_clear_id"] = None
-        display_cache.set(ERROR_SNAPSHOT_KEY, stale)
-        assert _summary(web)["total_errors"] == 0
-
-    def test_errors_after_the_clear_are_kept(self, web, display):
-        aggregator, publisher, clock = display
-        _fail(aggregator, plugin_id="before")
-        publisher.tick()
-        web.post("/api/v3/errors/clear", json={"all": True})
-        # An error lands after the request but before the display applies it.
-        for record in aggregator._records:
-            record.timestamp -= timedelta(seconds=5)
-        _fail(aggregator, plugin_id="after")
-        publisher.tick()
-        data = _summary(web)
-        assert data["plugin_error_counts"] == {"after": {"ValueError": 1}}
-        assert data["clear_pending"] is False
-
-    def test_age_based_clear(self, web, display):
-        aggregator, publisher, _ = display
-        _fail(aggregator, plugin_id="old")
-        _fail(aggregator, plugin_id="old")
-        for record in aggregator._records:
-            record.timestamp -= timedelta(hours=3)
-        _fail(aggregator, plugin_id="new")
-        publisher.tick()
-        body = web.post("/api/v3/errors/clear", json={"max_age_hours": 1}).get_json()["data"]
-        assert body["cleared_count"] == 2
-        pending = _summary(web)
-        assert pending["clear_pending"] is True
-        assert [r["plugin_id"] for r in pending["recent_errors"]] == ["new"]
-        publisher.tick()
-        data = _summary(web)
-        assert data["plugin_error_counts"] == {"new": {"ValueError": 1}}
-        assert data["total_errors"] == 1
-
-    def test_a_narrower_clear_does_not_undo_a_pending_wider_one(self, web, display):
-        aggregator, publisher, _ = display
-        for _ in range(3):
-            _fail(aggregator)
-        publisher.tick()
-        web.post("/api/v3/errors/clear", json={"all": True})
-        web.post("/api/v3/errors/clear", json={"max_age_hours": 24})
-        assert _summary(web)["total_errors"] == 0
-        publisher.tick()
-        assert aggregator.get_error_summary()["total_errors"] == 0
-
-    def test_default_body_still_means_older_than_24_hours(self, web, display):
-        aggregator, publisher, _ = display
-        _fail(aggregator)
-        publisher.tick()
-        response = web.post("/api/v3/errors/clear")
-        assert response.status_code == 200
-        assert response.get_json()["data"]["cleared_count"] == 0
-        publisher.tick()
-        assert _summary(web)["total_errors"] == 1
-
-    def test_validation_is_unchanged_but_all_skips_it(self, web):
-        assert web.post("/api/v3/errors/clear", json={"max_age_hours": 0}).status_code == 400
-        assert web.post("/api/v3/errors/clear", json={"max_age_hours": 9000}).status_code == 400
-        assert web.post("/api/v3/errors/clear",
-                        json={"all": True, "max_age_hours": "junk"}).status_code == 200
-
-    def test_a_request_that_did_not_reach_the_cache_is_an_error(self, web, api_v3_module):  # noqa: F811
-        cache = MagicMock()
-        cache.get.return_value = None
-        api_v3_module.api_v3.cache_manager = cache
-        response = web.post("/api/v3/errors/clear", json={"all": True})
-        assert response.status_code == 500
-        assert "clear request" in response.get_json()["message"]
-
-
 CLIENT = "web_interface.blueprints.api_v3.control_client"
+RETIRED_CLEAR_KEY = "plugin_error_clear_request"
 
 
 def _mailbox_file(shared_cache):
     _, _, directory = shared_cache
-    return directory / f"{ERROR_CLEAR_REQUEST_KEY}.json"
+    return directory / f"{RETIRED_CLEAR_KEY}.json"
 
 
-class TestClearOverTheSocket:
-    """``errors.clear``: the display applies the clear before it answers, and
-    the mailbox is written only when the socket could not carry it."""
+@pytest.fixture
+def socket_up(display, monkeypatch):
+    """The control socket, as the display serves it: errors_clear runs the
+    display's own handler against its publisher."""
+    from src.ipc import client as control_client
+    from src.ipc.contract import ErrorsClearArgs
+    _, publisher, _ = display
+    monkeypatch.setattr(errors, "_snapshot_publisher", publisher)
+    calls = []
 
-    @pytest.fixture
-    def socket_up(self, display, monkeypatch):
-        """The control socket, as the display serves it: errors_clear runs
-        the display's own handler against its publisher."""
-        from src.ipc import client as control_client
-        from src.ipc.contract import ErrorsClearArgs
-        _, publisher, _ = display
-        monkeypatch.setattr(errors, "_snapshot_publisher", publisher)
-        calls = []
+    def errors_clear(request_id, cutoff, **kw):
+        calls.append((request_id, cutoff))
+        return errors.apply_error_clear(request_id, ErrorsClearArgs(cutoff=cutoff))
 
-        def errors_clear(request_id, cutoff, **kw):
-            calls.append((request_id, cutoff))
-            return errors.apply_error_clear(request_id, ErrorsClearArgs(cutoff=cutoff))
+    monkeypatch.setattr(f"{CLIENT}.errors_clear", errors_clear)
+    assert control_client.errors_clear is errors_clear
+    return calls
 
-        monkeypatch.setattr(f"{CLIENT}.errors_clear", errors_clear)
-        assert control_client.errors_clear is errors_clear
-        return calls
+
+class TestClear:
+    """``errors.clear``: the display applies the clear before it answers."""
 
     def test_socket_clear_is_applied_before_the_answer(self, web, display, socket_up,
                                                        shared_cache):
@@ -471,6 +356,7 @@ class TestClearOverTheSocket:
         body = response.get_json()
         data = body["data"]
         assert data["transport"] == "socket" and data["applied"] is True
+        assert data["clear_requested"] is True
         assert data["cleared_count"] == 3
         assert body["message"] == "Cleared all errors"
         [(request_id, _)] = socket_up
@@ -479,90 +365,134 @@ class TestClearOverTheSocket:
         assert aggregator.get_error_summary()["total_errors"] == 0
         summary = _summary(web)
         assert summary["total_errors"] == 0 and summary["clear_pending"] is False
-        # And no mailbox file.
+        assert not _mailbox_file(shared_cache).exists()
+        # Nothing left for a tick to do.
+        assert publisher.tick() is False
+
+    def test_errors_after_the_clear_are_kept(self, web, display, socket_up):
+        aggregator, publisher, _ = display
+        _fail(aggregator, plugin_id="before")
+        for record in aggregator._records:
+            record.timestamp -= timedelta(seconds=5)
+        publisher.tick()
+        web.post("/api/v3/errors/clear", json={"all": True})
+        _fail(aggregator, plugin_id="after")
+        publisher.min_interval = 0
+        publisher.tick()
+        data = _summary(web)
+        assert data["plugin_error_counts"] == {"after": {"ValueError": 1}}
+        assert data["clear_pending"] is False
+
+    def test_age_based_clear(self, web, display, socket_up):
+        aggregator, publisher, _ = display
+        _fail(aggregator, plugin_id="old")
+        _fail(aggregator, plugin_id="old")
+        for record in aggregator._records:
+            record.timestamp -= timedelta(hours=3)
+        _fail(aggregator, plugin_id="new")
+        publisher.tick()
+        body = web.post("/api/v3/errors/clear", json={"max_age_hours": 1}).get_json()["data"]
+        assert body["cleared_count"] == 2
+        data = _summary(web)
+        assert data["plugin_error_counts"] == {"new": {"ValueError": 1}}
+        assert data["total_errors"] == 1
+
+    def test_default_body_still_means_older_than_24_hours(self, web, display, socket_up):
+        aggregator, publisher, _ = display
+        _fail(aggregator)
+        publisher.tick()
+        response = web.post("/api/v3/errors/clear")
+        assert response.status_code == 200
+        assert response.get_json()["data"]["cleared_count"] == 0
+        assert _summary(web)["total_errors"] == 1
+
+    def test_validation_is_unchanged_but_all_skips_it(self, web, socket_up):
+        assert web.post("/api/v3/errors/clear", json={"max_age_hours": 0}).status_code == 400
+        assert web.post("/api/v3/errors/clear", json={"max_age_hours": 9000}).status_code == 400
+        assert web.post("/api/v3/errors/clear",
+                        json={"all": True, "max_age_hours": "junk"}).status_code == 200
+
+
+class TestClearWithoutTheSocket:
+    """Stage 5: no mailbox to fall back to. The route says why it failed and
+    writes nothing; the errors stay as the display last reported them."""
+
+    def _post(self, web, display, monkeypatch, error):
+        monkeypatch.setattr(f"{CLIENT}.errors_clear", MagicMock(side_effect=error))
+        aggregator, publisher, _ = display
+        _fail(aggregator)
+        publisher.tick()
+        return web.post("/api/v3/errors/clear", json={"all": True})
+
+    @pytest.mark.parametrize("reason", ["no_socket", "refused"])
+    def test_a_stopped_display_is_an_error(self, web, display, shared_cache, monkeypatch,
+                                           reason):
+        from src.ipc import client as control_client
+        response = self._post(web, display, monkeypatch,
+                              control_client.ControlError(reason, sent=False))
+        assert response.status_code == 503
+        body = response.get_json()
+        assert body["context"]["socket_error"] == reason
+        assert "not running" in body["message"]
+        assert not _mailbox_file(shared_cache).exists()
+        # Nothing hides them: they are still the display's last report.
+        summary = _summary(web)
+        assert summary["total_errors"] == 1 and summary["clear_pending"] is False
+
+    @pytest.mark.parametrize("reason", ["disabled", "unsupported"])
+    def test_no_socket_here_is_an_error(self, web, display, shared_cache, monkeypatch, reason):
+        from src.ipc import client as control_client
+        response = self._post(web, display, monkeypatch,
+                              control_client.ControlError(reason, sent=False))
+        assert response.status_code == 503
+        assert "not available" in response.get_json()["message"]
         assert not _mailbox_file(shared_cache).exists()
 
-    def test_an_older_mailbox_request_does_not_read_as_pending(self, web, display, socket_up,
-                                                               shared_cache, monkeypatch):
-        # A clear that went to the mailbox while the socket was down, then a
-        # wider one over the socket: the old request has nothing left to hide.
-        from unittest.mock import patch
+    def test_an_older_display_is_told_to_restart(self, web, display, shared_cache,
+                                                 monkeypatch):
         from src.ipc import client as control_client
-        aggregator, publisher, _ = display
-        _fail(aggregator)
-        publisher.tick()
-        with patch(f"{CLIENT}.errors_clear",
-                   side_effect=control_client.ControlError("no_socket")):
-            data = web.post("/api/v3/errors/clear", json={"max_age_hours": 1}).get_json()["data"]
-        assert data["transport"] == "mailbox"
-        assert _mailbox_file(shared_cache).exists()
-        data = web.post("/api/v3/errors/clear", json={"all": True}).get_json()["data"]
-        assert data["transport"] == "socket"
-        assert _summary(web)["clear_pending"] is False
-
-    @pytest.mark.parametrize("reason", ["no_socket", "refused", "disabled", "unsupported"])
-    def test_no_socket_writes_the_mailbox(self, web, display, shared_cache, monkeypatch, reason):
-        from src.ipc import client as control_client
-        monkeypatch.setattr(f"{CLIENT}.errors_clear", MagicMock(
-            side_effect=control_client.ControlError(reason, sent=False)))
-        aggregator, publisher, _ = display
-        _fail(aggregator)
-        publisher.tick()
-        data = web.post("/api/v3/errors/clear", json={"all": True}).get_json()["data"]
-        assert data["transport"] == "mailbox" and data["applied"] is False
-        assert _mailbox_file(shared_cache).exists()
-        assert _summary(web)["clear_pending"] is True
-        publisher.tick()
-        assert aggregator.get_error_summary()["total_errors"] == 0
-
-    def test_an_older_display_gets_the_mailbox(self, web, display, shared_cache, monkeypatch):
-        # The upgrade case: new web interface, a display from before errors.clear.
-        from src.ipc import client as control_client
-        monkeypatch.setattr(f"{CLIENT}.errors_clear", MagicMock(
-            side_effect=control_client.ControlError("unknown_command", sent=True)))
-        aggregator, publisher, _ = display
-        _fail(aggregator)
-        publisher.tick()
-        data = web.post("/api/v3/errors/clear", json={"all": True}).get_json()["data"]
-        assert data["transport"] == "mailbox"
-        publisher.tick()
-        assert aggregator.get_error_summary()["total_errors"] == 0
+        response = self._post(web, display, monkeypatch,
+                              control_client.ControlError("unknown_command", sent=True))
+        assert response.status_code == 503
+        assert "restart" in response.get_json()["message"]
+        assert not _mailbox_file(shared_cache).exists()
 
     @pytest.mark.parametrize("reason", ["internal", "timeout", "busy", "invalid_args"])
     def test_a_display_that_had_it_and_failed_is_an_error(self, web, display, shared_cache,
                                                          monkeypatch, reason):
         from src.ipc import client as control_client
-        monkeypatch.setattr(f"{CLIENT}.errors_clear", MagicMock(
-            side_effect=control_client.ControlError(reason, sent=True)))
-        response = web.post("/api/v3/errors/clear", json={"all": True})
+        response = self._post(web, display, monkeypatch,
+                              control_client.ControlError(reason, sent=True))
         assert response.status_code == 503
-        assert response.get_json()["context"]["socket_error"] == reason
+        body = response.get_json()
+        assert body["context"]["socket_error"] == reason
+        assert body["message"] == "The display service did not apply the clear"
         assert not _mailbox_file(shared_cache).exists()
 
-
-class TestPublisherMailboxPoll:
-    def test_the_mailbox_is_read_only_when_its_file_changed(self, display, shared_cache):
-        _, publisher, _ = display
-        _, web_cache, _ = shared_cache
+    def test_the_default_test_setup_has_no_socket(self, web, display, shared_cache):
+        # conftest turns the socket off: the real client answers "disabled".
+        aggregator, publisher, _ = display
+        _fail(aggregator)
         publisher.tick()
+        response = web.post("/api/v3/errors/clear", json={"all": True})
+        assert response.status_code == 503
+        assert response.get_json()["context"]["socket_error"] in ("disabled", "unsupported")
+
+
+class TestPublisher:
+    def test_a_tick_reads_no_clear_request(self, display, shared_cache):
+        _, publisher, clock = display
+        _, web_cache, directory = shared_cache
+        # An old web interface's leftover request file is ignored.
+        (directory / f"{RETIRED_CLEAR_KEY}.json").write_text(
+            '{"timestamp": 1, "data": {"request_id": "old", "cutoff": 9e9}}')
         publisher.cache_manager = MagicMock(wraps=publisher.cache_manager)
-
-        def reads():
-            return [c for c in publisher.cache_manager.get.call_args_list
-                    if c.args[0] == ERROR_CLEAR_REQUEST_KEY]
-
         for _ in range(5):
+            clock.now += 60
             publisher.tick()
-        assert reads() == []          # no file: a stat per tick, no read
-        errors.request_error_clear(web_cache, 1.0)
-        publisher.tick()
-        assert len(reads()) == 1
-        for _ in range(5):
-            publisher.tick()
-        assert len(reads()) == 1      # unchanged file: not read again
-        errors.request_error_clear(web_cache, 2.0)
-        publisher.tick()
-        assert len(reads()) == 2
+        publisher.cache_manager.get.assert_not_called()
+        snapshot = web_cache.get(ERROR_SNAPSHOT_KEY, max_age=None, memory_ttl=0)
+        assert snapshot["applied_clear_id"] is None
 
     def test_clear_now_publishes_what_it_applied(self, display, shared_cache):
         aggregator, publisher, _ = display
@@ -572,7 +502,6 @@ class TestPublisherMailboxPoll:
         snapshot = web_cache.get(ERROR_SNAPSHOT_KEY, max_age=None, memory_ttl=0)
         assert snapshot["applied_clear_id"] == "sock-1"
         assert snapshot["total_errors"] == 0
-        assert snapshot["applied_clear_cutoff"] is not None
 
     def test_the_handler_needs_a_running_publisher(self, monkeypatch):
         from src.ipc.contract import ErrorsClearArgs
@@ -583,12 +512,10 @@ class TestPublisherMailboxPoll:
 
 @pytest.mark.skipif(not hasattr(os, "fchmod") or os.name == "nt",
                     reason="POSIX file modes")
-def test_both_files_are_group_readable(web, display, shared_cache):
+def test_the_snapshot_is_group_readable(web, display, shared_cache):
     aggregator, publisher, _ = display
     _, _, directory = shared_cache
     _fail(aggregator)
     publisher.tick()
-    web.post("/api/v3/errors/clear", json={"all": True})
-    for key in (ERROR_SNAPSHOT_KEY, ERROR_CLEAR_REQUEST_KEY):
-        mode = stat.S_IMODE(os.stat(directory / f"{key}.json").st_mode)
-        assert mode == 0o660, (key, oct(mode))
+    mode = stat.S_IMODE(os.stat(directory / f"{ERROR_SNAPSHOT_KEY}.json").st_mode)
+    assert mode == 0o660, oct(mode)

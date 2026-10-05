@@ -522,42 +522,52 @@ Returns the request id once queued, or `None` as above.
 
 These methods are new after core 3.8.0 (see `CHANGELOG.md`). Before them,
 plugins wrote the `display_on_demand_request` cache key (the "mailbox")
-themselves. The display reads it only once a second while the control
-socket is up, and it will be removed in a future release (see
-[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md), stage 5). A plugin that
-must keep working on older cores checks for the method, and writes the
-mailbox only when the method is missing or answers `None`:
+themselves. **The mailbox is gone** (see
+[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md), stage 5): the display no
+longer reads it, and a write to it is dropped with a warning in the log,
+once per plugin:
+
+```
+Ignored a write to the retired 'display_on_demand_request' cache key by plugin 'my-plugin': ...
+```
+
+A plugin that only needs to run on cores with these methods calls them and
+treats `None` as "no display took it":
+
+```python
+def _show_alert(self):
+    if self.request_on_demand(mode="my_alert", duration=15) is None:
+        self.logger.info("No display to show the alert on")
+```
+
+A plugin that must also work on cores before them can keep the mailbox
+write as its fallback, guarded by `hasattr`: on those cores the display
+still reads it, and on a current core the write is only dropped and logged
+(when the method is missing it never runs at all). Raise
+`ledmatrix_min_version` to the release that added the methods once you no
+longer need it.
 
 ```python
 import time, uuid
 
 def _show_alert(self):
-    if hasattr(self, "request_on_demand") and self.request_on_demand(
-            mode="my_alert", duration=15):
+    if hasattr(self, "request_on_demand"):
+        self.request_on_demand(mode="my_alert", duration=15)
         return
-    # Older core, or no display in this process: the mailbox, as before.
+    # A core older than request_on_demand(): the mailbox it still reads.
     self.cache_manager.set("display_on_demand_request", {
         "request_id": str(uuid.uuid4()), "action": "start",
         "plugin_id": self.plugin_id, "mode": "my_alert",
         "duration": 15, "pinned": False, "timestamp": time.time(),
     })
-
-def _release(self):
-    if hasattr(self, "end_on_demand") and self.end_on_demand():
-        return
-    self.cache_manager.set("display_on_demand_request", {
-        "request_id": str(uuid.uuid4()), "action": "stop",
-        "plugin_id": self.plugin_id, "timestamp": time.time(),
-    })
 ```
 
-Keep `ledmatrix_min_version` where it is: the fallback is what keeps the
-plugin working on older cores. A mailbox stop ends any on-demand session,
-whoever started it; `end_on_demand()` ends only the plugin's own.
+`end_on_demand()` ends only the plugin's own session; a stop written to the
+mailbox on an older core ends any session, whoever started it.
 
 Both methods answer a request id only when the plugin manager returned a
 string, so a test that gives the plugin a `MagicMock()` plugin manager gets
-`None` and exercises the mailbox path. To test the new path, set
+`None`. To test the path where the display takes the request, set
 `plugin_manager.request_on_demand.return_value = "some-id"`.
 
 > The full source for `BasePlugin` lives in

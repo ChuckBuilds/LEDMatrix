@@ -466,7 +466,7 @@ Request a specific plugin to display on-demand.
 - `mode` (string, optional): Display mode name (plugin_id inferred if not provided)
 - `duration` (number, optional): Duration in seconds (0 = until stopped)
 - `pinned` (boolean, optional): Pin display (pause rotation)
-- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within a frame over its control socket (within about a second through the mailbox fallback). When false and the service is stopped, the route returns 400.
+- `start_service` (boolean, optional): Start the display service if it is not running (default: true). A running service is never restarted: it picks the request up within a frame over its control socket. A stopped one is started and sent the request once its socket is up, which can take as long as the display takes to load its plugins (the route waits up to 45 s). When false and the service is stopped, the route returns 400.
 
 **Response**:
 ```json
@@ -486,24 +486,30 @@ Request a specific plugin to display on-demand.
 
 `service` is `null` when `start_service` is false.
 
-`transport` says how the request reached the display: `"socket"` means the
-display's control socket acknowledged it (it is queued for the render thread,
-which wakes for it and applies it within a frame; see
-[IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)), `"mailbox"` means it was
-written to the cache mailbox the display polls, as before the socket existed.
-The mailbox is used only when the socket could not carry the request. With
-`"mailbox"`, `socket_error` gives the reason (`no_socket` when the display is
-stopped or predates the socket, `refused`, a connect `timeout`,
-`unknown_command` from a display too old for the command, ...). Either way
-the request is applied the same way; `request_id` is the same id in both.
+`transport` is always `"socket"`: the display's control socket acknowledged
+the request (it is queued for the render thread, which wakes for it and
+applies it within a frame; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)).
+The `"mailbox"` value earlier releases could answer is gone with the
+mailbox: nothing is written to the cache.
 
-When the display had the request and did not take it -- a full queue
-(`busy`), bad arguments (`invalid_args`), no answer after the request was
-sent (`timeout`, `closed`) -- the route answers `503` (`400` for
-`invalid_args`) with `status: "error"` and `data: {request_id, transport:
-"socket", socket_error}`, and writes nothing to the mailbox. The stop route
-does the same, except that with `stop_service: true` it still stops the
-service and answers success.
+When the display did not take the request, the route answers an error with
+`status: "error"` and `data: {request_id, transport: "socket",
+socket_error}` (plus `service` when it started or checked the service):
+
+- no display listening (`no_socket`, `refused`): with the service stopped
+  and `start_service` false, `400`; otherwise the route waits for the
+  display's socket (45 s after starting the service, 10 s when it was
+  already running and may still be starting) and answers `503` if it never
+  answers;
+- a full queue (`busy`), no answer after the request was sent (`timeout`,
+  `closed`), a display older than the command (`unknown_command`), no
+  socket in the web process (`disabled`, `unsupported`): `503` at once;
+- bad arguments (`invalid_args`): `400`.
+
+The stop route answers the same errors (`503` when no display is
+listening, with a message saying whether the service is stopped), except
+that with `stop_service: true` it still stops the service and answers
+success, with `socket_error` set.
 
 ### Stop On-Demand Display
 
@@ -533,7 +539,7 @@ Stop the current on-demand display.
 }
 ```
 
-`transport` and `socket_error` are as for start.
+`transport` and the errors are as for start; a stop is never retried.
 
 ---
 
@@ -2199,7 +2205,7 @@ Every response below adds three fields to the shape it always had:
 |---|---|
 | `snapshot_available` | `false` until the display service has reported (for example, it is not running). Counts are then zero. |
 | `generated_at` | When the display service produced the snapshot (ISO, the Pi's local time), or `null`. |
-| `clear_pending` | A clear has been requested and the display service has not applied it yet. |
+| `clear_pending` | Always `false`: a clear is applied before its route answers. Kept for compatibility. |
 
 ### Get Error Summary
 
@@ -2280,21 +2286,17 @@ before it answers: `applied` is `true`, `transport` is `"socket"`, and
 }
 ```
 
-When the socket cannot carry it (the display is stopped, or older than
-`errors.clear`) the clear is asynchronous, as before: the web interface
-records a request (`plugin_error_clear_request` in the shared cache),
-`applied` is `false` and `transport` is `"mailbox"`, and the display service
-applies it within about 5 seconds. Reads hide the cleared errors from the
-moment the request is recorded. Until the display service applies an
-age-based clear, `recent_errors` and `active_patterns` are already filtered
-but the counts are the old ones, and `clear_pending` is `true`. Then
-`cleared_count` is how many of the reported errors the clear hides, and
-`null` when that cannot be known before the display service applies it (an
-age-based clear over more errors than the report lists).
+`clear_requested`, `applied` and `transport` are always `true`, `true` and
+`"socket"`, and are kept for compatibility.
 
-A request that could not be written to the shared cache answers `500`. A
-display that had the request and failed it (`internal`, a timeout after the
-request was sent) answers `503`, with `context.socket_error`.
+When the socket cannot carry the clear, the route answers `503` with
+`context.socket_error`, and nothing is cleared or recorded: the
+`plugin_error_clear_request` mailbox earlier releases fell back to is gone.
+The message says why: the display service is not running (its errors are
+then the last run's, and its next run starts with none), it is too old for
+`errors.clear` (restart it), the web process has no socket, or the display
+had the request and failed it (`internal`, a timeout after the request was
+sent).
 
 ---
 

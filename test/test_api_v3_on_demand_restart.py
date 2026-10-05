@@ -5,18 +5,19 @@ the web UI and the MQTT bridge send) as "restart": with the service running it
 ran ``systemctl stop``, slept 1.5s and started it again. Every on-demand or
 "Preview on display" click therefore cold-restarted the display process --
 every plugin reloaded, the panel blank for seconds -- to deliver a request the
-running process polls for every ON_DEMAND_POLL_INTERVAL anyway (see
-test_on_demand_mailbox.py and test_display_pending_changes.py for the display
-side: the mailbox is read mid-dwell, mid-screen and mid-Vegas-iteration).
+running process takes within a frame over its control socket anyway (see
+test_display_pending_changes.py for the display side: commands land
+mid-dwell, mid-screen and mid-Vegas-iteration).
 
 The restart did not buy anything either: a freshly started display restores
-only the on-demand session it saved itself (``display_on_demand_config``), so
-the new request reached it through the same mailbox, one cold start later.
+only the on-demand session it saved itself (``display_on_demand_config``).
 
 This file previously pinned that restart path (it guarded a broken
 ``import _pkg.time`` inside it). The path is gone; these tests pin its
 replacement: a running service is left alone, a stopped one is started (only
-when start_service is set), and the request lands in the mailbox either way.
+when start_service is set), and the request goes over the control socket
+either way -- to a stopped display once it has started and its socket is up.
+Nothing is ever written to the cache: the file mailbox is gone (stage 5).
 
 The service helpers are patched where they run. display.py binds
 _get_display_service_status by value, while _ensure_display_service_running
@@ -34,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from test._api_v3_test_helpers import api_v3_client, api_v3_module  # noqa: F401,E402
 
+from src.ipc import client as control_client  # noqa: E402
+
 START_URL = "/api/v3/display/on-demand/start"
 STOP_URL = "/api/v3/display/on-demand/stop"
 MAILBOX = "display_on_demand_request"
@@ -46,7 +49,10 @@ def service(api_v3_module):
 
     plugin_manager and config_manager are None so the route skips plugin
     resolution (not what is under test here). The cache is the blueprint's
-    MagicMock cache_manager, so mailbox writes are visible as set() calls.
+    MagicMock cache_manager, so a write would be visible as a set() call.
+
+    The control socket answers while the service is active and is missing
+    (``no_socket``) while it is not; ``sent`` records what it carried.
     """
     api_v3_module.api_v3.plugin_catalog = None
     api_v3_module.api_v3.config_manager = None
@@ -62,7 +68,32 @@ def service(api_v3_module):
             state["active"] = False
         return {"returncode": 0, "stdout": "", "stderr": ""}
 
-    with patch("web_interface.blueprints.api_v3._get_display_service_status",
+    sent = []
+
+    def socket(action):
+        def call(request_id, *args, **kwargs):
+            if not state["active"]:
+                raise control_client.ControlError("no_socket", "x", sent=False)
+            sent.append((action, request_id) + args)
+            return {"accepted": True, "request_id": request_id}
+        return call
+
+    class Clock:
+        now = 1000.0
+
+        def monotonic(self):
+            return self.now
+
+        def time(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    with patch("web_interface.blueprints.api_v3.time", Clock()), \
+         patch(f"{DISPLAY}.control_client.on_demand_start", side_effect=socket("start")), \
+         patch(f"{DISPLAY}.control_client.on_demand_stop", side_effect=socket("stop")), \
+         patch("web_interface.blueprints.api_v3._get_display_service_status",
                side_effect=status), \
          patch("web_interface.blueprints.api_v3.display._get_display_service_status",
                side_effect=status), \
@@ -74,6 +105,7 @@ def service(api_v3_module):
             "systemctl": run_systemctl,
             "stop_service": stop_service,
             "cache": api_v3_module.api_v3.cache_manager,
+            "sent": sent,
         }
 
 
@@ -99,19 +131,15 @@ class TestStartWhileTheServiceIsRunning:
         assert _systemctl_verbs(service["systemctl"]) == [], (
             "a running display service was sent a systemctl command")
 
-    def test_the_request_is_posted_for_the_running_display(self, api_v3_client, service):
+    def test_the_request_is_sent_to_the_running_display(self, api_v3_client, service):
         response = api_v3_client.post(
             START_URL, json={"plugin_id": "weather", "mode": "weather_current",
                              "duration": 60, "pinned": True})
         data = response.get_json()["data"]
-        writes = _mailbox_writes(service["cache"])
-        assert len(writes) == 1
-        assert writes[0]["action"] == "start"
-        assert writes[0]["request_id"] == data["request_id"]
-        assert writes[0]["plugin_id"] == "weather"
-        assert writes[0]["mode"] == "weather_current"
-        assert writes[0]["duration"] == 60
-        assert writes[0]["pinned"] is True
+        assert service["sent"] == [("start", data["request_id"], "weather",
+                                    "weather_current", 60, True)]
+        assert data["transport"] == "socket"
+        assert _mailbox_writes(service["cache"]) == []
 
     def test_the_response_reports_the_service_was_not_started(self, api_v3_client, service):
         data = api_v3_client.post(START_URL, json={"plugin_id": "weather"}).get_json()["data"]
@@ -132,8 +160,9 @@ class TestStartWhileTheServiceIsStopped:
         assert response.status_code == 200, response.get_json()
         assert _systemctl_verbs(service["systemctl"]) == ["start"]
         service["stop_service"].assert_not_called()
-        # Written before the start, so the new process finds it on its first poll.
-        assert len(_mailbox_writes(service["cache"])) == 1
+        # Sent once the started display's socket answered.
+        assert [s[0] for s in service["sent"]] == ["start"]
+        assert _mailbox_writes(service["cache"]) == []
 
     def test_without_start_service_it_is_left_stopped(self, api_v3_client, service):
         service["state"]["active"] = False
@@ -141,6 +170,7 @@ class TestStartWhileTheServiceIsStopped:
             START_URL, json={"plugin_id": "weather", "start_service": "false"})
         assert response.status_code == 400
         assert _systemctl_verbs(service["systemctl"]) == []
+        assert service["sent"] == []
 
     def test_a_start_that_fails_is_reported(self, api_v3_client, service):
         service["state"]["active"] = False
@@ -151,31 +181,12 @@ class TestStartWhileTheServiceIsStopped:
         assert response.get_json()["status"] == "error"
 
 
-class _Mailbox:
-    """The CacheManager calls the routes make, over a dict."""
-
-    def __init__(self):
-        self.entries = {}
-
-    def set(self, key, value, ttl=None):
-        self.entries[key] = value
-
-    def get(self, key, max_age=300, memory_ttl=None):
-        return self.entries.get(key)
-
-    def delete(self, key):
-        self.entries.pop(key, None)
-
-
 class TestARefusedStartLeavesNoRequestBehind:
     """A start the route answers with an error must not run later.
 
-    The request was posted (to the mailbox, with the display stopped) before
-    the route refused it, and the display reads the mailbox for an hour
-    without looking at a request's age. So "Display service is not running"
-    (start_service off) or "Failed to start display service" left the
-    request waiting, and the next time the display started -- minutes later,
-    by hand -- it ran that plugin, pinned if the request said so.
+    With the mailbox, the request was posted before the route refused it, and
+    a display started later ran it. Now nothing is written anywhere: the
+    request only ever goes over the socket, to a display that answers.
 
     A socket acknowledgement is the other side of it: the display answered,
     so it is running and has the request, whatever systemd says (a display
@@ -184,76 +195,48 @@ class TestARefusedStartLeavesNoRequestBehind:
     """
 
     @pytest.fixture
-    def mailbox(self, api_v3_module, service):
-        box = _Mailbox()
-        api_v3_module.api_v3.cache_manager = box
+    def stopped(self, service):
         service["state"]["active"] = False
-        return box
+        return service
 
     @pytest.mark.parametrize("body", [
         {"plugin_id": "weather", "start_service": False},
         {"plugin_id": "weather"},                           # start_service defaults on
     ])
     def test_a_socket_ack_is_a_success_whatever_systemd_says(
-            self, api_v3_client, service, mailbox, body):
+            self, api_v3_client, stopped, body):
         with patch(f"{DISPLAY}.control_client.on_demand_start",
                    side_effect=lambda request_id, *a: {"accepted": True}):
             response = api_v3_client.post(START_URL, json=body)
         assert response.status_code == 200, response.get_json()
         assert response.get_json()["data"]["transport"] == "socket"
-        assert MAILBOX not in mailbox.entries
-        assert _systemctl_verbs(service["systemctl"]) == [], (
+        assert _systemctl_verbs(stopped["systemctl"]) == [], (
             "a unit was started beside a display that answered the socket")
 
-    def test_without_start_service_the_request_is_taken_back(
-            self, api_v3_client, service, mailbox):
+    def test_without_start_service_nothing_is_left_behind(self, api_v3_client, stopped):
         response = api_v3_client.post(START_URL, json={
             "plugin_id": "weather", "pinned": True, "start_service": False})
         assert response.status_code == 400
         assert response.get_json()["status"] == "error"
-        assert MAILBOX not in mailbox.entries
+        assert stopped["cache"].set.call_count == 0
+        assert stopped["sent"] == []
 
-    def test_a_start_that_fails_takes_its_request_back(self, api_v3_client, service, mailbox):
-        service["systemctl"].side_effect = lambda args: {
+    def test_a_start_that_fails_leaves_nothing_behind(self, api_v3_client, stopped):
+        stopped["systemctl"].side_effect = lambda args: {
             "returncode": 1, "stdout": "", "stderr": "denied"}
         response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
         assert response.status_code == 500
-        assert MAILBOX not in mailbox.entries
-
-    def test_a_newer_request_is_left_alone_on_the_400(self, api_v3_client, service, mailbox):
-        newer = {"request_id": "someone-else", "action": "start", "plugin_id": "clock"}
-
-        def stopped_and_another_post_lands(*args):
-            mailbox.entries[MAILBOX] = newer
-            return {"active": False}
-
-        with patch(f"{DISPLAY}._get_display_service_status",
-                   side_effect=stopped_and_another_post_lands):
-            response = api_v3_client.post(START_URL, json={
-                "plugin_id": "weather", "start_service": False})
-        assert response.status_code == 400
-        assert mailbox.entries[MAILBOX] is newer
-
-    def test_a_newer_request_is_left_alone_on_the_500(self, api_v3_client, service, mailbox):
-        newer = {"request_id": "someone-else", "action": "start", "plugin_id": "clock"}
-
-        def start_fails_after_another_post(args):
-            mailbox.entries[MAILBOX] = newer
-            return {"returncode": 1, "stdout": "", "stderr": "denied"}
-
-        service["systemctl"].side_effect = start_fails_after_another_post
-        response = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
-        assert response.status_code == 500
-        assert mailbox.entries[MAILBOX] is newer
+        assert stopped["cache"].set.call_count == 0
+        assert stopped["sent"] == []
 
 
 class TestStop:
-    def test_stop_posts_a_stop_request_and_leaves_the_service_running(
+    def test_stop_sends_a_stop_request_and_leaves_the_service_running(
             self, api_v3_client, service):
         response = api_v3_client.post(STOP_URL, json={})
         assert response.status_code == 200, response.get_json()
-        writes = _mailbox_writes(service["cache"])
-        assert [w["action"] for w in writes] == ["stop"]
+        assert [s[0] for s in service["sent"]] == ["stop"]
+        assert _mailbox_writes(service["cache"]) == []
         service["stop_service"].assert_not_called()
         assert _systemctl_verbs(service["systemctl"]) == []
 

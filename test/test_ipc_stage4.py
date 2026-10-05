@@ -1,14 +1,13 @@
-"""Stage 4 of the control socket: the file mailboxes are only a fallback.
+"""Stages 4 and 5 of the control socket: the socket is the only way in.
 
 * The client knows whether the display had the request (``ControlError.sent``)
-  and ``should_fall_back`` allows a mailbox write only when it did not, or
-  when the display is too old to know the command (the upgrade case).
+  and ``display_not_listening`` says when no display was there to take it
+  (stopped or still starting), the one case a later retry can fix.
 * ``errors.clear`` is answered on the connection thread by a handler the
   display registers; a display without one answers like an older display.
-* The display looks at the on-demand mailbox once a second while the socket
-  is up (0.25 s without it), reads it only when its file changed, never
-  touches it for a socket command, and logs who still writes it.
-* ``CacheManager.file_signature`` / ``MailboxWatch`` make a look one stat().
+* Stage 5: the display no longer reads the ``display_on_demand_request``
+  mailbox at all, and the cache refuses writes to the retired mailbox keys,
+  warning once per writer.
 
 The web routes are covered in test_api_v3_on_demand_socket.py and
 test_error_snapshot_cross_process.py.
@@ -23,7 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cache_manager import CacheManager, MailboxWatch
+from src import cache_manager as cache_module
+from src.cache_manager import CacheManager
 from src.ipc import client
 from src.ipc import contract as c
 from src.ipc.contract import Command, ErrorsClearArgs, OnDemandStartArgs, ProtocolError
@@ -81,38 +81,41 @@ class TestSent:
     def test_an_answer_is_returned(self):
         assert _call(FakeSock([_reply('rid-1', ok=True, result={'pong': True})])) == {'pong': True}
 
-    @pytest.mark.parametrize('reason', ['no_socket', 'refused', 'timeout', 'busy'])
-    def test_a_failed_connect_was_not_sent(self, reason):
+    @pytest.mark.parametrize('reason,listening', [('no_socket', False), ('refused', False),
+                                                  ('timeout', True), ('busy', True)])
+    def test_a_failed_connect_was_not_sent(self, reason, listening):
         e = _error(connect_error=client.ControlError(reason))
         assert e.reason == reason and e.sent is False
-        assert client.should_fall_back(e)
+        # Only "nothing there" is worth waiting for: a timeout or a full
+        # backlog is a display that is there and stuck.
+        assert client.display_not_listening(e) is not listening
 
     def test_a_send_that_timed_out_was_not_sent(self):
         e = _error(sock=FakeSock(send_error=socket.timeout()))
         assert e.reason == 'timeout' and e.sent is False
-        assert client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     def test_silence_after_the_request_was_sent(self):
         e = _error(sock=FakeSock(recv_error=socket.timeout()))
         assert e.reason == 'timeout' and e.sent is True
-        assert not client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     def test_a_hang_up_after_the_request_was_sent(self):
         e = _error(sock=FakeSock([]))
         assert e.reason == 'closed' and e.sent is True
-        assert not client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     def test_a_garbled_reply(self):
         e = _error(sock=FakeSock([b'not json\n']))
         assert e.reason == 'bad_response' and e.sent is True
-        assert not client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     @pytest.mark.parametrize('code', ['busy', 'invalid_args', 'internal', 'pending', 'failed'])
     def test_a_display_error_with_an_id_was_sent(self, code):
         sock = FakeSock([_reply('rid-1', ok=False, error={'code': code, 'message': 'x'})])
         e = _error(sock=sock)
         assert e.reason == code and e.sent is True
-        assert not client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     @pytest.mark.parametrize('code', ['forbidden', 'busy'])
     def test_a_refusal_at_the_door_was_not_sent(self, code):
@@ -122,23 +125,27 @@ class TestSent:
                                       'error': {'code': code, 'message': 'x'}}) + '\n').encode()])
         e = _error(sock=sock)
         assert e.reason == code and e.sent is False
-        assert client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     @pytest.mark.parametrize('code', ['unknown_command', 'unsupported_version'])
-    def test_an_older_display_is_fallen_back_from(self, code):
+    def test_an_older_display_is_listening(self, code):
         sock = FakeSock([_reply('rid-1', ok=False, error={'code': code, 'message': 'x'})])
         e = _error(sock=sock)
         assert e.sent is True
-        assert client.should_fall_back(e)
+        assert not client.display_not_listening(e)
 
     def test_a_request_refused_locally_never_left(self):
         with pytest.raises(client.ControlError) as e:
             client.request(Command.ERRORS_CLEAR, {'cutoff': 'soon'}, paths=['/x.sock'])
         assert e.value.reason == 'invalid_request' and e.value.sent is False
-        assert client.should_fall_back(e.value)
+        assert not client.display_not_listening(e.value)
 
-    def test_a_client_bug_falls_back(self):
-        assert client.should_fall_back(RuntimeError('boom'))
+    @pytest.mark.parametrize('reason', ['disabled', 'unsupported'])
+    def test_a_client_without_the_socket_is_not_waiting_for_a_display(self, reason):
+        assert not client.display_not_listening(client.ControlError(reason))
+
+    def test_a_client_bug_is_not_a_missing_display(self):
+        assert not client.display_not_listening(RuntimeError('boom'))
 
 
 # -- errors.clear on the server ------------------------------------------------------
@@ -204,37 +211,28 @@ class TestErrorsClearOnTheServer:
         assert Command.ERRORS_CLEAR in result['commands']
 
 
-# -- the display's mailbox poll ------------------------------------------------------
+# -- stage 5: the display reads no mailbox --------------------------------------------
 
-class SignedCache:
-    """The slice of CacheManager the poll uses, counting what it costs."""
+class CountingCache:
+    """The slice of CacheManager the on-demand path uses, counting every call."""
 
     def __init__(self):
         self.data = {}
-        self.writes = 0
-        self.version = {}
-        self.reads = []
-        self.stats = 0
-        self.deletes = []
-        self.sets = []
+        self.calls = []
 
-    def file_signature(self, key):
-        self.stats += 1
-        return (self.version[key], 0, 0) if key in self.data else None
+    def __getattr__(self, name):
+        # Any other method (file_signature, delete, ...) is recorded too.
+        def call(*a, **kw):
+            self.calls.append((name, a[0] if a else None))
+        return call
 
     def get(self, key, *a, **kw):
-        self.reads.append(key)
+        self.calls.append(('get', key))
         return self.data.get(key)
 
     def set(self, key, value, *a, **kw):
-        self.sets.append(key)
+        self.calls.append(('set', key))
         self.data[key] = value
-        self.writes += 1
-        self.version[key] = self.writes
-
-    def delete(self, key):
-        self.deletes.append(key)
-        self.data.pop(key, None)
 
 
 class FakeServer:
@@ -250,209 +248,140 @@ class FakeServer:
         return out
 
 
-class Clock:
-    def __init__(self):
-        self.t = 1000.0
-
-    def __call__(self):
-        return self.t
-
-
 @pytest.fixture
-def controller(test_display_controller, monkeypatch):
+def controller(test_display_controller):
     dc = test_display_controller
-    dc.cache_manager = SignedCache()
+    dc.cache_manager = CountingCache()
     dc._activate_on_demand = MagicMock()
     dc.on_demand_active = False
     dc.on_demand_request_id = None
-    dc._last_on_demand_poll = None
-    dc._on_demand_mailbox = None
-    dc._mailbox_writers_logged = frozenset()
-    clock = Clock()
-    monkeypatch.setattr('src.display_controller.time.monotonic', clock)
-    dc.clock = clock
     return dc
 
 
-def _post(dc, rid, action='start', **fields):
-    dc.cache_manager.set(MAILBOX, dict({'request_id': rid, 'action': action}, **fields))
-
-
-def _poll_for(dc, seconds, step=1 / 16):   # exact in binary: no drift past a floor
-    end = dc.clock.t + seconds
-    while dc.clock.t < end:
-        dc._poll_on_demand_requests()
-        dc.clock.t += step
-
-
-class TestMailboxCadence:
-    def test_without_a_socket_it_is_looked_at_every_quarter_second(self, controller):
-        controller._control_server = None
-        _poll_for(controller, 10.0)
-        assert 38 <= controller.cache_manager.stats <= 42
-
-    def test_with_a_socket_it_is_looked_at_once_a_second(self, controller):
-        controller._control_server = FakeServer()
-        _poll_for(controller, 10.0)
-        assert 9 <= controller.cache_manager.stats <= 11
-
-    def test_a_look_that_finds_nothing_reads_nothing(self, controller):
-        controller._control_server = FakeServer()
-        _poll_for(controller, 10.0)
-        assert controller.cache_manager.reads == []
-
-    def test_an_unchanged_mailbox_is_not_read_again(self, controller):
-        # An already-processed start the delete could not remove, say.
-        controller._control_server = FakeServer()
-        controller.cache_manager.delete = MagicMock()   # the file stays
-        _post(controller, 'once', plugin_id='clock')
-        _poll_for(controller, 10.0)
-        assert controller.cache_manager.reads.count(MAILBOX) <= 2   # the read + the re-check
-        controller._activate_on_demand.assert_called_once()
-
-    def test_a_mailbox_request_lands_within_a_second_with_the_socket_up(self, controller):
-        # The upgrade case the other way round: a new display, and a web
-        # interface (or a plugin) that still writes the mailbox.
-        controller._control_server = FakeServer()
-        controller._poll_on_demand_requests()
-        controller.clock.t += 0.1
-        _post(controller, 'old-web', plugin_id='clock')
-        posted = controller.clock.t
-        while not controller._activate_on_demand.called:
+class TestNoMailbox:
+    @pytest.mark.parametrize('with_socket', [False, True])
+    def test_polling_touches_no_cache_key(self, controller, with_socket):
+        controller._control_server = FakeServer() if with_socket else None
+        controller.cache_manager.data[MAILBOX] = {'request_id': 'left', 'action': 'start',
+                                                  'plugin_id': 'clock'}
+        for _ in range(200):
             controller._poll_on_demand_requests()
-            controller.clock.t += 0.05
-            assert controller.clock.t - posted < 1.5
-        assert controller.clock.t - posted <= controller.MAILBOX_POLL_INTERVAL_WITH_SOCKET + 0.06
-        assert MAILBOX in controller.cache_manager.deletes   # consumed
+        assert controller.cache_manager.calls == []
+        controller._activate_on_demand.assert_not_called()
 
-    def test_socket_commands_still_land_at_once(self, controller):
+    def test_socket_commands_land_at_once(self, controller):
         server = controller._control_server = FakeServer()
-        controller._poll_on_demand_requests()
         server.commands.append(QueuedCommand('sock', Command.ON_DEMAND_START,
                                              OnDemandStartArgs(plugin_id='clock'), time.time()))
-        controller._poll_on_demand_requests()   # inside the mailbox interval
+        controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_called_once()
 
-
-class TestSocketCommandsLeaveTheMailboxAlone:
-    def test_a_socket_start_reads_and_deletes_no_mailbox(self, controller):
+    def test_a_start_is_applied_once_and_writes_no_processed_id(self, controller):
         server = controller._control_server = FakeServer()
-        controller._poll_on_demand_requests()
-        before = list(controller.cache_manager.reads)
-        server.commands.append(QueuedCommand('s1', Command.ON_DEMAND_START,
-                                             OnDemandStartArgs(plugin_id='clock'), time.time()))
-        controller._poll_on_demand_requests()
+        for _ in range(2):
+            server.commands.append(QueuedCommand('same', Command.ON_DEMAND_START,
+                                                 OnDemandStartArgs(plugin_id='clock'), time.time()))
+            controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_called_once()
-        assert MAILBOX not in controller.cache_manager.reads[len(before):]
-        assert controller.cache_manager.deletes == []
+        assert controller.cache_manager.calls == []
 
-    def test_a_socket_stop_reads_and_deletes_no_mailbox(self, controller):
+    def test_a_socket_stop_touches_no_cache_key(self, controller):
         from src.ipc.contract import OnDemandStopArgs
         controller.on_demand_active = True
         controller._clear_on_demand = MagicMock()
         server = controller._control_server = FakeServer()
         server.commands.append(QueuedCommand('s2', Command.ON_DEMAND_STOP,
                                              OnDemandStopArgs(), time.time()))
-        controller.clock.t += 5
         controller._drain_control_commands()
         controller._clear_on_demand.assert_called_once()
-        assert MAILBOX not in controller.cache_manager.reads
-        assert controller.cache_manager.deletes == []
+        assert controller.cache_manager.calls == []
 
-    def test_a_mailbox_copy_of_a_socket_command_is_dropped(self, controller):
-        # An older web interface timed out after the display queued the
-        # command, then wrote the mailbox too.
-        server = controller._control_server = FakeServer()
-        server.commands.append(QueuedCommand('both', Command.ON_DEMAND_START,
-                                             OnDemandStartArgs(plugin_id='clock'), time.time()))
-        controller._poll_on_demand_requests()
-        _post(controller, 'both', plugin_id='clock')
-        _poll_for(controller, 2.0)
-        controller._activate_on_demand.assert_called_once()
-        assert MAILBOX not in controller.cache_manager.data
-
-
-class TestDeprecationLog:
-    def test_each_mailbox_writer_is_logged_once(self, controller, caplog):
-        controller._control_server = FakeServer()
-        caplog.set_level(logging.INFO, logger='src.display_controller')
-        for i, plugin in enumerate(['on-air', 'on-air', 'pomodoro-timer']):
-            _post(controller, f'r{i}', plugin_id=plugin)
-            _poll_for(controller, 1.2)
-        lines = [r.getMessage() for r in caplog.records if 'file mailbox' in r.getMessage()]
-        assert len(lines) == 2
-        assert 'on-air' in lines[0] and 'pomodoro-timer' in lines[1]
-
-    def test_nothing_is_logged_without_a_socket(self, controller, caplog):
-        controller._control_server = None
-        caplog.set_level(logging.INFO, logger='src.display_controller')
-        _post(controller, 'r', plugin_id='on-air')
-        _poll_for(controller, 1.0)
-        controller._activate_on_demand.assert_called_once()
-        assert not [r for r in caplog.records if 'file mailbox' in r.getMessage()]
+    def test_the_mailbox_helpers_are_gone(self):
+        from src import display_controller as dcm
+        from src import error_aggregator as ea
+        for name in ('ON_DEMAND_MAILBOX_KEY', 'MailboxWatch'):
+            assert not hasattr(dcm, name)
+        assert not hasattr(ea, 'ERROR_CLEAR_REQUEST_KEY')
+        assert not hasattr(cache_module, 'MailboxWatch')
+        assert not hasattr(CacheManager, 'file_signature')
+        assert not hasattr(client, 'should_fall_back')
+        for name in ('_consume_on_demand_request', '_note_mailbox_request',
+                     '_mailbox_poll_interval', 'MAILBOX_POLL_INTERVAL_WITH_SOCKET'):
+            assert not hasattr(dcm.DisplayController, name)
 
 
-# -- file_signature and MailboxWatch -------------------------------------------------
+# -- stage 5: writes to the retired keys are refused, with one warning per writer -----
 
 @pytest.fixture
 def real_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(CacheManager, '_get_writable_cache_dir', lambda self: str(tmp_path))
+    monkeypatch.setattr(cache_module, '_retired_writers_warned', set())
     cache = CacheManager()
     yield cache
     cache.stop_cleanup_thread()
 
 
-class TestFileSignature:
-    def test_absent_key(self, real_cache):
-        assert real_cache.file_signature('nothing') is None
+class OldPlugin:
+    """What an old plugin looks like on the stack: BasePlugin gives every
+    plugin ``plugin_id`` and ``cache_manager``."""
 
-    def test_every_write_is_a_new_signature(self, real_cache):
-        seen = set()
-        for i in range(20):
-            # Same size each time, written as fast as possible.
-            real_cache.set(MAILBOX, {'request_id': f'r{i:02d}'})
-            sig = real_cache.file_signature(MAILBOX)
-            assert isinstance(sig, tuple)
-            seen.add(sig)
-        assert len(seen) == 20
+    def __init__(self, plugin_id, cache):
+        self.plugin_id = plugin_id
+        self.cache_manager = cache
 
-    def test_gone_after_a_delete(self, real_cache):
-        real_cache.set(MAILBOX, {'a': 1})
-        real_cache.delete(MAILBOX)
-        assert real_cache.file_signature(MAILBOX) is None
+    def trigger(self, target=None):
+        self.cache_manager.set(MAILBOX, {'request_id': 'r', 'action': 'start',
+                                         'plugin_id': target or self.plugin_id})
 
 
-class TestMailboxWatch:
-    def test_reads_once_per_write(self, real_cache):
-        watch = MailboxWatch(MAILBOX)
-        assert watch.changed(real_cache) is False       # no file
-        real_cache.set(MAILBOX, {'request_id': 'a'})
-        assert watch.changed(real_cache) is True
-        assert watch.changed(real_cache) is False
-        real_cache.set(MAILBOX, {'request_id': 'b'})
-        assert watch.changed(real_cache) is True
+def _warnings(caplog):
+    return [r.getMessage() for r in caplog.records
+            if r.levelno == logging.WARNING and 'retired' in r.getMessage()]
 
-    def test_forget_reads_again(self, real_cache):
-        watch = MailboxWatch(MAILBOX)
-        real_cache.set(MAILBOX, {'request_id': 'a'})
-        assert watch.changed(real_cache) is True
-        watch.forget()
-        assert watch.changed(real_cache) is True
 
-    def test_a_rewrite_after_a_delete_is_seen(self, real_cache):
-        watch = MailboxWatch(MAILBOX)
-        real_cache.set(MAILBOX, {'request_id': 'a'})
-        assert watch.changed(real_cache)
-        real_cache.delete(MAILBOX)
-        assert watch.changed(real_cache) is False
-        real_cache.set(MAILBOX, {'request_id': 'a'})
-        assert watch.changed(real_cache) is True
+class TestRetiredKeys:
+    @pytest.mark.parametrize('key', sorted(cache_module.RETIRED_MAILBOX_KEYS))
+    def test_a_write_stores_nothing(self, real_cache, key):
+        real_cache.set(key, {'request_id': 'r'})
+        real_cache.save_cache(key, {'request_id': 'r2'})
+        assert real_cache.get(key, max_age=None, memory_ttl=0) is None
+        assert not [f for f in os.listdir(real_cache.cache_dir) if key in f]
 
-    def test_a_cache_that_cannot_tell_is_read_every_time(self):
-        watch = MailboxWatch(MAILBOX)
-        assert watch.changed(MagicMock()) is True
-        assert watch.changed(MagicMock()) is True
-        assert watch.changed(object()) is True
+    def test_other_keys_are_unaffected(self, real_cache):
+        real_cache.set('display_on_demand_state', {'active': True})
+        assert real_cache.get('display_on_demand_state', max_age=None,
+                              memory_ttl=0) == {'active': True}
+
+    def test_the_writing_plugin_is_named_once(self, real_cache, caplog):
+        caplog.set_level(logging.WARNING)
+        on_air = OldPlugin('on-air', real_cache)
+        for _ in range(3):
+            on_air.trigger()
+        OldPlugin('pomodoro-timer', real_cache).trigger()
+        lines = _warnings(caplog)
+        assert len(lines) == 2
+        assert "plugin 'on-air'" in lines[0] and 'display_on_demand_request' in lines[0]
+        assert 'request_on_demand' in lines[0]
+        assert "plugin 'pomodoro-timer'" in lines[1]
+
+    def test_the_writer_is_the_caller_not_the_target(self, real_cache, caplog):
+        caplog.set_level(logging.WARNING)
+        OldPlugin('mqtt-notifications', real_cache).trigger(target='clock')
+        (line,) = _warnings(caplog)
+        assert "plugin 'mqtt-notifications'" in line and 'clock' not in line
+
+    def test_without_a_plugin_on_the_stack_the_request_names_it(self, real_cache, caplog):
+        caplog.set_level(logging.WARNING)
+        real_cache.set(MAILBOX, {'request_id': 'r', 'action': 'start', 'plugin_id': 'gif-player'})
+        (line,) = _warnings(caplog)
+        assert "plugin 'gif-player' (named in the request)" in line
+
+    def test_otherwise_unknown(self, real_cache, caplog):
+        caplog.set_level(logging.WARNING)
+        real_cache.set('plugin_error_clear_request', {'request_id': 'r', 'cutoff': 1.0})
+        real_cache.set('plugin_error_clear_request', {'request_id': 'r2', 'cutoff': 2.0})
+        (line,) = _warnings(caplog)
+        assert 'by unknown' in line and '/api/v3/errors/clear' in line
 
 
 # -- end to end over a real socket ---------------------------------------------------
@@ -479,24 +408,24 @@ class TestOverTheSocket:
         finally:
             server.close()
 
-    def test_an_older_display_is_an_upgrade_fallback(self, sock_path):
+    def test_an_older_display_is_listening(self, sock_path):
         server = ControlServer(sock_path)   # no errors.clear handler
         assert server.start()
         try:
             with pytest.raises(client.ControlError) as e:
                 client.errors_clear('clr-2', 1.0, paths=[sock_path])
             assert e.value.reason == 'unknown_command' and e.value.sent is True
-            assert client.should_fall_back(e.value)
+            assert not client.display_not_listening(e.value)
         finally:
             server.close()
 
-    def test_no_display_is_a_fallback(self, sock_path):
+    def test_no_display_is_not_listening(self, sock_path):
         with pytest.raises(client.ControlError) as e:
             client.errors_clear('clr-3', 1.0, paths=[sock_path])
         assert e.value.reason == 'no_socket' and e.value.sent is False
-        assert client.should_fall_back(e.value)
+        assert client.display_not_listening(e.value)
 
-    def test_a_full_queue_is_not_a_fallback(self, sock_path):
+    def test_a_full_queue_is_listening(self, sock_path):
         server = ControlServer(sock_path, queue_size=1)
         assert server.start()
         try:
@@ -504,6 +433,6 @@ class TestOverTheSocket:
             with pytest.raises(client.ControlError) as e:
                 client.on_demand_start('q2', 'clock', None, paths=[sock_path])
             assert e.value.reason == 'busy' and e.value.sent is True
-            assert not client.should_fall_back(e.value)
+            assert not client.display_not_listening(e.value)
         finally:
             server.close()
