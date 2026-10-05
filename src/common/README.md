@@ -46,7 +46,7 @@ Rules for the package:
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
-| [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | next release |
+| [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
@@ -402,7 +402,7 @@ Created by `DisplayController`; works with any plugin.
 `draw_multiline_text()`, `create_text_image()`.
 
 `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0, 0),
-offsets=OUTLINE_SQUARE)` (Unreleased) draws the text in `outline_color` at
+offsets=OUTLINE_SQUARE)` (3.8.1) draws the text in `outline_color` at
 each offset, then in `fill` on top: the same pixels as one `draw.text` per
 offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
 eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the

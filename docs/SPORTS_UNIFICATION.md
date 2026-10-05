@@ -91,7 +91,7 @@ more. Shared sports code lives in `src/common`:
 | `sports_live_scroll.py` | next release | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
 | `sports_display_rules.py` | next release | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
 | `sports_font_path.py` | next release | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
-| `sports_game_over.py` | next release | `SportsGameOverMixin` — `_is_game_really_over`, with the `FINAL_PERIOD` seam (family 5) |
+| `sports_game_over.py` | 3.8.1 | `SportsGameOverMixin` — `_is_game_really_over`, with the `FINAL_PERIOD` seam (family 5) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
