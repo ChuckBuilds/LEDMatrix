@@ -305,7 +305,7 @@ Left in the plugins, though identical:
 
 The pilot of the method below. ledmatrix-plugins `scripts/test_game_over_check.py`
 (#621) pinned 3,115 answers across the nine plugins first; the reconcile
-(ledmatrix-plugins `claude/family5-reconcile`) made the five bodies one and
+(ledmatrix-plugins #625) made the five bodies one and
 changed only the cells the owner's decisions under
 [Product decisions](#product-decisions-each-family-needs) explain: ufc's
 clock rule (65 cells), baseball's dormant one (53, every one a game with a

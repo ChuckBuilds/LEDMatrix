@@ -2,7 +2,7 @@
 
 ``SportsGameOverMixin._is_game_really_over`` is the scoreboards'
 ``SportsLive._is_game_really_over``, reconciled in ledmatrix-plugins
-``claude/family5-reconcile`` from five bodies into one and copied here under
+#625 from five bodies into one and copied here under
 its existing name. ``SportsLiveSharedMixin._detect_stale_games``
 (``src.common.sports_shared``) calls it on every live game, and the plugins'
 live-priority filters call it too, to drop a game ESPN still reports as
