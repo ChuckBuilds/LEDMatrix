@@ -81,6 +81,14 @@ The conventions the converted pages share:
   to the module's export of the same name and warns once.
 - **Timers are cleared in `destroy()`**, the one thing `ctx.signal` cannot
   undo by itself.
+- **A page reports its own htmx saves.** A form whose result a page module
+  shows (an `htmx:afterRequest` listener on the page root, in place of an
+  `hx-on` attribute naming a global) carries `data-reports-result`. `app.js`
+  then leaves the server's message to the page, as it does for a form with
+  an `hx-on` after-request handler, so a save shows one notification.
+- **Server data for the module goes in `data-*` attributes**, as JSON where
+  it is structured (`data-schedule-config='{{ schedule_config | tojson }}'`),
+  not templated into a script.
 
 `core/registry.js` handles the rest:
 
@@ -239,8 +247,8 @@ are the inline script in each partial today.
 | 3 | Operation History | 293 lines, now 0 | **Done in stage 2.** Read-only list; rows drawn with `textContent`, the search debounce cleared on destroy. The "Showing x to y" counters now also reset when nothing matches |
 | 4 | Config Editor (`raw_json.html`) | 212 lines, now 0 | **Done in stage 2.** Plain textareas (no CodeMirror on this page). It defined 5 globals after all (`formatJson`, `manualValidateJson`, `validateJSON`, `saveMainConfig`, `saveSecretsConfig`); nothing else used them, and they are deprecated aliases now. The live "Invalid JSON" line no longer puts the parser's message into `innerHTML` |
 | 5 | Backup & Restore | 232 lines, now 0 | **Done in stage 2.** Its 5 globals (`exportBackup`, `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`) are deprecated aliases; the buttons are delegated `data-action`s. Uploads go through `ctx.api.request(..., { body: formData })` (`api.js` gained a raw `body` option) |
-| 6 | Schedule | 193 | 2 globals used as `hx-on` response handlers. Moves `hx-on` handlers into page listeners |
-| 7 | General | 147 | `webLogin` global and the security section. The first page that touches login |
+| 6 | Schedule | 193 lines, now 0 | **Done in stage 3.** Its 2 `hx-on` response handlers (`handleScheduleResponse`, `handleDimScheduleResponse`) are one `htmx:afterRequest` listener on the page root, and deprecated aliases. The forms are marked `data-reports-result` so `app.js` does not repeat the server's message. The saved schedules reach the module as JSON in `data-schedule-config` / `data-dim-schedule-config` instead of being templated into the script |
+| 7 | General | 153 lines, now 0 | **Done in stage 3.** The Security section's three forms and two buttons are delegated `data-action`s (one submit and one click listener); `window.webLogin` is a deprecated alias of an object with its five methods. Login requests go through `ctx.api`, so the login redirect is quiet. The settings form keeps its `hx-on` call to the shared `showSaveResult`, as Rotation's does |
 | 8 | Display | 231 | First page with `LEDVisibility` timers: those move to a `ctx.visibility` service that stops on destroy |
 | 9 | Overview | 410 (4 scripts) | First-run surface: Getting Started, update banner, live preview. Five globals |
 | 10 | WiFi | 364 | `x-data="wifiSetup()"` is defined by its own script. Moves to `Alpine.data()` registered from the module. AP-mode first screen, so it needs the AP-mode test on a real device |
@@ -284,6 +292,8 @@ Unit suites need only node. They import the shipped modules directly:
 | `dom/test_durations_page.js` | DOM: real partial, real widget, real API shape | One plugin-list request per swap; Move down moves one place after five swaps; the swap cancels a request in flight; a late-loading widget is waited for, and a page swapped away while waiting starts nothing; hostile names stay text |
 | `dom/test_operation_history_page.js` | DOM: real partial, real API shape | One history request per swap and per Refresh; the plugin filter filled once (from `PluginAPI`'s cache when loaded); paging, filters, debounced search, Clear (one DELETE), error/network/login states, cancel on swap; hostile ids, users and errors stay text |
 | `dom/test_raw_json_page.js` | DOM: real partial, real config | One POST per Save after five swaps, to the right file; Format and Validate act once; invalid JSON never sent and its message stays text; a save survives a swap and is still reported; the old globals' entry points |
+| `dom/test_schedule_page.js` | DOM: real partial, real widget | Both pickers drawn once per swap from the saved config; after five swaps each form's answer is one notification (message, fallback, refused, non-JSON, `null`), a request from outside the forms none; the brightness label; a late widget waited for, a page swapped away while waiting draws nothing; the old globals' entry points |
+| `dom/test_general_page.js` | DOM: real partial, real widget, real API shape | The timezone picker drawn once per swap with the saved zone; the settings form left to htmx; after five swaps each Security action makes one request (create, copy, revoke and its cancel, password and its mismatch); hostile token names stay text; refused, network and login answers; a create made before a swap is still reported and draws nothing; `webLogin`'s entry points |
 | `dom/test_backup_restore_page.js` | DOM: real partial, real API shape | One request per Refresh, Delete, Export (busy button ignores a second click), Inspect and Restore after five swaps; the upload's fields and the six restore options; reads cancelled by a swap, writes not; hostile file and host names stay text; the old globals' entry points |
 | `test/web_interface/test_es_modules.py` | pytest | MIME type; `no-cache` without `?v` and immutable with it; `boot.js` loads last; every import resolves inside `core/` and `pages/`; the converted pages are exactly the registered ones, each with its module, `init`, and one root in the rendered partial; a converted partial has no `<script>` and no `onclick`; every moved global is aliased in `boot.js` and exported by its module, and no template defines it any more |
 | `test/test_field_model_parity.py` | pytest | The model against the macro for every available schema |
