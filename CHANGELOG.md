@@ -19,6 +19,12 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.2
+
+The display hands freed memory back to the OS (#774), and sports consolidation
+family 6: `src.common.sports_favorites`, which the scoreboards adopt by
+flooring on 3.8.2 (#775).
+
 ### The display hands freed memory back to the OS
 
 The display process's resident memory climbed in steps for hours while the
@@ -52,8 +58,8 @@ and the 20-minute frame soaks came out at 0.147-0.165% late against main's
   favourites-only picks). Each side of a game is named by the 3.5.0
   `_favorite_key` seam and compared with `favorite_teams` stripped and
   upper-cased; nrl overrides the key with the ESPN team id. Only a game with an
-  id can be a duplicate. A plugin may inherit the mixins once it floors on the
-  release that ships this module, and deletes its copies then.
+  id can be a duplicate. A plugin may inherit the mixins once it floors on
+  3.8.2, and deletes its copies then. (#775)
 
 ## 3.8.1
 

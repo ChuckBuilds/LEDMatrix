@@ -44,7 +44,7 @@ Rules for the package:
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
-| [`sports_favorites`](#sports_favorites) | Which games involve a favourite team, and the favourites-only picks | Yes (scoreboards) | next release |
+| [`sports_favorites`](#sports_favorites) | Which games involve a favourite team, and the favourites-only picks | Yes (scoreboards) | 3.8.2 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
 | [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |

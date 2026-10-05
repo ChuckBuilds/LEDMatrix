@@ -87,12 +87,12 @@ more. Shared sports code lives in `src/common`:
 | `sports_celebration.py` | 3.7.0 | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
 | `sports_fetch.py` | 3.7.0 | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
 | `sports_card_wrappers.py` | 3.7.0 | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
-| `sports_plugin_host.py` | next release | `SportsPluginHostMixin` — the plugin class's (`manager.py`) identical helpers: Vegas weight, off-thread switch refresh |
-| `sports_live_scroll.py` | next release | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
-| `sports_display_rules.py` | next release | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
-| `sports_font_path.py` | next release | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
+| `sports_plugin_host.py` | 3.8.0 | `SportsPluginHostMixin` — the plugin class's (`manager.py`) identical helpers: Vegas weight, off-thread switch refresh |
+| `sports_live_scroll.py` | 3.8.0 | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
+| `sports_display_rules.py` | 3.8.0 | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
+| `sports_font_path.py` | 3.8.0 | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
 | `sports_game_over.py` | 3.8.1 | `SportsGameOverMixin` — `_is_game_really_over`, with the `FINAL_PERIOD` seam (family 5) |
-| `sports_favorites.py` | next release | `SportsFavoritesMixin`, `SportsUpcomingFavoritesMixin`, `SportsRecentFavoritesMixin` — `_is_favorite_game` and the favourites-only picks, on the `_favorite_key` seam (family 6) |
+| `sports_favorites.py` | 3.8.2 | `SportsFavoritesMixin`, `SportsUpcomingFavoritesMixin`, `SportsRecentFavoritesMixin` — `_is_favorite_game` and the favourites-only picks, on the `_favorite_key` seam (family 6) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
