@@ -114,12 +114,11 @@ def test_the_answer_is_what_the_catch_all_returned(client, caplog, method, url, 
     assert records[-1].exc_info[1] is FORCED
 
 
-def test_credentials_are_redacted_from_the_detail(client):
+def test_the_exception_message_never_reaches_the_detail(client):
     body = client.get("/api/v3/plugins/installed").get_json()
-    for secret in ("SECRET123", "pw1", "K1"):
-        assert secret not in body["details"]
-    assert "<redacted>" in body["details"]
-    assert body["details"].startswith("RuntimeError: forced failure")
+    for secret in ("SECRET123", "pw1", "K1", "forced failure"):
+        assert secret not in str(body)
+    assert body["details"] == "RuntimeError"
 
 
 def _raise_415():
@@ -218,7 +217,7 @@ class TestPluginActionStep1:
             encoding="utf-8")
         return d
 
-    def test_the_script_error_reaches_the_response(self, plugin_dir, monkeypatch):
+    def test_the_script_error_is_reported_by_type(self, plugin_dir, monkeypatch):
         from unittest.mock import MagicMock
         manager = MagicMock()
         manager.get_plugin_directory.return_value = str(plugin_dir)
@@ -232,5 +231,6 @@ class TestPluginActionStep1:
 
         assert resp.status_code == 500
         body = resp.get_json()
-        assert body["details"] == "RuntimeError: the auth script failed"
+        assert body["details"] == "RuntimeError"
+        assert "the auth script failed" not in str(body)
         assert body["message"] == 'An error occurred; see logs for details'

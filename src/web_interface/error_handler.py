@@ -4,6 +4,7 @@ Centralized error handling for web interface.
 Provides helpers for consistent error responses across API endpoints.
 """
 
+import errno
 from typing import Any, Optional
 from flask import jsonify
 
@@ -20,10 +21,9 @@ logger = get_logger(__name__)
 _MAX_DETAIL_LENGTH = 400
 
 
-def describe_exception(exc: BaseException,
-                       max_length: int = _MAX_DETAIL_LENGTH) -> str:
+def describe_exception(exc: BaseException) -> str:
     """
-    One-line, safe-to-return description of an exception.
+    Machine-readable reason code for an exception, safe to return over HTTP.
 
     The generic "an error occurred; see logs for details" tells a user nothing
     and, when the failure is bad enough, the logs are unreachable too: a device
@@ -31,20 +31,24 @@ def describe_exception(exc: BaseException,
     *including* the log viewer, because journalctl could not be executed. The
     underlying `[Errno 5] Input/output error` named the fault immediately.
 
-    Returns "TypeName: message", credentials redacted and length capped. The
-    type alone is worth carrying -- a bare PermissionError says more than any
-    generic sentence.
+    So the type and errno still go back -- "OSError:EIO", "PermissionError:
+    EACCES", "TimeoutExpired" -- but never the exception's message, which can
+    quote paths, URLs, credentials or a library's internals (CodeQL
+    py/stack-trace-exposure). The message is logged here instead, so every
+    reason code a client sees has its full text in the log.
 
     Args:
         exc: The exception to describe
-        max_length: Truncate beyond this many characters
 
     Returns:
-        A single-line description, never empty
+        "TypeName" or "TypeName:ERRNO", never empty
     """
-    message = str(exc).strip()
-    text = f"{type(exc).__name__}: {message}" if message else type(exc).__name__
-    return redact_text(text, max_length)
+    code = type(exc).__name__
+    exc_errno = getattr(exc, 'errno', None)
+    if isinstance(exc_errno, int) and exc_errno in errno.errorcode:
+        code = f"{code}:{errno.errorcode[exc_errno]}"
+    logger.warning("Error reported to the client as %s: %s", code, redact_text(str(exc)))
+    return code
 
 
 def redact_text(text: str, max_length: int = _MAX_DETAIL_LENGTH) -> str:

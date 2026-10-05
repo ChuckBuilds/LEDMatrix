@@ -222,7 +222,7 @@ def _save_config_atomic(config_manager, config_data, create_backup=True):
             config_manager.save_config(config_data)
             return True, None
         except Exception as e:
-            return False, str(e)
+            return False, f"Failed to save configuration ({describe_exception(e)})"
 def _coerce_to_bool(value):
     """
     Coerce a form value to a proper Python boolean.
@@ -246,7 +246,11 @@ def _coerce_to_bool(value):
         return value.lower() in ('true', 'on', '1', 'yes')
     return False
 def _get_display_service_status():
-    """Return status information about the ledmatrix service."""
+    """Return status information about the ledmatrix service.
+
+    active/returncode only: this goes back in API responses, and systemctl's
+    output (or an exception's text) is logged rather than returned.
+    """
     try:
         result = subprocess.run(
             ['systemctl', 'is-active', 'ledmatrix'],
@@ -254,26 +258,18 @@ def _get_display_service_status():
             text=True,
             timeout=3
         )
+        if result.stderr.strip():
+            logger.debug('systemctl is-active ledmatrix: %s', result.stderr.strip())
         return {
             'active': result.stdout.strip() == 'active',
             'returncode': result.returncode,
-            'stdout': result.stdout.strip(),
-            'stderr': result.stderr.strip()
         }
     except subprocess.TimeoutExpired:
-        return {
-            'active': False,
-            'returncode': -1,
-            'stdout': '',
-            'stderr': 'timeout'
-        }
-    except Exception as err:
-        return {
-            'active': False,
-            'returncode': -1,
-            'stdout': '',
-            'stderr': str(err)
-        }
+        logger.warning('systemctl is-active ledmatrix timed out')
+        return {'active': False, 'returncode': -1}
+    except Exception:
+        logger.warning('Could not query ledmatrix.service status', exc_info=True)
+        return {'active': False, 'returncode': -1}
 def _run_systemctl_command(args):
     """Run a systemctl command safely."""
     try:
@@ -295,18 +291,26 @@ def _run_systemctl_command(args):
             'stderr': 'timeout'
         }
     except Exception as err:
+        logger.warning('%s failed', ' '.join(args), exc_info=True)
         return {
             'returncode': -1,
             'stdout': '',
-            'stderr': str(err)
+            'stderr': describe_exception(err)
         }
+def _public_service_result(result):
+    """A _run_systemctl_command result fit for a response: no stdout/stderr."""
+    if result.get('returncode') != 0:
+        logger.error('systemctl exited %s: %s', result.get('returncode'),
+                     (result.get('stderr') or '').strip())
+    return {k: v for k, v in result.items() if k not in ('stdout', 'stderr')}
 def _ensure_display_service_running():
     """Ensure the ledmatrix display service is running."""
     status = _get_display_service_status()
     if status.get('active'):
         status['started'] = False
         return status
-    result = _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix.service'])
+    result = _public_service_result(
+        _run_systemctl_command(['sudo', 'systemctl', 'start', 'ledmatrix.service']))
     service_status = _get_display_service_status()
     result['started'] = result.get('returncode') == 0
     result['active'] = service_status.get('active')
@@ -314,7 +318,8 @@ def _ensure_display_service_running():
     return result
 def _stop_display_service():
     """Stop the ledmatrix display service."""
-    result = _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix.service'])
+    result = _public_service_result(
+        _run_systemctl_command(['sudo', 'systemctl', 'stop', 'ledmatrix.service']))
     status = _get_display_service_status()
     result['active'] = status.get('active')
     result['status'] = status
@@ -712,7 +717,7 @@ def _do_transactional_uninstall(plugin_id, preserve_config):
         success = api_v3.plugin_store_manager.uninstall_plugin(plugin_id)
     except Exception as remove_err:
         _rollback()
-        return False, f"Failed to remove plugin {plugin_id}: {remove_err}"
+        return False, f"Failed to remove plugin {plugin_id} ({describe_exception(remove_err)})"
 
     if not success:
         _rollback()

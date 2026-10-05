@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+- Web API error responses no longer carry an exception's message (CodeQL
+  `py/stack-trace-exposure`). `describe_exception()` now returns a reason
+  code -- the exception type, plus the errno for an `OSError`
+  (`OSError:EIO`, `PermissionError:EACCES`) -- and logs the message
+  instead, so `details` still names the fault without quoting paths, URLs
+  or library internals. The display service status and the on-demand
+  start/stop `service` results keep `active`, `returncode` and `started`
+  but drop systemctl's `stdout`/`stderr`; WiFi, unit-refresh and
+  config-save failures say what failed and point at the log.
+
 ## 3.8.2
 
 The display hands freed memory back to the OS (#774), and sports consolidation

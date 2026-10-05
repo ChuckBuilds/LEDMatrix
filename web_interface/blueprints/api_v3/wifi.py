@@ -67,7 +67,7 @@ def _run_background_connect(ssid, password):
         payload = _connect_result_payload(ssid, success, message)
     except Exception as e:
         logger.error("Background WiFi connect failed", exc_info=True)
-        payload = {'status': 'error', 'message': describe_exception(e)}
+        payload = {'status': 'error', 'message': f'Failed to connect to network ({describe_exception(e)})'}
     _record_connect_result(ssid, payload)
 
 
@@ -276,7 +276,7 @@ def connect_wifi():
     try:
         success, message = wifi_manager.connect_to_network(ssid, password)
     except Exception as e:
-        _record_connect_result(ssid, {'status': 'error', 'message': describe_exception(e)})
+        _record_connect_result(ssid, {'status': 'error', 'message': f'Failed to connect to network ({describe_exception(e)})'})
         raise
     payload = _connect_result_payload(ssid, success, message)
     _record_connect_result(ssid, payload)
