@@ -44,8 +44,10 @@ Rules for the package:
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
+| [`sports_favorites`](#sports_favorites) | Which games involve a favourite team, and the favourites-only picks | Yes (scoreboards) | 3.8.2 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
+| [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
@@ -279,6 +281,19 @@ list it before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
 `_effective_live_duration()`, the shorter dwell for a non-favourite live
 game).
 
+### sports_favorites
+
+[`sports_favorites.py`](sports_favorites.py). Sports family 6, one mixin per
+class that carried the methods: `SportsFavoritesMixin` (`SportsCore`:
+`_is_favorite_game(game)` and `_favorite_code(value)`),
+`SportsUpcomingFavoritesMixin` (`_select_games_for_display`) and
+`SportsRecentFavoritesMixin` (`_select_recent_games_for_display`). Each side
+of a game is named by `_favorite_key` (from `SportsHelpersMixin`; NRL
+overrides it with the team id) and compared with `favorite_teams` stripped and
+upper-cased. The selection methods give each favourite up to the per-team
+limit, count a game between two favourites for both, and treat only games
+with an id as possible duplicates.
+
 ### sports_fetch
 
 [`sports_fetch.py`](sports_fetch.py). `SportsFetchMixin`: the `SportsCore`
@@ -293,6 +308,16 @@ lookback) and `_wants_live_odds()` (odds only for games near the screen).
 path as given when it exists (relative to the cwd), else
 `font_layout.resolve_asset_path(path)`. What the scoreboards'
 `_resolve_font_path` copies return on a core that ships it.
+
+### sports_game_over
+
+[`sports_game_over.py`](sports_game_over.py). `SportsGameOverMixin`:
+`_is_game_really_over(game)`, the `SportsLive` check that drops a game ESPN
+still lists as live (`SportsLiveSharedMixin._detect_stale_games` calls it).
+Over on a final period text, or on a 0:00 clock from period `FINAL_PERIOD`
+on unless the score is level. `FINAL_PERIOD` is a class attribute the host
+sets per sport; the default `None` means the clock never ends a game. List
+it before `SportsLiveSharedMixin`.
 
 ### sports_game_renderer
 
@@ -391,7 +416,7 @@ Created by `DisplayController`; works with any plugin.
 `draw_multiline_text()`, `create_text_image()`.
 
 `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0, 0),
-offsets=OUTLINE_SQUARE)` (Unreleased) draws the text in `outline_color` at
+offsets=OUTLINE_SQUARE)` (3.8.1) draws the text in `outline_color` at
 each offset, then in `fill` on top: the same pixels as one `draw.text` per
 offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
 eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the

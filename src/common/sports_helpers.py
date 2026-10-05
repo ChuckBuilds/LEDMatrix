@@ -34,8 +34,9 @@ first core release that ships it (see ``CHANGELOG.md``).
 
 ``_favorite_key`` is the one method not taken from the plugins: it is the
 override point from the since-removed ``src/base_classes`` sports core,
-carried here so later phases (shared celebrations and game selection) have a
-hardware-free home for the seam. No plugin defines it today and nothing in this module calls it.
+carried here as the hardware-free home for the seam. ``sports_favorites``
+calls it; nrl overrides it with the ESPN team id. Nothing in this module
+calls it.
 
 WHAT A HOST MUST PROVIDE
 ------------------------
@@ -47,8 +48,8 @@ listed here.
 - ``mode_config`` (dict) and ``logger`` -- ``_setting_int``. ``league`` is
   read with ``getattr`` for the warning text only.
 - ``games_list`` and ``current_game_index`` -- ``_next_switch_index``; plus
-  ``_is_favorite_game`` (called with a game), which stays per-plugin and is
-  only called when
+  ``_is_favorite_game`` (called with a game; ``sports_favorites`` has the
+  shared body), only called when
   ``favorite_rotation_boost`` is above 1. ``favorite_rotation_boost`` itself
   defaults to 1 on the mixin.
 - ``last_game_switch`` -- ``_reset_dwell_on_reentry``, read with ``getattr``
@@ -216,15 +217,12 @@ class SportsHelpersMixin:
         rather than a branch so core never has to learn the string "nrl"::
 
             def _favorite_key(self, game, side):
-                return str(game.get(f"{side}_id"))
+                team_id = game.get(f"{side}_id")
+                return None if team_id is None else str(team_id)
 
-        An override that stringifies should note that a missing id becomes the
-        literal ``"None"``, which would spuriously match a favorites list
-        containing that string. The default returns ``None`` for a missing
-        abbreviation, which never matches.
-
-        Carried from the since-removed ``src/base_classes`` sports core for
-        later phases; nothing in this module calls it yet.
+        It returns ``None`` for a missing id rather than ``str(None)``, which
+        would match a favourite typed "None". A ``None`` never matches.
+        ``sports_favorites`` compares the value stripped and upper-cased.
         """
         return game.get(f"{side}_abbr")
 

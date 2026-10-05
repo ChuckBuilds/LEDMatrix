@@ -19,6 +19,112 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.2
+
+The display hands freed memory back to the OS (#774), and sports consolidation
+family 6: `src.common.sports_favorites`, which the scoreboards adopt by
+flooring on 3.8.2 (#775).
+
+### The display hands freed memory back to the OS
+
+The display process's resident memory climbed in steps for hours while the
+data it held stayed flat: glibc keeps what Python frees in per-thread malloc
+arenas and returns little of it. `src/malloc_tuning.py` (new, standard library
+only, a no-op off Linux/glibc) does two things in-process, so it reaches
+devices without re-running the installer:
+
+- **Arena cap at start-up.** `run.py` calls `mallopt(M_ARENA_MAX, 2)` before any
+  thread exists, the same cap as the unit's `Environment=MALLOC_ARENA_MAX=2`.
+  Units installed before that line never got it (systemd runs the copy in
+  `/etc/systemd/system`); a `MALLOC_ARENA_MAX` in the environment still wins.
+- **`malloc_trim(0)` between screens**, at most every 5 minutes, from the top of
+  the render loop where no frame is being drawn. Measured on a Pi 4: 2-11 ms
+  per call.
+
+On ledpi (Pi 4, 192x48, Vegas on, nine plugins, a unit without
+`MALLOC_ARENA_MAX`), alternated main / branch / branch / main arms of 2.5 h:
+two hours in, resident memory was 551 MB on main (the second main arm was
+already at 651 MB after 1 h 44 min) against 412 and 386 MB with this change,
+and the 20-minute frame soaks came out at 0.147-0.165% late against main's
+0.151-0.188%.
+
+### New modules
+
+- `src/common/sports_favorites.py` -- sports consolidation family 6, once the
+  plugins made `_is_favorite_game` (seven bodies), `_select_games_for_display`
+  (two) and `_select_recent_games_for_display` (three) one each:
+  `SportsFavoritesMixin` (`SportsCore`: `_is_favorite_game`, `_favorite_code`),
+  `SportsUpcomingFavoritesMixin` and `SportsRecentFavoritesMixin` (the
+  favourites-only picks). Each side of a game is named by the 3.5.0
+  `_favorite_key` seam and compared with `favorite_teams` stripped and
+  upper-cased; nrl overrides the key with the ESPN team id. Only a game with an
+  id can be a duplicate. A plugin may inherit the mixins once it floors on
+  3.8.2, and deletes its copies then. (#775)
+
+## 3.8.1
+
+Smooth scrolling at the slower speeds, and the fixes and performance work
+since 3.8.0. Highlights: the default 50 px/s and every other held-frame speed
+now scroll cleanly (below), Raspberry Pi OS Bookworm is supported alongside
+Trixie, updates refresh the systemd units, the display control socket gains
+stages 2 and 3, the shared fetch service lands (stages 1 and 2), and a run of
+web UI and Plugin Manager fixes. One new module is for plugins:
+`src.common.sports_game_over` (sports family 5), which the scoreboards adopt
+by flooring on 3.8.1; the other new modules are core-internal and set no
+`ledmatrix_min_version` floor.
+
+### Scroll speed
+
+These two entries were the reason for this release: on 3.8.0 a slow scroll
+either stepped or showed a half-pixel tear across the middle of the panel,
+so only speeds of one pixel per refresh looked right.
+
+- The Vegas Scroll Speed slider now says what the panel will do with the speed
+  it is on, and offers the nearest smooth ones to click. Only speeds that advance
+  a whole number of pixels per refresh look smooth, and which those are depends
+  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
+  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
+  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
+- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
+  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
+  which move one pixel at a time. 100 Hz panels are unaffected. (#710)
+- A held-frame scroll (one pixel every two or more refreshes, such as 50 or
+  60 px/s on a 100-120 Hz panel) no longer shows a half-pixel step across the
+  middle of the panel. Scan-order compensation ran only at one frame per
+  refresh; a held frame is now presented as a sequence of swaps
+  (`scan_order.refresh_plan()`), so the half of the panel that scans later
+  steps one refresh after the rest. It is skipped when a blit takes more than
+  half a refresh, since the second blit has to land before the next vsync.
+  (#711)
+
+### Web UI: the Display tab is an ES-module page, with a page-visibility service (stage 4)
+
+- New `static/v3/js/core/visibility.js`: each page module gets
+  `ctx.visibility` with `whileVisible(start, stop)`, `every(ms, fn)` and
+  `isVisible()`. Work registered there runs only while the page's tab is the
+  active tab and the browser tab is visible, and ends when the page is
+  swapped out, with no teardown code in the page. It reads the active tab
+  from `window.LEDVisibility`, so it agrees with the classic partials that
+  still use that directly. The page registry gained a `mountContext` option
+  for services bound to one mounted page.
+- The Display tab's inline scripts are now `static/v3/js/pages/display.js`.
+  The partial has no inline script, `onclick` or `onchange` any more. The
+  multi-display sync status poll (every 5 s) runs through
+  `ctx.visibility.every`; the status and scroll-speed hint requests go
+  through `core/api.js` with the page's abort signal, and so does the Vegas
+  order widget's plugin-list request.
+- Behaviour differences: with sync on, opening the tab asks for the status
+  once instead of twice, and a Display tab loaded while not on screen waits
+  until it is. A login redirect during a poll no longer flashes "Sync status
+  unavailable". The `window.syncStatusInterval` timer id is gone (nothing
+  read it). A pending scroll-hint request or widget retry is dropped when
+  the partial is swapped out.
+- `window.updateSyncUI` keeps working as a deprecated alias through
+  `window.LEDMatrix` (one console warning).
+- New suites `test/js/dom/test_visibility_service.js` and
+  `dom/test_display_page.js`; `unit/test_display_partial_ids.js` imports the
+  module instead of slicing the template.
+
 ### Plugins ask for the screen in-process: `request_on_demand()` / `end_on_demand()`
 
 The in-process way in that stage 5 of the control socket needed
@@ -194,6 +300,20 @@ Internal; no behaviour change. Stage 3 of `docs/RUN_LOOP_REDESIGN.md`.
   (`refresh_registry_in_background()`, backing off for a minute after an
   offline failure), so a later load has them. The store, install and update
   paths still fetch as before.
+- A sports live manager's idle back-off now honours every pending kickoff,
+  not just the first. `_note_scheduled_start_candidate()` kept one kickoff
+  and, while it was inside its 15-minute grace, refused every later one; by
+  the time the grace ended the later one had passed and was refused again.
+  So of two favourites kicking off within 15 minutes of each other, the
+  second lost its own grace: if the first game was not live by then (a rain
+  delay, a postponement, ESPN slow to flip it) and ESPN had not flipped the
+  second either, the back-off went back to its ceiling and the second game
+  was noticed up to the ceiling (15 minutes by default) late. Later
+  kickoffs now wait in a short queue (`_later_scheduled_starts`, the
+  earliest 8) and each takes over with a grace of its own when the one
+  before it expires. A kickoff still
+  holds the live cadence for at most its own grace, so a postponed game
+  costs the same quarter of an hour as before.
 
 ### ESPN date-range fetches: fewer requests, fewer at once
 
@@ -668,6 +788,16 @@ policies are unchanged.
 - `src/display_arbiter.py` -- the display loop's Arbiter (see Tooling).
   Core-internal: plugins have no reason to import it, so it sets no
   `ledmatrix_min_version` floor.
+- `src/common/sports_game_over.py` -- `SportsGameOverMixin`, sports
+  consolidation family 5: `_is_game_really_over`, the scoreboards'
+  `SportsLive` check that drops a game ESPN still lists as live, once the
+  plugins made their five bodies one. Over on a final period text, or on a
+  0:00 clock from period `FINAL_PERIOD` on unless the score is level (a tie
+  at the end of regulation goes to overtime). `FINAL_PERIOD` is the per-sport
+  class attribute, `None` by default (the clock never ends a game); the
+  scoreboards declare 3 (hockey), 4 (basketball, football, lacrosse) or
+  `None`. List the mixin before `SportsLiveSharedMixin`. A plugin may import
+  it once it floors on 3.8.1, and deletes its copy then. (#770)
 
 ### Tooling
 
@@ -1321,18 +1451,6 @@ guard the import, since the loader's version check is advisory).
   processes, or turns the socket off with `off`. A non-root dev run uses a
   private per-user path under the temp directory.
 
-### Scroll speed
-
-- The Vegas Scroll Speed slider now says what the panel will do with the speed
-  it is on, and offers the nearest smooth ones to click. Only speeds that advance
-  a whole number of pixels per refresh look smooth, and which those are depends
-  on the panel (`GET /api/v3/config/scroll-speed-advice`, built on
-  `scroll_config.speed_advice()`; it uses the refresh the display measured, not
-  the `limit_refresh_rate_hz` cap). The slider steps by 1 px/s instead of 5.
-- The default 50 px/s no longer snaps to a stepped 48 px/s (2 px every 5
-  refreshes, 24 fps) on a 120 Hz panel: `solve_crisp()` now prefers 60 or 40 px/s,
-  which move one pixel at a time. 100 Hz panels are unaffected.
-
 ### Update channels
 
 - Devices no longer pick up every merge to `main`. A new setting,
@@ -1590,6 +1708,17 @@ read any of them:
 
 ### Fixes
 
+- Updating a plugin from the store no longer deletes the files it wrote
+  beside itself. A monorepo update replaces the plugin directory with the
+  fresh download and deletes the old copy, so calendar's Google OAuth files
+  (`token.pickle`, `credentials.json`) were lost on every update and the
+  calendar stopped until they were restored by hand. Before the old copy is
+  removed, the update now copies over anything the plugin's `.gitignore`
+  excludes plus known secret/state files (`*.pickle`, `token.json`,
+  `credentials.json`, `config_secrets.json`, `.pkce_code_verifier`); files the
+  new release ships are never overwritten, and byte code is not carried. A
+  plugin updated with `git pull` no longer sweeps an untracked token into the
+  auto-stash, which is never popped (`src/plugin_system/plugin_local_files.py`).
 - Quieter routine logging. Every rotation logged each mode twice
   ("Switching to mode", then "Processing mode"), and a mode with nothing to
   show added "display() returned False" and "No content to display". Those

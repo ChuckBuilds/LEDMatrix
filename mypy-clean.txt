@@ -36,8 +36,10 @@ src/common/sports_card.py
 src/common/sports_card_wrappers.py
 src/common/sports_celebration.py
 src/common/sports_display_rules.py
+src/common/sports_favorites.py
 src/common/sports_fetch.py
 src/common/sports_font_path.py
+src/common/sports_game_over.py
 src/common/sports_live_scroll.py
 src/common/sports_plugin_host.py
 src/common/sports_scroll.py
@@ -58,6 +60,7 @@ src/ipc/contract.py
 src/ipc/server.py
 src/logging_config.py
 src/logo_downloader.py
+src/malloc_tuning.py
 src/matrix_support.py
 src/pi5_matrix_support.py
 src/plugin_system/__init__.py

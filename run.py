@@ -14,6 +14,12 @@ project_dir = os.path.dirname(os.path.abspath(__file__))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
+# Cap glibc's malloc arenas before any thread exists (arenas already made
+# stay): the in-process twin of the unit's MALLOC_ARENA_MAX=2, for units
+# installed before that line. A no-op off glibc. See src/malloc_tuning.py.
+from src import malloc_tuning
+malloc_tuning.cap_arenas()
+
 # Under systemd the watchdog clock is already running, and start-up (plugin
 # loads, initial updates) takes far longer than the render loop's limit. Widen
 # it before anything slow is imported; the render loop narrows it again once
