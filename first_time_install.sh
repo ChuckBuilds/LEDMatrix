@@ -91,8 +91,9 @@ if [ -r "$LM_OS_RELEASE_FILE" ]; then
     DESKTOP_DETECTED=0
     # grep without -q: -q exits at the first match, dpkg then dies of SIGPIPE,
     # and pipefail turns a found desktop into "not found".
-    # Match on the package name only, anchored: `dpkg -l` lines include the
-    # description, so an unanchored ".*kde" matched libblockdev-* on Lite.
+    # Match installed package names from their start: the unanchored ".*kde"
+    # matched mid-word (libblockdev-* = "bloc-kde-v") on Lite, and `dpkg -l`
+    # lines also carry descriptions that could match.
     if dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null \
             | grep -E "^ii +(raspberrypi-ui-mods|lxde|xfce|gnome|kde)" >/dev/null; then
         DESKTOP_DETECTED=1
