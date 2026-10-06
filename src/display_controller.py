@@ -25,7 +25,6 @@ import os
 import inspect
 import signal
 import json
-import math
 import threading
 import types
 from collections import deque
@@ -64,6 +63,7 @@ from src.ipc.contract import (
     PluginReloadResult,
 )
 from src.ipc.server import ControlServer, QueuedCommand, StateHub, start_control_server
+from src.plugin_system.base_plugin import finite_seconds
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -99,19 +99,6 @@ _INITIAL_UPDATE_BUDGET_SECONDS = 20.0
 _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
-
-
-def _finite_seconds(value: Any) -> Optional[float]:
-    """``value`` as seconds when it is a finite number or a numeric string,
-    else None. A bool is not a number here, though it is an int: True would
-    read as a one-second screen."""
-    if isinstance(value, bool):
-        return None
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return seconds if math.isfinite(seconds) else None
 
 
 class _PluginReloadJob:
@@ -1569,7 +1556,7 @@ class DisplayController:
         except Exception as err:  # pylint: disable=broad-except
             problem = f"get_display_duration() raised {type(err).__name__}: {err}"
         else:
-            seconds = _finite_seconds(value)
+            seconds = finite_seconds(value)
             if seconds is not None:
                 return seconds
             problem = f"display duration {value!r} is not a number"
