@@ -141,7 +141,6 @@ class DisplaySyncManager:
         self._last_leader_frame_time: float = 0.0
         self._frame_lock = threading.Lock()
         self._leader_ip: Optional[str] = None
-        self._on_new_cycle: Optional[Callable[[], None]] = None       # called when leader starts new cycle
         self._on_scroll_image: Optional[Callable[[Image.Image], None]] = None   # called with Image when received
         self._pending_scroll_image: Optional[Image.Image] = None  # image received before callback set
         self._scroll_image_lock = threading.Lock()         # guards _on_scroll_image / _pending_scroll_image
@@ -412,17 +411,6 @@ class DisplaySyncManager:
         except Exception as exc:
             self.logger.debug("Sync: scroll_x send error: %s", exc)
 
-    def send_new_cycle(self) -> None:
-        """Leader: signal that a new scroll cycle has started so follower rebuilds its image."""
-        if self.role != SyncRole.LEADER:
-            return
-        if self._leader_state != LeaderState.CONNECTED or not self._peer_ip:
-            return
-        try:
-            self._send_sock.sendto(b'{"t":"nc"}', (self._peer_ip, self.port))
-        except Exception as exc:
-            self.logger.debug("Sync: new_cycle send error: %s", exc)
-
     def send_frame(self, image: Image.Image) -> None:
         """Leader: send a rendered frame to the follower as raw RGB bytes.
         Raw format is orders of magnitude faster than PNG on Pi hardware —
@@ -506,21 +494,19 @@ class DisplaySyncManager:
             self._latest_frame = img
         self._enter_follower_mode(sender_ip)
 
-    def _enter_follower_mode(self, sender_ip: str) -> bool:
+    def _enter_follower_mode(self, sender_ip: str) -> None:
         """Note that the leader at ``sender_ip`` just sent something, and
-        switch from standalone to follower mode if not already following.
-        Returns True if this call made the switch."""
+        switch from standalone to follower mode if not already following."""
         self._last_leader_frame_time = time.monotonic()
         self._leader_ip = sender_ip
         if self._follower_state != FollowerState.STANDALONE:
-            return False
+            return
         self._follower_state = FollowerState.FOLLOWER
         self.logger.info(
             "Sync: leader active at %s — switching to follower mode",
             sender_ip,
         )
         self.write_status_file()
-        return True
 
     def _follower_recv_loop(self) -> None:
         while self._running:
@@ -570,12 +556,9 @@ class DisplaySyncManager:
                     # frame. Read and validate its fields under a guard —
                     # a UDP payload is attacker-shaped, so a non-object
                     # body makes .get() raise AttributeError and an "sx"
-                    # carrying a non-numeric x raises ValueError/TypeError
-                    # — but dispatch the callback *outside* it. Running
-                    # the callback in here would let a fault in someone
-                    # else's code read as a malformed packet and be
-                    # logged as one.
-                    fire_new_cycle = False
+                    # carrying a non-numeric x raises ValueError/TypeError.
+                    # Any other "t" is ignored, including the "nc" (new
+                    # cycle) that older leaders send and no follower used.
                     try:
                         t = msg.get("t")
                         if t == "hello_ack":
@@ -601,17 +584,10 @@ class DisplaySyncManager:
                                 # back from. Treat it as malformed.
                                 raise ValueError(f"non-finite scroll x: {msg['x']!r}")
                             self._latest_scroll_x = scroll_x
-                            if self._enter_follower_mode(sender_ip):
-                                fire_new_cycle = True  # build initial scroll image
-                        elif t == "nc":
-                            # Leader started a new scroll cycle — rebuild local image
-                            fire_new_cycle = True
+                            self._enter_follower_mode(sender_ip)
                     except (KeyError, AttributeError, TypeError, ValueError) as exc:
                         self.logger.debug("Sync: malformed control message: %s", exc)
                         continue
-
-                    if fire_new_cycle and self._on_new_cycle:
-                        self._on_new_cycle()
 
             except socket.timeout:
                 continue
@@ -678,15 +654,6 @@ class DisplaySyncManager:
     def get_latest_scroll_x(self) -> Optional[float]:
         """Follower: return the most recently received Vegas scroll position, or None."""
         return self._latest_scroll_x
-
-    def set_on_new_cycle(self, callback: Callable[[], None]) -> None:
-        """Follower: register a callback fired when the leader starts a new scroll cycle.
-
-        Nothing in core registers one: display_controller follows the leader
-        through set_on_scroll_image() and the scroll position instead of
-        rebuilding locally. The hook stays for callers that want the signal.
-        """
-        self._on_new_cycle = callback
 
     def get_latest_frame(self) -> Optional[Image.Image]:
         """Follower: return the most recently received pixel frame (non-Vegas fallback)."""

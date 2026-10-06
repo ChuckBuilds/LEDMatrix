@@ -15,6 +15,7 @@ from datetime import datetime
 import logging
 
 from src.logging_config import get_logger
+from src.deprecation import deprecated
 
 
 class PluginState(Enum):
@@ -138,6 +139,7 @@ class PluginStateManager:
         """
         return self._states.get(plugin_id, PluginState.UNLOADED)
     
+    @deprecated("3.10.0", "use get_state()")
     def is_loaded(self, plugin_id: str) -> bool:
         """Check if plugin is loaded."""
         state = self.get_state(plugin_id)
@@ -148,11 +150,13 @@ class PluginStateManager:
         state = self.get_state(plugin_id)
         return state == PluginState.ENABLED
     
+    @deprecated("3.10.0", "use get_state()")
     def is_running(self, plugin_id: str) -> bool:
         """Check if plugin is currently running."""
         state = self.get_state(plugin_id)
         return state == PluginState.RUNNING
     
+    @deprecated("3.10.0", "use get_state()")
     def is_error(self, plugin_id: str) -> bool:
         """Check if plugin is in error state."""
         state = self.get_state(plugin_id)
@@ -197,6 +201,7 @@ class PluginStateManager:
                 state.value,
             )
 
+    @deprecated("3.10.0")
     def get_error_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """
         Get error information for a plugin.
@@ -265,10 +270,12 @@ class PluginStateManager:
         """Record that plugin update() was called."""
         self._last_update[plugin_id] = datetime.now()
     
+    @deprecated("3.10.0")
     def get_last_update(self, plugin_id: str) -> Optional[datetime]:
         """Get timestamp of last update() call."""
         return self._last_update.get(plugin_id)
 
+    @deprecated("3.10.0", "use get_state()")
     def get_state_info(self, plugin_id: str) -> Dict[str, Any]:
         """
         Get comprehensive state information for a plugin.

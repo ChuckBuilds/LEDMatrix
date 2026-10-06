@@ -170,16 +170,6 @@ class VegasModeCoordinator:
         self._static_pause_active = False
         self._saved_scroll_position: Optional[int] = None
 
-        # Statistics
-        self.stats = {
-            'total_runtime_seconds': 0.0,
-            'cycles_completed': 0,
-            'interruptions': 0,
-            'config_updates': 0,
-            'static_pauses': 0,
-        }
-        self._start_time: Optional[float] = None
-
         logger.info(
             "VegasModeCoordinator initialized: enabled=%s, fps=%d, buffer_ahead=%d",
             self.vegas_config.enabled,
@@ -314,7 +304,6 @@ class VegasModeCoordinator:
             # new run would have run_frame() refuse every frame.
             self._is_paused = False
             self._live_priority_active = False
-            self._start_time = time.time()
             # A fresh run starts with a clean health slate: no stale
             # "was degraded" from the previous run, and a heartbeat that is
             # due immediately so the first sample confirms the marquee is up.
@@ -344,10 +333,6 @@ class VegasModeCoordinator:
             self._is_active = False
             self._is_paused = False
             self._live_priority_active = False
-
-            if self._start_time:
-                self.stats['total_runtime_seconds'] += time.time() - self._start_time
-                self._start_time = None
 
         self._restore_switch_interval()
         self._remove_render_gate()
@@ -473,7 +458,6 @@ class VegasModeCoordinator:
             if not self._is_active:
                 return
             self._is_paused = True
-            self.stats['interruptions'] += 1
 
         self.display_manager.set_scrolling_state(False)
         logger.info("Vegas mode paused")
@@ -543,9 +527,8 @@ class VegasModeCoordinator:
             if self.render_pipeline.has_deferred():
                 self.render_pipeline.drain_deferred()
             elif self.render_pipeline.needs_extension():
-                if self.render_pipeline.extend_scroll_content():
-                    self.stats['cycles_completed'] += 1
-                elif self.render_pipeline.is_cycle_complete():
+                if (not self.render_pipeline.extend_scroll_content()
+                        and self.render_pipeline.is_cycle_complete()):
                     # Extension failed and the strip has run out: fall back to
                     # the swap rather than sitting on a dead frame.
                     self.render_pipeline.start_new_cycle()
@@ -555,7 +538,6 @@ class VegasModeCoordinator:
                 if not self.render_pipeline.start_new_cycle():
                     logger.warning("Failed to start new Vegas cycle")
                     return False
-                self.stats['cycles_completed'] += 1
 
             # Check for hot-swap opportunities
             if self.render_pipeline.should_recompose():
@@ -835,7 +817,6 @@ class VegasModeCoordinator:
             self._pending_config_update = True
             self._pending_config = new_config
             self._config_version += 1
-            self.stats['config_updates'] += 1
 
         logger.debug("Config update queued (version %d)", self._config_version)
 
@@ -910,23 +891,6 @@ class VegasModeCoordinator:
             self.stream_manager.mark_plugin_updated(plugin_id)
             self.plugin_adapter.invalidate_cache(plugin_id)
 
-    def get_status(self) -> Dict[str, Any]:
-        """Get comprehensive Vegas mode status."""
-        status = {
-            'enabled': self.vegas_config.enabled,
-            'active': self._is_active,
-            'paused': self._is_paused,
-            'live_priority_active': self._live_priority_active,
-            'config': self.vegas_config.to_dict(),
-            'stats': self.stats.copy(),
-        }
-
-        if self._is_active:
-            status['render_info'] = self.render_pipeline.get_current_scroll_info()
-            status['stream_status'] = self.stream_manager.get_buffer_status()
-
-        return status
-
     # -------------------------------------------------------------------------
     # Static pause handling (for STATIC display mode)
     # -------------------------------------------------------------------------
@@ -980,7 +944,6 @@ class VegasModeCoordinator:
             # Save current scroll position for smooth resume
             self._saved_scroll_position = self.render_pipeline.get_scroll_position()
             self._static_pause_active = True
-            self.stats['static_pauses'] += 1
 
         logger.info("Static pause started for plugin: %s", plugin_id)
 

@@ -179,9 +179,7 @@
         container.innerHTML = '';
         const p = document.createElement('p');
         p.className = 'text-xs text-red-400 mt-1 flex items-center gap-1';
-        p.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + escapeHtml(message);
+        p.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + window.LEDEscape.html(message);
         container.appendChild(p);
     }
-
-    function escapeHtml(str) { return window.LEDEscape.html(str); }
 })();

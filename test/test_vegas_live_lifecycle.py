@@ -46,9 +46,6 @@ class _Stream:
     def get_grouped_content_for_composition(self):
         return self.first
 
-    def get_active_plugin_ids(self):
-        return ["p"]
-
     def take_next_group(self, count=None, offscreen_only=False):
         self.taken += 1
         return [("q", [_image(40, 99)])]

@@ -28,8 +28,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('NumberInput', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -80,16 +78,16 @@
             const currentValue = rawValue === '' ? '' : (isNaN(Number(rawValue)) ? '' : String(Number(rawValue)));
 
             // Escape values for safe HTML attribute interpolation
-            const safeMin = min !== null ? escapeHtml(String(min)) : '';
-            const safeMax = max !== null ? escapeHtml(String(max)) : '';
-            const safeStep = escapeHtml(String(step));
+            const safeMin = min !== null ? window.LEDEscape.html(String(min)) : '';
+            const safeMax = max !== null ? window.LEDEscape.html(String(max)) : '';
+            const safeStep = window.LEDEscape.html(String(step));
 
             let html = `<div id="${fieldId}_widget" class="number-input-widget" data-field-id="${fieldId}" data-min="${safeMin}" data-max="${safeMax}" data-step="${safeStep}">`;
 
             html += '<div class="flex items-center">';
 
             if (prefix) {
-                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">${escapeHtml(prefix)}</span>`;
+                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">${window.LEDEscape.html(prefix)}</span>`;
             }
 
             if (showButtons && !disabled) {
@@ -108,9 +106,9 @@
             html += `
                 <input type="number"
                        id="${fieldId}_input"
-                       name="${escapeHtml(options.name || fieldId)}"
-                       value="${escapeHtml(currentValue)}"
-                       placeholder="${escapeHtml(placeholder)}"
+                       name="${window.LEDEscape.html(options.name || fieldId)}"
+                       value="${window.LEDEscape.html(currentValue)}"
+                       placeholder="${window.LEDEscape.html(placeholder)}"
                        ${min !== null ? `min="${safeMin}"` : ''}
                        ${max !== null ? `max="${safeMax}"` : ''}
                        step="${safeStep}"
@@ -132,7 +130,7 @@
             }
 
             if (suffix) {
-                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">${escapeHtml(suffix)}</span>`;
+                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">${window.LEDEscape.html(suffix)}</span>`;
             }
 
             html += '</div>';
@@ -142,7 +140,7 @@
                 const rangeText = min !== null && max !== null
                     ? `${min} - ${max}`
                     : (min !== null ? `Min: ${min}` : `Max: ${max}`);
-                html += `<div class="text-xs text-gray-400 mt-1">${escapeHtml(rangeText)}</div>`;
+                html += `<div class="text-xs text-gray-400 mt-1">${window.LEDEscape.html(rangeText)}</div>`;
             }
 
             // Error message area

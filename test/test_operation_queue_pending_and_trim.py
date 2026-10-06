@@ -54,7 +54,7 @@ def test_second_pending_operation_for_a_plugin_is_refused(op_queue):
     assert _wait_for(lambda: op_queue.get_operation_status(first).status
                      == OperationStatus.COMPLETED)
     # Once it has finished, the plugin accepts a new operation again.
-    op_queue.enqueue_operation(OperationType.UPDATE, "demo")
+    op_queue.enqueue_operation(OperationType.UNINSTALL, "demo")
 
 
 def test_operations_map_is_trimmed_with_history(op_queue):
@@ -64,8 +64,8 @@ def test_operations_map_is_trimmed_with_history(op_queue):
     assert _wait_for(lambda: all(
         (op_queue.get_operation_status(i) is None
          or op_queue.get_operation_status(i).status == OperationStatus.COMPLETED)
-        for i in ids) and len(op_queue.get_operation_history()) == 3)
+        for i in ids) and len(op_queue._operation_history) == 3)
 
     assert len(op_queue._operations) == 3
-    kept = {op.operation_id for op in op_queue.get_operation_history()}
+    kept = {op.operation_id for op in op_queue._operation_history}
     assert set(op_queue._operations) == kept

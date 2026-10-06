@@ -8,7 +8,6 @@ import time
 from typing import Any, Optional, Dict, Tuple
 from flask import jsonify, request
 
-from src.web_interface.error_handler import create_error_response, create_success_response
 from src.web_interface.errors import ErrorCode, WebInterfaceError
 
 
@@ -31,7 +30,15 @@ def success_response(
     Returns:
         Flask jsonify response
     """
-    response_data = create_success_response(data, message, metadata)
+    response_data: Dict[str, Any] = {'status': 'success'}
+    # `is not None` rather than truthiness: "" and {} are values a caller
+    # chose to send, and dropping them would make the shape depend on the data.
+    if data is not None:
+        response_data['data'] = data
+    if message is not None:
+        response_data['message'] = message
+    if metadata is not None:
+        response_data['metadata'] = metadata
     for key, value in (extra or {}).items():
         response_data.setdefault(key, value)
 
@@ -70,14 +77,14 @@ def error_response(
     Returns:
         Flask jsonify response with status code
     """
-    return create_error_response(
+    error = WebInterfaceError(
         error_code=error_code,
         message=message,
         details=details,
-        context=context,
-        suggested_fixes=suggested_fixes,
-        status_code=status_code
+        context=context or {},
+        suggested_fixes=suggested_fixes
     )
+    return jsonify(error.to_dict()), status_code
 
 
 def exception_error_response(

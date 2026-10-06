@@ -15,7 +15,7 @@
  *                      is the one Alpine uses)
  *   end of <body>, defer, in this order: app.js, js/tooltips.js,
  *                      js/settings-search.js, js/utils/dialog.js,
- *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      js/plugins/api_client.js,
  *                      state_manager.js, install_manager.js, list_filter.js,
  *                      the widget bundle (web_interface/widget_bundle.py),
  *                      plugins_manager.js
@@ -252,8 +252,7 @@ document.addEventListener('keydown', function(e) {
     // alone because during the x-transition between tabs both are visible.
     // requestSubmit() runs validation and onsubmit guards like a real submit;
     // with no visible form, do nothing. Inside a modal dialog the shortcut is
-    // the dialog's (json-file-manager saves its file on Ctrl+S), so the tab's
-    // form is left alone.
+    // the dialog's, so the tab's form is left alone.
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         const active = document.activeElement;

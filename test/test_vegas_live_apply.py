@@ -43,9 +43,6 @@ class _Stream:
     def get_grouped_content_for_composition(self):
         return self.groups[0]
 
-    def get_active_plugin_ids(self):
-        return ["p"]
-
     def take_next_group(self, count=None, offscreen_only=False):
         self.i += 1
         return self.groups[self.i] if self.i < len(self.groups) else []

@@ -62,12 +62,12 @@ global.setGridHtmlIfChanged = (container, html) => { container.innerHTML = html;
 
 // eslint-disable-next-line no-eval
 eval([
-  'function escapeHtml(text) {', 'function escapeAttribute(text) {', 'function jsStringAttr(value) {',
+  'function jsStringAttr(value) {',
   'function renderPluginStore(plugins) {', 'function renderSavedRepositories(repositories) {',
   'function renderCustomRegistryPlugins(plugins, registryUrl) {',
-].map(extract).join('\n') + '\nglobal.jsStringAttr = jsStringAttr; global.escapeHtml = escapeHtml;'
+].map(extract).join('\n') + '\nglobal.jsStringAttr = jsStringAttr;'
   + '\nglobal.renderPluginStore = renderPluginStore; global.renderSavedRepositories = renderSavedRepositories;'
-  + '\nglobal.renderCustomRegistryPlugins = renderCustomRegistryPlugins; global.escapeAttribute = escapeAttribute;');
+  + '\nglobal.renderCustomRegistryPlugins = renderCustomRegistryPlugins;');
 
 // ── minimal HTML start-tag tokenizer ───────────────────────────────────────
 function decodeEntities(s) {

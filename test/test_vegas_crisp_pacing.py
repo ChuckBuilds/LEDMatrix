@@ -26,9 +26,6 @@ class FakeStream:
     def get_grouped_content_for_composition(self):
         return [('a', [Image.new('RGB', (4000, H), (255, 255, 255))])]
 
-    def get_active_plugin_ids(self):
-        return ['a']
-
 
 class FakeDM:
     width = W

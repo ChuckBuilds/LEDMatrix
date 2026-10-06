@@ -14,7 +14,6 @@ src/auto_update_setup.py
 src/backup_manager.py
 src/base_odds_manager.py
 src/cache/__init__.py
-src/cache/cache_metrics.py
 src/cache/cache_strategy.py
 src/cache/memory_cache.py
 src/common/__init__.py

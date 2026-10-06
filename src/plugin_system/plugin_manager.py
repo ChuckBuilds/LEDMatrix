@@ -38,6 +38,7 @@ from src.common.permission_utils import (
     ensure_directory_permissions,
     get_plugin_dir_mode
 )
+from src.deprecation import deprecated
 
 
 class _DeferredConfigChange(NamedTuple):
@@ -939,6 +940,7 @@ class PluginManager:
         """
         return self.plugins.get(plugin_id)
     
+    @deprecated("3.10.0", "use get_plugin(plugin_id)")
     def get_all_plugins(self) -> Dict[str, Any]:
         """
         Get all loaded plugins.
@@ -948,6 +950,7 @@ class PluginManager:
         """
         return self.plugins.copy()
     
+    @deprecated("3.10.0", "read the manifest with src.plugin_system.plugin_catalog.PluginCatalog")
     def get_plugin_info(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """
         Get information about a plugin (manifest + runtime info).
@@ -985,6 +988,7 @@ class PluginManager:
         
         return info
     
+    @deprecated("3.10.0", "read manifests with src.plugin_system.plugin_catalog.PluginCatalog")
     def get_all_plugin_info(self) -> List[Dict[str, Any]]:
         """
         Get information about all plugins.
@@ -1025,6 +1029,7 @@ class PluginManager:
             by_manifest=False)
         return str(plugin_dir) if plugin_dir is not None else None
     
+    @deprecated("3.10.0", "read manifests with src.plugin_system.plugin_catalog.PluginCatalog")
     def get_plugin_display_modes(self, plugin_id: str) -> List[str]:
         """
         Get display modes provided by a plugin.
@@ -1045,6 +1050,7 @@ class PluginManager:
             return display_modes
         return []
     
+    @deprecated("3.10.0", "read manifests with src.plugin_system.plugin_catalog.PluginCatalog")
     def find_plugin_for_mode(self, mode: str) -> Optional[str]:
         """
         Find which plugin provides a given display mode.

@@ -15,11 +15,7 @@ import uuid
 class OperationType(Enum):
     """Types of plugin operations."""
     INSTALL = "install"
-    UPDATE = "update"
     UNINSTALL = "uninstall"
-    ENABLE = "enable"
-    DISABLE = "disable"
-    CONFIGURE = "configure"
 
 
 class OperationStatus(Enum):
@@ -28,7 +24,6 @@ class OperationStatus(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -70,29 +65,3 @@ class PluginOperation:
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
         }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PluginOperation':
-        """Create operation from dictionary."""
-        op = cls(
-            operation_type=OperationType(data['operation_type']),
-            plugin_id=data['plugin_id'],
-            operation_id=data.get('operation_id', str(uuid.uuid4())),
-            parameters=data.get('parameters', {}),
-            status=OperationStatus(data.get('status', 'pending')),
-            progress=data.get('progress', 0.0),
-            message=data.get('message', ''),
-            error=data.get('error'),
-            result=data.get('result'),
-        )
-        
-        # Parse datetime fields
-        if data.get('created_at'):
-            op.created_at = datetime.fromisoformat(data['created_at'])
-        if data.get('started_at'):
-            op.started_at = datetime.fromisoformat(data['started_at'])
-        if data.get('completed_at'):
-            op.completed_at = datetime.fromisoformat(data['completed_at'])
-        
-        return op
-

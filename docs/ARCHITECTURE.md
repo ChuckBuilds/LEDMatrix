@@ -76,10 +76,10 @@ for the protocol, the permission model and the plan to retire the mailboxes.
 Only the display process imports plugin code, instantiates plugins and calls
 their lifecycle hooks (`update`, `display`, `on_config_change`, `on_enable`,
 `on_disable`). The web process is metadata-only: it reads plugins as files
-through `PluginCatalog`
-([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py))
--- manifests, config schemas (through `SchemaManager`), each plugin's
-section of `config.json`, and installed versions. The catalog keeps the
+-- manifests and directories through `PluginCatalog`
+([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py)),
+config schemas through `SchemaManager`, and each plugin's section of
+`config.json` through `ConfigManager`. The catalog keeps the
 read-only method names of `PluginManager` and has nothing that can run a
 plugin (no `load_plugin`, `get_plugin` or `plugins`).
 
@@ -294,7 +294,7 @@ and must not vouch for it.
 | Base class plugins implement | [`base_plugin.py`](../src/plugin_system/base_plugin.py) (`BasePlugin`, `VegasDisplayMode`) |
 | Finding a plugin's directory | [`plugin_dirs.py`](../src/plugin_system/plugin_dirs.py): manifest `id` first, then directory `<id>` or `ledmatrix-<id>` |
 | Discovery, load, unload, scheduled updates (display process) | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
-| Manifest, schema, config and version reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
+| Manifest reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
 | Import and instantiate | [`plugin_loader.py`](../src/plugin_system/plugin_loader.py) (`PluginLoader.load_plugin()`: dependencies, module, class) |
 | Timeouts | [`plugin_executor.py`](../src/plugin_system/plugin_executor.py) (`PluginExecutor`, 30 s default; a timed-out thread is abandoned, not killed) |
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |
