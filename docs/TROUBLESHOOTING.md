@@ -101,7 +101,10 @@ python3 --version
   Imager, choosing Raspberry Pi OS Lite (64-bit). Trixie is recommended;
   Bookworm (Legacy) also works. An in-place upgrade from Bullseye is not
   supported by Raspberry Pi and is not worth the risk.
-- "Desktop environment detected": use the Lite image, not the desktop one.
+- "A desktop is running": use the Lite image, not the desktop one, or boot
+  to the console with `sudo systemctl set-default multi-user.target` and
+  reboot. Desktop packages that are installed but not running only produce a
+  warning, and the install continues.
 - "python3 is Python 3.x; LEDMatrix needs Python 3.11 or newer": something
   has replaced the system `python3`. Point it back at the OS's own Python
   (`/usr/bin/python3` should be 3.11 on Bookworm, 3.13 on Trixie).
