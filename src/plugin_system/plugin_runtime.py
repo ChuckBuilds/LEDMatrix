@@ -56,7 +56,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src import display_watchdog
 from src.logging_config import get_logger
@@ -100,6 +100,9 @@ _ERROR_MESSAGE_CHARS = 200
 _ERROR_TYPE_CHARS = 80
 _ID_CHARS = 100
 _VERSION_CHARS = 40
+#: Bounds on a plugin's published ``modes``: a plugin computes them, so a
+#: runaway list must not bloat a file written to the SD card.
+_MAX_MODES = 200
 
 #: Reader statuses. Only LIVE carries runtime facts.
 LIVE = "live"
@@ -154,6 +157,15 @@ def summarize_error(error_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     }
 
 
+def _published_modes(modes: Any) -> Optional[List[str]]:
+    """The registered display modes as a snapshot carries them, or None."""
+    if not isinstance(modes, list):
+        return None
+    # A name is a key the display matches exactly: drop one too long to
+    # carry whole rather than clip it into a different name.
+    return [m for m in modes if isinstance(m, str) and len(m) <= _ID_CHARS][:_MAX_MODES]
+
+
 def build_runtime_snapshot(state_manager: Any, *, started_at: float,
                            now: Optional[float] = None,
                            running: bool = True,
@@ -173,6 +185,7 @@ def build_runtime_snapshot(state_manager: Any, *, started_at: float,
                 "error": summarize_error(record.get("error_info")),
                 "version": _clip(version, _VERSION_CHARS) if version else None,
                 "loaded_at": _epoch(record.get("loaded_at")),
+                "modes": _published_modes(record.get("modes")),
             }
     return {
         "schema": SNAPSHOT_SCHEMA,
@@ -415,6 +428,21 @@ class PluginRuntimeView:
             "loaded_version": record.get("version"),
             "loaded_at": record.get("loaded_at"),
         }
+
+    def display_modes(self, plugin_id: str) -> Optional[List[str]]:
+        """The display modes the display registered for ``plugin_id``: what
+        it rotates and accepts on-demand, including modes a plugin computes
+        from its config. None unless the view is live and the plugin is
+        loaded with its modes registered -- the caller then falls back to
+        the manifest's ``display_modes``."""
+        if not self.live:
+            return None
+        record = self.plugins.get(plugin_id)
+        modes = record.get("modes") if isinstance(record, dict) else None
+        if not isinstance(modes, list):
+            return None
+        modes = [m for m in modes if isinstance(m, str)]
+        return modes or None
 
     def describe(self) -> Dict[str, Any]:
         """The view's own status, for a response to carry beside the facts."""

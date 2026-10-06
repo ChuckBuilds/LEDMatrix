@@ -25,7 +25,6 @@ import os
 import inspect
 import signal
 import json
-import math
 import threading
 import types
 from collections import deque
@@ -64,6 +63,7 @@ from src.ipc.contract import (
     PluginReloadResult,
 )
 from src.ipc.server import ControlServer, QueuedCommand, StateHub, start_control_server
+from src.plugin_system.base_plugin import finite_seconds
 from src.vegas_mode.render_pipeline import SYNC_SEND_INTERVAL
 
 # Get logger with consistent configuration
@@ -99,19 +99,6 @@ _INITIAL_UPDATE_BUDGET_SECONDS = 20.0
 _MIN_INITIAL_UPDATE_TIMEOUT_SECONDS = 2.0
 
 DEFAULT_DYNAMIC_DURATION_CAP = 180.0
-
-
-def _finite_seconds(value: Any) -> Optional[float]:
-    """``value`` as seconds when it is a finite number or a numeric string,
-    else None. A bool is not a number here, though it is an int: True would
-    read as a one-second screen."""
-    if isinstance(value, bool):
-        return None
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return seconds if math.isfinite(seconds) else None
 
 
 class _PluginReloadJob:
@@ -1569,7 +1556,7 @@ class DisplayController:
         except Exception as err:  # pylint: disable=broad-except
             problem = f"get_display_duration() raised {type(err).__name__}: {err}"
         else:
-            seconds = _finite_seconds(value)
+            seconds = finite_seconds(value)
             if seconds is not None:
                 return seconds
             problem = f"display duration {value!r} is not a number"
@@ -4624,6 +4611,15 @@ class DisplayController:
             display_modes = [plugin_id]
         with self._plugin_modes_lock:
             self.plugin_display_modes[plugin_id] = list(display_modes)
+        # Into the runtime snapshot the web interface reads, so its mode
+        # lists and on-demand lookups see computed modes too (#668).
+        state_manager = getattr(self.plugin_manager, 'state_manager', None)
+        record_modes = getattr(state_manager, 'record_modes', None)
+        if callable(record_modes):
+            try:
+                record_modes(plugin_id, list(display_modes))
+            except Exception as e:  # reporting must never break registration
+                logger.debug("Could not record display modes for %s: %s", plugin_id, e)
 
         # Subscribe to config changes for per-plugin hot-reload. Bind plugin_id
         # and instance as defaults so each plugin's callback targets its own

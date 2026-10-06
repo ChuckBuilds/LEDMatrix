@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Tooling
+
+- `test/test_sports_helpers.py`'s parity tests pass again with
+  `LEDMATRIX_PLUGINS` set. The scoreboards deleted their copies of the
+  `sports_helpers` bodies and constants when they adopted `SportsHelpersMixin`
+  (ledmatrix-plugins #563/#564), and the 19 tests still expected them. A copy
+  that is gone now counts as adopted when the plugin imports
+  `src.common.sports_helpers`, as the stage 3/4 and game-over parity tests
+  already do; a copy that remains must still match.
+
 ### Dead code removed, unused plugin APIs deprecated
 
 An over-engineering audit of the whole tree. Every symbol below was checked
@@ -1338,6 +1348,25 @@ policies are unchanged.
   a runtime publisher that stops still goes `stale`, and a subscription that
   goes quiet still falls back to the cache. The cache path's 120 s rule is
   unchanged.
+- A plugin that pauses the Vegas scroll gets its pause when its display
+  duration is not a plain number. Several plugins (clock-simple, calendar,
+  countdown) return `display_duration` as it is in config.json, so a value
+  saved as `"20"` or `null` (the raw config editor, a hand edit) reached the
+  pause as a string or None; comparing it with the clock raised, and the
+  plugin flashed up and the scroll went straight on, at every one of its
+  turns. `inf` held the pause until something interrupted it, and 0, a
+  negative number or NaN ended it at once. The pause now reads the duration
+  as the rotation does (`finite_seconds()` in `base_plugin`): a numeric
+  string counts, anything else that is not a finite number (or a
+  `get_display_duration()` that raises) pauses for 30 s, and a number at or
+  below zero for 15 s, with one warning per plugin.
+- Reinstalling Weather, Music, Stocks or Leaderboard from the Plugin Store
+  while it is enabled asks for a display restart, as reinstalling any other
+  enabled plugin does. `POST /api/v3/plugins/install` looked for the
+  plugin's `enabled` flag under the store id (`weather`), but its config
+  section is under the id its manifest declares (`ledmatrix-weather`), so
+  `restart_required` was always false and the display kept running the
+  copy it had loaded. The check now uses the installed id.
 
 ### Scrolling
 

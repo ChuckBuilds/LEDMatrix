@@ -363,9 +363,11 @@ it. This is the list the force-display dialog offers.
 
 Send the reported `plugin_id` alongside `mode` when starting an on-demand
 display: `/display/on-demand/start` falls back to `find_plugin_for_mode` when
-`plugin_id` is omitted, and that lookup only sees modes declared in a static
-manifest — a plugin whose modes are generated (each installed Starlark app is
-one) returns 404 there.
+`plugin_id` is omitted. While the display is running, this list and that
+lookup use the modes the display registered, including ones a plugin generates
+from its config (each installed Starlark app, each soccer `custom_leagues`
+entry). With the display stopped, or for a plugin it has not loaded, both see
+only the modes its manifest declares.
 
 Triggers plugin discovery, which is otherwise lazy — so a caller that never
 opens the dashboard still gets the full list.

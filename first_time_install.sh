@@ -86,25 +86,44 @@ if [ -r "$LM_OS_RELEASE_FILE" ]; then
         OS_CHECK_FAILED=1
     fi
 
-    # Check if it's the Lite version (no desktop environment)
-    # Check for desktop packages or desktop services
-    DESKTOP_DETECTED=0
+    # Check for a desktop. A desktop only competes with the panel for CPU while
+    # it runs, so a running display manager stops the install; desktop packages
+    # or session files on a Pi that boots to the console are only a warning.
+    DESKTOP_RUNNING=0
+    DESKTOP_INSTALLED=0
+    # display-manager is the alias every Debian display manager registers.
+    for dm in display-manager lightdm gdm gdm3 sddm lxdm; do
+        if systemctl is-active --quiet "$dm" 2>/dev/null; then
+            DESKTOP_RUNNING=1
+        fi
+    done
     # grep without -q: -q exits at the first match, dpkg then dies of SIGPIPE,
     # and pipefail turns a found desktop into "not found".
-    if dpkg -l | grep -E "^ii.*raspberrypi-ui-mods|^ii.*lxde|^ii.*xfce|^ii.*gnome|^ii.*kde" >/dev/null; then
-        DESKTOP_DETECTED=1
-    fi
-    if systemctl list-units --type=service --state=running 2>/dev/null | grep -qE "lightdm|gdm3|sddm|lxdm"; then
-        DESKTOP_DETECTED=1
+    # Desktop metapackages and session managers, matched as whole installed
+    # package names: an unanchored ".*kde" matched libblockdev-* ("bloc-kde-v"),
+    # and a "gnome" prefix matched standalone parts such as gnome-keyring.
+    # Trixie replaced raspberrypi-ui-mods with the rpd-*-core metapackages.
+    DESKTOP_PACKAGES='raspberrypi-ui-mods|rpd-wayland-core|rpd-x-core'
+    DESKTOP_PACKAGES+='|lxde|lxde-core|lxsession|xfce4|xfce4-session'
+    DESKTOP_PACKAGES+='|gnome-shell|gnome-session|kde-plasma-desktop|plasma-desktop'
+    DESKTOP_PACKAGES+='|plasma-workspace|task-desktop|task-[a-z0-9]+-desktop'
+    if dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null \
+            | grep -E "^ii +(${DESKTOP_PACKAGES})(:[a-z0-9]+)?$" >/dev/null; then
+        DESKTOP_INSTALLED=1
     fi
     if [ -d /usr/share/raspberrypi-ui-mods ] || [ -d /usr/share/xsessions ]; then
-        DESKTOP_DETECTED=1
+        DESKTOP_INSTALLED=1
     fi
-    
-    if [ "$DESKTOP_DETECTED" -eq 1 ]; then
-        echo "✗ ERROR: Desktop environment detected - this script requires Raspberry Pi OS Lite"
-        echo "  Please use Raspberry Pi OS Lite (not the full desktop version)"
+
+    if [ "$DESKTOP_RUNNING" -eq 1 ]; then
+        echo "✗ ERROR: A desktop is running - this script requires Raspberry Pi OS Lite"
+        echo "  Please use Raspberry Pi OS Lite (not the full desktop version), or boot"
+        echo "  to the console: sudo systemctl set-default multi-user.target && sudo reboot"
         OS_CHECK_FAILED=1
+    elif [ "$DESKTOP_INSTALLED" -eq 1 ]; then
+        echo "⚠ WARNING: Desktop packages are installed, but no desktop is running."
+        echo "  Continuing. Keep the Pi booting to the console: a running desktop"
+        echo "  competes with the LED panel for CPU and can make it flicker."
     else
         echo "✓ Lite version confirmed (no desktop environment)"
     fi

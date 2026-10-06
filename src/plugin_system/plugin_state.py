@@ -10,7 +10,7 @@ snapshot ``plugin_runtime.PluginRuntimePublisher`` publishes from it.
 import threading
 import time
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 import logging
 
@@ -236,6 +236,26 @@ class PluginStateManager:
             }
             self._note_change()
 
+    def record_modes(self, plugin_id: str, modes: List[str]) -> None:
+        """Record the display modes the display registered for ``plugin_id``.
+
+        Called by the DisplayController each time it registers the plugin.
+        These are the modes it actually rotates and accepts on-demand --
+        ``plugin.modes`` when the plugin computes them (a soccer league the
+        user added under ``custom_leagues``), else the manifest's list -- and
+        the web interface has no other way to learn them (#668). Kept on the
+        loaded record, so an unload or a reload's fresh record_loaded()
+        forgets them until the plugin is registered again.
+        """
+        with self._lock:
+            loaded = self._loaded.get(plugin_id)
+            if loaded is None:
+                return
+            modes = [str(m) for m in modes]
+            if loaded.get('modes') != modes:
+                loaded['modes'] = modes
+                self._note_change()
+
     def record_unloaded(self, plugin_id: str) -> None:
         """Forget the loaded record alone, keeping state and error info: for
         an unload that failed after the instance was already dropped."""
@@ -248,7 +268,8 @@ class PluginStateManager:
         section so a concurrent load or unload is seen whole or not at all.
 
         Per plugin: ``state`` (published_state()'s value), ``loaded``,
-        ``version`` and ``loaded_at`` (None unless loaded) and ``error_info``
+        ``version``, ``loaded_at`` and ``modes`` (None unless loaded; ``modes``
+        also None until the display registers it) and ``error_info``
         (a copy, or None).
         """
         with self._lock:
@@ -262,6 +283,7 @@ class PluginStateManager:
                     'loaded': loaded is not None,
                     'version': loaded['version'] if loaded else None,
                     'loaded_at': loaded['loaded_at'] if loaded else None,
+                    'modes': list(loaded['modes']) if loaded and 'modes' in loaded else None,
                     'error_info': dict(info) if info is not None else None,
                 }
             return records

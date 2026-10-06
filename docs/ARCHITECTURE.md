@@ -143,7 +143,9 @@ loaded and when. Nothing else keeps plugin state:
 `DisplayController` right after it creates the `PluginManager`, writes the
 cache key `plugin_runtime_snapshot`: per plugin `loaded`, `state`, `error`
 (type, a redacted message of at most 200 characters, when, recoverable),
-`version` and `loaded_at`, plus `published_at`, `stale_after` and `running`.
+`version`, `loaded_at` and `modes` (the display modes `DisplayController`
+registered -- `plugin.modes` when the plugin computes them, else the
+manifest's), plus `published_at`, `stale_after` and `running`.
 The cache is on disk, usually the SD card, so it writes when something a
 reader sees changes -- throttled to once per 10 s -- and otherwise once a
 minute as a heartbeat. RUNNING, which every `update()` passes through, is
@@ -159,6 +161,9 @@ truth cannot leak into a response. `/api/v3/plugins/installed` returns
 `loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` per
 plugin and `data.runtime` (`status`, `published_at`, `age_seconds`);
 `/api/v3/plugins/state` returns the same beside the desired state.
+`PluginCatalog.get_plugin_display_modes` and `find_plugin_for_mode` prefer a
+live view's `modes` to the manifest's `display_modes`, so `/display/modes`
+and on-demand see modes a plugin generates from its config (#668).
 
 **Reconciliation**
 ([`state_reconciliation.py`](../src/plugin_system/state_reconciliation.py))

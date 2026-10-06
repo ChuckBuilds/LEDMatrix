@@ -162,7 +162,7 @@ class TestPublisher:
         assert snapshot["stale_after"] == rt.STALE_AFTER
         assert snapshot["plugins"] == {"clock": {
             "loaded": True, "state": "enabled", "error": None,
-            "version": "1.0.0", "loaded_at": 10.0}}
+            "version": "1.0.0", "loaded_at": 10.0, "modes": None}}
 
     def test_changes_are_throttled_and_quiet_displays_refresh(self):
         cache = MagicMock()
