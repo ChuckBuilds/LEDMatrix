@@ -91,11 +91,16 @@ if [ -r "$LM_OS_RELEASE_FILE" ]; then
     DESKTOP_DETECTED=0
     # grep without -q: -q exits at the first match, dpkg then dies of SIGPIPE,
     # and pipefail turns a found desktop into "not found".
-    # Match installed package names from their start: the unanchored ".*kde"
-    # matched mid-word (libblockdev-* = "bloc-kde-v") on Lite, and `dpkg -l`
-    # lines also carry descriptions that could match.
+    # Desktop metapackages and session managers, matched as whole installed
+    # package names: an unanchored ".*kde" matched libblockdev-* ("bloc-kde-v"),
+    # and a "gnome" prefix matched standalone parts such as gnome-keyring.
+    # Trixie replaced raspberrypi-ui-mods with the rpd-*-core metapackages.
+    DESKTOP_PACKAGES='raspberrypi-ui-mods|rpd-wayland-core|rpd-x-core'
+    DESKTOP_PACKAGES+='|lxde|lxde-core|lxsession|xfce4|xfce4-session'
+    DESKTOP_PACKAGES+='|gnome-shell|gnome-session|kde-plasma-desktop|plasma-desktop'
+    DESKTOP_PACKAGES+='|plasma-workspace|task-desktop|task-[a-z0-9]+-desktop'
     if dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null \
-            | grep -E "^ii +(raspberrypi-ui-mods|lxde|xfce|gnome|kde)" >/dev/null; then
+            | grep -E "^ii +(${DESKTOP_PACKAGES})(:[a-z0-9]+)?$" >/dev/null; then
         DESKTOP_DETECTED=1
     fi
     if systemctl list-units --type=service --state=running 2>/dev/null | grep -qE "lightdm|gdm3|sddm|lxdm"; then
