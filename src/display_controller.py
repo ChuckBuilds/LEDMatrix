@@ -4611,6 +4611,15 @@ class DisplayController:
             display_modes = [plugin_id]
         with self._plugin_modes_lock:
             self.plugin_display_modes[plugin_id] = list(display_modes)
+        # Into the runtime snapshot the web interface reads, so its mode
+        # lists and on-demand lookups see computed modes too (#668).
+        state_manager = getattr(self.plugin_manager, 'state_manager', None)
+        record_modes = getattr(state_manager, 'record_modes', None)
+        if callable(record_modes):
+            try:
+                record_modes(plugin_id, list(display_modes))
+            except Exception as e:  # reporting must never break registration
+                logger.debug("Could not record display modes for %s: %s", plugin_id, e)
 
         # Subscribe to config changes for per-plugin hot-reload. Bind plugin_id
         # and instance as defaults so each plugin's callback targets its own

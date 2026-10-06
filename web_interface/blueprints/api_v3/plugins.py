@@ -150,8 +150,9 @@ def get_installed_plugins():
         vegas_participation, vegas_participation_source = _vegas_participation(
             plugin_id, plugin_config, plugin_info)
 
-        # The modes the manifest declares, from the catalog as /display/modes
-        # and on-demand/start read them. The on-demand modal offers these;
+        # The plugin's modes, from the catalog as /display/modes and
+        # on-demand/start read them: what the running display registered,
+        # else what the manifest declares. The on-demand modal offers these;
         # without them it offered only the plugin id, which the display
         # turns into the first mode. Strings only: a manifest is hand-edited.
         declared_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id)
