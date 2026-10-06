@@ -28,6 +28,7 @@ Rules for the package:
 | [`api_helper`](#api_helper) | HTTP GET/POST with caching and rate limiting | Yes | — |
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
+| [`espn_payload`](#espn_payload) | Drop the parts of an ESPN scoreboard payload no scoreboard reads | No, core-internal (used by `BackgroundDataService`) | n/a |
 | [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | 3.6.0 |
 | [`fetch_service`](#fetch_service) | Pooled, merged, budgeted and counted HTTP for core fetch paths | No, core-internal (reached through `api_helper` and `espn_dates`) | n/a |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
@@ -119,6 +120,18 @@ one process-wide cap of `ESPN_CHUNK_WORKERS` in flight.
 Every request goes through [`fetch_service`](#fetch_service), the chunks
 counted against the plugin that asked. Scoreboard plugins also bundle a copy
 for older cores.
+
+### espn_payload
+
+[`espn_payload.py`](espn_payload.py). Core-internal. ESPN scoreboard
+responses carry stat leaders, athlete cards, links, headlines and highlights
+that no scoreboard draws. `slim_scoreboard_payload(payload)` removes exactly
+those keys, in place, and leaves everything it does not know about alone;
+`is_espn_scoreboard_url(url)` says whether a URL is an ESPN site-API
+scoreboard. `BackgroundDataService` slims each scoreboard window before
+caching it, which cuts the five sports windows from ~40MB to ~12MB of parsed
+objects. Adding a key to the drop lists means first checking that nothing
+reads it.
 
 ### favorite_team_check
 
