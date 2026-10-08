@@ -19,6 +19,60 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.3
+
+Fresh installs on Raspberry Pi OS Lite work again: 3.8.2's installer reported
+a desktop on Lite and stopped (#780, #781). Also lighter cached ESPN
+scoreboard windows (#749), a Vegas static-pause fix and a store reinstall
+restart prompt (#753), and display modes a plugin computes from its config in
+the web UI (#769).
+
+### Install
+
+- The installer no longer stops Raspberry Pi OS Lite with "Desktop environment
+  detected". Its package check searched whole `dpkg -l` lines, and `.*kde`
+  matched inside `libblockdev` ("bloc**kde**v"), which Lite ships; it now
+  matches installed package names from their start (#780). Desktop
+  metapackages and session managers are matched as whole names, so
+  `gnome-keyring` and similar standalone parts no longer count, and the list
+  now includes Raspberry Pi OS Trixie's `rpd-wayland-core` / `rpd-x-core`
+  (which replaced `raspberrypi-ui-mods`), Debian's `task-*-desktop` and
+  multi-arch names (#781).
+- Only a **running** desktop stops the install: a display manager that
+  `systemctl is-active` reports (`display-manager`, lightdm, gdm, sddm,
+  lxdm), with directions to boot to the console instead. Desktop packages or
+  session files on a Pi that boots to the console print a warning and the
+  install continues (#781).
+
+### Fixed
+
+- A Vegas static pause no longer ends at once for a plugin whose
+  `display_duration` is not a number (a string such as `"20"` or `null` from
+  config.json, as clock-simple, calendar and countdown return it). The pause
+  reads the duration the way the rotation does, with the same fallbacks: 30 s
+  for anything that is not a number, 15 s for zero or less. The helper moved
+  from `display_controller._finite_seconds` to `base_plugin.finite_seconds`,
+  unchanged (#753).
+- Reinstalling an enabled plugin from the store now asks for a restart for
+  plugins that install under their manifest id (Weather as
+  `ledmatrix-weather`, Music, Stocks, Leaderboard): the route checked the
+  enabled flag under the registry id (#753).
+- `/display/modes`, the on-demand dialog and `on-demand/start` by mode see the
+  modes a plugin computes from its config (soccer-scoreboard's custom
+  leagues), which no manifest can list. The display records the modes it
+  registered in the runtime snapshot, and the web catalog prefers them while
+  the plugin is loaded, falling back to the manifest otherwise. No manifest or
+  plugin change needed (#769, fixes #668).
+
+### Performance
+
+- `BackgroundDataService` drops the parts of an ESPN `/scoreboard` response no
+  scoreboard reads (stat leaders, athlete cards, links, headlines, highlights,
+  geo broadcasts) before caching it (`src/common/espn_payload.py`,
+  core-internal). Measured on one Pi (hdpi), the five scoreboard windows went
+  from 10.6 MB to 3.0 MB of JSON and ~40 MB to ~12 MB of parsed objects.
+  `submit_fetch_request(slim_payload=False)` caches a response whole (#749).
+
 ### Tooling
 
 - `test/test_sports_helpers.py`'s parity tests pass again with
@@ -27,7 +81,9 @@ accepts both, but the store flags the old spelling as deprecated
   (ledmatrix-plugins #563/#564), and the 19 tests still expected them. A copy
   that is gone now counts as adopted when the plugin imports
   `src.common.sports_helpers`, as the stage 3/4 and game-over parity tests
-  already do; a copy that remains must still match.
+  already do; a copy that remains must still match. (#777)
+- `src/common/README.md` lists `espn_payload`, which
+  `test_common_readme_lists_every_module` requires (#782).
 
 ## 3.8.2
 
