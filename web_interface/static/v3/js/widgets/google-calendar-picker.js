@@ -179,7 +179,9 @@
         container.innerHTML = '';
         const p = document.createElement('p');
         p.className = 'text-xs text-red-400 mt-1 flex items-center gap-1';
-        p.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + window.LEDEscape.html(message);
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-exclamation-triangle';
+        p.append(icon, ' ' + message);
         container.appendChild(p);
     }
 })();
