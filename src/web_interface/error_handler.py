@@ -1,18 +1,11 @@
 """
-Centralized error handling for web interface.
+Error text and payloads for web interface responses.
 
-Provides helpers for consistent error responses across API endpoints.
+Safe exception descriptions and the bodies for exceptions no route handled.
+The standard success/error responses are in api_helpers.
 """
 
-from typing import Any, Optional
-from flask import jsonify
-
-from src.web_interface.errors import WebInterfaceError, ErrorCode
-from src.logging_config import get_logger
 from src.redaction import redact_credentials
-
-
-logger = get_logger(__name__)
 
 
 # Long enough for an errno string with a path, short enough not to dump a
@@ -101,72 +94,3 @@ def http_exception_payload(error) -> dict:
         'error_code': (error.name or 'HTTP_ERROR').upper().replace(' ', '_'),
         'message': error.description,
     }
-
-
-def create_error_response(
-    error_code: ErrorCode,
-    message: str,
-    details: Optional[str] = None,
-    context: Optional[dict] = None,
-    suggested_fixes: Optional[list] = None,
-    status_code: int = 500
-) -> tuple:
-    """
-    Create a standardized error response.
-    
-    Args:
-        error_code: Error code
-        message: Error message
-        details: Optional detailed error information
-        context: Optional context dictionary
-        suggested_fixes: Optional list of suggested fixes
-        status_code: HTTP status code
-    
-    Returns:
-        Tuple of (jsonify response, status_code)
-    """
-    error = WebInterfaceError(
-        error_code=error_code,
-        message=message,
-        details=details,
-        context=context or {},
-        suggested_fixes=suggested_fixes
-    )
-    
-    return jsonify(error.to_dict()), status_code
-
-
-def create_success_response(
-    data: Any = None,
-    message: Optional[str] = None,
-    metadata: Optional[dict] = None
-) -> dict:
-    """
-    Create a standardized success response.
-    
-    Args:
-        data: Response data
-        message: Optional success message
-        metadata: Optional metadata (timing, version, etc.)
-    
-    Returns:
-        Dictionary for jsonify
-    """
-    response: dict[str, Any] = {
-        "status": "success"
-    }
-    
-    # All three use `is not None` rather than truthiness: "" and {} are
-    # values a caller chose to send, and dropping them silently would make
-    # the response shape depend on the data.
-    if data is not None:
-        response["data"] = data
-
-    if message is not None:
-        response["message"] = message
-
-    if metadata is not None:
-        response["metadata"] = metadata
-
-    return response
-

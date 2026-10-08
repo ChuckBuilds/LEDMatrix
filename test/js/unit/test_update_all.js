@@ -253,9 +253,10 @@ const noSleep = { sleep: async () => {} };
     for (const endpoint of bad) codes.push(await refusal(endpoint));
     ok('an endpoint that could leave the API path is refused before fetch()',
        codes.every(c => c === 'INVALID_ENDPOINT') && urls.length === 0, { codes, urls });
-    await PluginAPI.resetPluginConfig('a/../b&x=1');
+    global.debugLog = () => {};   // GETs go through the throttler, which logs
+    await PluginAPI.getPluginHealth('a/../b&x=1');
     ok('a plugin id is encoded into the URL, not spliced into it',
-       urls[0] === '/api/v3/plugins/config/reset?plugin_id=a%2F..%2Fb%26x%3D1', urls);
+       urls[0] === '/api/v3/plugins/health/a%2F..%2Fb%26x%3D1', urls);
     delete global.fetch;
   }
 

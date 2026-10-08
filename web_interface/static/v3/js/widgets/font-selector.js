@@ -31,8 +31,6 @@
     let fontCatalogCache = null;
     let fontCatalogPromise = null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -187,7 +185,7 @@
             container.innerHTML = `
                 <div id="${fieldId}_widget" class="font-selector-widget" data-field-id="${fieldId}">
                     <select id="${fieldId}_input"
-                            name="${escapeHtml(options.name || fieldId)}"
+                            name="${window.LEDEscape.html(options.name || fieldId)}"
                             disabled
                             class="form-select w-full rounded-md border-gray-300 shadow-sm bg-gray-100 text-black">
                         <option value="">Loading fonts...</option>
@@ -223,7 +221,7 @@
 
                 html += `
                     <select id="${fieldId}_input"
-                            name="${escapeHtml(options.name || fieldId)}"
+                            name="${window.LEDEscape.html(options.name || fieldId)}"
                             ${disabled ? 'disabled' : ''}
                             ${required ? 'required' : ''}
                             onchange="window.LEDMatrixWidgets.getHandlers('font-selector').onChange('${fieldId}')"
@@ -232,7 +230,7 @@
 
                 // Placeholder option
                 if (placeholder && !required) {
-                    html += `<option value="" ${!currentValue ? 'selected' : ''}>${escapeHtml(placeholder)}</option>`;
+                    html += `<option value="" ${!currentValue ? 'selected' : ''}>${window.LEDEscape.html(placeholder)}</option>`;
                 }
 
                 // Font options
@@ -242,7 +240,7 @@
                     const fontType = font.type ? ` (${font.type.toUpperCase()})` : '';
                     const isSelected = String(fontValue) === currentValue;
 
-                    html += `<option value="${escapeHtml(String(fontValue))}" ${isSelected ? 'selected' : ''}>${escapeHtml(displayName)}${escapeHtml(fontType)}</option>`;
+                    html += `<option value="${window.LEDEscape.html(String(fontValue))}" ${isSelected ? 'selected' : ''}>${window.LEDEscape.html(displayName)}${window.LEDEscape.html(fontType)}</option>`;
                 }
 
                 html += '</select>';
@@ -268,9 +266,9 @@
                 container.innerHTML = `
                     <div id="${fieldId}_widget" class="font-selector-widget" data-field-id="${fieldId}">
                         <select id="${fieldId}_input"
-                                name="${escapeHtml(options.name || fieldId)}"
+                                name="${window.LEDEscape.html(options.name || fieldId)}"
                                 class="form-select w-full rounded-md border-gray-300 shadow-sm bg-white text-black">
-                            <option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue || 'Error loading fonts')}</option>
+                            <option value="${window.LEDEscape.html(currentValue)}" selected>${window.LEDEscape.html(currentValue || 'Error loading fonts')}</option>
                         </select>
                         <div class="text-sm text-red-600 mt-1">Failed to load font list</div>
                     </div>

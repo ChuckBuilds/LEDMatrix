@@ -220,55 +220,6 @@ const PluginAPI = {
     },
     
     /**
-     * Toggle plugin enabled/disabled.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @param {boolean} enabled - Whether plugin should be enabled
-     * @returns {Promise<Object>} Response data
-     */
-    async togglePlugin(pluginId, enabled) {
-        return await this.request('/plugins/toggle', 'POST', {
-            plugin_id: pluginId,
-            enabled: enabled
-        });
-    },
-    
-    /**
-     * Get plugin configuration.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Plugin configuration
-     */
-    async getPluginConfig(pluginId) {
-        const response = await this.request(`/plugins/config?plugin_id=${encodeURIComponent(pluginId)}`);
-        return response.data || {};
-    },
-    
-    /**
-     * Save plugin configuration.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @param {Object} config - Configuration data
-     * @returns {Promise<Object>} Response data
-     */
-    async savePluginConfig(pluginId, config) {
-        return await this.request('/plugins/config', 'POST', {
-            plugin_id: pluginId,
-            config: config
-        });
-    },
-    
-    /**
-     * Reset plugin configuration to defaults.
-     * 
-     * @param {string} pluginId - Plugin identifier
-     * @returns {Promise<Object>} Response data
-     */
-    async resetPluginConfig(pluginId) {
-        return await this.request(`/plugins/config/reset?plugin_id=${encodeURIComponent(pluginId)}`, 'POST');
-    },
-    
-    /**
      * Update plugin.
      * 
      * @param {string} pluginId - Plugin identifier

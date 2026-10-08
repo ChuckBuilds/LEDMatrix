@@ -26,8 +26,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('UrlInput', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -127,7 +125,7 @@
             const currentValue = value || '';
 
             // Escape the protocols for safe HTML attribute interpolation
-            const escapedProtocols = escapeHtml(allowedProtocols.join(','));
+            const escapedProtocols = window.LEDEscape.html(allowedProtocols.join(','));
             let html = `<div id="${fieldId}_widget" class="url-input-widget" data-field-id="${fieldId}" data-protocols="${escapedProtocols}">`;
 
             html += '<div class="relative">';
@@ -143,9 +141,9 @@
             html += `
                 <input type="url"
                        id="${fieldId}_input"
-                       name="${escapeHtml(options.name || fieldId)}"
-                       value="${escapeHtml(currentValue)}"
-                       placeholder="${escapeHtml(placeholder)}"
+                       name="${window.LEDEscape.html(options.name || fieldId)}"
+                       value="${window.LEDEscape.html(currentValue)}"
+                       placeholder="${window.LEDEscape.html(placeholder)}"
                        ${disabled ? 'disabled' : ''}
                        ${required ? 'required' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('url-input').onChange('${fieldId}')"
@@ -160,7 +158,7 @@
                 html += `
                     <div id="${fieldId}_preview" class="mt-2 ${currentValue && isValidUrl(currentValue, allowedProtocols) ? '' : 'hidden'}">
                         <a id="${fieldId}_preview_link"
-                           href="${escapeHtml(safeHref(currentValue, allowedProtocols))}"
+                           href="${window.LEDEscape.html(safeHref(currentValue, allowedProtocols))}"
                            target="_blank"
                            rel="noopener noreferrer"
                            class="text-sm text-blue-600 hover:text-blue-800 flex items-center">

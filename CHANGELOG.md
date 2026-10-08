@@ -85,6 +85,70 @@ the web UI (#769).
 - `src/common/README.md` lists `espn_payload`, which
   `test_common_readme_lists_every_module` requires (#782).
 
+### Dead code removed, unused plugin APIs deprecated
+
+An over-engineering audit of the whole tree. Every symbol below was checked
+against core, the plugin monorepo and all eight third-party plugins in
+`plugins.json` before it went. Nothing a plugin imports was removed;
+plugin-facing methods only get `@deprecated` (see below).
+
+- **Deprecated for removal in 3.10.0** (warn once per process, in
+  `journalctl -u ledmatrix`). No plugin in core, the monorepo or the registry
+  calls them. `docs/DEPRECATIONS_3.8.md` is the regenerated scan, which
+  `scripts/plugin_api_usage.py` now runs for these owners too:
+  - `LogoDownloader`: the bulk-download and RGBA-conversion methods
+    (`fetch_teams_data`, `extract_teams_from_data`,
+    `download_missing_logos_for_league`, `download_all_ncaa_football_logos`,
+    `download_all_missing_logos`, `convert_image_to_rgba`,
+    `convert_all_logos_to_rgba`). `download_missing_logo()` stays.
+  - `ConfigManager`: `rollback_config`, `list_backups`,
+    `validate_config_file`, `get_secret`, `cleanup_orphaned_plugin_configs`,
+    `validate_all_plugin_configs`.
+  - `APIHelper`: `fetch_espn_scoreboard`/`_standings`/`_rankings`,
+    `set_cache`, `get_cache`, `set_rate_limit`, `get_request_stats`. `get()`
+    stays.
+  - `BackgroundDataService`: `get_result`, `is_request_complete`,
+    `get_request_status` (pass `callback=` to `submit_fetch_request()`).
+  - `PluginManager`: `get_all_plugins`, `get_plugin_info`,
+    `get_all_plugin_info`, `get_plugin_display_modes`, `find_plugin_for_mode`.
+    `PluginStateManager`: `is_loaded`, `is_running`, `is_error`,
+    `get_last_update`, `get_error_info`, `get_state_info`.
+  - `CacheManager.load_cache`, `CacheManager.generate_sport_cache_key`,
+    `FontManager.measure_text`, `FontManager.get_native_bdf_size`,
+    `BaseOddsManager.get_odds_for_games`, `BaseOddsManager.format_odds_summary`,
+    `DynamicTeamResolver.get_available_dynamic_teams`,
+    `DynamicTeamResolver.is_dynamic_team`, `PluginTestCase`.
+- **Removed (core-internal, no caller):**
+  - `src/cache/cache_metrics.py`
+  - Vegas status/stats plumbing that nothing read (`get_status`,
+    `get_current_scroll_info`, `get_buffer_status`, `VegasModeConfig.to_dict`)
+  - the sync "new cycle" message, which no follower ever handled (followers
+    now ignore any message type they don't know)
+  - unused `OperationType` members, `PluginOperation.from_dict`,
+    `cancel_operation`
+  - the test-only `PluginCatalog` readers
+  - `IPC *Args.to_dict` and `client.ping()`
+  - `_parse_form_value`
+  - `CacheStrategyProtocol`
+  - `ErrorAggregator.on_pattern_detected` and `clear_old_records`
+  - the duplicate `create_error_response`/`create_success_response`
+- **Web UI:**
+  - `json-file-manager.js` was never mounted: the schema widget renders the
+    plugin's own file manager in an iframe.
+  - `example-color-picker.js` was a docs example; `utils/error_handler.js` had
+    one fallback caller.
+  - The 29 one-line `escapeHtml` shims now call `window.LEDEscape` directly.
+  - Four uncalled `PluginAPI` methods are gone.
+  - `window.escapeHtml`, `BaseWidget` and every widget name are unchanged.
+- **Scripts and dependencies:**
+  - One-off scripts removed: `add_defaults_to_schemas.py`,
+    `analyze_plugin_schemas.py`, `test_captive_portal.sh`,
+    `verify_wifi_before_testing.sh`, `dev/run_emulator.sh` (use
+    `python3 run.py -e`), `update_plugin_repos.py` (use
+    `git -C ../ledmatrix-plugins pull`).
+  - Unused pins dropped: `markupsafe` (Flask still installs it) and
+    `pytest-mock`.
+
 ## 3.8.2
 
 The display hands freed memory back to the OS (#774), and sports consolidation

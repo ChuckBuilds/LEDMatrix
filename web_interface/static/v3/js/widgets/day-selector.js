@@ -50,8 +50,6 @@
     // Use BaseWidget utilities if available
     const base = window.BaseWidget ? new window.BaseWidget('DaySelector', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -100,7 +98,7 @@
 
             // Hidden input to store the value as JSON array
             // Note: Using single quotes for attribute, JSON uses double quotes, so no escaping needed
-            html += `<input type="hidden" id="${fieldId}_data" name="${escapeHtml(inputName)}" value='${JSON.stringify(selectedDays)}'>`;
+            html += `<input type="hidden" id="${fieldId}_data" name="${window.LEDEscape.html(inputName)}" value='${JSON.stringify(selectedDays)}'>`;
 
             // Select All toggle
             if (showSelectAll) {
@@ -141,7 +139,7 @@
                                ${isChecked ? 'checked' : ''}
                                onchange="window.LEDMatrixWidgets.getHandlers('day-selector').onChange('${fieldId}')"
                                class="day-checkbox h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                        <span class="ml-1 text-sm text-gray-700">${escapeHtml(label)}</span>
+                        <span class="ml-1 text-sm text-gray-700">${window.LEDEscape.html(label)}</span>
                     </label>
                 `;
             }

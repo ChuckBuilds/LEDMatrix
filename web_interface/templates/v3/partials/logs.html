@@ -493,7 +493,7 @@ function updatePluginFilterOptions() {
     const plugins = Array.from(new Set(window._allLogs.map(log => log.plugin).filter(Boolean))).sort();
 
     pluginFilterEl.innerHTML = '<option value="">All Plugins</option>' +
-        plugins.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+        plugins.map(p => `<option value="${window.LEDEscape.html(p)}">${window.LEDEscape.html(p)}</option>`).join('');
 
     // Restore previous selection if it's still a valid option
     if (previousValue && plugins.includes(previousValue)) {
@@ -517,14 +517,14 @@ function renderLogs() {
         const logElement = document.createElement('div');
         logElement.className = `log-entry py-1 px-2 hover:bg-gray-800 rounded transition-colors duration-150 ${getLogLevelClass(log.level)}`;
         const pluginBadge = log.plugin
-            ? `<span class="log-plugin flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold bg-purple-700 text-white" title="Plugin: ${escapeHtml(log.plugin)}">${escapeHtml(log.plugin)}</span>`
+            ? `<span class="log-plugin flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold bg-purple-700 text-white" title="Plugin: ${window.LEDEscape.html(log.plugin)}">${window.LEDEscape.html(log.plugin)}</span>`
             : '';
         logElement.innerHTML = `
             <div class="flex items-start gap-3 text-xs font-mono">
-                <span class="log-timestamp text-gray-400 flex-shrink-0 w-32">${escapeHtml(log.timestamp)}</span>
+                <span class="log-timestamp text-gray-400 flex-shrink-0 w-32">${window.LEDEscape.html(log.timestamp)}</span>
                 <span class="log-level flex-shrink-0 px-2 py-0.5 rounded text-xs font-semibold ${getLogLevelBadgeClass(log.level)}">${log.level}</span>
                 ${pluginBadge}
-                <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${escapeHtml(log.message)}</span>
+                <span class="log-message flex-1 ${getLogLevelTextClass(log.level)} break-words">${window.LEDEscape.html(log.message)}</span>
             </div>
         `;
         if (window._logsContent) {
@@ -761,12 +761,10 @@ function showEmptyState() {
 
 function showError(message) {
     if (window._logsContent) {
-        window._logsContent.innerHTML = `<div class="text-red-400 p-4">${escapeHtml(message)}</div>`;
+        window._logsContent.innerHTML = `<div class="text-red-400 p-4">${window.LEDEscape.html(message)}</div>`;
         window._logsContent.classList.remove('hidden');
     }
 }
-
-function escapeHtml(text) { return window.LEDEscape.html(text); }
 
 function refreshCurrentPluginStatus() {
     fetch('/api/v3/display/current-status')
@@ -843,11 +841,11 @@ function renderPluginErrors(summary) {
             '<th class="py-1 font-medium">Types</th></tr></thead><tbody>';
         plugins.forEach(p => {
             const types = Object.entries(p.types)
-                .map(([type, n]) => `${escapeHtml(type)} ×${escapeHtml(String(Number(n) || 0))}`)
+                .map(([type, n]) => `${window.LEDEscape.html(type)} ×${window.LEDEscape.html(String(Number(n) || 0))}`)
                 .join(', ');
             html += '<tr class="border-b border-gray-100">' +
-                `<td class="py-1 pr-4"><code class="bg-gray-100 px-1 rounded">${escapeHtml(p.id)}</code></td>` +
-                `<td class="py-1 pr-4 font-semibold text-gray-900">${escapeHtml(String(p.total))}</td>` +
+                `<td class="py-1 pr-4"><code class="bg-gray-100 px-1 rounded">${window.LEDEscape.html(p.id)}</code></td>` +
+                `<td class="py-1 pr-4 font-semibold text-gray-900">${window.LEDEscape.html(String(p.total))}</td>` +
                 `<td class="py-1 text-gray-700 break-words">${types}</td></tr>`;
         });
         html += '</tbody></table></div>';
@@ -862,16 +860,16 @@ function renderPluginErrors(summary) {
         html += '<h4 class="mt-4 mb-2 text-sm font-semibold text-gray-900">Repeating errors</h4><ul class="list-none pl-0 space-y-2">';
         patterns.forEach(p => {
             const severity = String(p.severity || 'warning');
-            const affected = (p.affected_plugins || []).map(id => escapeHtml(id)).join(', ') || 'unknown';
+            const affected = (p.affected_plugins || []).map(id => window.LEDEscape.html(id)).join(', ') || 'unknown';
             const sample = (p.sample_messages || [])[0];
             html += '<li class="border border-gray-200 rounded-lg px-3 py-2">' +
                 '<div class="flex flex-wrap items-center gap-2">' +
-                `<span class="px-2 py-0.5 rounded text-xs font-semibold ${badge[severity] || badge.warning}">${escapeHtml(severity)}</span>` +
-                `<code class="font-semibold text-gray-900">${escapeHtml(p.error_type || '')}</code>` +
-                `<span class="text-gray-700">×${escapeHtml(String(Number(p.count) || 0))}</span>` +
-                `<span class="text-xs text-gray-500 ml-auto">last seen ${escapeHtml(formatErrorTime(p.last_seen))}</span></div>` +
+                `<span class="px-2 py-0.5 rounded text-xs font-semibold ${badge[severity] || badge.warning}">${window.LEDEscape.html(severity)}</span>` +
+                `<code class="font-semibold text-gray-900">${window.LEDEscape.html(p.error_type || '')}</code>` +
+                `<span class="text-gray-700">×${window.LEDEscape.html(String(Number(p.count) || 0))}</span>` +
+                `<span class="text-xs text-gray-500 ml-auto">last seen ${window.LEDEscape.html(formatErrorTime(p.last_seen))}</span></div>` +
                 `<div class="mt-1 text-xs text-gray-600">Plugins: ${affected}</div>` +
-                (sample ? `<div class="mt-1 text-xs font-mono text-gray-700 break-words">${escapeHtml(sample)}</div>` : '') +
+                (sample ? `<div class="mt-1 text-xs font-mono text-gray-700 break-words">${window.LEDEscape.html(sample)}</div>` : '') +
                 '</li>';
         });
         html += '</ul>';

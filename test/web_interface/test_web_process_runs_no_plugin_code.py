@@ -119,7 +119,7 @@ class Web:
         self.config_manager.template_path = str(tmp_path / "no-template.json")
         self.schema_manager = SchemaManager(plugins_dir=self.plugins_dir, project_root=tmp_path,
                                             config_manager=self.config_manager)
-        self.catalog = PluginCatalog(self.plugins_dir, self.config_manager, self.schema_manager)
+        self.catalog = PluginCatalog(self.plugins_dir)
 
         api = self.api = api_v3_module.api_v3
         api.config_manager = self.config_manager
@@ -242,7 +242,8 @@ class TestTheWebProcessNeverRunsAPlugin:
         _bump_version(web, "1.1.0")
         body = web.post("/api/v3/plugins/update", {"plugin_id": PLUGIN_ID})
         assert body["data"]["update_status"] == "updated"
-        assert web.catalog.get_installed_version(PLUGIN_ID) == "1.1.0"
+        # The route rescans the catalog, which now has the new manifest.
+        assert web.catalog.get_manifest(PLUGIN_ID)["version"] == "1.1.0"
         assert web.ran() == []
 
     def test_installing_it(self, web):
@@ -497,16 +498,15 @@ class TestCatalogReadsWhatIsInstalled:
         assert expected, f"no plugins under {root}"
         before = set(sys.modules)
         schema_manager = SchemaManager(plugins_dir=root, project_root=PROJECT_ROOT)
-        catalog = PluginCatalog(root, schema_manager=schema_manager)
+        catalog = PluginCatalog(root)
 
         assert set(catalog.discover_plugins()) == set(expected)
         for plugin_id, (plugin_dir, manifest) in expected.items():
             assert catalog.get_manifest(plugin_id) == manifest
             assert catalog.get_plugin_directory(plugin_id) == str(plugin_dir)
-            assert catalog.get_installed_version(plugin_id) == manifest.get("version", "")
             assert catalog.get_plugin_display_modes(plugin_id) == manifest.get("display_modes", [])
             if (plugin_dir / "config_schema.json").exists():
-                schema = catalog.get_schema(plugin_id, use_cache=False)
+                schema = schema_manager.load_schema(plugin_id, use_cache=False)
                 assert isinstance(schema, dict) and "properties" in schema, plugin_id
 
         imported = [name for name in set(sys.modules) - before
@@ -537,16 +537,16 @@ class TestCatalogReadsWhatIsInstalled:
         assert catalog.discover_plugins() == []
         assert catalog.get_manifest("ci-fixture-plugin") is None
 
-    def test_enabled_follows_the_display_rule(self, tmp_path):
+    def test_enabled_follows_the_display_rule(self, api_v3_module):
         config = MagicMock()
         config.load_config.return_value = {"a": {"enabled": True}, "b": {}, "c": "junk"}
-        catalog = PluginCatalog(tmp_path, config_manager=config)
-        assert catalog.is_enabled("a") is True
+        api_v3_module.api_v3.config_manager = config
+        enabled = api_v3_module._plugin_enabled_in_config
+        assert enabled("a") is True
         # The display runs a plugin only when its section says so.
-        assert catalog.is_enabled("b") is False
-        assert catalog.is_enabled("c") is False
-        assert catalog.is_enabled("missing") is False
-        assert catalog.get_config("c") == {}
+        assert enabled("b") is False
+        assert enabled("c") is False
+        assert enabled("missing") is False
 
     def test_it_has_nothing_that_runs_a_plugin(self, tmp_path):
         catalog = PluginCatalog(tmp_path)

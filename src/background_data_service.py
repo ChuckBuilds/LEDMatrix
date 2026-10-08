@@ -43,6 +43,7 @@ from src.common.espn_dates import (
     fetch_espn_date_chunks,
     parse_espn_date_range,
 )
+from src.deprecation import deprecated
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -698,6 +699,7 @@ class BackgroundDataService:
         
         raise last_exception
     
+    @deprecated("3.10.0", "pass callback= to submit_fetch_request()")
     def get_result(self, request_id: str) -> Optional[FetchResult]:
         """
         Get the result of a fetch request.
@@ -714,6 +716,7 @@ class BackgroundDataService:
         with self._lock:
             return self.completed_requests.get(request_id)
     
+    @deprecated("3.10.0", "pass callback= to submit_fetch_request()")
     def is_request_complete(self, request_id: str) -> bool:
         """
         Check if a request has completed.
@@ -730,6 +733,7 @@ class BackgroundDataService:
         with self._lock:
             return request_id in self.completed_requests
     
+    @deprecated("3.10.0", "pass callback= to submit_fetch_request()")
     def get_request_status(self, request_id: str) -> Optional[FetchStatus]:
         """
         Get the status of a fetch request.

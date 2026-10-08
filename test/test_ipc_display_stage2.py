@@ -349,7 +349,6 @@ class TestVegasChecksEveryFrame:
         coord.render_pipeline.frame_interval = 0.0
         coord.render_pipeline.target_fps = 90
         coord.display_manager = MagicMock()
-        coord.stats = {'cycles_completed': 0, 'interruptions': 0}
         coord._state_lock = threading.Lock()
         coord._is_active = True
         coord._is_paused = False

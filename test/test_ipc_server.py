@@ -215,7 +215,7 @@ class TestWhereTheServerListens:
         assert srv.server_socket_path({}) is None
         assert ControlServer('x.sock').start() is False
         with pytest.raises(client.ControlError) as e:
-            client.ping(paths=['x.sock'])
+            client.request(Command.PING, paths=['x.sock'])
         assert e.value.reason == 'unsupported'
 
 
@@ -271,7 +271,7 @@ def _read_line(s):
 class TestLiveSocket:
     def test_client_round_trip(self, live, sock_path):
         live()
-        assert client.ping(paths=[sock_path]) == {'pong': True}
+        assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
         assert client.hello(paths=[sock_path])['version'] == 1
         assert client.on_demand_status(paths=[sock_path])['current_mode'] == 'clock'
 
@@ -335,7 +335,7 @@ class TestLiveSocket:
             assert s.recv(10) == b''          # and hung up
         finally:
             s.close()
-        assert client.ping(paths=[sock_path]) == {'pong': True}
+        assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
 
     def test_a_client_that_hangs_up_mid_message(self, live, sock_path):
         server = live()
@@ -343,7 +343,7 @@ class TestLiveSocket:
         s.sendall(b'{"v":1,"id":"half","cmd":"on_demand.st')
         s.close()
         time.sleep(0.2)
-        assert client.ping(paths=[sock_path]) == {'pong': True}
+        assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
         assert server.drain() == []
 
     def test_a_slow_client_is_dropped_and_blocks_nobody(self, live, sock_path):
@@ -352,7 +352,7 @@ class TestLiveSocket:
         try:
             slow.sendall(b'{"v":1,')           # ...and never finishes
             t0 = time.monotonic()
-            assert client.ping(paths=[sock_path]) == {'pong': True}
+            assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
             assert time.monotonic() - t0 < 0.5, 'a slow client held up another'
             assert slow.recv(100) == b''       # hung up on, not answered
         finally:
@@ -380,7 +380,7 @@ class TestLiveSocket:
             for s in held:
                 s.close()
         time.sleep(0.3)
-        assert client.ping(paths=[sock_path]) == {'pong': True}
+        assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
 
     def test_many_concurrent_clients(self, live, sock_path):
         server = live(queue_size=64)
@@ -408,7 +408,7 @@ class TestLiveSocket:
         s = ControlServer(sock_path, status_provider=lambda: status)
         try:
             assert s.start()
-            assert client.ping(paths=[sock_path]) == {'pong': True}
+            assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
         finally:
             s.close()
 
@@ -416,7 +416,7 @@ class TestLiveSocket:
         live()
         second = ControlServer(sock_path, status_provider=lambda: status)
         assert second.start() is False
-        assert client.ping(paths=[sock_path]) == {'pong': True}
+        assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
 
     def test_a_regular_file_is_never_removed(self, sock_path):
         with open(sock_path, 'w') as f:
@@ -434,24 +434,24 @@ class TestLiveSocket:
         assert second.start()
         try:
             first.close()                     # must not unlink second's file
-            assert client.ping(paths=[sock_path]) == {'pong': True}
+            assert client.request(Command.PING, paths=[sock_path]) == {'pong': True}
         finally:
             second.close()
 
     def test_client_reasons(self, sock_path, tmp_path):
         with pytest.raises(client.ControlError) as e:
-            client.ping(paths=[sock_path])
+            client.request(Command.PING, paths=[sock_path])
         assert e.value.reason == 'no_socket'
         dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         dead.bind(sock_path)
         try:
             with pytest.raises(client.ControlError) as e:
-                client.ping(paths=[sock_path])
+                client.request(Command.PING, paths=[sock_path])
             assert e.value.reason == 'refused'
         finally:
             dead.close()
         with pytest.raises(client.ControlError) as e:
-            client.ping(paths=[])
+            client.request(Command.PING, paths=[])
         assert e.value.reason == 'disabled'
         with pytest.raises(client.ControlError) as e:
             client.on_demand_start('x', None, None, paths=[sock_path])
@@ -464,7 +464,7 @@ class TestLiveSocket:
         try:
             t0 = time.monotonic()
             with pytest.raises(client.ControlError) as e:
-                client.ping(paths=[sock_path], timeout=0.3)
+                client.request(Command.PING, paths=[sock_path], timeout=0.3)
             assert e.value.reason == 'timeout'
             assert time.monotonic() - t0 < 1.0
         finally:
@@ -542,7 +542,7 @@ class TestPermissions:
                     os.setgroups([])
                     os.setgid(gid)
                     os.setuid(nobody.pw_uid)
-                    result = json.dumps(client.ping(paths=[sock_path]))
+                    result = json.dumps(client.request(Command.PING, paths=[sock_path]))
                 except client.ControlError as e:
                     result = 'error:' + e.reason
                 except Exception as e:  # report anything else to the parent

@@ -61,27 +61,14 @@ class WebInterfaceError:
     context: Optional[Dict[str, Any]] = None
     suggested_fixes: Optional[List[str]] = None
     original_error: Optional[Exception] = None
-    
-    def __init__(
-        self,
-        error_code: ErrorCode,
-        message: str,
-        details: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        suggested_fixes: Optional[List[str]] = None,
-        original_error: Optional[Exception] = None
-    ):
-        self.error_code = error_code
-        self.message = message
-        self.details = details
-        self.context = context or {}
+
+    def __post_init__(self) -> None:
+        self.context = self.context or {}
         # `is None`, not truthiness: an explicit [] means "this caller has
         # no suggestions to offer", which the default list would override.
-        self.suggested_fixes = (
-            suggested_fixes if suggested_fixes is not None
-            else self._get_default_suggestions(error_code))
-        self.original_error = original_error
-    
+        if self.suggested_fixes is None:
+            self.suggested_fixes = self._get_default_suggestions(self.error_code)
+
     def _get_default_suggestions(self, error_code: ErrorCode) -> List[str]:
         """Get default suggested fixes for error code."""
         suggestions_map = {

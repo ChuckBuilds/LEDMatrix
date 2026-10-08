@@ -33,8 +33,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('FileUploadSingle', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -78,22 +76,22 @@
             const currentValue = value || '';
             const hasImage = isImagePath(currentValue);
 
-            let html = `<div id="${fieldId}_widget" class="file-upload-single-widget" data-field-id="${fieldId}" data-plugin-id="${escapeHtml(pluginId)}">`;
+            let html = `<div id="${fieldId}_widget" class="file-upload-single-widget" data-field-id="${fieldId}" data-plugin-id="${window.LEDEscape.html(pluginId)}">`;
 
             // Hidden input carries the actual string value
-            html += `<input type="hidden" id="${fieldId}" name="${escapeHtml(options.name || fieldId)}" value="${escapeHtml(currentValue)}">`;
+            html += `<input type="hidden" id="${fieldId}" name="${window.LEDEscape.html(options.name || fieldId)}" value="${window.LEDEscape.html(currentValue)}">`;
 
             // Preview area (shown when a value is set)
             html += `<div id="${fieldId}_preview" class="${hasImage ? '' : 'hidden'} flex items-center space-x-3 mb-2 p-2 bg-gray-50 rounded border border-gray-200">`;
-            html += `<img id="${fieldId}_thumb" src="/${escapeHtml(currentValue)}" alt="Preview"
+            html += `<img id="${fieldId}_thumb" src="/${window.LEDEscape.html(currentValue)}" alt="Preview"
                           class="w-12 h-12 object-cover rounded"
                           onerror="this.style.display='none';document.getElementById('${fieldId}_thumb_placeholder').style.display='flex'">`;
             html += `<div id="${fieldId}_thumb_placeholder" style="display:none" class="w-12 h-12 bg-gray-200 rounded flex items-center justify-center">
                          <i class="fas fa-image text-gray-400 text-lg"></i>
                      </div>`;
             html += `<div class="flex-1 min-w-0">
-                         <p id="${fieldId}_filename" class="text-xs text-gray-600 truncate">${escapeHtml(currentValue.split('/').pop() || '')}</p>
-                         <p id="${fieldId}_fullpath" class="text-xs text-gray-400">${escapeHtml(currentValue)}</p>
+                         <p id="${fieldId}_filename" class="text-xs text-gray-600 truncate">${window.LEDEscape.html(currentValue.split('/').pop() || '')}</p>
+                         <p id="${fieldId}_fullpath" class="text-xs text-gray-400">${window.LEDEscape.html(currentValue)}</p>
                      </div>`;
             html += `<button type="button"
                              onclick="window.LEDMatrixWidgets.getHandlers('file-upload-single').onClear('${fieldId}')"
@@ -113,12 +111,12 @@
                           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('${fieldId}_file_input').click();}">
                          <input type="file"
                                 id="${fieldId}_file_input"
-                                accept="${escapeHtml(allowedTypes)}"
+                                accept="${window.LEDEscape.html(allowedTypes)}"
                                 style="display:none"
                                 data-field-id="${fieldId}"
-                                data-plugin-id="${escapeHtml(pluginId)}"
+                                data-plugin-id="${window.LEDEscape.html(pluginId)}"
                                 data-max-size-mb="${maxSizeMb}"
-                                data-allowed-types="${escapeHtml(allowedTypes)}"
+                                data-allowed-types="${window.LEDEscape.html(allowedTypes)}"
                                 onchange="window.LEDMatrixWidgets.getHandlers('file-upload-single').onFileSelect(event, '${fieldId}')">
                          <i class="fas fa-cloud-upload-alt text-xl text-gray-400 mb-1"></i>
                          <p class="text-xs text-gray-500">${hasImage ? 'Click to replace image' : 'Click or drag to upload image'}</p>

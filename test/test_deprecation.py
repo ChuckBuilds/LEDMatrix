@@ -32,9 +32,46 @@ DEPRECATED_3_9 = {
     ],
 }
 
+#: Deprecated after the October 2026 over-engineering audit, for removal in
+#: 3.10.0: nothing in core, the monorepo or the registry's third-party plugins
+#: calls them.
+DEPRECATED_3_10 = {
+    "src.logo_downloader.LogoDownloader": [
+        "fetch_teams_data", "extract_teams_from_data", "download_missing_logos_for_league",
+        "download_all_ncaa_football_logos", "download_all_missing_logos",
+        "convert_image_to_rgba", "convert_all_logos_to_rgba",
+    ],
+    "src.config_manager.ConfigManager": [
+        "rollback_config", "list_backups", "validate_config_file", "get_secret",
+        "cleanup_orphaned_plugin_configs", "validate_all_plugin_configs",
+    ],
+    "src.common.api_helper.APIHelper": [
+        "fetch_espn_scoreboard", "fetch_espn_standings", "fetch_espn_rankings",
+        "set_cache", "get_cache", "set_rate_limit", "get_request_stats",
+    ],
+    "src.plugin_system.testing.plugin_test_base.PluginTestCase": ["setUp"],
+    "src.background_data_service.BackgroundDataService": [
+        "get_result", "is_request_complete", "get_request_status",
+    ],
+    "src.plugin_system.plugin_manager.PluginManager": [
+        "get_all_plugins", "get_plugin_info", "get_all_plugin_info",
+        "get_plugin_display_modes", "find_plugin_for_mode",
+    ],
+    "src.plugin_system.plugin_state.PluginStateManager": [
+        "is_loaded", "is_running", "is_error", "get_last_update", "get_error_info",
+        "get_state_info",
+    ],
+    "src.cache_manager.CacheManager": ["load_cache", "generate_sport_cache_key"],
+    "src.font_manager.FontManager": ["measure_text", "get_native_bdf_size"],
+    "src.base_odds_manager.BaseOddsManager": ["get_odds_for_games", "format_odds_summary"],
+    "src.dynamic_team_resolver.DynamicTeamResolver": [
+        "get_available_dynamic_teams", "is_dynamic_team",
+    ],
+}
+
 #: Every pinned marker: (class path, method) -> the release that removes it.
 PINNED = {(path, name): removal
-          for removal, table in (("3.9.0", DEPRECATED_3_9),)
+          for removal, table in (("3.9.0", DEPRECATED_3_9), ("3.10.0", DEPRECATED_3_10))
           for path, names in table.items() for name in names}
 
 

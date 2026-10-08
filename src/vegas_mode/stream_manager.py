@@ -16,7 +16,7 @@ BasePlugin.get_vegas_participation):
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Any, Deque, Tuple, TYPE_CHECKING
+from typing import Optional, List, Dict, Deque, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -94,13 +94,6 @@ class StreamManager:
         self._last_refresh: float = 0.0
         self._refresh_interval: float = 30.0  # Refresh plugin list every 30s
 
-        # Statistics
-        self.stats = {
-            'segments_fetched': 0,
-            'segments_served': 0,
-            'fetch_errors': 0,
-        }
-
         logger.info("StreamManager initialized with buffer_ahead=%d", config.buffer_ahead)
 
     def initialize(self) -> bool:
@@ -143,46 +136,11 @@ class StreamManager:
                     return None
 
             segment = self._active_buffer.popleft()
-            self.stats['segments_served'] += 1
 
             # Trigger prefetch to maintain buffer
             self._ensure_buffer_filled()
 
             return segment
-
-    def peek_next_segment(self) -> Optional[ContentSegment]:
-        """
-        Peek at the next segment without removing it.
-
-        Returns:
-            ContentSegment or None if buffer is empty
-        """
-        with self._buffer_lock:
-            if self._active_buffer:
-                return self._active_buffer[0]
-            return None
-
-    def get_buffer_status(self) -> Dict[str, Any]:
-        """Get current buffer status for monitoring."""
-        with self._buffer_lock:
-            return {
-                'active_count': len(self._active_buffer),
-                'total_plugins': len(self._ordered_plugins),
-                'prefetch_index': self._prefetch_index,
-                'stats': self.stats.copy(),
-            }
-
-    def get_active_plugin_ids(self) -> List[str]:
-        """
-        Get list of plugin IDs currently in the active buffer.
-
-        Thread-safe accessor for render pipeline.
-
-        Returns:
-            List of plugin IDs in buffer order
-        """
-        with self._buffer_lock:
-            return [seg.plugin_id for seg in self._active_buffer]
 
     def mark_plugin_updated(self, plugin_id: str) -> None:
         """
@@ -587,7 +545,6 @@ class StreamManager:
                     images=[],  # No images needed for static pause
                     display_mode=VegasDisplayMode.STATIC
                 )
-                self.stats['segments_fetched'] += 1
                 logger.debug(
                     "[%s] Created STATIC placeholder (pause trigger)",
                     plugin_id
@@ -610,7 +567,6 @@ class StreamManager:
                 display_mode=VegasDisplayMode.SCROLL
             )
 
-            self.stats['segments_fetched'] += 1
             logger.debug(
                 "[%s] Segment: %d image(s), %dpx",
                 plugin_id, len(images), total_width
@@ -619,7 +575,6 @@ class StreamManager:
 
         except Exception:
             logger.exception("[%s] ERROR fetching content", plugin_id)
-            self.stats['fetch_errors'] += 1
             return None
 
     def _ensure_buffer_filled(self) -> None:
@@ -770,10 +725,8 @@ class StreamManager:
                 plugin, plugin_id, offscreen_only=offscreen_only)
         except Exception:
             logger.exception("[%s] ERROR fetching content", plugin_id)
-            self.stats['fetch_errors'] += 1
             return None
         if images:
-            self.stats['segments_fetched'] += 1
             return (plugin_id, images)
         # Only the old contract hands anything back to the render thread.
         defer_empty = offscreen_only and not getattr(

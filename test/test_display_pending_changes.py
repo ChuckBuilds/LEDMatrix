@@ -145,7 +145,6 @@ def vegas_coordinator(controller):
     coord.render_pipeline.target_fps = float(coord.vegas_config.target_fps)
     coord.stream_manager = MagicMock()
     coord.display_manager = controller.display_manager
-    coord.stats = {'cycles_completed': 0, 'interruptions': 0}
     coord._state_lock = threading.Lock()
     coord._is_active = True
     coord._is_paused = False

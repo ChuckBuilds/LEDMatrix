@@ -238,8 +238,6 @@
         window.showNotification(msg, type);
     }
 
-    function escHtml(s) { return window.LEDEscape.html(s); }
-
     function formatSize(bytes) {
         if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
         return (bytes / 1024).toFixed(2) + ' KB';
@@ -399,17 +397,17 @@
         modal.className = 'pfm-modal';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title" id="${escHtml(fieldId)}_modal_title"><i class="fas fa-edit mr-2" aria-hidden="true"></i>${escHtml(filename)}</span>
-                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_modal_close" aria-label="Close">
+                <span class="pfm-modal-title" id="${window.LEDEscape.html(fieldId)}_modal_title"><i class="fas fa-edit mr-2" aria-hidden="true"></i>${window.LEDEscape.html(filename)}</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${window.LEDEscape.html(fieldId)}_modal_close" aria-label="Close">
                     <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
-            <div class="pfm-modal-body" id="${escHtml(fieldId)}_edit_body">
+            <div class="pfm-modal-body" id="${window.LEDEscape.html(fieldId)}_edit_body">
                 <div class="pfm-empty"><i class="fas fa-spinner fa-spin" aria-hidden="true"></i>Loading…</div>
             </div>
             <div class="pfm-modal-footer">
-                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_modal_cancel">Cancel</button>
-                <button type="button" class="pfm-btn pfm-btn-primary" id="${escHtml(fieldId)}_save_btn">
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${window.LEDEscape.html(fieldId)}_modal_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-primary" id="${window.LEDEscape.html(fieldId)}_save_btn">
                     <i class="fas fa-save mr-1" aria-hidden="true"></i>Save
                 </button>
             </div>`);
@@ -423,7 +421,7 @@
         const data = await callAction(st.pluginId, st.actions.get, { filename }).catch(() => null);
         const body = document.getElementById(`${fieldId}_edit_body`);
         if (!data || data.status !== 'success' || !body) {
-            if (body) safeSetHTML(body, `<div class="pfm-empty pfm-error-text">Couldn't load ${escHtml(filename)}. Close this window and try again.</div>`);
+            if (body) safeSetHTML(body, `<div class="pfm-empty pfm-error-text">Couldn't load ${window.LEDEscape.html(filename)}. Close this window and try again.</div>`);
             return;
         }
 
@@ -438,10 +436,10 @@
             // Textarea path: _editData stays null; save() reads from the <textarea>
             st._editData = null;
             safeSetHTML(body, `
-                <textarea id="${escHtml(fieldId)}_json_ta" rows="20" class="pfm-json-ta"
-                    aria-label="File contents (JSON)" aria-describedby="${escHtml(fieldId)}_json_err"
-                >${escHtml(JSON.stringify(content, null, 2))}</textarea>
-                <div id="${escHtml(fieldId)}_json_err" class="pfm-json-err" role="alert"></div>`);
+                <textarea id="${window.LEDEscape.html(fieldId)}_json_ta" rows="20" class="pfm-json-ta"
+                    aria-label="File contents (JSON)" aria-describedby="${window.LEDEscape.html(fieldId)}_json_err"
+                >${window.LEDEscape.html(JSON.stringify(content, null, 2))}</textarea>
+                <div id="${window.LEDEscape.html(fieldId)}_json_err" class="pfm-json-err" role="alert"></div>`);
         }
     };
 
@@ -465,7 +463,7 @@
         // Delegated listener: day/col reach _pfmCellEdit only through data-*
         // attributes, never through a JS string spliced into an inline
         // handler -- the browser HTML-decodes attribute values before
-        // running them as script, which undoes escHtml's quote escaping and
+        // running them as script, which undoes LEDEscape's quote escaping and
         // reopens the exact injection it exists to close. `container` is a
         // fresh element per modal open (see _pfmOpenEdit), so this attaches
         // exactly once per table, even though buildPage() re-renders below.
@@ -498,21 +496,21 @@
                         <thead>
                             <tr>
                                 <th class="pfm-day-col">Day</th>
-                                ${cols.map(c => `<th>${escHtml(c.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}</th>`).join('')}
+                                ${cols.map(c => `<th>${window.LEDEscape.html(c.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))}</th>`).join('')}
                             </tr>
                         </thead>
                         <tbody>
                             ${pageEntries.map(([day, val]) => `
-                            <tr data-day="${escHtml(day)}" class="${parseInt(day) === todayDoy ? 'today-row' : ''}">
-                                <td class="pfm-day-col" style="user-select:none;">${escHtml(day)}</td>
+                            <tr data-day="${window.LEDEscape.html(day)}" class="${parseInt(day) === todayDoy ? 'today-row' : ''}">
+                                <td class="pfm-day-col" style="user-select:none;">${window.LEDEscape.html(day)}</td>
                                 ${cols.map(col => {
                                     const v = val[col] ?? '';
                                     const isLong = String(v).length > 60 || col === 'description' || col === 'definition' || col === 'content';
                                     return isLong
-                                        ? `<td><textarea data-day="${escHtml(day)}" data-col="${escHtml(col)}" rows="2"
-                                            >${escHtml(String(v))}</textarea></td>`
-                                        : `<td><input type="text" data-day="${escHtml(day)}" data-col="${escHtml(col)}"
-                                            value="${escHtml(String(v))}"></td>`;
+                                        ? `<td><textarea data-day="${window.LEDEscape.html(day)}" data-col="${window.LEDEscape.html(col)}" rows="2"
+                                            >${window.LEDEscape.html(String(v))}</textarea></td>`
+                                        : `<td><input type="text" data-day="${window.LEDEscape.html(day)}" data-col="${window.LEDEscape.html(col)}"
+                                            value="${window.LEDEscape.html(String(v))}"></td>`;
                                 }).join('')}
                             </tr>`).join('')}
                         </tbody>
@@ -604,20 +602,20 @@
         modal.style.maxWidth = '28rem';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title" id="${escHtml(fieldId)}_del_title"><i class="fas fa-trash mr-2" aria-hidden="true"></i>Delete File</span>
-                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_del_close" aria-label="Close">
+                <span class="pfm-modal-title" id="${window.LEDEscape.html(fieldId)}_del_title"><i class="fas fa-trash mr-2" aria-hidden="true"></i>Delete File</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${window.LEDEscape.html(fieldId)}_del_close" aria-label="Close">
                     <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="pfm-modal-body">
                 <div class="pfm-danger-box">
-                    <strong>${escHtml(filename)}</strong> will be permanently deleted and removed
+                    <strong>${window.LEDEscape.html(filename)}</strong> will be permanently deleted and removed
                     from the plugin configuration. This cannot be undone.
                 </div>
             </div>
             <div class="pfm-modal-footer">
-                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_del_cancel">Cancel</button>
-                <button type="button" class="pfm-btn pfm-btn-danger" id="${escHtml(fieldId)}_del_confirm">
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${window.LEDEscape.html(fieldId)}_del_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-danger" id="${window.LEDEscape.html(fieldId)}_del_confirm">
                     <i class="fas fa-trash mr-1" aria-hidden="true"></i>Delete
                 </button>
             </div>`);
@@ -654,25 +652,25 @@
         modal.style.maxWidth = '32rem';
         safeSetHTML(modal, `
             <div class="pfm-modal-header">
-                <span class="pfm-modal-title" id="${escHtml(fieldId)}_cre_title"><i class="fas fa-plus-circle mr-2" aria-hidden="true"></i>Create New File</span>
-                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${escHtml(fieldId)}_cre_close" aria-label="Close">
+                <span class="pfm-modal-title" id="${window.LEDEscape.html(fieldId)}_cre_title"><i class="fas fa-plus-circle mr-2" aria-hidden="true"></i>Create New File</span>
+                <button type="button" class="pfm-btn pfm-btn-secondary pfm-btn-sm" id="${window.LEDEscape.html(fieldId)}_cre_close" aria-label="Close">
                     <i class="fas fa-times" aria-hidden="true"></i>
                 </button>
             </div>
             <div class="pfm-modal-body">
-                <div id="${escHtml(fieldId)}_create_err" class="pfm-field-error" role="alert" style="margin-bottom:.5rem;"></div>
+                <div id="${window.LEDEscape.html(fieldId)}_create_err" class="pfm-field-error" role="alert" style="margin-bottom:.5rem;"></div>
                 ${fields.map(f => `
                 <div class="pfm-field">
-                    <label for="${escHtml(fieldId)}_cf_${escHtml(f.key)}">${escHtml(f.label || f.key)}</label>
-                    <input type="text" id="${escHtml(fieldId)}_cf_${escHtml(f.key)}"
-                           placeholder="${escHtml(f.placeholder || '')}"
-                           ${f.pattern ? `pattern="${escHtml(f.pattern)}"` : ''}>
-                    ${f.hint ? `<div class="pfm-field-hint">${escHtml(f.hint)}</div>` : ''}
+                    <label for="${window.LEDEscape.html(fieldId)}_cf_${window.LEDEscape.html(f.key)}">${window.LEDEscape.html(f.label || f.key)}</label>
+                    <input type="text" id="${window.LEDEscape.html(fieldId)}_cf_${window.LEDEscape.html(f.key)}"
+                           placeholder="${window.LEDEscape.html(f.placeholder || '')}"
+                           ${f.pattern ? `pattern="${window.LEDEscape.html(f.pattern)}"` : ''}>
+                    ${f.hint ? `<div class="pfm-field-hint">${window.LEDEscape.html(f.hint)}</div>` : ''}
                 </div>`).join('')}
             </div>
             <div class="pfm-modal-footer">
-                <button type="button" class="pfm-btn pfm-btn-secondary" id="${escHtml(fieldId)}_cre_cancel">Cancel</button>
-                <button type="button" class="pfm-btn pfm-btn-create" id="${escHtml(fieldId)}_create_btn">
+                <button type="button" class="pfm-btn pfm-btn-secondary" id="${window.LEDEscape.html(fieldId)}_cre_cancel">Cancel</button>
+                <button type="button" class="pfm-btn pfm-btn-create" id="${window.LEDEscape.html(fieldId)}_create_btn">
                     <i class="fas fa-plus mr-1" aria-hidden="true"></i>Create
                 </button>
             </div>`);
@@ -818,7 +816,7 @@
                     <div class="pfm-header">
                         <div>
                             <div class="pfm-title">File Explorer</div>
-                            ${st.directoryLabel ? `<div class="pfm-dir">Manage files in <code>${escHtml(st.directoryLabel)}</code></div>` : ''}
+                            ${st.directoryLabel ? `<div class="pfm-dir">Manage files in <code>${window.LEDEscape.html(st.directoryLabel)}</code></div>` : ''}
                         </div>
                         <div style="display:flex;gap:.375rem;">
                             ${actions.create ? `
@@ -841,7 +839,7 @@
                                onchange="if(this.files[0])window._pfmUpload('${fieldId}',this.files[0]);this.value=''">
                         <i class="fas fa-cloud-upload-alt pfm-upload-icon" aria-hidden="true"></i>
                         <p>Drag and drop or click to upload</p>
-                        <small>${escHtml(st.uploadHint)}</small>
+                        <small>${window.LEDEscape.html(st.uploadHint)}</small>
                     </div>` : ''}
 
                     <div class="pfm-grid">

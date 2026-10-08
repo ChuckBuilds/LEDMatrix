@@ -66,31 +66,6 @@ class TestPluginOperationsIntegration(unittest.TestCase):
         history = self.operation_history.get_history(plugin_id=plugin_id)
         self.assertEqual([r.operation_type for r in history], ["install"])
 
-    def test_update_operation_flow(self):
-        """Test complete update operation flow."""
-        plugin_id = "test-plugin"
-        
-        # Enqueue update operation
-        operation_id = self.operation_queue.enqueue_operation(
-            OperationType.UPDATE,
-            plugin_id,
-            {"from_version": "1.0.0", "to_version": "2.0.0"}
-        )
-        
-        self.assertIsNotNone(operation_id)
-        
-        # Record in history
-        self.operation_history.record_operation(
-            operation_type="update",
-            plugin_id=plugin_id,
-            status="in_progress",
-            operation_id=operation_id
-        )
-        
-        # Verify history
-        history = self.operation_history.get_history(plugin_id=plugin_id)
-        self.assertEqual([r.operation_type for r in history], ["update"])
-
     def test_uninstall_operation_flow(self):
         """Test complete uninstall operation flow."""
         plugin_id = "test-plugin"
@@ -162,7 +137,7 @@ class TestPluginOperationsIntegration(unittest.TestCase):
         # The prevention only works for truly concurrent (pending/running) operations
         try:
             op2_id = self.operation_queue.enqueue_operation(
-                OperationType.UPDATE,
+                OperationType.UNINSTALL,
                 plugin_id
             )
             # If no exception, the first operation may have completed already

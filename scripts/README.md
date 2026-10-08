@@ -15,7 +15,7 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | [`install/`](install/README.md) | keep | The installers: one-shot, services, sudoers/WiFi permissions, cache setup, and the shared `lib_*.sh` helpers `first_time_install.sh` sources |
 | [`fix_perms/`](fix_perms/README.md) | keep | Permission repair scripts, plus the two root helpers the web interface runs through sudo (`safe_plugin_rm.sh`, `safe_pip_install.sh`) |
 | [`utils/`](utils/README.md) | keep | Scripts run by systemd units or the web interface (conditional web start, WiFi monitor, update verify, DNS fix, Pixlet config editor, cache clearing) |
-| [`dev/`](dev/README.md) | dev-only | Plugin linking, emulator runner, Vegas density audit, Pillow smoke test |
+| [`dev/`](dev/README.md) | dev-only | Plugin linking, Vegas density audit, Pillow smoke test |
 | `templates/` | dev-only | `dev_preview.html`, the page `dev_server.py` serves |
 
 ## Top-level scripts
@@ -43,22 +43,18 @@ display; **diagnostic** — run by hand on a Pi when something is wrong.
 | `scroll_speeds.py` | keep | Shows and tries the scroll speeds your panel can display cleanly |
 | `sports_drift_report.py` | keep | Counts the different bodies of each method across the nine scoreboards in a `ledmatrix-plugins` checkout (report-only CI job; docs/SPORTS_UNIFICATION.md) |
 | `troubleshoot_captive_portal.sh` | diagnostic | Troubleshoots captive-portal WiFi setup after you can SSH back in |
-| `update_plugin_repos.py` | dev-only | Pulls the latest `ledmatrix-plugins` monorepo |
 | `verify_installation.sh` | diagnostic | Checks that an installation completed correctly |
 | `verify_wifi_setup.sh` | diagnostic | Health check of the WiFi management setup |
 
-## Candidates for removal
+## Hand-run tools nothing else references
 
 Nothing in the repo (docs, CI, tests, other scripts or code) refers to these.
-They are kept for now; each one needs an owner decision before it goes.
+They are run by hand and were kept by owner decision (October 2026); the
+old one-off schema fixers and WiFi test scripts listed here were removed.
 
 | Script | What it does |
 |---|---|
-| `add_defaults_to_schemas.py` | One-off: adds missing `default` values to plugin config schemas |
-| `analyze_plugin_schemas.py` | One-off: reports duplicate/inconsistent fields across plugin schemas |
 | `audit_plugins.py` | AST security audit of plugin code; says it is "designed to run in CI" but no workflow runs it |
 | `audit_render_path.py` | Finds blocking calls reachable from a plugin's `display()` |
 | `sports_scroll_check.py` | Drives a sports scoreboard scroll on the panel and reports its pacing |
-| `test_captive_portal.sh` | Tests the captive portal from a device connected to the AP |
-| `verify_wifi_before_testing.sh` | Pre-flight check before unplugging Ethernet to test WiFi |
 | `dev/test_pillow_compat.py` | Pillow API smoke test to run after upgrading Pillow |

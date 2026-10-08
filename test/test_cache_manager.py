@@ -1,7 +1,7 @@
 """
 Tests for CacheManager and cache components.
 
-Tests cache functionality including memory cache, disk cache, strategy, and metrics.
+Tests cache functionality including memory cache, disk cache, and strategy.
 """
 
 import pytest
@@ -11,7 +11,6 @@ from src.cache_manager import CacheManager
 from src.cache.memory_cache import MemoryCache
 from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
-from src.cache.cache_metrics import CacheMetrics
 from datetime import datetime
 
 
@@ -26,7 +25,6 @@ class TestCacheManager:
             assert hasattr(cm, '_memory_cache_component')
             assert hasattr(cm, '_disk_cache_component')
             assert hasattr(cm, '_strategy_component')
-            assert hasattr(cm, '_metrics_component')
     
     def test_set_and_get(self, tmp_path):
         """Test basic set and get operations."""
@@ -196,50 +194,6 @@ class TestMemoryCache:
         assert stats["max_size"] == 1000  # default
 
 
-class TestCacheMetrics:
-    """Test CacheMetrics functionality."""
-    
-    def test_record_hit(self):
-        """Test recording cache hit."""
-        metrics = CacheMetrics()
-        metrics.record_hit()
-        stats = metrics.get_metrics()
-        
-        # get_metrics() returns calculated values, not raw hits/misses
-        assert stats['total_requests'] == 1
-        assert stats['cache_hit_rate'] == 1.0  # 1 hit out of 1 request
-    
-    def test_record_miss(self):
-        """Test recording cache miss."""
-        metrics = CacheMetrics()
-        metrics.record_miss()
-        stats = metrics.get_metrics()
-        
-        # get_metrics() returns calculated values, not raw hits/misses
-        assert stats['total_requests'] == 1
-        assert stats['cache_hit_rate'] == 0.0  # 0 hits out of 1 request
-    
-    def test_record_fetch_time(self):
-        """Test recording fetch time."""
-        metrics = CacheMetrics()
-        metrics.record_fetch_time(0.5)
-        stats = metrics.get_metrics()
-        
-        assert stats['fetch_count'] == 1
-        assert stats['total_fetch_time'] == 0.5
-        assert stats['average_fetch_time'] == 0.5
-    
-    def test_cache_hit_rate(self):
-        """Test cache hit rate calculation."""
-        metrics = CacheMetrics()
-        metrics.record_hit()
-        metrics.record_hit()
-        metrics.record_miss()
-        
-        stats = metrics.get_metrics()
-        assert stats['cache_hit_rate'] == pytest.approx(0.666, abs=0.01)
-
-
 class TestDiskCache:
     """Test DiskCache functionality."""
     
@@ -370,36 +324,6 @@ class TestDiskCache:
         
         # Should handle gracefully
         assert result is None or isinstance(result, dict)
-    
-    def test_record_background_hit(self):
-        """Test recording background cache hit."""
-        metrics = CacheMetrics()
-        metrics.record_hit(cache_type='background')
-        stats = metrics.get_metrics()
-        
-        assert stats['total_requests'] == 1
-        assert stats['background_hit_rate'] == 1.0
-    
-    def test_record_background_miss(self):
-        """Test recording background cache miss."""
-        metrics = CacheMetrics()
-        metrics.record_miss(cache_type='background')
-        stats = metrics.get_metrics()
-        
-        assert stats['total_requests'] == 1
-        assert stats['background_hit_rate'] == 0.0
-    
-    def test_multiple_fetch_times(self):
-        """Test recording multiple fetch times."""
-        metrics = CacheMetrics()
-        metrics.record_fetch_time(0.5)
-        metrics.record_fetch_time(1.0)
-        metrics.record_fetch_time(0.3)
-        
-        stats = metrics.get_metrics()
-        assert stats['fetch_count'] == 3
-        assert stats['total_fetch_time'] == 1.8
-        assert stats['average_fetch_time'] == pytest.approx(0.6, abs=0.01)
 
 
 class TestDiskCacheWriteEconomy:

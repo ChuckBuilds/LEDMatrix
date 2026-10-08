@@ -33,8 +33,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('RadioGroup', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -83,15 +81,15 @@
                         <div class="flex items-center h-5">
                             <input type="radio"
                                    id="${optId}"
-                                   name="${escapeHtml(options.name || fieldId)}"
-                                   value="${escapeHtml(String(optValue))}"
+                                   name="${window.LEDEscape.html(options.name || fieldId)}"
+                                   value="${window.LEDEscape.html(String(optValue))}"
                                    ${isChecked ? 'checked' : ''}
                                    ${disabled ? 'disabled' : ''}
                                    class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}">
                         </div>
                         <div class="ml-3">
-                            <span class="text-sm font-medium text-gray-900">${escapeHtml(label)}</span>
-                            ${description ? `<p class="text-xs text-gray-500">${escapeHtml(description)}</p>` : ''}
+                            <span class="text-sm font-medium text-gray-900">${window.LEDEscape.html(label)}</span>
+                            ${description ? `<p class="text-xs text-gray-500">${window.LEDEscape.html(description)}</p>` : ''}
                         </div>
                     </label>
                 `;

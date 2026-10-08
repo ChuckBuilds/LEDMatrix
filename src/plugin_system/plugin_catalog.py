@@ -3,9 +3,10 @@ Plugin catalog: what the web process knows about installed plugins.
 
 The web interface and the display run as two processes. Only the display
 imports plugin code and runs it; the web process reads plugins as files --
-manifest, config schema, the plugin's section of config.json, the installed
-version -- and never imports a plugin module, instantiates a plugin class or
-calls a plugin lifecycle hook. This class is that read side.
+manifest, config schema, the plugin's section of config.json -- and never
+imports a plugin module, instantiates a plugin class or calls a plugin
+lifecycle hook. This class is the manifest side of that; schemas come from
+SchemaManager and config from ConfigManager.
 
 It keeps the method names of the read-only part of :class:`PluginManager`
 (``discover_plugins``, ``plugin_manifests``, ``get_plugin_info``,
@@ -25,11 +26,10 @@ machine) the web cannot know, and reports as unknown.
 See docs/ARCHITECTURE.md ("Web and display processes").
 """
 
-import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from src.common.permission_utils import (
     ensure_directory_permissions, get_plugin_dir_mode,
@@ -47,19 +47,16 @@ _RUNTIME_VIEW_TTL_SECONDS = 1.0
 
 
 class PluginCatalog:
-    """Manifests, schemas, config and versions of the installed plugins.
+    """Manifests and directories of the installed plugins.
 
     Discovery is explicit and cheap to repeat: :meth:`discover_plugins`
     rescans the plugins directory and replaces the manifest map, so an
     uninstalled plugin disappears and a new one appears.
     """
 
-    def __init__(self, plugins_dir: PathLike, config_manager: Optional[Any] = None,
-                 schema_manager: Optional[Any] = None,
+    def __init__(self, plugins_dir: PathLike,
                  runtime_source: Optional[Callable[[], Any]] = None) -> None:
         self.plugins_dir: Path = Path(plugins_dir)
-        self.config_manager = config_manager
-        self.schema_manager = schema_manager
         # Returns the display's PluginRuntimeView
         # (src/plugin_system/plugin_runtime.py). Its live view carries the
         # modes the display registered, which the mode lookups below prefer
@@ -145,30 +142,6 @@ class PluginCatalog:
             ids = list(self.plugin_manifests)
         return [info for info in (self.get_plugin_info(pid) for pid in ids) if info]
 
-    def read_manifest(self, plugin_id: str) -> Optional[Dict[str, Any]]:
-        """The manifest as it is on disk now, not as discovery last saw it.
-
-        For reads that must reflect a change made since the last scan -- the
-        version just after an update, say. None when the plugin has no
-        directory or its manifest is missing, unreadable or not an object.
-        """
-        plugin_dir = self.get_plugin_directory(plugin_id)
-        if plugin_dir is None:
-            return None
-        try:
-            with open(Path(plugin_dir) / 'manifest.json', 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-        except (OSError, ValueError) as exc:
-            self.logger.debug("Could not read manifest for %s: %s", plugin_id, exc)
-            return None
-        return manifest if isinstance(manifest, dict) else None
-
-    def get_installed_version(self, plugin_id: str) -> str:
-        """The installed version from the on-disk manifest, or ''."""
-        manifest = self.read_manifest(plugin_id) or {}
-        version = manifest.get('version', '')
-        return version if isinstance(version, str) else str(version)
-
     def get_plugin_directory(self, plugin_id: str) -> Optional[str]:
         """Where ``plugin_id`` is installed, or None.
 
@@ -251,31 +224,6 @@ class PluginCatalog:
                     isinstance(m, str) and m.lower() == wanted for m in modes):
                 return plugin_id
         return None
-
-    # -- schema and config ------------------------------------------------
-
-    def get_schema(self, plugin_id: str, use_cache: bool = True) -> Optional[Dict[str, Any]]:
-        """The plugin's config schema through SchemaManager, or None."""
-        if self.schema_manager is None:
-            return None
-        schema = self.schema_manager.load_schema(plugin_id, use_cache=use_cache)
-        return cast(Optional[Dict[str, Any]], schema)
-
-    def get_config(self, plugin_id: str) -> Dict[str, Any]:
-        """The plugin's section of config.json (secrets merged), or {}."""
-        if self.config_manager is None:
-            return {}
-        section = (self.config_manager.load_config() or {}).get(plugin_id)
-        return section if isinstance(section, dict) else {}
-
-    def is_enabled(self, plugin_id: str) -> bool:
-        """Whether config.json enables the plugin, by the display's rule.
-
-        The display loads a plugin only when its section says
-        ``"enabled": true``; a missing flag or section means disabled
-        (``DisplayController._reconcile_enabled_plugins``).
-        """
-        return bool(self.get_config(plugin_id).get('enabled', False))
 
 
 def display_restart_required(action: str, plugin_enabled: bool, *,

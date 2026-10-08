@@ -218,7 +218,6 @@ class RenderPipeline:
 
         # Render state
         self._cycle_complete = False
-        self._segments_in_scroll: List[str] = []  # Plugin IDs in current scroll
         self._record_by_seq: Dict[int, ElementRecord] = {}
         # Live updates. _applied: per record, the (epoch, digest) of the
         # pixels the strip holds. _live_slots / _live_ready: the worker's
@@ -235,15 +234,9 @@ class RenderPipeline:
         self._frame_interval = config.get_frame_interval()
         self._cycle_start_time = 0.0
 
-        # Statistics
-        self.stats = {
-            'frames_rendered': 0,
-            'scroll_cycles': 0,
-            'composition_count': 0,
-            'hot_swaps': 0,
-            'avg_frame_time_ms': 0.0,
-        }
-        self._frame_times: Deque[float] = deque(maxlen=100)  # Efficient fixed-size buffer
+        # Read by _measure_refresh (warm-up) and the live integration test.
+        self.frames_rendered = 0
+        self.extensions = 0
 
         logger.info(
             "RenderPipeline initialized: %dx%d @ %d FPS",
@@ -342,7 +335,7 @@ class RenderPipeline:
             return
         if getattr(self.display_manager, 'matrix', None) is None:
             return  # No hardware: nothing blocks, so there is nothing to time.
-        if self.stats['frames_rendered'] < self.REFRESH_WARMUP_FRAMES:
+        if self.frames_rendered < self.REFRESH_WARMUP_FRAMES:
             return
         self._swap_times.append(time.monotonic())
         if len(self._swap_times) <= self.REFRESH_SAMPLES:
@@ -452,10 +445,6 @@ class RenderPipeline:
                 layouts)
             self._note_op('compose', self._strip_nbytes())
 
-            # Track which plugins are in this scroll (get safely via buffer status)
-            self._segments_in_scroll = self.stream_manager.get_active_plugin_ids()
-
-            self.stats['composition_count'] += 1
             self._cycle_start_time = time.time()
             self._cycle_complete = False
 
@@ -865,9 +854,7 @@ class RenderPipeline:
             # trim's copy, if it made one.
             self._note_op('extend', moved + (self._copied_bytes() if cut else 0))
 
-            self._segments_in_scroll = [pid for pid, _ in grouped]
-            self.stats['composition_count'] += 1
-            self.stats['extensions'] = self.stats.get('extensions', 0) + 1
+            self.extensions += 1
 
             logger.info(
                 "Extended scroll strip with %d plugin block(s), %d rows: "
@@ -1150,8 +1137,6 @@ class RenderPipeline:
         Returns:
             True if frame was rendered, False if no content
         """
-        frame_start = time.time()
-
         try:
             if not self.scroll_helper.has_strip():
                 return False
@@ -1200,7 +1185,6 @@ class RenderPipeline:
             if at_wrap_point or self.scroll_helper.is_scroll_complete():
                 if not self._cycle_complete:
                     self._cycle_complete = True
-                    self.stats['scroll_cycles'] += 1
                     logger.info(
                         "Scroll cycle complete after %.1fs",
                         time.time() - self._cycle_start_time
@@ -1239,11 +1223,8 @@ class RenderPipeline:
             # Update scrolling state
             self.display_manager.set_scrolling_state(True, self._frame_hold)
 
-            # Track statistics
-            self.stats['frames_rendered'] += 1
+            self.frames_rendered += 1
             self._measure_refresh()
-            frame_time = time.time() - frame_start
-            self._track_frame_time(frame_time)
 
             return True
 
@@ -1251,15 +1232,6 @@ class RenderPipeline:
             # Expected errors from scroll helper or display manager operations
             logger.exception("Error rendering frame")
             return False
-
-    def _track_frame_time(self, frame_time: float) -> None:
-        """Track frame timing for statistics."""
-        self._frame_times.append(frame_time)  # deque with maxlen auto-removes old entries
-
-        if self._frame_times:
-            self.stats['avg_frame_time_ms'] = (
-                sum(self._frame_times) / len(self._frame_times) * 1000
-            )
 
     def is_cycle_complete(self) -> bool:
         """Check if current scroll cycle is complete."""
@@ -1347,7 +1319,6 @@ class RenderPipeline:
                 else:
                     self.scroll_helper.scroll_position = 0.0
 
-                self.stats['hot_swaps'] += 1
                 logger.debug(
                     "Hot-swap completed: scroll repositioned %.0f→%.0f (%.1f%% of new %dpx image)",
                     old_pos, self.scroll_helper.scroll_position,
@@ -1396,8 +1367,6 @@ class RenderPipeline:
             # transition rather than near-end content wrapping around.
             self.scroll_helper.scroll_position = float(self.config.lead_in_width)
 
-            # Signal follower that a new cycle started (triggers its own rebuild)
-            self.sync_manager.send_new_cycle()
             # Push the actual scroll image over TCP so follower has identical pixels.
             # Done in a background thread to not block the render loop (~15ms transfer).
             image = self.scroll_helper.cached_image
@@ -1409,16 +1378,6 @@ class RenderPipeline:
                 ).start()
 
         return result
-
-    def get_current_scroll_info(self) -> Dict[str, Any]:
-        """Get current scroll state information."""
-        scroll_info = self.scroll_helper.get_scroll_info()
-        return {
-            **scroll_info,
-            'cycle_complete': self._cycle_complete,
-            'plugins_in_scroll': self._segments_in_scroll,
-            'stats': self.stats.copy(),
-        }
 
     def get_scroll_position(self) -> int:
         """
@@ -1465,8 +1424,6 @@ class RenderPipeline:
         self.scroll_helper.clear_cache()
 
         self._cycle_complete = False
-        self._segments_in_scroll = []
-        self._frame_times = deque(maxlen=100)
 
         # Content lined up for the old run belongs to it. Left in place, the
         # first extension after Vegas is switched back on appended that stale

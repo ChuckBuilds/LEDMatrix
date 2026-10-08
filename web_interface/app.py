@@ -168,8 +168,6 @@ def _catalog_runtime_view():
 
 plugin_catalog = PluginCatalog(
     plugins_dir=plugins_dir,
-    config_manager=config_manager,
-    schema_manager=schema_manager,
     runtime_source=_catalog_runtime_view,
 )
 
@@ -181,12 +179,10 @@ operation_queue = PluginOperationQueue(max_history=500)
 # snapshot the display publishes (src/plugin_system/plugin_runtime.py). An
 # existing file is left where it is, unread; see docs/ARCHITECTURE.md.
 
-# Initialize operation history
-# Use lazy_load=True to defer file loading until first use (improves startup time)
+# Initialize operation history (its file is read on first use, not at startup)
 operation_history = OperationHistory(
     history_file=str(project_root / "data" / "operation_history.json"),
-    max_records=1000,
-    lazy_load=True
+    max_records=1000
 )
 
 # Plugin discovery is deferred until first API request that needs it

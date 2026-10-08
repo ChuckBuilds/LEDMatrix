@@ -399,9 +399,6 @@ class HelloArgs:
     versions: Tuple[int, ...] = (PROTOCOL_VERSION,)
     client: str = ''
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'versions': list(self.versions), 'client': self.client}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'HelloArgs':
         versions = args.get('versions', [PROTOCOL_VERSION])
@@ -426,10 +423,6 @@ class OnDemandStartArgs:
     duration: Optional[float] = None
     pinned: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'plugin_id': self.plugin_id, 'mode': self.mode,
-                'duration': self.duration, 'pinned': self.pinned}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'OnDemandStartArgs':
         plugin_id = _optional_name(args, 'plugin_id')
@@ -449,9 +442,6 @@ class OnDemandStartArgs:
 class OnDemandStopArgs:
     """``on_demand.stop``: end the on-demand session and resume rotation."""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'OnDemandStopArgs':
         return cls()
@@ -460,9 +450,6 @@ class OnDemandStopArgs:
 @dataclass(frozen=True)
 class NoArgs:
     """``ping`` and ``on_demand.status`` take no arguments (extra ones are ignored)."""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'NoArgs':
@@ -479,9 +466,6 @@ class BrightnessSetArgs:
     The dim schedule still applies on top, as it does to the saved value.
     """
     brightness: int
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'brightness': self.brightness}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'BrightnessSetArgs':
@@ -502,9 +486,6 @@ class PluginReloadArgs:
     makes the display import anything it was not already running.
     """
     plugin_id: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'plugin_id': self.plugin_id}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'PluginReloadArgs':
@@ -546,9 +527,6 @@ class StateGetArgs:
     since: Optional[int] = None
     epoch: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'since': self.since, 'epoch': self.epoch}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'StateGetArgs':
         return cls(since=_optional_version(args, 'since'), epoch=_optional_epoch(args))
@@ -565,9 +543,6 @@ class StateSubscribeArgs:
     and a ``tick`` at least every :data:`SUBSCRIBE_KEEPALIVE_SECONDS`.
     """
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'StateSubscribeArgs':
         return cls()
@@ -581,9 +556,6 @@ class ErrorsClearArgs:
     snapshot then reports as ``applied_clear_id``.
     """
     cutoff: float
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'cutoff': self.cutoff}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'ErrorsClearArgs':

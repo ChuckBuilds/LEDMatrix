@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
 
 import requests
 from urllib3.util.retry import Retry
+from src.deprecation import deprecated
 
 if TYPE_CHECKING:
     # What Session() puts in .headers; the stubs only promise a MutableMapping.
@@ -171,6 +172,7 @@ class APIHelper:
             self.logger.error(f"Request failed for {url}: {e}")
             return None
     
+    @deprecated("3.10.0", "use src.common.espn_dates.fetch_espn_scoreboard()")
     def fetch_espn_scoreboard(self, sport: str, league: str, 
                              date: Optional[str] = None,
                              cache_key: Optional[str] = None,
@@ -227,6 +229,7 @@ class APIHelper:
             store_espn_scoreboard_cache(self.cache_manager, shared_key, data)
         return data
     
+    @deprecated("3.10.0", "call get() with the ESPN URL")
     def fetch_espn_standings(self, sport: str, league: str,
                             cache_key: Optional[str] = None,
                             cache_ttl: int = 3600) -> Optional[Dict]:
@@ -249,6 +252,7 @@ class APIHelper:
         
         return self.get(url, cache_key=cache_key, cache_ttl=cache_ttl)
     
+    @deprecated("3.10.0", "call get() with the ESPN URL")
     def fetch_espn_rankings(self, sport: str, league: str,
                            cache_key: Optional[str] = None,
                            cache_ttl: int = 3600) -> Optional[Dict]:
@@ -311,6 +315,7 @@ class APIHelper:
             self.logger.error(f"POST request failed for {url}: {e}")
             return None
     
+    @deprecated("3.10.0", "use the plugin's cache_manager")
     def set_cache(self, key: str, data: Any, ttl: int = 3600) -> None:
         """
         Set cache data.
@@ -323,6 +328,7 @@ class APIHelper:
         """
         self._set_cache(key, data, ttl)
     
+    @deprecated("3.10.0", "use the plugin's cache_manager")
     def get_cache(self, key: str) -> Optional[Any]:
         """
         Get cached data.
@@ -392,6 +398,7 @@ class APIHelper:
         self._last_request_monotonic = time.monotonic()
         self._last_request_time = time.time()
     
+    @deprecated("3.10.0")
     def set_rate_limit(self, min_interval: float) -> None:
         """
         Set minimum interval between requests.
@@ -402,6 +409,7 @@ class APIHelper:
         self._min_request_interval = min_interval
         self.logger.debug(f"Rate limit set to {min_interval} seconds")
     
+    @deprecated("3.10.0")
     def get_request_stats(self) -> Dict[str, Any]:
         """
         Get request statistics.

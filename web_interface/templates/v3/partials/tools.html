@@ -403,14 +403,14 @@
             <div class="mt-3 rounded-md p-3 bg-${color}-50 border border-${color}-200">
                 <div class="flex items-start gap-2">
                     <i class="fas ${icon} text-${color}-600 mt-0.5"></i>
-                    <span class="text-sm text-${color}-800">${escHtml(message)}</span>
+                    <span class="text-sm text-${color}-800">${window.LEDEscape.html(message)}</span>
                 </div>`;
 
         if (output) {
             html += `
                 <details class="mt-2">
                     <summary class="text-xs text-${color}-700 cursor-pointer hover:underline">Show output</summary>
-                    <pre class="mt-2 text-xs bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto whitespace-pre-wrap">${escHtml(output)}</pre>
+                    <pre class="mt-2 text-xs bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto whitespace-pre-wrap">${window.LEDEscape.html(output)}</pre>
                 </details>`;
         }
 
@@ -421,10 +421,10 @@
                 const di = d.ok ? 'fa-check' : 'fa-times';
                 html += `<li class="text-xs flex items-start gap-1">
                     <i class="fas ${di} text-${dc}-600 mt-0.5 w-3"></i>
-                    <span class="text-gray-700">${escHtml(d.plugin)}</span>`;
+                    <span class="text-gray-700">${window.LEDEscape.html(d.plugin)}</span>`;
                 if (d.output) {
                     html += ` <details class="inline"><summary class="cursor-pointer text-gray-400 hover:underline ml-1">output</summary>
-                        <pre class="mt-1 text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-x-auto whitespace-pre-wrap">${escHtml(d.output)}</pre></details>`;
+                        <pre class="mt-1 text-xs bg-gray-900 text-gray-100 rounded p-2 overflow-x-auto whitespace-pre-wrap">${window.LEDEscape.html(d.output)}</pre></details>`;
                 }
                 html += `</li>`;
             }
@@ -434,8 +434,6 @@
         html += `</div>`;
         el.innerHTML = html;
     }
-
-    function escHtml(s) { return window.LEDEscape.html(s); }
 
     // ── main action dispatcher ────────────────────────────────────────────────
 
@@ -507,7 +505,7 @@
             })
             .then(d => {
                 if (d.status === 'error') {
-                    panel.innerHTML = `<span class="text-sm text-red-600">${escHtml(d.message || 'Git info unavailable.')}</span>`;
+                    panel.innerHTML = `<span class="text-sm text-red-600">${window.LEDEscape.html(d.message || 'Git info unavailable.')}</span>`;
                     return;
                 }
 
@@ -519,45 +517,45 @@
                 let html = `<div class="space-y-2">
                     <div class="flex items-center gap-2">
                         <i class="fas fa-code-branch text-gray-400"></i>
-                        <span class="font-mono text-gray-800">${escHtml(d.detached ? (d.version || 'detached') : (d.branch || 'unknown'))}</span>
+                        <span class="font-mono text-gray-800">${window.LEDEscape.html(d.detached ? (d.version || 'detached') : (d.branch || 'unknown'))}</span>
                         ${dirtyBadge}
                     </div>`;
 
                 if (d.dirty && d.status) {
-                    html += `<pre class="text-xs bg-yellow-50 border border-yellow-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-yellow-900">${escHtml(d.status)}</pre>`;
+                    html += `<pre class="text-xs bg-yellow-50 border border-yellow-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-yellow-900">${window.LEDEscape.html(d.status)}</pre>`;
                 }
 
                 if (d.recent_commits) {
                     html += `<div class="mt-2">
                         <p class="text-xs text-gray-500 mb-1">Recent commits</p>
-                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-gray-700">${escHtml(d.recent_commits)}</pre>
+                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-gray-700">${window.LEDEscape.html(d.recent_commits)}</pre>
                     </div>`;
                 }
 
                 if (d.detached && d.current_release) {
                     // The stable update channel sits on release tags, with no branch.
-                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>On release ${escHtml(d.current_release)}, not a branch (stable update channel). Pull Latest follows the update channel set on the General tab.</p>`;
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>On release ${window.LEDEscape.html(d.current_release)}, not a branch (stable update channel). Pull Latest follows the update channel set on the General tab.</p>`;
                 } else if (d.detached) {
                     // Detached but not on a release: say what the channel does
                     // with it, in the General tab's words.
-                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>Not on a branch or a release. ${escHtml(d.channel_message || '')} Pull Latest follows the update channel set on the General tab.</p>`;
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-tag mr-1"></i>Not on a branch or a release. ${window.LEDEscape.html(d.channel_message || '')} Pull Latest follows the update channel set on the General tab.</p>`;
                 } else if (d.upstream) {
-                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-link mr-1"></i>tracking <span class="font-mono">${escHtml(d.upstream)}</span></p>`;
+                    html += `<p class="text-xs text-gray-500 mt-1"><i class="fas fa-link mr-1"></i>tracking <span class="font-mono">${window.LEDEscape.html(d.upstream)}</span></p>`;
                 } else if (d.can_pull) {
-                    html += `<p class="text-xs text-blue-700 mt-1"><i class="fas fa-info-circle mr-1"></i>No upstream set; Pull Latest will use <span class="font-mono">origin/${escHtml(d.branch || '')}</span> and set it.</p>`;
+                    html += `<p class="text-xs text-blue-700 mt-1"><i class="fas fa-info-circle mr-1"></i>No upstream set; Pull Latest will use <span class="font-mono">origin/${window.LEDEscape.html(d.branch || '')}</span> and set it.</p>`;
                 } else {
                     html += `<p class="text-xs text-amber-700 mt-1"><i class="fas fa-triangle-exclamation mr-1"></i>No upstream and no matching branch on origin — Pull Latest cannot run. Switch to a branch that exists on the remote.</p>`;
                 }
 
                 if (d.remote_url) {
-                    html += `<p class="text-xs text-gray-400 mt-1"><i class="fas fa-cloud mr-1"></i>${escHtml(d.remote_url)}</p>`;
+                    html += `<p class="text-xs text-gray-400 mt-1"><i class="fas fa-cloud mr-1"></i>${window.LEDEscape.html(d.remote_url)}</p>`;
                 }
 
                 html += `</div>`;
                 panel.innerHTML = html;
             })
             .catch(err => {
-                panel.innerHTML = `<span class="text-sm text-red-600">Could not load git info: ${escHtml(String(err))}</span>`;
+                panel.innerHTML = `<span class="text-sm text-red-600">Could not load git info: ${window.LEDEscape.html(String(err))}</span>`;
             });
     }
 
@@ -574,7 +572,7 @@
             .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d.message || `HTTP ${r.status}`)))
             .then(d => {
                 if (d.status === 'error') {
-                    sel.innerHTML = `<option value="">${escHtml(d.message || 'unavailable')}</option>`;
+                    sel.innerHTML = `<option value="">${window.LEDEscape.html(d.message || 'unavailable')}</option>`;
                     sel.disabled = true;
                     return;
                 }
@@ -592,7 +590,7 @@
                 if (!sel.options.length) add('', 'no branches found');
             })
             .catch(err => {
-                sel.innerHTML = `<option value="">${escHtml(String(err))}</option>`;
+                sel.innerHTML = `<option value="">${window.LEDEscape.html(String(err))}</option>`;
                 sel.disabled = true;
             });
     }
@@ -680,7 +678,7 @@
         let html = `
             <div class="flex items-center gap-2 mb-3">
                 <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-${summaryColor}-100 text-${summaryColor}-800">
-                    <i class="fas fa-bolt mr-1"></i>${escHtml(summaryText)}
+                    <i class="fas fa-bolt mr-1"></i>${window.LEDEscape.html(summaryText)}
                 </span>
             </div>
             <ul class="space-y-1">`;
@@ -688,7 +686,7 @@
             const set = !!power[key];
             html += `<li class="flex items-center gap-2">
                 <i class="fas ${set ? 'fa-exclamation-circle text-red-500' : 'fa-check text-green-500'} w-4"></i>
-                <span class="text-gray-700">${escHtml(label)}</span>
+                <span class="text-gray-700">${window.LEDEscape.html(label)}</span>
             </li>`;
         }
         html += `</ul>`;
@@ -719,9 +717,9 @@
                 <div class="flex items-center">
                     <div class="flex-shrink-0"><i class="fas ${icon} ${iconColor} text-xl"></i></div>
                     <div class="ml-3 w-0 flex-1">
-                        <dt class="text-sm font-medium text-gray-500 truncate">${escHtml(label)}</dt>
-                        <dd class="text-lg font-medium text-gray-900">${escHtml(value)}</dd>
-                        ${sub ? `<dd class="text-xs text-gray-400 mt-0.5">${escHtml(sub)}</dd>` : ''}
+                        <dt class="text-sm font-medium text-gray-500 truncate">${window.LEDEscape.html(label)}</dt>
+                        <dd class="text-lg font-medium text-gray-900">${window.LEDEscape.html(value)}</dd>
+                        ${sub ? `<dd class="text-xs text-gray-400 mt-0.5">${window.LEDEscape.html(sub)}</dd>` : ''}
                     </div>
                 </div>
             </div>`;
@@ -781,7 +779,7 @@
                         'Display Service', d.service_active ? 'Active' : 'Inactive', null);
             })
             .catch(err => {
-                panel.innerHTML = `<div class="col-span-full text-sm text-red-600">Diagnostics unavailable: ${escHtml(String(err))}</div>`;
+                panel.innerHTML = `<div class="col-span-full text-sm text-red-600">Diagnostics unavailable: ${window.LEDEscape.html(String(err))}</div>`;
             });
     };
 
@@ -925,7 +923,6 @@
     };
 
     // ── plugin health panel ──────────────────────────────────────────────────
-    function phEscape(s) { return window.LEDEscape.html(s); }
     function phFmtSecs(v) {
         if (typeof v !== 'number' || !isFinite(v)) return '—';
         return v.toFixed(3) + 's';
@@ -968,10 +965,10 @@
                 const lastErr = h.degraded_reason || h.last_error || '';
                 const calls = (typeof m.call_count === 'number') ? m.call_count : '—';
                 const errCell = lastErr
-                    ? '<span title="' + phEscape(lastErr) + '">' + phEscape(lastErr) + '</span>'
+                    ? '<span title="' + window.LEDEscape.html(lastErr) + '">' + window.LEDEscape.html(lastErr) + '</span>'
                     : '<span class="text-gray-400">—</span>';
                 rows += '<tr>' +
-                    '<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">' + phEscape(id) + '</td>' +
+                    '<td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">' + window.LEDEscape.html(id) + '</td>' +
                     '<td class="px-4 py-3 whitespace-nowrap"><span class="status-indicator ' + st.cls + '">' + st.label + '</span></td>' +
                     '<td class="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-600">' + phFmtSecs(m.avg_execution_time) + '</td>' +
                     '<td class="px-4 py-3 whitespace-nowrap text-right text-sm text-gray-600">' + phFmtSecs(m.max_execution_time) + '</td>' +
@@ -982,7 +979,7 @@
             tbody.innerHTML = rows;
         } catch (e) {
             const emsg = (e && e.message) ? e.message : String(e);
-            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-red-500">Failed to load plugin health: ' + phEscape(emsg) + '</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-red-500">Failed to load plugin health: ' + window.LEDEscape.html(emsg) + '</td></tr>';
         }
     }
     window.refreshPluginHealth = refreshPluginHealth;
@@ -1042,8 +1039,8 @@
         const c = data.config || {};
         const field = (id, label, value, type, extra) => `
             <label class="block">
-                <span class="text-xs font-medium text-gray-700">${escHtml(label)}</span>
-                <input id="${id}" type="${type || 'text'}" value="${value === null || value === undefined ? '' : escHtml(String(value))}"
+                <span class="text-xs font-medium text-gray-700">${window.LEDEscape.html(label)}</span>
+                <input id="${id}" type="${type || 'text'}" value="${value === null || value === undefined ? '' : window.LEDEscape.html(String(value))}"
                        ${extra || ''}
                        class="mt-1 w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md">
             </label>`;
@@ -1102,9 +1099,9 @@
 
             <div class="flex items-center justify-between gap-4 pt-2">
                 <p class="text-xs text-gray-500">
-                    Saved to <code class="bg-gray-100 px-1 rounded">${escHtml(data.config_path)}</code>.
+                    Saved to <code class="bg-gray-100 px-1 rounded">${window.LEDEscape.html(data.config_path)}</code>.
                     Any field can also be set as
-                    <code class="bg-gray-100 px-1 rounded">${escHtml(data.env_override_prefix)}&lt;KEY&gt;</code>,
+                    <code class="bg-gray-100 px-1 rounded">${window.LEDEscape.html(data.env_override_prefix)}&lt;KEY&gt;</code>,
                     which wins over the file.
                 </p>
                 <button id="btn-mqtt-save" onclick="saveMqttBridge()"
@@ -1158,7 +1155,7 @@
             })
             .catch(err => {
                 document.getElementById('mqtt-bridge-body').innerHTML =
-                    `<p class="text-sm text-red-600">Could not load bridge settings: ${escHtml(err.message)}</p>`;
+                    `<p class="text-sm text-red-600">Could not load bridge settings: ${window.LEDEscape.html(err.message)}</p>`;
             });
     };
 
@@ -1291,7 +1288,7 @@
                     <div>
                         <p class="text-sm font-medium text-amber-900">
                             <i class="fas fa-circle-notch fa-spin mr-1"></i>
-                            Editing <code class="bg-amber-100 px-1 rounded">${escHtml(status.app_id)}</code> — the display is stopped
+                            Editing <code class="bg-amber-100 px-1 rounded">${window.LEDEscape.html(status.app_id)}</code> — the display is stopped
                         </p>
                         <p class="text-xs text-amber-800 mt-1">
                             <a href="${editorHost(status.port)}" target="_blank" rel="noopener"
@@ -1310,26 +1307,26 @@
         const rows = apps.length ? apps.map(a => `
             <div class="flex items-center justify-between gap-4 py-2 border-t border-gray-100 first:border-t-0">
                 <div class="min-w-0">
-                    <p class="text-sm font-medium text-gray-900 truncate">${escHtml(a.name)}</p>
-                    <p class="text-xs text-gray-500 truncate">${escHtml(a.id)}${a.editable ? '' : ' — no .star file'}</p>
+                    <p class="text-sm font-medium text-gray-900 truncate">${window.LEDEscape.html(a.name)}</p>
+                    <p class="text-xs text-gray-500 truncate">${window.LEDEscape.html(a.id)}${a.editable ? '' : ' — no .star file'}</p>
                 </div>
-                <button id="btn-pixlet-edit-${escHtml(a.id)}"
+                <button id="btn-pixlet-edit-${window.LEDEscape.html(a.id)}"
                         ${(!a.editable || status.running) ? 'disabled' : ''}
-                        data-pixlet-edit data-app-id="${escHtml(a.id)}"
+                        data-pixlet-edit data-app-id="${window.LEDEscape.html(a.id)}"
                         class="shrink-0 inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                     <i class="fas fa-sliders-h mr-2"></i>Edit
                 </button>
             </div>`).join('') : `
             <p class="text-sm text-gray-500">
                 No Starlark apps installed. Install one from the Plugins tab first
-                (looked in <code class="bg-gray-100 px-1 rounded">${escHtml(appsDir)}</code>).
+                (looked in <code class="bg-gray-100 px-1 rounded">${window.LEDEscape.html(appsDir)}</code>).
             </p>`;
 
         body.innerHTML = active + `<div class="mt-2">${rows}</div>
             <div id="result-pixlet" class="hidden"></div>`;
 
-        // Bound here rather than via an inline onclick: escHtml does not encode
-        // single quotes, and the id used to be interpolated into a single-quoted
+        // Bound here rather than via an inline onclick: the escaper used to leave
+        // single quotes alone, and the id used to be interpolated into a single-quoted
         // JS string, so an app directory containing an apostrophe could break
         // out of it and run script. Through dataset the value is only ever
         // parsed as an HTML attribute, never as JavaScript.
@@ -1351,7 +1348,7 @@
         })
         .catch(err => {
             const body = document.getElementById('pixlet-editor-body');
-            if (body) body.innerHTML = `<p class="text-sm text-red-600">Could not load: ${escHtml(err.message)}</p>`;
+            if (body) body.innerHTML = `<p class="text-sm text-red-600">Could not load: ${window.LEDEscape.html(err.message)}</p>`;
         });
     };
 

@@ -25,8 +25,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('ColorPicker', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -141,7 +139,7 @@
             html += '</div>';
 
             // Hidden input for form submission
-            html += `<input type="hidden" id="${fieldId}_input" name="${escapeHtml(options.name || fieldId)}" value="${currentValue}">`;
+            html += `<input type="hidden" id="${fieldId}_input" name="${window.LEDEscape.html(options.name || fieldId)}" value="${currentValue}">`;
 
             // Preset colors - only render valid hex colors
             if (Array.isArray(presets) && presets.length > 0) {
@@ -155,12 +153,12 @@
                         html += `
                             <button type="button"
                                     ${disabled ? 'disabled' : ''}
-                                    data-color="${escapeHtml(normalized)}"
+                                    data-color="${window.LEDEscape.html(normalized)}"
                                     onclick="window.LEDMatrixWidgets.getHandlers('color-picker').onPresetClick('${fieldId}', this.dataset.color)"
                                     class="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
-                                    style="background-color: ${escapeHtml(normalized)};"
-                                    title="${escapeHtml(normalized)}"
-                                    aria-label="Use color ${escapeHtml(normalized)}">
+                                    style="background-color: ${window.LEDEscape.html(normalized)};"
+                                    title="${window.LEDEscape.html(normalized)}"
+                                    aria-label="Use color ${window.LEDEscape.html(normalized)}">
                             </button>
                         `;
                     }
