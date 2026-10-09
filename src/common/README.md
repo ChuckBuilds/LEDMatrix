@@ -53,7 +53,7 @@ Rules for the package:
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
-| [`sports_rotation`](#sports_rotation) | Which non-favourite games a scoreboard shows, and when the slice moves | Yes (scoreboards) | next release |
+| [`sports_rotation`](#sports_rotation) | Which non-favourite games a scoreboard shows, and when the slice moves | Yes (scoreboards) | 3.8.4 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
 | [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
