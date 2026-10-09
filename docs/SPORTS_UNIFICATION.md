@@ -93,6 +93,7 @@ more. Shared sports code lives in `src/common`:
 | `sports_font_path.py` | 3.8.0 | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
 | `sports_game_over.py` | 3.8.1 | `SportsGameOverMixin` — `_is_game_really_over`, with the `FINAL_PERIOD` seam (family 5) |
 | `sports_favorites.py` | 3.8.2 | `SportsFavoritesMixin`, `SportsUpcomingFavoritesMixin`, `SportsRecentFavoritesMixin` — `_is_favorite_game` and the favourites-only picks, on the `_favorite_key` seam (family 6) |
+| `sports_rotation.py` | 3.8.4 | `SportsRotationMixin` — the other-games rotation (importance order, the window, odds on rotated-in games), on the `_rankings_loaded` seam (family 7) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 

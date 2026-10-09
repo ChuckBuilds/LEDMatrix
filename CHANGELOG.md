@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.4
+
+A panel that cannot reach its refresh cap is reported with a cap it can hold
+(#759); a failed on-demand request ends its own session (#779); exception
+messages stay out of API responses (#778); and sports consolidation family 7,
+`src.common.sports_rotation`, which the scoreboards adopt by flooring on
+3.8.4 (#786).
+
 ### Scroll speed: a panel slower than its refresh cap is reported
 
 - Scroll speeds are solved against `limit_refresh_rate_hz`, so a panel that
@@ -63,8 +71,7 @@ accepts both, but the store flags the old spelling as deprecated
   games get odds when `show_odds` is on. `_rankings_loaded()` is the seam
   `_by_importance` asks (default: the abbreviation table is non-empty;
   football also counts its by-id table). A plugin may inherit the mixin once
-  it floors on the release that ships this module, and deletes its copies
-  then.
+  it floors on 3.8.4, and deletes its copies then. (#786)
 
 ## 3.8.3
 
