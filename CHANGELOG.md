@@ -50,6 +50,22 @@ accepts both, but the store flags the old spelling as deprecated
   but drop systemctl's `stdout`/`stderr`; WiFi, unit-refresh and
   config-save failures say what failed and point at the log.
 
+### New modules
+
+- `src/common/sports_rotation.py` -- sports consolidation family 7, once the
+  plugins made `_by_importance`, `_other_games_window`,
+  `_advance_other_games_if_due` (two bodies each), `_rotate_other_games_on_display`
+  (two) and `_attach_odds_to_rotated_games` (three; ufc had none) one each:
+  `SportsRotationMixin` (`SportsCore`), the other-games rotation. The window
+  advances under `_games_lock`, so `update()` and `display()` advancing it at
+  once no longer skip a window; the display path's due-check reads the pool
+  `_compose_selection` will cut, unfiltered fallback included; rotated-in
+  games get odds when `show_odds` is on. `_rankings_loaded()` is the seam
+  `_by_importance` asks (default: the abbreviation table is non-empty;
+  football also counts its by-id table). A plugin may inherit the mixin once
+  it floors on the release that ships this module, and deletes its copies
+  then.
+
 ## 3.8.3
 
 Fresh installs on Raspberry Pi OS Lite work again: 3.8.2's installer reported

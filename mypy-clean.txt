@@ -41,6 +41,7 @@ src/common/sports_font_path.py
 src/common/sports_game_over.py
 src/common/sports_live_scroll.py
 src/common/sports_plugin_host.py
+src/common/sports_rotation.py
 src/common/sports_scroll.py
 src/common/sports_timezone.py
 src/common/sports_vegas.py
