@@ -6,22 +6,22 @@
     [70.255, "sports_live", 20.0, "duration", 20, true],
     [90.255, "sports_live", 20.0, "display-false", 11, false],
     [110.255, "<vegas>", 30.008, "duration", 3751, null],
-    [140.263, "<vegas>", 10.0, "on-demand-start", 1250, null],
-    [150.263, "clock", 20.0, "duration", 20, true],
-    [170.263, "clock", 5.0, "on-demand-expired", 5, true],
-    [175.263, "<vegas>", 24.959, "vegas-interrupt", 3120, null],
-    [200.222, "<wifi>", 3.0, "duration", 6, null],
-    [203.222, "<vegas>", 30.008, "duration", 3751, null],
-    [233.23, "<vegas>", 26.77, "horizon", 3347, null]
+    [140.263, "<vegas>", 9.744, "on-demand-start", 1218, null],
+    [150.007, "clock", 20.0, "duration", 20, true],
+    [170.007, "clock", 5.0, "on-demand-expired", 5, true],
+    [175.007, "<vegas>", 25.999, "vegas-interrupt", 3250, null],
+    [201.006, "<wifi>", 2.0, "duration", 4, null],
+    [203.006, "<vegas>", 30.008, "duration", 3751, null],
+    [233.014, "<vegas>", 26.986, "horizon", 3374, null]
   ],
   "events": [
     [70.255, "vegas-live"],
     [70.255, "live", "sports_live"],
     [150.0, "request", "start:v1"],
-    [150.263, "on-demand-start", "clock"],
-    [150.263, "vegas-interrupt"],
-    [175.263, "on-demand-expired"],
+    [150.007, "on-demand-start", "clock"],
+    [150.007, "vegas-interrupt"],
+    [175.007, "on-demand-expired"],
     [200.0, "wifi-file", "Connected to HomeNet"],
-    [200.222, "vegas-interrupt"]
+    [201.006, "vegas-interrupt"]
   ]
 }

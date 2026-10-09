@@ -2,19 +2,17 @@
 and end_on_demand().
 
 A plugin running in the display process used to write the
-``display_on_demand_request`` mailbox, which the display reads once a second
-while the control socket is up. These tests pin the way in that replaces it:
+``display_on_demand_request`` mailbox, which the display no longer reads
+(stage 5). These tests pin the way in that replaced it:
 
 * BasePlugin -> PluginManager -> DisplayController.submit_plugin_on_demand,
   which only queues, from any thread;
 * the render thread applies the queue where it applies socket commands,
-  through the mailbox's own handler, without the mailbox's read floor, and
-  woken by the control socket when it is up;
+  through _handle_on_demand_request, at once, and woken by the control
+  socket when it is up;
 * a plugin's stop ends only its own session;
 * no display to ask (the web interface's plugin manager, an old core's
-  plugin manager) answers None, which is a plugin's cue to fall back to the
-  mailbox;
-* the mailbox still works for plugins that write it.
+  plugin manager) answers None.
 """
 
 import logging
@@ -73,19 +71,10 @@ def controller(test_display_controller):
     c_ = test_display_controller
     c_.on_demand_active = False
     c_.on_demand_request_id = None
-    c_._last_on_demand_poll = None
-    mailbox = {'value': None}
-
-    def fake_get(key, *a, **kw):
-        if key == 'display_on_demand_request':
-            return mailbox['value']
-        return None
-
-    c_.cache_manager.get = MagicMock(side_effect=fake_get)
+    c_.cache_manager.get = MagicMock(return_value=None)
     c_.cache_manager.set = MagicMock()
     c_.cache_manager.delete = MagicMock()
     c_._activate_on_demand = MagicMock()
-    c_.mailbox = mailbox
     return c_
 
 
@@ -101,7 +90,7 @@ class TestWiring:
         controller.plugin_manager.set_on_demand_handler.assert_called_once_with(
             controller.submit_plugin_on_demand)
 
-    def test_a_start_reaches_the_mailbox_handler(self, wired):
+    def test_a_start_reaches_the_on_demand_handler(self, wired):
         controller, manager = wired
         rid = _plugin('pomodoro-timer', manager).request_on_demand(
             mode='pomodoro', duration=30, pinned=True)
@@ -139,15 +128,6 @@ class TestWiring:
         controller._poll_on_demand_requests()
         assert seen == ['a', 'b', 'c']
 
-    def test_the_mailbox_still_works_for_older_plugins(self, wired):
-        controller, manager = wired
-        controller.mailbox['value'] = {'request_id': 'mb', 'action': 'start',
-                                       'plugin_id': 'birdnet-go'}
-        _plugin('on-air', manager).request_on_demand()
-        controller._poll_on_demand_requests()
-        ids = [call.args[0]['request_id'] for call in controller._activate_on_demand.call_args_list]
-        assert 'mb' in ids and len(ids) == 2
-
     def test_a_failing_request_is_contained(self, wired):
         controller, manager = wired
         calls = []
@@ -174,10 +154,10 @@ class TestPromptness:
         controller._service_pending_changes()        # well inside the 0.25 s floor
         controller._activate_on_demand.assert_called_once()
 
-    def test_a_plugin_request_skips_the_mailbox_floor(self, wired):
+    def test_a_plugin_request_lands_on_the_next_poll(self, wired):
         controller, manager = wired
         controller._control_server = _WakeServer()
-        controller._poll_on_demand_requests()        # sets the 1 s mailbox floor
+        controller._poll_on_demand_requests()
         _plugin('p', manager).request_on_demand()
         controller._poll_on_demand_requests()
         controller._activate_on_demand.assert_called_once()
@@ -286,14 +266,13 @@ class TestStop:
         controller._poll_on_demand_requests()
         controller._clear_on_demand.assert_not_called()
 
-    def test_a_mailbox_stop_still_ends_any_session(self, wired):
+    def test_a_socket_stop_still_ends_any_session(self, wired):
         controller, _ = wired
         controller.on_demand_active = True
         controller.on_demand_plugin_id = 'clock'
         controller._clear_on_demand = MagicMock()
-        controller.mailbox['value'] = {'request_id': 's', 'action': 'stop',
-                                       'plugin_id': 'on-air'}
-        controller._poll_on_demand_requests()
+        controller._handle_on_demand_request({'request_id': 's', 'action': 'stop',
+                                              'source': 'socket'})
         controller._clear_on_demand.assert_called_once_with(reason='requested-stop')
 
     def test_start_then_stop_from_one_thread_ends_the_session(self, wired):
@@ -314,7 +293,7 @@ class TestStop:
 
 
 class TestNoDisplay:
-    """None is a plugin's cue to write the mailbox instead."""
+    """None: no display in this process took the request."""
 
     def test_a_manager_with_no_handler_answers_none(self):
         plugin = _plugin('p', _manager())
@@ -353,21 +332,30 @@ class TestNoDisplay:
         assert bare._plugin_on_demand_pending() is False
         bare._drain_plugin_on_demand()                 # nothing to do, no error
 
-    def test_the_feature_detection_pattern(self):
-        """The hasattr pattern from docs/PLUGIN_API_REFERENCE.md."""
-        writes = []
-
-        class OldCorePlugin:     # an older core's BasePlugin has no such method
-            pass
-
-        for plugin, expect_mailbox in ((OldCorePlugin(), True),
-                                       (_plugin('p', _manager()), True),
-                                       (_plugin('p', _manager(lambda r: True)), False)):
-            writes.clear()
-            if not (hasattr(plugin, 'request_on_demand')
-                    and plugin.request_on_demand(mode='m')):
-                writes.append('mailbox')
-            assert (writes == ['mailbox']) is expect_mailbox
+    def test_a_mailbox_write_after_none_is_dropped_with_a_warning(self, tmp_path,
+                                                                    monkeypatch, caplog):
+        """What a plugin written for older cores does on None now: its
+        fallback write to the retired key stores nothing, and the log names
+        it once."""
+        from src import cache_manager as cache_module
+        from src.cache_manager import CacheManager
+        monkeypatch.setattr(CacheManager, '_get_writable_cache_dir',
+                            lambda self: str(tmp_path))
+        monkeypatch.setattr(cache_module, '_retired_writers_warned', set())
+        cache = CacheManager()
+        try:
+            plugin = _plugin('birdnet-go', _manager())
+            plugin.cache_manager = cache
+            caplog.set_level(logging.WARNING)
+            for _ in range(2):
+                if plugin.request_on_demand(mode='m') is None:
+                    plugin.cache_manager.set('display_on_demand_request', {
+                        'request_id': 'r', 'action': 'start', 'plugin_id': 'birdnet-go'})
+            assert cache.get('display_on_demand_request', max_age=None, memory_ttl=0) is None
+            lines = [r.getMessage() for r in caplog.records if 'retired' in r.getMessage()]
+            assert len(lines) == 1 and "plugin 'birdnet-go'" in lines[0]
+        finally:
+            cache.stop_cleanup_thread()
 
 
 class TestArguments:
@@ -401,7 +389,7 @@ class TestArguments:
 
 class TestMockManagers:
     def test_a_magicmock_manager_reads_as_not_taken(self):
-        """A plugin's test with a MagicMock manager keeps its mailbox path."""
+        """A plugin's test with a MagicMock manager reads as "not taken"."""
         plugin = _plugin('p', MagicMock())
         assert plugin.request_on_demand(mode='m') is None
         assert plugin.end_on_demand() is None

@@ -1,18 +1,18 @@
 # Control socket (web → display)
 
 The display process serves a Unix socket that the web interface uses to send
-it commands and get an answer back. It replaces the cache-file "mailboxes" on
+it commands and get an answer back. It replaced the cache-file "mailboxes" on
 the SD card one command at a time. Stage 1 carries on-demand start, stop and
 status. Stage 2 makes those commands land within a frame on every kind of
 screen, and adds `brightness.set` and `plugin.reload`. Stage 3 adds a state
 stream (`state.get`, `state.subscribe`), so the web interface reads what the
 display is doing from the socket instead of from cache files the display
-wrote to the SD card. Stage 4 makes the socket the only way a command goes
-while it works: the web interface writes a mailbox only when the socket
-cannot carry the request, `errors.clear` replaces the last command that
-always went through a mailbox, and the display looks at the mailboxes once
-a second, with a `stat()`. The file mailboxes and the cache keys stay as a
-fallback for one release.
+display wrote to the SD card. Stage 4 makes the socket the only way a command goes
+while it works, and `errors.clear` replaces the last command that always
+went through a mailbox. Stage 5 removes the mailboxes: the web interface no
+longer writes them and the display no longer reads them, so the socket is
+the only way a command reaches the display (see "Without the socket"). The
+cache keys the display writes for readers stay as their fallback.
 
 | | |
 |---|---|
@@ -145,14 +145,17 @@ than the display's wait, so `pending` arrives before the client gives up.
 `v` the display does not speak gets `unsupported_version`. `hello` is checked
 by its `versions` list instead, and its result names the highest version both
 sides share, so a client can find out what a display supports before it
-relies on anything newer. The client sends `v: 1` and falls back to the
-mailbox when the display refuses it. It does not send `hello` first, which
+relies on anything newer. The client sends `v: 1`, and a route answers an
+error when the display refuses it. It does not send `hello` first, which
 saves a round trip.
 
 New commands are added within a version, so stage 2 is still version 1. A
 display that does not know a command answers `unknown_command`, which the
 web interface treats like any other socket failure and falls back from, and
-`hello` lists the commands a display knows. The version changes only when the
+`hello` lists the commands a display knows.
+(Since stage 5, a command the display does not know is an error the route
+reports, telling the user to restart the display; there is no mailbox left
+to fall back to.) The version changes only when the
 envelope or the meaning of an existing command changes.
 
 **Events.** `state.subscribe` is the one command with more than one message
@@ -217,7 +220,8 @@ socket.
  }}
 ```
 
-- `display` and `on_demand` are the dicts the cache keys hold, `plugins` is
+- `display` and `on_demand` are the dicts the cache keys hold (`on_demand`
+  includes `request_id`, the request it answers), `plugins` is
   the runtime snapshot (`build_runtime_snapshot`), and `brightness` is the
   configured level, what the panel shows now, and whether the dim schedule
   has it dimmed. A section not published yet is `null`.
@@ -368,13 +372,12 @@ request, validates it against the contract, and then does one of two things:
 - For a query, it answers from a status snapshot the display provides
   (`DisplayController._control_status`). The snapshot only reads attributes.
 
-The render thread drains the queue in `_poll_on_demand_requests()`, the same
-place it reads the mailbox:
+The render thread drains the queue in `_poll_on_demand_requests()`:
 
-- An on-demand command goes to `_handle_on_demand_request()`, which is the
-  mailbox's own handler. The two paths share all of their code: activation,
-  the processed-id guard, error publishing, and resuming the rotation
-  afterwards.
+- An on-demand command goes to `_handle_on_demand_request()`, which also
+  handles plugins' own requests. The two paths share all of their code:
+  activation, the request-id guard, error publishing, and resuming the
+  rotation afterwards.
 - `brightness.set` is applied there and then (`_apply_control_brightness`),
   and the current frame is pushed again so the panel shows it.
 - `plugin.reload` starts at the top of the next loop pass, the place where
@@ -407,14 +410,13 @@ place it reads the mailbox:
   unloads it mid-load; a disable saved meanwhile is applied once the
   reload is done. A second reload of the same plugin runs after the first.
 
-The floor on the mailbox read (0.25 s, 1 s since stage 4) does not apply to the queue, because
-draining it costs no disk read. A queued command also lets
-`_service_pending_changes()` skip its own floor.
+Draining the queue costs no disk read, so it has no floor. A queued command
+also lets `_service_pending_changes()` skip its own 0.25 s floor.
 
 ### Waking the render thread (stage 2)
 
 Stage 1 made the socket answer, but not land sooner: a queued command waited
-for the same polls the mailbox does. Measured on ledpi (Pi 4, 24 fps Vegas),
+for the same polls the mailbox did. Measured on ledpi (Pi 4, 24 fps Vegas),
 a start took 1.02 s on a static screen and about 0.4 s in Vegas either way.
 Now the queue wakes the render thread:
 
@@ -434,8 +436,7 @@ Now the queue wakes the render thread:
 - **Scrolling screens** already service pending changes every frame.
 
 So a command lands within a millisecond or so on a static screen and in a
-dwell, and within one frame in Vegas and on a scrolling screen. The mailbox
-is slower on purpose (see "The mailboxes now"). Commands still run only on the render thread: the
+dwell, and within one frame in Vegas and on a scrolling screen. Commands still run only on the render thread: the
 connection threads only queue them and set the event. The one exception is
 the slow half of `plugin.reload` (tearing down and loading the plugin),
 which runs on its own thread. Every change to the display's state still
@@ -453,74 +454,101 @@ bookkeeping. A client's send to the render thread waking took 0.72 ms median
 Without a socket (Windows, `LEDMATRIX_CONTROL_SOCKET=off`) the waits are the
 plain sleeps they were.
 
-**Exactly once.** Since stage 4 the web interface writes the mailbox only
-when the display never had the request (see "When the web interface falls
-back"), so a request goes one way or the other, never both. A command and a
-mailbox write for the same request still share one `request_id`, and the
-`on_demand_request_id` and processed-id checks still drop a second copy: an
-older web interface (before stage 4) wrote the mailbox after a reply timed
-out, too. The display takes such a copy out of the mailbox when it drops it.
+**Exactly once.** A request goes over the socket once. The web route sends
+it again only while no display is listening (see "Without the socket"), so
+a display gets it at most once; a start with a request id the display has
+just processed is dropped anyway (`on_demand_request_id`). The persisted
+`display_on_demand_processed_id` guard against a mailbox replayed after a
+restart went with the mailbox.
 
-## When the web interface falls back (stage 4)
+## Without the socket (stage 5)
 
 The client tells a request the display never had from one it had and then
 failed. `ControlError.sent` is True once the whole request was written to a
 connected display; a refusal the display sends before reading anything
 (`forbidden`, too many connections) carries no request id, and leaves it
-False. `src.ipc.client.should_fall_back()` is the one rule every route uses:
+False. `src.ipc.client.display_not_listening()` picks out the one case a
+later retry can fix: nothing is listening (`no_socket`, `refused`) and the
+request was never sent.
 
-| What happened | Example reasons | Mailbox? | The route answers |
-|---|---|---|---|
-| The display never had it | `no_socket`, `refused`, `disabled`, `unsupported`, a connect or send that timed out, `forbidden` / `busy` at the door, `invalid_request` (refused by the client itself) | yes | success, `transport: "mailbox"`, `socket_error` |
-| A display too old to know it (the upgrade case) | `unknown_command`, `unsupported_version` | yes | as above |
-| The display had it and failed | `busy` (queue full), `invalid_args`, `internal`, a timeout or hang-up after the send, `bad_response` | no | `503` (`400` for `invalid_args`), `socket_error` |
+| What happened | Example reasons | On-demand start | On-demand stop | `errors.clear` |
+|---|---|---|---|---|
+| No display listening | `no_socket`, `refused` | service stopped: `400` without `start_service`; with it, start the service and answer `202` (`status: "starting"`) at once; the dispatcher sends the request until the display takes it (up to 45 s), else `start-timeout`. Service running (still starting): the same `202`, sent for up to 10 s | `503` ("not running" / "may still be starting"); with `stop_service` the service is stopped and the route succeeds | `503` ("not running"; its errors are the last run's, and the next run starts with none) |
+| A display too old to know the command | `unknown_command`, `unsupported_version` | `503` | `503` | `503`, "restart it" |
+| No socket in this process | `disabled`, `unsupported` (Windows, `LEDMATRIX_CONTROL_SOCKET=off`) | `503` | `503` | `503` |
+| The display had it and failed, turned it away, or never answered | `busy`, `invalid_args`, `internal`, a timeout, a hang-up, `bad_response`, `forbidden` | `503` (`400` for `invalid_args`) | `503` (with `stop_service`: stopped anyway) | `503` |
 
-A display that had the request may have applied it (a reply that timed out),
-or would refuse the mailbox copy as well (bad arguments), or is stuck and
-would not read the mailbox either (a full queue). Writing the copy anyway
-only turned that into a "success". An on-demand stop with `stop_service`
-still stops the service, which ends on-demand whatever happened.
+Every error answer carries `socket_error` (a reason code, or `other`).
+Nothing is written to the cache in any of these cases.
+
+**Waiting for a display that is starting.** The socket comes up when the
+display's run loop starts, after every plugin has loaded, which can take
+longer than a client waits (the MQTT bridge gives up after 15 s). So the
+start route never waits: it answers `202` with `status: "starting"`, and
+hands the request to the web process's one dispatcher
+([`web_interface/on_demand_dispatch.py`](../web_interface/on_demand_dispatch.py)).
+Its worker thread sends the request every 0.5 s while nothing is listening,
+until the display acknowledges it or the wait runs out (45 s after a cold
+start, `START_WAIT_SECONDS`; 10 s for a service that was already running,
+`ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS`). Any other failure ends it at once.
+One start is pending at a time: a newer start replaces it, and a stop
+cancels it (the stop then succeeds even with no display listening, and
+reports `cancelled_request_id`).
+
+The outcome is reported where clients already look:
+`GET /display/on-demand/status` answers the pending start's state
+(`source: "web"`, `status: "starting"`, or `status: "error"` with `error:
+"start-timeout"` or the socket's reason) until the display publishes
+something newer, and `GET /display/current-status` adds it as
+`on_demand_pending`.
+
+A delivered start keeps reading as `status: "starting"`, now with
+`delivered: true`, until the display publishes the state that answers it.
+The display acknowledges a start as soon as its socket opens, but its run
+loop acts on it only after the first screen is built (about 5 s on ledpi,
+while Vegas renders its first strip), and meanwhile it publishes its own
+idle state. The display's on-demand state names the request it answers
+(`request_id`), so "answers it" means the id matches. A display older than
+that field answers with any state published after the delivery. Either
+way the delivered start is reported for at most 30 s
+(`DELIVERED_SHOWN_SECONDS`).
 
 Brightness and plugin reload never had a mailbox: without the socket, the
 config watcher applies the saved brightness and a reload becomes the
 restart banner, as before.
 
-### The mailboxes now
+### The mailboxes are gone
 
-| Mailbox | Written by | Read by the display | While the socket is up |
-|---|---|---|---|
-| `display_on_demand_request` | the web interface, only on fallback; plugins that predate `BasePlugin.request_on_demand()`, or run on a core without it | the render thread, `_poll_on_demand_requests()` | looked at every 1 s (`MAILBOX_POLL_INTERVAL_WITH_SOCKET`), 0.25 s without a socket |
-| `plugin_error_clear_request` | the web interface, only on fallback | the error publisher's thread, every 5 s tick | unchanged rate |
+| Former mailbox | Last written by | Now |
+|---|---|---|
+| `display_on_demand_request` | the web interface on fallback (stage 4); plugins that predate `BasePlugin.request_on_demand()` | not read. A write is dropped by `CacheManager.save_cache` (`RETIRED_MAILBOX_KEYS`) and logged once per writer as a warning that names the plugin when it can be told (the plugin instance on the call stack, else the `plugin_id` in the request) |
+| `plugin_error_clear_request` | the web interface on fallback (stage 4) | not read; a write is dropped and logged the same way |
 
-A look is one `stat()` of the mailbox file (`CacheManager.file_signature`):
-`(inode, mtime, size)`, and every write renames a new file into place, so a
-new write always looks different. `MailboxWatch` reads the file only when
-that changed since the last look, so a mailbox that holds nothing new, or
-nothing at all, costs no open and no parse. A socket command never reads or
-deletes the on-demand mailbox. A start already processed is taken out of
-the mailbox instead of being re-read until it expires.
+A file left on the SD card by an older version is never read again, so it
+is harmless. `MailboxWatch` and
+`CacheManager.file_signature`, which made a look at a mailbox one `stat()`,
+went with them.
 
-A request that comes through the on-demand mailbox while the socket is up
-is logged once per writer (`came through the file mailbox although the
-control socket is up`), which names the plugins that still write it.
+The four plugins that wrote `display_on_demand_request` (birdnet-go,
+mqtt-notifications, on-air, pomodoro-timer) use `request_on_demand()` on a
+core that has it, and fall back to the mailbox only when that method is
+missing or answers `None` (no display in the process, or a full queue).
+On a stage-5 core such a fallback write is dropped with the warning above.
 
 ### Plugins in the display process
 
 A plugin asks for the screen with `BasePlugin.request_on_demand()` and gives
 it back with `end_on_demand()` (see "On-demand display" in
 [PLUGIN_API_REFERENCE.md](PLUGIN_API_REFERENCE.md)). Neither goes through
-the socket or a file: `PluginManager` hands the mailbox-shaped request,
+the socket or a file: `PluginManager` hands the on-demand request,
 marked `source: 'plugin'`, to `DisplayController.submit_plugin_on_demand`,
 which queues it in memory (at most `PLUGIN_ON_DEMAND_QUEUE_SIZE`, 32) from
 whatever thread the plugin called on, and wakes the render thread through
 the socket's queue flag (`ControlServer.wake()`). The render thread applies
 it in `_drain_control_commands`, after the socket's commands, through the
 same `_handle_on_demand_request`, so it lands within a frame like a socket
-command. Without a socket it lands on the next pending-changes pass (typically
-within 0.25 s). A plugin's stop ends only a session that plugin owns. The four
-plugins that wrote the mailbox (birdnet-go, mqtt-notifications, on-air,
-pomodoro-timer) use it where the core has it and write the mailbox
-otherwise.
+command. Without a socket it lands on the next pending-changes pass. A
+plugin's stop ends only a session that plugin owns.
 
 ## Robustness
 
@@ -538,8 +566,7 @@ block the render loop or crash it:
   found. A client that disconnects mid-message is dropped silently. No
   exception from a handler leaves the connection thread.
 - **Full queue.** When the queue is full, the client gets `busy`, and the web
-  interface answers `503` rather than write the mailbox, which the stuck
-  render thread would not read either. A full queue means the render thread
+  interface answers `503`. A full queue means the render thread
   is stuck, and the systemd watchdog deals with that.
 - **Awaited commands.** The wait for an awaited command's outcome happens on
   its connection thread and is bounded (`AWAIT_SECONDS`), so a stuck render
@@ -554,8 +581,8 @@ block the render loop or crash it:
   process created.
 - **Never fatal.** If the server cannot start (Windows, no `AF_UNIX`, a bind
   failure, `LEDMATRIX_CONTROL_SOCKET=off`), it logs that and the display runs
-  as before. The web interface then uses the mailbox, and reads the cache
-  keys and the heartbeat file.
+  as before. The web interface then cannot send it commands (the routes
+  answer `503`), and reads the cache keys and the heartbeat file.
 - **Subscribers (stage 3).** A `state.subscribe` connection gives its request
   slot back and takes one of 4 subscriber slots (`MAX_SUBSCRIBERS`). A fifth
   gets `busy`. So a few browsers' web processes holding streams can never
@@ -613,11 +640,9 @@ device never touches the live display.
 ## Stage plan
 
 1. **On-demand, with acks (done, #706).** Contract, server, client.
-   `on_demand.start`/`stop`/`status`, `hello`, `ping`. The REST routes try the
-   socket first and report `transport: "socket" | "mailbox"` (plus
-   `socket_error` on fallback). The mailbox is unchanged, and the plugins that
-   write it directly (birdnet-go, mqtt-notifications, on-air, pomodoro-timer)
-   keep working.
+   `on_demand.start`/`stop`/`status`, `hello`, `ping`. The REST routes tried
+   the socket first and reported `transport: "socket" | "mailbox"` (plus
+   `socket_error` on fallback).
 2. **Commands that were restarts or polls (done).**
    - The render thread waits on the queue instead of sleeping, and Vegas
      checks it every frame, so a command lands within a frame on every kind
@@ -660,12 +685,12 @@ device never touches the live display.
 4. **The mailboxes become a fallback (done).**
    - The web interface writes a mailbox only when the socket could not carry
      the request (`should_fall_back`); a display that had it and failed is
-     answered as that (see "When the web interface falls back").
+     answered as that.
    - `errors.clear` replaces `plugin_error_clear_request` as the way a clear
      reaches the display.
    - The display looks at the on-demand mailbox once a second while the
      socket is up, reads either mailbox only when its file changed, and logs
-     who still writes the on-demand one (see "The mailboxes now").
+     who still writes the on-demand one.
    - Not changed, deliberately: config saves (the schedule, the dim
      schedule, plugin settings) still reach the display through
      `config.json` and its watcher, which is the setting itself rather than
@@ -674,15 +699,20 @@ device never touches the live display.
      already stats at most once a second. Plugin health and metrics resets
      write the persisted record the display publishes and do not reach the
      running display (their routes say so); they are not mailboxes.
-5. **Remove the mailboxes (next release).** Once every device has run a
-   display with stage 4, the web interface stops writing both mailboxes and
-   the display stops reading them. The four plugins that wrote
-   `display_on_demand_request` now have an in-process way to ask for the
-   screen (`BasePlugin.request_on_demand()` / `end_on_demand()`, see
-   "Plugins in the display process"); they keep the mailbox write only as
-   their fallback on older cores. The display also stops writing `display_current_state`,
-   `display_on_demand_state` and `plugin_runtime_snapshot` once the web
-   interface no longer falls back to them.
+5. **Remove the mailboxes (done, the release after 3.8.1).** The web
+   interface no longer writes `display_on_demand_request` or
+   `plugin_error_clear_request`, and the display no longer reads them (see
+   "Without the socket"). When no display is listening, the start route
+   starts the service if asked, answers `202`, and the web process's
+   dispatcher sends the request once the socket is up; every other failure
+   is an error the route reports. A write to
+   either key is dropped with a one-time warning naming the writer. The
+   display still writes `display_current_state`, `display_on_demand_state`
+   and `plugin_runtime_snapshot`: the web interface reads them whenever the
+   socket cannot answer (a stopped or starting display, a web user not yet
+   in the socket's group, a platform without Unix sockets), and
+   `display_on_demand_config` is the display's own record for resuming a
+   session after a restart. Retiring those keys is left for later.
 
 ## Checking it on a device
 
@@ -694,12 +724,11 @@ curl -s -X POST localhost:5000/api/v3/display/on-demand/start \
 # ... "transport": "socket"
 ```
 
-If the response says `"transport": "mailbox"`, `socket_error` gives the
-reason. `no_socket` means the display is stopped or predates the socket.
-`refused` usually means the web user is not in the socket's group, which
-takes effect when the web service restarts after the user is added. A `503`
-with `"transport": "socket"` means the display had the request and did not
-take it (`busy`, `timeout`, ...): nothing was written to the mailbox.
+On an error, `socket_error` gives the reason. `no_socket` means the display
+is stopped or still starting. `refused` usually means the web user is not in
+the socket's group, which takes effect when the web service restarts after
+the user is added. `busy`, `timeout` and the like mean the display had the
+request and did not take it. Nothing is ever written to a mailbox.
 
 An error clear:
 
@@ -707,7 +736,7 @@ An error clear:
 curl -s -X POST localhost:5000/api/v3/errors/clear \
   -H 'Content-Type: application/json' -d '{"all":true}'
 # ... "applied": true, "transport": "socket"
-sudo journalctl -u ledmatrix | grep -E "Cleared .* plugin error|file mailbox"
+sudo journalctl -u ledmatrix | grep -E "Cleared .* plugin error|retired"
 ```
 
 Brightness and a plugin reload:

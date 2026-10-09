@@ -155,13 +155,6 @@ class FakeCache:
         self._writes += 1
         self._written[key] = self._writes
 
-    def file_signature(self, key):
-        """CacheManager.file_signature: None without a file, else a value
-        that changes with every write."""
-        if key not in self.data:
-            return None
-        return (self._written.get(key, 0), 0, 0)
-
     def delete(self, key):
         self.data.pop(key, None)
 
@@ -729,10 +722,23 @@ class RunLoopHarness:
         self.controller.available_modes.append(mode)
 
     def on_demand_request(self, t: float, request_id: str, action: str = "start", **fields):
+        """An on-demand start or stop from the web interface at ``t``: a
+        command on the control socket (served for the run if no test did),
+        which is the only way the web interface reaches the display."""
+        from src.ipc.contract import Command, parse_args
+        from src.ipc.server import QueuedCommand
+
+        server = self.controller._control_server
+        if not isinstance(server, FakeControlServer):
+            server = self.control_socket()
+        cmd = Command.ON_DEMAND_START if action == "start" else Command.ON_DEMAND_STOP
+        command = QueuedCommand(request_id=request_id, cmd=cmd,
+                                args=parse_args(cmd, fields if action == "start" else {}),
+                                received_at=0.0)
+
         def post():
             self.log("request", f"{action}:{request_id}")
-            self.cache.set("display_on_demand_request",
-                           {"request_id": request_id, "action": action, **fields})
+            server.queue.append(command)
         self.clock.at(t, post)
 
     def restore_on_demand(self, plugin_id: str, mode: Optional[str] = None,

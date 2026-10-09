@@ -8,8 +8,9 @@ Three separate gaps, all reachable from the web UI's force-display dialog:
   * restarting while on-demand was active loaded *only* the on-demand plugin,
     so normal rotation had nothing to return to for the life of the process;
   * a stop request was exempt from the duplicate guards on purpose and was
-    never removed from the mailbox, so it was re-processed on every poll
-    forever.
+    never removed from the file mailbox, so it was re-processed on every poll
+    forever. The mailbox is gone (stage 5); a stop still skips the guards,
+    so a second click stops a session a race left running.
 """
 
 from unittest.mock import MagicMock
@@ -185,51 +186,25 @@ class TestRestartDoesNotStarveTheOtherPlugins:
         assert controller.on_demand_active is False
 
 
-class TestStopRequestsAreConsumed:
-    """A stop request is exempt from the duplicate guards, so the mailbox
-    delete is the only thing that ends it."""
-
-    STOP = {'request_id': 'S1', 'action': 'stop'}
+class TestStopRequestsSkipTheDuplicateGuard:
+    """A stop is exempt from the request-id guard: every one is acted on."""
 
     def _arrange(self, controller, active):
         controller.on_demand_active = active
         controller.on_demand_status = 'active' if active else 'idle'
-        controller._last_on_demand_poll = None
-        controller.cache_manager.get = MagicMock(
-            side_effect=lambda key, *a, **kw:
-                self.STOP if key == 'display_on_demand_request' else None)
-        controller.cache_manager.set = MagicMock()
-        controller.cache_manager.delete = MagicMock()
         controller._clear_on_demand = MagicMock()
 
-    def test_a_handled_stop_is_removed_from_the_mailbox(self, test_display_controller):
+    def test_the_stop_is_acted_on(self, test_display_controller):
         c = test_display_controller
         self._arrange(c, active=True)
-        c._poll_on_demand_requests()
-        c.cache_manager.delete.assert_called_once_with('display_on_demand_request')
-
-    def test_a_stop_arriving_while_idle_is_also_removed(self, test_display_controller):
-        """Otherwise a stop sent to an idle display re-fires forever."""
-        c = test_display_controller
-        self._arrange(c, active=False)
-        c._poll_on_demand_requests()
-        c.cache_manager.delete.assert_called_once_with('display_on_demand_request')
-
-    def test_the_stop_is_still_acted_on(self, test_display_controller):
-        c = test_display_controller
-        self._arrange(c, active=True)
-        c._poll_on_demand_requests()
+        c._handle_on_demand_request({'request_id': 'S1', 'action': 'stop',
+                                     'source': 'socket'})
         c._clear_on_demand.assert_called_once_with(reason='requested-stop')
 
-    def test_a_start_racing_in_behind_a_stop_is_not_discarded(self, test_display_controller):
-        """The compare-before-delete applies to stops too."""
+    def test_the_same_stop_twice_is_acted_on_twice(self, test_display_controller):
         c = test_display_controller
         self._arrange(c, active=True)
-        newer = {'request_id': 'S2', 'action': 'start', 'plugin_id': 'p', 'mode': 'm'}
-        reads = iter([self.STOP, newer])
-        c.cache_manager.get = MagicMock(
-            side_effect=lambda key, *a, **kw:
-                next(reads, newer) if key == 'display_on_demand_request' else None)
-
-        c._poll_on_demand_requests()
-        assert c.cache_manager.delete.call_count == 0
+        for _ in range(2):
+            c._handle_on_demand_request({'request_id': 'S1', 'action': 'stop',
+                                         'source': 'socket'})
+        assert c._clear_on_demand.call_count == 2

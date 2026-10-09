@@ -370,25 +370,13 @@ def _redact_error_record(record):
 
 
 def _read_errors():
-    snapshot, clear_request = _errors.read_error_report(_errors_cache())
-    return snapshot, clear_request
+    return _errors.read_error_report(_errors_cache())
 
 
 def _send_error_clear(request_id, cutoff):
-    """``errors.clear`` over the control socket: the display's answer, or None
-    when the socket could not carry it (no socket, or a display older than
-    the command) and the clear goes to the mailbox instead. A display that
-    took the request and failed raises ControlError (no second copy)."""
-    client = _pkg.control_client
-    try:
-        return client.errors_clear(request_id, cutoff)
-    except client.ControlError as e:
-        if not client.should_fall_back(e):
-            raise
-        _pkg._log_socket_failure('errors.clear', e, _pkg._socket_reason_code(e.reason))
-    except Exception:  # never let the socket path break the route
-        logger.exception("Control socket client failed clearing errors; using the mailbox")
-    return None
+    """``errors.clear`` over the control socket: the display's answer.
+    Raises ControlError when it did not take or apply it."""
+    return _pkg.control_client.errors_clear(request_id, cutoff)
 
 
 @api_v3.route('/errors/summary', methods=['GET'])
@@ -402,7 +390,7 @@ def get_error_summary():
     until it has reported; ``generated_at`` says when it did.
     """
     try:
-        summary = _errors.error_summary_from_report(*_read_errors())
+        summary = _errors.error_summary_from_report(_read_errors())
         summary['recent_errors'] = [_redact_error_record(r) for r in summary['recent_errors']]
         for pattern in summary['active_patterns'].values():
             if isinstance(pattern, dict) and isinstance(pattern.get('sample_messages'), list):
@@ -430,7 +418,7 @@ def get_plugin_errors(plugin_id):
     recorded errors is "healthy".
     """
     try:
-        health = _errors.plugin_health_from_report(*_read_errors(), plugin_id)
+        health = _errors.plugin_health_from_report(_read_errors(), plugin_id)
         health['last_error'] = _redact_error_record(health['last_error'])
         return success_response(data=health, message="Plugin health retrieved")
     except Exception as e:
@@ -449,9 +437,10 @@ def clear_old_errors():
         max_age_hours: Maximum age in hours (default: 24, max: 8760 = 1 year)
         all: true clears every error recorded so far (max_age_hours ignored)
 
-    The errors live in the display service, so this records a clear request
-    that it applies within a few seconds. Reads hide the cleared errors from
-    the moment the request is recorded.
+    The errors live in the display service, so the clear is sent to it over
+    the control socket, and it has applied it when this answers. Without a
+    running display it fails with 503: the errors shown are then the last
+    run's, and the display's next run starts with none.
     """
     try:
         data = request.get_json(silent=True) or {}
@@ -492,28 +481,28 @@ def clear_old_errors():
                                                  send=_send_error_clear)
         except _pkg.control_client.ControlError as e:
             reason = _pkg._socket_reason_code(e.reason)
-            logger.warning("The display did not apply the error clear: %s", e)
+            _pkg._log_socket_failure('errors.clear', e, reason)
+            if _pkg.control_client.display_not_listening(e):
+                message = ("The display service is not running (or is still starting), "
+                           "so the errors could not be cleared. The errors shown are "
+                           "from its last run; it starts again with none.")
+            elif reason in _pkg.control_client.UPGRADE_REASONS:
+                message = ("The running display service is too old to clear errors; "
+                           "restart it to pick up the installed version")
+            elif reason in _pkg._QUIET_SOCKET_REASONS:
+                message = ("The control socket is not available here, so the errors "
+                           "could not be cleared")
+            else:
+                message = "The display service did not apply the clear"
             return error_response(
                 error_code=ErrorCode.SYSTEM_ERROR,
-                message="The display service did not apply the clear",
+                message=message,
                 context={'socket_error': reason},
                 status_code=503
             )
-        except OSError as e:
-            logger.error("Could not record an error clear request: %s", e)
-            return error_response(
-                error_code=ErrorCode.SYSTEM_ERROR,
-                message="Could not record the clear request in the shared cache",
-                status_code=500
-            )
 
         scope = "all errors" if clear_all else f"errors older than {max_age_hours} hours"
-        if result.get('applied'):
-            message = f"Cleared {scope}"
-        else:
-            message = (f"Clear of {scope} requested; the display service applies it "
-                       f"within about {int(_errors.SNAPSHOT_TICK_INTERVAL)} seconds")
-        return success_response(data=result, message=message)
+        return success_response(data=result, message=f"Cleared {scope}")
     except Exception as e:
         logger.error(f"Error clearing old errors: {e}", exc_info=True)
         return error_response(

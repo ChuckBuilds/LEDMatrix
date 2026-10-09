@@ -6,7 +6,7 @@ a Vegas iteration runs for vegas_scroll.max_cycle_duration (240s here). On a
 real Pi on 2026-09-23:
 
   * an on-demand request posted at 10:54:27 was activated at 10:57:24, when the
-    Vegas iteration it arrived during finally ended -- nothing read the mailbox
+    Vegas iteration it arrived during finally ended -- nothing read the request
     in between, because _check_vegas_interrupt only looked at a flag that the
     main-loop read sets;
   * two brightness saves 12s apart inside one 30s screen never showed at all.
@@ -15,6 +15,11 @@ _service_pending_changes is the fix: a throttled pass the dwell sleep, the
 render loops and the Vegas interrupt check all call. These tests drive those
 long stretches on a fake clock and check a change lands within one throttle
 interval -- and that the throttle holds, since the callers run at frame rate.
+
+The on-demand requests here come from a plugin in the display process
+(submit_plugin_on_demand), the way in that needs no socket; the file mailbox
+these tests used to write is gone (stage 5). A queued request skips the
+throttle, so it lands at the next pass's call, not the next interval.
 """
 
 import threading
@@ -28,7 +33,6 @@ from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.coordinator import VegasModeCoordinator
 
 VEGAS_ITERATION_SECONDS = 240
-REQUEST_KEY = 'display_on_demand_request'
 
 
 class FakeClock:
@@ -75,26 +79,15 @@ def clock(monkeypatch):
 
 @pytest.fixture
 def controller(test_display_controller, clock):
-    """A controller at rest: no schedule, full brightness, empty mailbox."""
+    """A controller at rest: no schedule, full brightness, nothing queued."""
     c = test_display_controller
     c._refresh_config_cache({'display': {'hardware': {'brightness': 90}}})
     c.current_brightness = 90
     c.is_display_active = True
     c._check_wifi_status_message = MagicMock(return_value=None)
 
-    c.mailbox = {}  # what the web process has written
-
-    def cache_get(key, *args, **kwargs):
-        if key == REQUEST_KEY:
-            return c.mailbox.get('request')
-        return None
-
-    def cache_delete(key):
-        if key == REQUEST_KEY:
-            c.mailbox.pop('request', None)
-
-    c.cache_manager.get = MagicMock(side_effect=cache_get)
-    c.cache_manager.delete = MagicMock(side_effect=cache_delete)
+    c.cache_manager.get = MagicMock(return_value=None)
+    c.cache_manager.delete = MagicMock()
     c.cache_manager.set = MagicMock()
     c.display_manager.set_brightness = MagicMock(return_value=True)
     c.display_manager.update_display = MagicMock()
@@ -110,11 +103,12 @@ def controller(test_display_controller, clock):
     return c
 
 
-def post_request(controller, request_id='r1', mode='clock'):
-    controller.mailbox['request'] = {
-        'request_id': request_id, 'action': 'start',
-        'plugin_id': mode, 'mode': mode,
-    }
+def post_request(controller, request_id='r1', mode='clock', action='start'):
+    """A plugin asking for the screen (or giving it back) from its thread."""
+    assert controller.submit_plugin_on_demand({
+        'request_id': request_id, 'action': action,
+        'plugin_id': mode, 'mode': mode, 'source': 'plugin',
+    })
 
 
 def save_brightness(controller, brightness):
@@ -124,9 +118,11 @@ def save_brightness(controller, brightness):
         {'display': {'hardware': {'brightness': brightness}}})
 
 
-def mailbox_reads(controller):
-    return sum(1 for call in controller.cache_manager.get.call_args_list
-               if call.args and call.args[0] == REQUEST_KEY)
+def count_passes(controller):
+    """Count the pending-changes passes that got past the throttle."""
+    controller._poll_on_demand_requests = MagicMock(
+        wraps=controller._poll_on_demand_requests)
+    return controller._poll_on_demand_requests
 
 
 def vegas_coordinator(controller):
@@ -206,15 +202,16 @@ class TestOnDemandDuringVegas:
                 "interrupt checker never saw the request")
         assert controller.on_demand_active
 
-    def test_an_empty_mailbox_lets_the_iteration_run_out(self, controller, clock):
+    def test_a_quiet_iteration_runs_out(self, controller, clock):
         coord = vegas_coordinator(controller)
+        passes = count_passes(controller)
         assert coord.run_iteration() is True
         assert not controller.on_demand_active
-        # And the read is throttled: at most one per interval, not per check.
-        max_reads = VEGAS_ITERATION_SECONDS / controller.PENDING_CHANGES_INTERVAL + 1
-        assert 0 < mailbox_reads(controller) <= max_reads
+        # And the pass is throttled: at most one per interval, not per check.
+        max_passes = VEGAS_ITERATION_SECONDS / controller.PENDING_CHANGES_INTERVAL + 1
+        assert 0 < passes.call_count <= max_passes
         checks = coord.frames // coord._interrupt_check_interval
-        assert mailbox_reads(controller) < checks / 2
+        assert passes.call_count < checks / 2
 
 
 class TestBrightnessIsAppliedMidScreen:
@@ -294,23 +291,25 @@ class TestBrightnessIsAppliedMidScreen:
 
 
 class TestThrottle:
-    def test_no_reads_or_brightness_calls_between_passes(self, controller, clock):
+    def test_no_passes_or_brightness_calls_between_passes(self, controller, clock):
         controller._service_pending_changes()
-        reads = mailbox_reads(controller)
+        passes = count_passes(controller)
         save_brightness(controller, 40)
-        post_request(controller)
         for _ in range(500):  # a few seconds of frames, all inside one interval
             controller._service_pending_changes()
             clock.t += controller.PENDING_CHANGES_INTERVAL / 1000
-        assert mailbox_reads(controller) == reads
+        assert passes.call_count == 0
         controller.display_manager.set_brightness.assert_not_called()
-        assert not controller.on_demand_active
 
         clock.t += controller.PENDING_CHANGES_INTERVAL
         controller._service_pending_changes()
-        # The poll, plus the consume step's re-read of the request it acted on.
-        assert mailbox_reads(controller) > reads
+        assert passes.call_count == 1
         controller.display_manager.set_brightness.assert_called_once_with(40)
+
+    def test_a_queued_request_skips_the_throttle(self, controller, clock):
+        controller._service_pending_changes()
+        post_request(controller)
+        controller._service_pending_changes()   # inside the interval
         assert controller.on_demand_active
 
     def test_between_passes_it_does_no_work_at_all(self, controller, clock):
@@ -397,7 +396,7 @@ class TestScheduleAndDwells:
         controller._service_pending_changes()
         assert controller.on_demand_active
         clock.t += controller.PENDING_CHANGES_INTERVAL
-        controller.mailbox['request'] = {'request_id': 'r2', 'action': 'stop'}
+        post_request(controller, request_id='r2', action='stop')
         start = clock.t
         controller._sleep_with_plugin_updates(30)
         assert not controller.on_demand_active

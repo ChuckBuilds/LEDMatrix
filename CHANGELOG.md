@@ -19,6 +19,63 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Removed: the cache-key mailboxes (control socket stage 5) -- breaking
+
+The control socket (`docs/IPC_CONTROL_SOCKET.md`) is now the only way the
+web interface sends the display a command. The file mailboxes it fell back
+to for one release are gone.
+
+- **`display_on_demand_request` and `plugin_error_clear_request` are no
+  longer written or read.** The display stops polling the on-demand mailbox
+  (`MailboxWatch`, `MAILBOX_POLL_INTERVAL_WITH_SOCKET`,
+  `_consume_on_demand_request` and the persisted
+  `display_on_demand_processed_id` guard are removed), and the error
+  publisher stops reading the clear request. `CacheManager.file_signature`,
+  `src.cache_manager.MailboxWatch`, `src.ipc.client.should_fall_back` and
+  `src.error_aggregator.ERROR_CLEAR_REQUEST_KEY` are removed.
+- **A write to either key is dropped, with one warning per writer.**
+  `CacheManager.save_cache` (and so `set`) refuses `RETIRED_MAILBOX_KEYS`
+  and logs `Ignored a write to the retired '<key>' cache key by plugin
+  '<id>'`, naming the plugin from the call stack or the request. Plugins
+  must use `BasePlugin.request_on_demand()` / `end_on_demand()` (3.8.1).
+  In the official monorepo, birdnet-go, mqtt-notifications, on-air and
+  pomodoro-timer still write the mailbox, but only as their fallback when
+  those methods are missing or answer `None`.
+- **On-demand routes without a listening display.** `POST
+  /api/v3/display/on-demand/start` with no display listening starts the
+  service (when `start_service`, the default) and answers **`202`** with
+  `status: "starting"` at once; a single background worker in the web
+  process (`web_interface/on_demand_dispatch.py`) sends the request until
+  the display acknowledges it, for up to 45 s (10 s for a service that is
+  running but has no socket yet). `GET /display/on-demand/status` reports it
+  (`starting`; still `starting` with `delivered: true` after the display
+  acknowledges it, until the display publishes the state for that
+  `request_id`, now part of its on-demand state, for at most 30 s; then the
+  display's state, or `error` / `start-timeout`), and
+  `/display/current-status` adds `on_demand_pending`. A newer start replaces
+  a pending one and a stop cancels it (`cancelled_request_id`). The web UI
+  and the MQTT bridge treat `202` as taken. With the service stopped and
+  `start_service` false it answers `400`. Every other socket failure (`unknown_command`
+  from an older display, `disabled`/`unsupported`, `busy`, a timeout) is a
+  `503`. `/stop` answers `503` when no display is listening, unless
+  `stop_service` stops the service. `transport` is always `"socket"`; the
+  `"mailbox"` value is gone.
+- **`POST /api/v3/errors/clear` without the socket answers `503`** (with
+  `context.socket_error` and a message saying why) instead of recording a
+  request. `clear_pending` in the error routes is now always `false`;
+  `src.error_aggregator.read_error_report()` returns only the snapshot, and
+  `error_summary_from_report()` / `plugin_health_from_report()` /
+  `request_error_clear()` lose their clear-request arguments.
+- **Kept:** the display still writes `display_current_state`,
+  `display_on_demand_state`, `plugin_runtime_snapshot` and the heartbeat
+  file, because the web interface reads them whenever the socket cannot
+  answer (a stopped or starting display, a web user not yet in the socket's
+  group, Windows), and `display_on_demand_config`, its own record for
+  resuming a session after a restart.
+- **Windows and `LEDMATRIX_CONTROL_SOCKET=off`:** with no socket, the web
+  interface can no longer start or stop on-demand sessions or clear errors
+  on a running display (the mailbox used to carry them).
+
 ## 3.8.4
 
 A panel that cannot reach its refresh cap is reported with a cap it can hold

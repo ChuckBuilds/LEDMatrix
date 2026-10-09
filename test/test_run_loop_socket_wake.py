@@ -12,8 +12,8 @@ frame, so a command is applied:
 * at the next frame in Vegas (8 ms here, at 125 fps).
 
 Each test runs the real run() loop on the fake clock of
-test/_run_loop_harness.py and compares the socket with the mailbox for the
-same request. The latencies are the fake clock's, so they are exact.
+test/_run_loop_harness.py. The latencies are the fake clock's, so they are
+exact. (The file mailbox these were once compared with is gone: stage 5.)
 """
 
 import os
@@ -32,13 +32,10 @@ def _event_time(trace, kind):
     return next(e[0] for e in trace["events"] if e[1] == kind)
 
 
-def _on_demand_latency(tmp_path, build, via, horizon=40):
+def _on_demand_latency(tmp_path, build, horizon=40):
     h = RunLoopHarness(tmp_path, horizon=horizon)
     build(h)
-    if via == "socket":
-        h.control_socket().post(POSTED, Command.ON_DEMAND_START, {"plugin_id": "weather"})
-    else:
-        h.on_demand_request(POSTED, "mb1", plugin_id="weather")
+    h.control_socket().post(POSTED, Command.ON_DEMAND_START, {"plugin_id": "weather"})
     trace = h.run()
     return round(_event_time(trace, "on-demand-start") - POSTED, 3), trace
 
@@ -60,18 +57,12 @@ def _vegas(h):
     h.enable_vegas(cycle=30)
 
 
-@pytest.mark.parametrize("build, mailbox_latency", [
-    (_static, 0.7),    # the next 1 s frame, at t=11
-    (_dwell, 0.2),     # the next 0.25 s tick, at t=10.5
-    (_vegas, 0.02),    # the next 10-frame check: 80 ms at 125 fps, ~0.4 s on a Pi 4
-], ids=["static-screen", "dwell", "vegas"])
-def test_a_socket_command_lands_at_once(tmp_path, build, mailbox_latency):
-    (tmp_path / "s").mkdir()
-    (tmp_path / "m").mkdir()
-    socket_latency, trace = _on_demand_latency(tmp_path / "s", build, "socket")
-    via_mailbox, _ = _on_demand_latency(tmp_path / "m", build, "mailbox")
-
-    assert via_mailbox == pytest.approx(mailbox_latency, abs=0.002)
+@pytest.mark.parametrize("build", [_static, _dwell, _vegas],
+                         ids=["static-screen", "dwell", "vegas"])
+def test_a_socket_command_lands_at_once(tmp_path, build):
+    # Before stage 2 these waited for the next 1 s frame, the next 0.25 s
+    # dwell tick, or the next 10-frame Vegas check.
+    socket_latency, trace = _on_demand_latency(tmp_path, build)
     if build is _vegas:
         # One 8 ms frame: Vegas checks the queue every frame now.
         assert socket_latency <= 0.008
