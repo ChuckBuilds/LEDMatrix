@@ -95,9 +95,10 @@ class TestRefreshPluginStore:
             RuntimeError("failed at /home/user/LEDMatrix/src/secret.py line 42"))
         body = api_v3_client.post(self.URL, json={}).get_json()
         assert "Traceback" not in str(body)
-        # `details` is describe_exception output: one line, type-named,
-        # credential-redacted. It may quote the message, but never a stack.
-        assert body["details"].startswith("RuntimeError:")
+        # `details` is describe_exception output: the type, never the
+        # message or a stack.
+        assert body["details"] == "RuntimeError"
+        assert "secret.py" not in str(body)
         assert "\n" not in body["details"]
 
 

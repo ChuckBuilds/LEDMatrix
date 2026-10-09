@@ -689,7 +689,7 @@ def execute_system_action():
                     logger.warning("install_base_requirements timed out for %s", label)
                 except OSError as install_err:
                     all_ok = False
-                    outputs.append(f"== {label} ==\nFailed: {install_err}")
+                    outputs.append(f"== {label} ==\nFailed: {describe_exception(install_err)}")
                     logger.warning("install_base_requirements errored for %s: %s", label, install_err)
             return jsonify({
                 'status': 'success' if all_ok else 'error',
@@ -784,11 +784,10 @@ def execute_system_action():
         return jsonify({'status': 'error', 'message': 'Command timed out', 'returncode': -1, 'stderr': 'timeout'})
     except Exception as e:
         logger.error("execute_system_action failed: %s", e, exc_info=True)
-        detail = describe_exception(e)
         resp = {
             'status': 'error',
-            'message': _sudo_hint_for(detail) or 'Action failed; see logs for details',
-            'details': detail,
+            'message': _sudo_hint_for(str(e)) or 'Action failed; see logs for details',
+            'details': describe_exception(e),
         }
         return jsonify(resp), 500
 @api_v3.route('/system/git-info', methods=['GET'])
