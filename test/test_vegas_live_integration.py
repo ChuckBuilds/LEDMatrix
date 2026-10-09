@@ -189,7 +189,7 @@ def test_with_live_refresh_off_the_same_run_is_plain_content(dm, tmp_path, ticke
     start_width = pipeline.scroll_helper.total_scroll_width
     assert _run_until(
         coordinator,
-        lambda: pipeline.stats.get('extensions', 0) >= 1, seconds=10.0)
+        lambda: pipeline.extensions >= 1, seconds=10.0)
     assert pipeline.live_records() == ()
     assert np.asarray(pipeline.scroll_helper.cached_array).shape[1] > 0
     assert start_width > 0

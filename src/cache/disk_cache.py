@@ -15,10 +15,13 @@ import tempfile
 import logging
 import threading
 import zlib
-from typing import Dict, Any, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from src.common.path_safety import safe_path_component
+
+if TYPE_CHECKING:
+    from src.cache.cache_strategy import CacheStrategy
 
 try:  # optional: large speedup on the cache write path, see _dumps below
     import orjson
@@ -60,23 +63,6 @@ def _filename_stem(key: str) -> str:
     keep = _MAX_KEY_FILENAME_BYTES - _KEY_HASH_CHARS - 1
     prefix = encoded[:keep].decode('utf-8', errors='ignore')
     return f"{prefix}-{digest}"
-
-
-
-class CacheStrategyProtocol(Protocol):
-    """Protocol for cache strategy objects that categorize cache keys."""
-    
-    def get_data_type_from_key(self, key: str) -> str:
-        """
-        Determine the data type from a cache key.
-        
-        Args:
-            key: Cache key
-            
-        Returns:
-            Data type string for strategy lookup
-        """
-        ...
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -816,12 +802,12 @@ class DiskCache:
         # mkstemp's random component.
         return bool(sep) and len(head) > 1 and bool(suffix)
 
-    def cleanup_expired_files(self, cache_strategy: CacheStrategyProtocol, retention_policies: Dict[str, int]) -> Dict[str, Any]:
+    def cleanup_expired_files(self, cache_strategy: 'CacheStrategy', retention_policies: Dict[str, int]) -> Dict[str, Any]:
         """
         Clean up expired cache files based on retention policies.
         
         Args:
-            cache_strategy: Object implementing CacheStrategyProtocol for categorizing files
+            cache_strategy: Categorizes files by key (get_data_type_from_key)
             retention_policies: Dict mapping data types to retention days
             
         Returns:

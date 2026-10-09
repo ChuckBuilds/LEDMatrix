@@ -1,9 +1,11 @@
 """
 Tests for src/vegas_mode/config.py
 
-Covers VegasModeConfig: from_config, to_dict, get_frame_interval,
+Covers VegasModeConfig: from_config, get_frame_interval,
 get_ordered_plugins, validate.
 """
+
+import dataclasses
 
 import pytest
 from src.vegas_mode.config import VegasModeConfig
@@ -49,7 +51,8 @@ class TestVegasModeConfigDefaults:
             (Path(__file__).resolve().parent.parent / "config"
              / "config.template.json").read_text(encoding="utf-8"))
         shipped = template["display"]["vegas_scroll"]
-        defaults = VegasModeConfig().to_dict()
+        defaults = dataclasses.asdict(VegasModeConfig())
+        defaults["excluded_plugins"] = sorted(defaults["excluded_plugins"])
         mismatched = {k: (v, defaults[k]) for k, v in shipped.items()
                       if k in defaults and defaults[k] != v}
         assert not mismatched, f"template vs code default: {mismatched}"
@@ -57,9 +60,9 @@ class TestVegasModeConfigDefaults:
     def test_missing_keys_read_the_field_defaults(self):
         # from_config used to repeat every default; with no keys set it must
         # produce exactly the dataclass defaults.
-        assert VegasModeConfig.from_config({}).to_dict() == VegasModeConfig().to_dict()
-        assert (VegasModeConfig.from_config({"display": {"vegas_scroll": {}}}).to_dict()
-                == VegasModeConfig().to_dict())
+        assert VegasModeConfig.from_config({}) == VegasModeConfig()
+        assert (VegasModeConfig.from_config({"display": {"vegas_scroll": {}}})
+                == VegasModeConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -112,42 +115,6 @@ class TestFromConfig:
     def test_frame_based_scrolling(self):
         cfg = VegasModeConfig.from_config(self._cfg(frame_based_scrolling=False))
         assert cfg.frame_based_scrolling is False
-
-
-# ---------------------------------------------------------------------------
-# to_dict
-# ---------------------------------------------------------------------------
-
-class TestToDict:
-    def test_roundtrip(self):
-        original = VegasModeConfig(
-            enabled=True,
-            scroll_speed=75.0,
-            separator_width=24,
-            plugin_order=["a", "b"],
-            excluded_plugins={"z"},
-            target_fps=100,
-        )
-        d = original.to_dict()
-        assert d["enabled"] is True
-        assert d["scroll_speed"] == 75.0
-        assert d["separator_width"] == 24
-        assert d["plugin_order"] == ["a", "b"]
-        assert "z" in d["excluded_plugins"]
-        assert d["target_fps"] == 100
-
-    def test_excluded_plugins_is_list(self):
-        cfg = VegasModeConfig(excluded_plugins={"x"})
-        d = cfg.to_dict()
-        assert isinstance(d["excluded_plugins"], list)
-
-    def test_all_keys_present(self):
-        d = VegasModeConfig().to_dict()
-        for key in ("enabled", "scroll_speed", "separator_width", "plugin_order",
-                    "excluded_plugins", "target_fps", "buffer_ahead",
-                    "frame_based_scrolling", "scroll_delay",
-                    "dynamic_duration_enabled", "min_cycle_duration", "max_cycle_duration"):
-            assert key in d
 
 
 # ---------------------------------------------------------------------------

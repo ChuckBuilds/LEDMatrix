@@ -27,7 +27,6 @@ def _coordinator(plugins):
     coord.stream_manager = MagicMock()
     coord.display_manager = MagicMock()
     coord.plugin_manager = SimpleNamespace(plugins=plugins, get_plugin=plugins.get)
-    coord.stats = {'cycles_completed': 0, 'interruptions': 0}
     coord._state_lock = threading.Lock()
     coord._is_active = True
     coord._is_paused = False
@@ -99,7 +98,6 @@ def test_vegas_resumes_after_a_live_priority_pause():
 
 def test_stop_clears_a_live_priority_pause():
     coord = _live_coordinator(['nfl_live'])
-    coord._start_time = None
     coord._restore_switch_interval = lambda: None
     coord._remove_render_gate = lambda: None
     coord.run_iteration()

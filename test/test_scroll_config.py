@@ -21,6 +21,7 @@ from src.common.scroll_config import (  # noqa: E402
     refresh_hz_from_config,
     resolve,
 )
+from src.common import scroll_config  # noqa: E402
 
 
 class FakeHelper:
@@ -504,3 +505,46 @@ class TestSpeedAdvice:
         got = solve_crisp(50, 125.74)
         assert got.steppiness == "smooth"
         assert got.pixels_per_frame == 1
+
+
+class TestRefreshShortfall:
+    """A panel that cannot reach its cap runs every scroll slow."""
+
+    def test_the_ledmatrix_rig_is_told_to_cap_at_100(self):
+        # Pi 4, 2x128x64 on adafruit-hat-pwm under a 120 Hz cap: measured
+        # 107.6-113.1 Hz, and frame_timing reports the fast end.
+        s = scroll_config.refresh_shortfall(113.1, 120)
+        assert s == {"measured_hz": 113.1, "planned_hz": 120.0,
+                     "suggested_cap_hz": 100, "slow_percent": 6}
+
+    def test_a_panel_that_holds_its_cap_is_fine(self):
+        assert scroll_config.refresh_shortfall(99.95, 100) is None
+        assert scroll_config.refresh_shortfall(97.5, 100) is None
+
+    def test_a_panel_that_beats_its_cap_is_fine(self):
+        assert scroll_config.refresh_shortfall(125.7, 120) is None
+
+    def test_nothing_measured_says_nothing(self):
+        assert scroll_config.refresh_shortfall(None, 120) is None
+        assert scroll_config.refresh_shortfall(0, 120) is None
+        assert scroll_config.refresh_shortfall("fast", 120) is None
+
+    def test_the_suggestion_leaves_headroom_under_the_measurement(self):
+        assert scroll_config.holdable_cap(113.1) == 100
+        assert scroll_config.holdable_cap(95.0) == 90
+        # 5% under 105 is 99.75: 100 would sit inside the panel's drift.
+        assert scroll_config.holdable_cap(105.0) == 90
+        assert scroll_config.holdable_cap(9.0) is None
+        assert scroll_config.holdable_cap(None) is None
+
+    def test_the_log_line_names_the_cap_to_use(self):
+        text = scroll_config.describe_refresh_shortfall(
+            scroll_config.refresh_shortfall(113.1, 120))
+        assert "about 113 Hz" in text and "120 Hz" in text
+        assert "6% slower" in text
+        assert "Set Limit Refresh Rate to 100 Hz" in text
+
+    def test_no_suggestion_for_a_panel_too_slow_for_any_cap(self):
+        text = scroll_config.describe_refresh_shortfall(
+            scroll_config.refresh_shortfall(9.0, 100))
+        assert "Set Limit Refresh Rate" not in text

@@ -18,10 +18,11 @@ import math
 import sys
 import time
 import threading
-from typing import Optional, Dict, Any, List, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Any, FrozenSet, List, Callable, TYPE_CHECKING
 
 from src import display_watchdog
 from src.common import render_gate
+from src.plugin_system.base_plugin import finite_seconds
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.elements import LiveEpochs
 from src.vegas_mode.plugin_adapter import PluginAdapter
@@ -52,6 +53,14 @@ _FPS_HEARTBEAT_INTERVAL = 300.0
 #: Pi 4 with two scoreboards (9 modes), 1.7% of a 125fps frame, growing with
 #: every plugin. Game state doesn't change within a quarter second.
 _LIVE_PRIORITY_CHECK_INTERVAL = 0.25
+
+#: Seconds a static pause shows a plugin whose display duration can't be
+#: used, as long as the rotation shows it: 30 when get_display_duration()
+#: raises or answers something that is not a number
+#: (DisplayController._get_display_duration), 15 when it answers a number at
+#: or below zero (DisplayController._resolve_durations).
+_UNREADABLE_DURATION = 30.0
+_NOT_POSITIVE_DURATION = 15.0
 
 
 def _percentile(ordered: List[float], fraction: float) -> float:
@@ -92,6 +101,9 @@ class VegasModeCoordinator:
     _live_reason: Optional[str] = None
     # Set only while Vegas has changed the GIL switch interval; read with getattr.
     _saved_switch_interval: Optional[float]
+    #: Plugins already warned about a display duration the pause can't use,
+    #: so a bad setting logs once, not at every turn. Replaced, not mutated.
+    _duration_warned: FrozenSet[str] = frozenset()
 
     def __init__(
         self,
@@ -169,16 +181,6 @@ class VegasModeCoordinator:
         # Static pause handling
         self._static_pause_active = False
         self._saved_scroll_position: Optional[int] = None
-
-        # Statistics
-        self.stats = {
-            'total_runtime_seconds': 0.0,
-            'cycles_completed': 0,
-            'interruptions': 0,
-            'config_updates': 0,
-            'static_pauses': 0,
-        }
-        self._start_time: Optional[float] = None
 
         logger.info(
             "VegasModeCoordinator initialized: enabled=%s, fps=%d, buffer_ahead=%d",
@@ -314,7 +316,6 @@ class VegasModeCoordinator:
             # new run would have run_frame() refuse every frame.
             self._is_paused = False
             self._live_priority_active = False
-            self._start_time = time.time()
             # A fresh run starts with a clean health slate: no stale
             # "was degraded" from the previous run, and a heartbeat that is
             # due immediately so the first sample confirms the marquee is up.
@@ -344,10 +345,6 @@ class VegasModeCoordinator:
             self._is_active = False
             self._is_paused = False
             self._live_priority_active = False
-
-            if self._start_time:
-                self.stats['total_runtime_seconds'] += time.time() - self._start_time
-                self._start_time = None
 
         self._restore_switch_interval()
         self._remove_render_gate()
@@ -473,7 +470,6 @@ class VegasModeCoordinator:
             if not self._is_active:
                 return
             self._is_paused = True
-            self.stats['interruptions'] += 1
 
         self.display_manager.set_scrolling_state(False)
         logger.info("Vegas mode paused")
@@ -543,9 +539,8 @@ class VegasModeCoordinator:
             if self.render_pipeline.has_deferred():
                 self.render_pipeline.drain_deferred()
             elif self.render_pipeline.needs_extension():
-                if self.render_pipeline.extend_scroll_content():
-                    self.stats['cycles_completed'] += 1
-                elif self.render_pipeline.is_cycle_complete():
+                if (not self.render_pipeline.extend_scroll_content()
+                        and self.render_pipeline.is_cycle_complete()):
                     # Extension failed and the strip has run out: fall back to
                     # the swap rather than sitting on a dead frame.
                     self.render_pipeline.start_new_cycle()
@@ -555,7 +550,6 @@ class VegasModeCoordinator:
                 if not self.render_pipeline.start_new_cycle():
                     logger.warning("Failed to start new Vegas cycle")
                     return False
-                self.stats['cycles_completed'] += 1
 
             # Check for hot-swap opportunities
             if self.render_pipeline.should_recompose():
@@ -835,7 +829,6 @@ class VegasModeCoordinator:
             self._pending_config_update = True
             self._pending_config = new_config
             self._config_version += 1
-            self.stats['config_updates'] += 1
 
         logger.debug("Config update queued (version %d)", self._config_version)
 
@@ -910,23 +903,6 @@ class VegasModeCoordinator:
             self.stream_manager.mark_plugin_updated(plugin_id)
             self.plugin_adapter.invalidate_cache(plugin_id)
 
-    def get_status(self) -> Dict[str, Any]:
-        """Get comprehensive Vegas mode status."""
-        status = {
-            'enabled': self.vegas_config.enabled,
-            'active': self._is_active,
-            'paused': self._is_paused,
-            'live_priority_active': self._live_priority_active,
-            'config': self.vegas_config.to_dict(),
-            'stats': self.stats.copy(),
-        }
-
-        if self._is_active:
-            status['render_info'] = self.render_pipeline.get_current_scroll_info()
-            status['stream_status'] = self.stream_manager.get_buffer_status()
-
-        return status
-
     # -------------------------------------------------------------------------
     # Static pause handling (for STATIC display mode)
     # -------------------------------------------------------------------------
@@ -980,7 +956,6 @@ class VegasModeCoordinator:
             # Save current scroll position for smooth resume
             self._saved_scroll_position = self.render_pipeline.get_scroll_position()
             self._static_pause_active = True
-            self.stats['static_pauses'] += 1
 
         logger.info("Static pause started for plugin: %s", plugin_id)
 
@@ -1010,7 +985,7 @@ class VegasModeCoordinator:
             # Wait for the plugin's display duration. Monotonic, like the
             # iteration clock: an NTP step on an RTC-less Pi would otherwise
             # end the pause at once or stretch it by the correction.
-            duration = plugin.get_display_duration()
+            duration = self._static_pause_duration(plugin)
             start = time.monotonic()
 
             while time.monotonic() - start < duration:
@@ -1045,6 +1020,42 @@ class VegasModeCoordinator:
             self._end_static_pause()
 
         return True
+
+    def _static_pause_duration(self, plugin: 'BasePlugin') -> float:
+        """Seconds a static pause shows ``plugin``: its display duration,
+        read the way the rotation reads it.
+
+        Several plugins return their display_duration setting straight from
+        config.json, so one saved as "20" or null came back as a string or
+        None; comparing it with the clock raised, and the pause's broad
+        except ended the pause at every one of the plugin's turns. inf
+        paused until something interrupted it, and NaN, False, 0 or a
+        negative number ended the pause at once. A numeric string counts
+        (finite_seconds); anything else, or a raise, gets
+        _UNREADABLE_DURATION, and a number at or below zero
+        _NOT_POSITIVE_DURATION, logged once per plugin.
+        """
+        try:
+            value = plugin.get_display_duration()
+        except Exception as err:  # pylint: disable=broad-except
+            problem = f"get_display_duration() raised {type(err).__name__}: {err}"
+            fallback = _UNREADABLE_DURATION
+        else:
+            seconds = finite_seconds(value)
+            if seconds is not None and seconds > 0:
+                return seconds
+            if seconds is None:
+                problem = f"display duration {value!r} is not a number"
+                fallback = _UNREADABLE_DURATION
+            else:
+                problem = f"display duration {value!r} is not above zero"
+                fallback = _NOT_POSITIVE_DURATION
+        plugin_id = plugin.plugin_id
+        if plugin_id not in self._duration_warned:
+            self._duration_warned = self._duration_warned | {plugin_id}
+            logger.warning("[%s] %s; its static pause lasts %.0fs (logged once)",
+                           plugin_id, problem, fallback)
+        return fallback
 
     def _end_static_pause(self) -> None:
         """End static pause and restore scroll state."""

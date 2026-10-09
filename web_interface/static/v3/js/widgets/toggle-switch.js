@@ -26,8 +26,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('ToggleSwitch', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -90,10 +88,10 @@
             const sizeClass = SIZE_CLASSES[size] || SIZE_CLASSES.medium;
             const colorClass = COLOR_CLASSES[colorOn] || COLOR_CLASSES.blue;
 
-            let html = `<div id="${fieldId}_widget" class="toggle-switch-widget flex items-center" data-field-id="${fieldId}" data-label-on="${escapeHtml(labelOn)}" data-label-off="${escapeHtml(labelOff)}" data-color="${colorOn}">`;
+            let html = `<div id="${fieldId}_widget" class="toggle-switch-widget flex items-center" data-field-id="${fieldId}" data-label-on="${window.LEDEscape.html(labelOn)}" data-label-off="${window.LEDEscape.html(labelOff)}" data-color="${colorOn}">`;
 
             // Hidden checkbox for form submission
-            html += `<input type="hidden" id="${fieldId}_hidden" name="${escapeHtml(options.name || fieldId)}" value="${isChecked}">`;
+            html += `<input type="hidden" id="${fieldId}_hidden" name="${window.LEDEscape.html(options.name || fieldId)}" value="${isChecked}">`;
 
             html += `
                 <button type="button"
@@ -113,7 +111,7 @@
             if (showLabels) {
                 html += `
                     <span id="${fieldId}_label" class="ml-3 text-sm font-medium ${isChecked ? 'text-gray-900' : 'text-gray-500'}">
-                        ${escapeHtml(isChecked ? labelOn : labelOff)}
+                        ${window.LEDEscape.html(isChecked ? labelOn : labelOff)}
                     </span>
                 `;
             }

@@ -52,9 +52,6 @@ class FakeStream:
     def get_static_layout(self):
         return [(pid, w is None) for pid, w in self.layout]
 
-    def get_active_plugin_ids(self):
-        return [pid for pid, _ in self.layout]
-
     def is_static_plugin(self, plugin_id):
         return plugin_id in self.statics
 
@@ -163,7 +160,6 @@ class TestStreamManagerSkipsStaticContent:
         sm.plugin_manager = SimpleNamespace(plugins=plugins)
         sm.plugin_adapter = MagicMock()
         sm.plugin_adapter.get_content.return_value = [block(10)]
-        sm.stats = {'segments_fetched': 0, 'fetch_errors': 0}
         sm.refresh = lambda: None
         return sm
 
@@ -213,13 +209,13 @@ class TestCoordinatorStaticPause:
         coord._live_priority_active = False
         coord._live_priority_check = None
         coord._interrupt_check = None
-        coord.stats = {'static_pauses': 0}
         return coord
 
     def _plugin(self):
         plugin = MagicMock()
         plugin.plugin_id = 'clock'
-        plugin.get_display_duration.return_value = 0
+        # A moment: zero would pause 15 s, as the rotation shows it.
+        plugin.get_display_duration.return_value = 0.01
         return plugin
 
     def test_trigger_comes_from_the_pipeline(self):

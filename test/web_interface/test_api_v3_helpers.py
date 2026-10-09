@@ -22,7 +22,6 @@ from web_interface.blueprints.api_v3 import (  # noqa: E402
     _is_plugin_update_available,
     _coerce_to_bool,
     deep_merge,
-    _parse_form_value,
     _get_schema_property,
     _set_nested_value,
     _SKIP_FIELD,
@@ -114,44 +113,6 @@ class TestDeepMerge:
         result = deep_merge(base, {"a": {"x": 9}})
         assert base == {"a": {"x": 1}, "keep": {"y": 2}}  # base unchanged
         assert result["keep"] is base["keep"]  # untouched subtree is shared
-
-
-class TestParseFormValue:
-    def test_boolean_strings(self):
-        assert _parse_form_value("true") is True
-        assert _parse_form_value("False") is False
-
-    def test_null_like_strings(self):
-        assert _parse_form_value("null") is None
-        assert _parse_form_value("none") is None
-        assert _parse_form_value("") is None
-
-    def test_none_passthrough(self):
-        assert _parse_form_value(None) is None
-
-    def test_numbers(self):
-        assert _parse_form_value("42") == 42
-        assert isinstance(_parse_form_value("42"), int)
-        assert _parse_form_value("3.5") == 3.5
-        assert isinstance(_parse_form_value("3.5"), float)
-
-    def test_json_array_parsed_before_numbers(self):
-        # RGB arrays like "[255, 0, 0]" must come back as lists.
-        assert _parse_form_value("[255, 0, 0]") == [255, 0, 0]
-
-    def test_json_object(self):
-        assert _parse_form_value('{"a": 1}') == {"a": 1}
-
-    def test_malformed_json_falls_back_to_string(self):
-        assert _parse_form_value("[not json") == "[not json"
-
-    def test_plain_string_returned_unstripped(self):
-        # The original value (not the stripped copy) is returned.
-        assert _parse_form_value("  hello  ") == "  hello  "
-
-    def test_non_string_passthrough(self):
-        assert _parse_form_value(7) == 7
-        assert _parse_form_value([1, 2]) == [1, 2]
 
 
 class TestGetSchemaProperty:

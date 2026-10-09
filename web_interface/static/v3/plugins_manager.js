@@ -21,7 +21,7 @@
  *                      is the one Alpine uses)
  *   end of <body>, defer, in this order: app.js, js/tooltips.js,
  *                      js/settings-search.js, js/utils/dialog.js,
- *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      js/plugins/api_client.js,
  *                      state_manager.js, install_manager.js, list_filter.js,
  *                      the widget bundle (web_interface/widget_bundle.py),
  *                      plugins_manager.js
@@ -1090,7 +1090,7 @@ function renderInstalledCards(plugins, total) {
         const enabledBool = Boolean(plugin.enabled);
 
         // Escape plugin ID for use in HTML attributes and JavaScript
-        const escapedPluginId = escapeAttribute(plugin.id);
+        const escapedPluginId = window.LEDEscape.attr(plugin.id);
 
         return `
         <div class="plugin-card">
@@ -1100,7 +1100,7 @@ function renderInstalledCards(plugins, total) {
                      card's full width. -->
                 <div class="flex items-start justify-between gap-3 mb-2">
                     <div class="flex items-center flex-wrap gap-2 min-w-0">
-                        <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
+                        <h4 class="font-semibold text-gray-900 text-base">${window.LEDEscape.html(plugin.name || plugin.id)}</h4>
                         ${plugin.is_starlark_app ? '<span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>' : ''}
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
                     </div>
@@ -1112,7 +1112,7 @@ function renderInstalledCards(plugins, total) {
                         <input type="checkbox"
                                class="sr-only peer"
                                role="switch"
-                               aria-label="Enable ${escapeAttribute(plugin.name || plugin.id)}"
+                               aria-label="Enable ${window.LEDEscape.attr(plugin.name || plugin.id)}"
                                id="toggle-${escapedPluginId}"
                                ${enabledBool ? 'checked' : ''}
                                data-plugin-id="${escapedPluginId}"
@@ -1134,17 +1134,17 @@ function renderInstalledCards(plugins, total) {
                 </div>
                 </div>
                 <div class="text-sm text-gray-600 space-y-1.5 mb-3">
-                    <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${escapeAttribute(plugin.version)} → latest v${escapeAttribute(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${escapeHtml(plugin.latest_version)} available</span>` : ''}</p>` : ''}
-                    <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
+                    <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(plugin.author || 'Unknown')}</p>
+                    ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${window.LEDEscape.html(plugin.version)}${plugin.update_available && plugin.latest_version ? `<span class="badge badge-info" title="Installed v${window.LEDEscape.attr(plugin.version)} → latest v${window.LEDEscape.attr(plugin.latest_version)}"><i class="fas fa-arrow-circle-up mr-1"></i>v${window.LEDEscape.html(plugin.latest_version)} available</span>` : ''}</p>` : ''}
+                    <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(plugin.category || 'General')}</p>
                 </div>
-                <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
+                <p class="text-sm text-gray-700 leading-relaxed">${window.LEDEscape.html(plugin.description || 'No description available')}</p>
             </div>
 
             <!-- Plugin Tags -->
             ${plugin.tags && plugin.tags.length > 0 ? `
                 <div class="flex flex-wrap gap-1.5 mb-4">
-                    ${plugin.tags.map(tag => `<span class="badge badge-info">${escapeHtml(tag)}</span>`).join('')}
+                    ${plugin.tags.map(tag => `<span class="badge badge-info">${window.LEDEscape.html(tag)}</span>`).join('')}
                 </div>
             ` : ''}
 
@@ -1161,8 +1161,8 @@ function renderInstalledCards(plugins, total) {
                             style="flex: 1;"
                             data-plugin-id="${escapedPluginId}"
                             data-action="update"
-                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeAttribute(plugin.latest_version) : 'Reinstall the latest published version'}">
-                        <i class="fas ${plugin.update_available ? 'fa-arrow-circle-up' : 'fa-sync'} mr-2"></i>${plugin.update_available && plugin.latest_version ? 'Update to v' + escapeHtml(plugin.latest_version) : 'Update'}
+                            title="${plugin.update_available && plugin.latest_version ? 'Update to v' + window.LEDEscape.attr(plugin.latest_version) : 'Reinstall the latest published version'}">
+                        <i class="fas ${plugin.update_available ? 'fa-arrow-circle-up' : 'fa-sync'} mr-2"></i>${plugin.update_available && plugin.latest_version ? 'Update to v' + window.LEDEscape.html(plugin.latest_version) : 'Update'}
                     </button>
                     <button class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-semibold"
                             style="flex: 1;"
@@ -1846,15 +1846,15 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}</div>`;
+                statusDiv.innerHTML = `<div class="text-green-600"><i class="fas fa-check-circle mr-2"></i>${window.LEDEscape.html(data.message || 'Action completed successfully')}</div>`;
                 btn.innerHTML = originalText;
                 btn.disabled = false;
                 delete btn.dataset.step;
                 showNotification(data.message || 'Action completed successfully!', 'success');
             } else {
-                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Error')}</div>`;
+                statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>${window.LEDEscape.html(data.message || 'Error')}</div>`;
                 if (data.output) {
-                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>`;
+                    statusDiv.innerHTML += `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${window.LEDEscape.html(data.output)}</pre>`;
                 }
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -1862,7 +1862,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
             }
         })
         .catch(error => {
-            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
+            statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${window.LEDEscape.html(error.message)}</div>`;
             btn.innerHTML = originalText;
             btn.disabled = false;
             delete btn.dataset.step;
@@ -1894,12 +1894,12 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
                 statusDiv.innerHTML = `
                     <div class="bg-blue-50 border border-blue-200 rounded p-3">
                         <div class="text-blue-900 font-medium mb-2">
-                            <i class="fas fa-link mr-2"></i>${escapeHtml(data.message || 'Authorization URL Generated')}
+                            <i class="fas fa-link mr-2"></i>${window.LEDEscape.html(data.message || 'Authorization URL Generated')}
                         </div>
                         <div class="mb-3">
                             <p class="text-sm text-blue-700 mb-2">1. Click the link below to authorize:</p>
-                            <a href="${data.auth_url && data.auth_url.startsWith('http') ? escapeHtml(data.auth_url) : '#'}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
-                                ${escapeHtml(data.auth_url || '')}
+                            <a href="${data.auth_url && data.auth_url.startsWith('http') ? window.LEDEscape.html(data.auth_url) : '#'}" target="_blank" class="text-blue-600 hover:text-blue-800 underline break-all">
+                                ${window.LEDEscape.html(data.auth_url || '')}
                             </a>
                         </div>
                         <div class="mb-2">
@@ -1917,9 +1917,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
                 statusDiv.innerHTML = `
                     <div class="bg-green-50 border border-green-200 rounded p-3">
                         <div class="text-green-900 font-medium mb-2">
-                            <i class="fas fa-check-circle mr-2"></i>${escapeHtml(data.message || 'Action completed successfully')}
+                            <i class="fas fa-check-circle mr-2"></i>${window.LEDEscape.html(data.message || 'Action completed successfully')}
                         </div>
-                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
+                        ${data.output ? `<pre class="mt-2 text-xs bg-green-50 p-2 rounded overflow-auto max-h-32">${window.LEDEscape.html(data.output)}</pre>` : ''}
                     </div>
                 `;
                 btn.innerHTML = originalText;
@@ -1930,9 +1930,9 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
             statusDiv.innerHTML = `
                 <div class="bg-red-50 border border-red-200 rounded p-3">
                     <div class="text-red-900 font-medium mb-2">
-                        <i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Action failed')}
+                        <i class="fas fa-exclamation-circle mr-2"></i>${window.LEDEscape.html(data.message || 'Action failed')}
                     </div>
-                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${escapeHtml(data.output)}</pre>` : ''}
+                    ${data.output ? `<pre class="mt-2 text-xs bg-red-50 p-2 rounded overflow-auto max-h-32">${window.LEDEscape.html(data.output)}</pre>` : ''}
                 </div>
             `;
             btn.innerHTML = originalText;
@@ -1940,7 +1940,7 @@ window.executePluginAction = function(actionId, actionIndex, pluginId) {
         }
     })
     .catch(error => {
-        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${escapeHtml(error.message)}</div>`;
+        statusDiv.innerHTML = `<div class="text-red-600"><i class="fas fa-exclamation-circle mr-2"></i>Error: ${window.LEDEscape.html(error.message)}</div>`;
         btn.innerHTML = originalText;
         btn.disabled = false;
     });
@@ -2403,33 +2403,33 @@ function renderPluginStore(plugins) {
               + (plugin.plugin_path ? '/' + plugin.plugin_path.split('/').map(encodeURIComponent).join('/') : '')
             : '';
         const commitHtml = !commit ? '' : (commitUrl
-            ? `<a href="${escapeAttribute(commitUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-gray-500 hover:underline" title="Source of this version: commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</a>`
-            : `<span class="text-xs font-mono text-gray-500" title="Commit ${escapeAttribute(commit)}">${escapeHtml(commit.slice(0, 7))}</span>`);
+            ? `<a href="${window.LEDEscape.attr(commitUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-gray-500 hover:underline" title="Source of this version: commit ${window.LEDEscape.attr(commit)}">${window.LEDEscape.html(commit.slice(0, 7))}</a>`
+            : `<span class="text-xs font-mono text-gray-500" title="Commit ${window.LEDEscape.attr(commit)}">${window.LEDEscape.html(commit.slice(0, 7))}</span>`);
         return `
         <div class="plugin-card">
             <div class="flex items-start justify-between mb-4">
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center flex-wrap gap-1.5 mb-2">
-                        <h4 class="font-semibold text-gray-900 text-base">${escapeHtml(plugin.name || plugin.id)}</h4>
+                        <h4 class="font-semibold text-gray-900 text-base">${window.LEDEscape.html(plugin.name || plugin.id)}</h4>
                         ${plugin.verified ? '<span class="badge badge-success"><i class="fas fa-check-circle mr-1"></i>Verified</span>' : ''}
                         ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         ${isNewPlugin(plugin.last_updated) ? '<span class="badge badge-info"><i class="fas fa-sparkles mr-1"></i>New</span>' : ''}
-                        ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${escapeHtml(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
-                        ${plugin.incompatible_reason ? `<span class="badge badge-warning" title="${escapeAttribute(plugin.incompatible_reason)}"><i class="fas fa-exclamation-triangle mr-1"></i>Needs LEDMatrix ${escapeHtml(plugin.ledmatrix_min_version || 'update')}+</span>` : ''}
+                        ${plugin._source === 'custom_repository' ? `<span class="badge badge-accent" title="From: ${window.LEDEscape.html(plugin._repository_name || plugin._repository_url || 'Custom Repository')}"><i class="fas fa-bookmark mr-1"></i>Custom</span>` : ''}
+                        ${plugin.incompatible_reason ? `<span class="badge badge-warning" title="${window.LEDEscape.attr(plugin.incompatible_reason)}"><i class="fas fa-exclamation-triangle mr-1"></i>Needs LEDMatrix ${window.LEDEscape.html(plugin.ledmatrix_min_version || 'update')}+</span>` : ''}
                     </div>
                     <div class="text-sm text-gray-600 space-y-1.5 mb-3">
-                        <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.author || 'Unknown')}</p>
-                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${escapeHtml(plugin.version)}${commitHtml}</p>` : ''}
-                        <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(plugin.category || 'General')}</p>
+                        <p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(plugin.author || 'Unknown')}</p>
+                        ${plugin.version ? `<p class="flex items-center flex-wrap gap-1.5"><i class="fas fa-tag mr-2 text-gray-400 w-4"></i>v${window.LEDEscape.html(plugin.version)}${commitHtml}</p>` : ''}
+                        <p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(plugin.category || 'General')}</p>
                     </div>
-                    <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(plugin.description || 'No description available')}</p>
+                    <p class="text-sm text-gray-700 leading-relaxed">${window.LEDEscape.html(plugin.description || 'No description available')}</p>
                 </div>
             </div>
 
             <!-- Plugin Tags -->
             ${plugin.tags && plugin.tags.length > 0 ? `
                 <div class="flex flex-wrap gap-1.5 mb-4">
-                    ${plugin.tags.map(tag => `<span class="badge badge-info">${escapeHtml(tag)}</span>`).join('')}
+                    ${plugin.tags.map(tag => `<span class="badge badge-info">${window.LEDEscape.html(tag)}</span>`).join('')}
                 </div>
             ` : ''}
 
@@ -2658,11 +2658,11 @@ function renderSavedRepositories(repositories) {
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
                         <i class="fas ${repoType === 'registry' ? 'fa-folder-open' : 'fa-code-branch'} text-gray-400 text-xs"></i>
-                        <span class="text-sm font-medium text-gray-900 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoName)}</span>
+                        <span class="text-sm font-medium text-gray-900 truncate" title="${window.LEDEscape.attr(repoUrl)}">${window.LEDEscape.html(repoName)}</span>
                     </div>
-                    <p class="text-xs text-gray-500 truncate" title="${escapeAttribute(repoUrl)}">${escapeHtml(repoUrl)}</p>
+                    <p class="text-xs text-gray-500 truncate" title="${window.LEDEscape.attr(repoUrl)}">${window.LEDEscape.html(repoUrl)}</p>
                 </div>
-                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${jsStringAttr(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${escapeAttribute(repoName)}">
+                <button onclick='if(window.removeSavedRepository){window.removeSavedRepository(${jsStringAttr(repoUrl)})}else{console.error("removeSavedRepository not available")}' class="ml-2 text-red-600 hover:text-red-800 text-xs px-2 py-1" title="Remove repository" aria-label="Remove saved repository ${window.LEDEscape.attr(repoName)}">
                     <i class="fas fa-trash" aria-hidden="true"></i>
                 </button>
             </div>
@@ -2779,7 +2779,7 @@ function attachInstallButtonHandler() {
                     debugLog('[attachInstallButtonHandler] Response data:', data);
                     if (data.status === 'success') {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${escapeHtml(data.plugin_id)}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-green-600"><i class="fas fa-check-circle mr-1"></i>Successfully installed: ${window.LEDEscape.html(data.plugin_id)}</span>`;
                         }
                         pluginUrlInput.value = '';
                         window.noteRestartRequired(data);
@@ -2790,14 +2790,14 @@ function attachInstallButtonHandler() {
                         }, 1000);
                     } else {
                         if (pluginStatusDiv) {
-                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${escapeHtml(data.message || 'Installation failed')}</span>`;
+                            pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>${window.LEDEscape.html(data.message || 'Installation failed')}</span>`;
                         }
                     }
                 })
                 .catch(error => {
                     console.error('[attachInstallButtonHandler] Error:', error);
                     if (pluginStatusDiv) {
-                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
+                        pluginStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
                     }
                 })
                 .finally(() => {
@@ -2946,7 +2946,7 @@ function setupGitHubInstallHandlers() {
                 }
             })
             .catch(error => {
-                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${escapeHtml(error.message)}</span>`;
+                registryStatusDiv.innerHTML = `<span class="text-red-600"><i class="fas fa-times-circle mr-1"></i>Error: ${window.LEDEscape.html(error.message)}</span>`;
                 customRegistryPlugins.classList.add('hidden');
             })
             .finally(() => {
@@ -3045,8 +3045,8 @@ function renderCustomRegistryPlugins(plugins, registryUrl) {
             <div class="bg-white border border-gray-200 rounded-lg p-3">
                 <div class="flex items-start justify-between mb-2">
                     <div class="flex-1">
-                        <h5 class="font-semibold text-sm text-gray-900">${escapeHtml(plugin.name || plugin.id)}</h5>
-                        <p class="text-xs text-gray-600 mt-1 line-clamp-2">${escapeHtml(plugin.description || 'No description')}</p>
+                        <h5 class="font-semibold text-sm text-gray-900">${window.LEDEscape.html(plugin.name || plugin.id)}</h5>
+                        <p class="text-xs text-gray-600 mt-1 line-clamp-2">${window.LEDEscape.html(plugin.description || 'No description')}</p>
                     </div>
                 </div>
                 <div class="space-y-2 mt-2 pt-2 border-t border-gray-100">
@@ -3080,7 +3080,7 @@ function showInstalledLoadError(message) {
     content.innerHTML = `
         <div class="text-center py-8">
             <i class="fas fa-exclamation-triangle text-4xl text-red-400 mb-2"></i>
-            <p class="text-red-600">${escapeHtml(message)}</p>
+            <p class="text-red-600">${window.LEDEscape.html(message)}</p>
         </div>
     `;
 }
@@ -3104,10 +3104,8 @@ function isGithubUrl(url) {
     }
 }
 
-// Short local names for window.LEDEscape (app-early.js), which says what each
-// one is for. Function declarations, so they are usable anywhere in this IIFE.
-function escapeHtml(text) { return window.LEDEscape.html(text); }
-function escapeAttribute(text) { return window.LEDEscape.attr(text); }
+// Short local name for window.LEDEscape.jsStringAttr (app-early.js). A function
+// declaration, so it is usable anywhere in this IIFE.
 function jsStringAttr(value) { return window.LEDEscape.jsStringAttr(value); }
 
 function isNewPlugin(lastUpdated) {
@@ -3428,8 +3426,6 @@ document.addEventListener('htmx:afterSettle', function() {
     let starlarkDataLoaded = false;
 
     // ── Helpers ─────────────────────────────────────────────────────────────
-    function escapeHtml(str) { return window.LEDEscape.html(str); }
-
     function isStarlarkInstalled(appId) {
         // Check window.installedPlugins (populated by loadInstalledPlugins)
         if (window.installedPlugins && Array.isArray(window.installedPlugins)) {
@@ -3487,7 +3483,7 @@ document.addEventListener('htmx:afterSettle', function() {
                 if (!banner) return;
                 if (data.pixlet_available) {
                     banner.innerHTML = `<div class="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
-                        <i class="fas fa-check-circle mr-2"></i>Pixlet available${data.pixlet_version ? ' (' + escapeHtml(data.pixlet_version) + ')' : ''} &mdash; ${data.installed_apps || 0} app(s) installed
+                        <i class="fas fa-check-circle mr-2"></i>Pixlet available${data.pixlet_version ? ' (' + window.LEDEscape.html(data.pixlet_version) + ')' : ''} &mdash; ${data.installed_apps || 0} app(s) installed
                     </div>`;
                 } else {
                     banner.innerHTML = `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
@@ -3514,7 +3510,7 @@ document.addEventListener('htmx:afterSettle', function() {
             .then(r => r.json())
             .then(data => {
                 if (data.status !== 'success') {
-                    if (grid) grid.innerHTML = `<div class="col-span-full text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>${escapeHtml(data.message || 'Failed to load')}</div>`;
+                    if (grid) grid.innerHTML = `<div class="col-span-full text-center py-8 text-red-500"><i class="fas fa-exclamation-circle mr-2"></i>${window.LEDEscape.html(data.message || 'Failed to load')}</div>`;
                     return;
                 }
 
@@ -3693,22 +3689,22 @@ document.addEventListener('htmx:afterSettle', function() {
         setGridHtmlIfChanged(grid, apps.map(app => {
             const installed = isStarlarkInstalled(app.id);
             return `
-            <div class="plugin-card" data-app-id="${escapeHtml(app.id)}">
+            <div class="plugin-card" data-app-id="${window.LEDEscape.html(app.id)}">
                 <div class="flex items-start justify-between mb-4">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center flex-wrap gap-1.5 mb-2">
                             <!-- break-words: Starlark app names come from the
                                  community repo and some are long single tokens,
                                  which overflowed the card instead of wrapping. -->
-                            <h4 class="font-semibold text-gray-900 text-base break-words">${escapeHtml(app.name || app.id)}</h4>
+                            <h4 class="font-semibold text-gray-900 text-base break-words">${window.LEDEscape.html(app.name || app.id)}</h4>
                             <span class="badge badge-warning"><i class="fas fa-star mr-1"></i>Starlark</span>
                             ${installed ? '<span class="badge badge-success"><i class="fas fa-check mr-1"></i>Installed</span>' : ''}
                         </div>
                         <div class="text-sm text-gray-600 space-y-1.5 mb-3">
-                            ${app.author ? `<p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${escapeHtml(app.author)}</p>` : ''}
-                            ${app.category ? `<p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${escapeHtml(app.category)}</p>` : ''}
+                            ${app.author ? `<p class="flex items-center"><i class="fas fa-user mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(app.author)}</p>` : ''}
+                            ${app.category ? `<p class="flex items-center"><i class="fas fa-folder mr-2 text-gray-400 w-4"></i>${window.LEDEscape.html(app.category)}</p>` : ''}
                         </div>
-                        <p class="text-sm text-gray-700 leading-relaxed">${escapeHtml(app.summary || app.desc || 'No description')}</p>
+                        <p class="text-sm text-gray-700 leading-relaxed">${window.LEDEscape.html(app.summary || app.desc || 'No description')}</p>
                     </div>
                 </div>
                 <div class="flex gap-2 mt-auto pt-3 border-t border-gray-200">

@@ -44,8 +44,8 @@ and symlink the plugin directories you are working on into LEDMatrix's
 ### 1. The plugin monorepo
 
 Clone ledmatrix-plugins into the same parent directory as LEDMatrix (the
-workspace file and `scripts/update_plugin_repos.py` look for
-`../ledmatrix-plugins` relative to the LEDMatrix root):
+workspace file looks for `../ledmatrix-plugins` relative to the LEDMatrix
+root):
 
 ```bash
 cd ~/Github
@@ -86,7 +86,7 @@ the plugin from there. See the
 
 ```bash
 cd ~/Github/LEDMatrix
-python3 scripts/update_plugin_repos.py      # git pull in ../ledmatrix-plugins
+git -C ../ledmatrix-plugins pull            # the sibling monorepo checkout
 # or
 ./scripts/dev/dev_plugin_setup.sh update    # git pull in every linked checkout
 ```

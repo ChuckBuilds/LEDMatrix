@@ -24,8 +24,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('EmailInput', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -73,9 +71,9 @@
             html += `
                 <input type="email"
                        id="${fieldId}_input"
-                       name="${escapeHtml(options.name || fieldId)}"
-                       value="${escapeHtml(currentValue)}"
-                       placeholder="${escapeHtml(placeholder)}"
+                       name="${window.LEDEscape.html(options.name || fieldId)}"
+                       value="${window.LEDEscape.html(currentValue)}"
+                       placeholder="${window.LEDEscape.html(placeholder)}"
                        ${disabled ? 'disabled' : ''}
                        ${required ? 'required' : ''}
                        onchange="window.LEDMatrixWidgets.getHandlers('email-input').onChange('${fieldId}')"

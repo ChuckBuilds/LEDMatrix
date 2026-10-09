@@ -75,6 +75,14 @@ OWNER_RECEIVERS: Dict[str, Tuple[str, ...]] = {
     "DisplayManager": ("display_manager", "display_mgr", "displaymanager", "display", "dm"),
     "FontManager": ("font_manager", "font_mgr", "fontmanager", "fonts", "fm"),
     "PluginManager": ("plugin_manager", "plugin_mgr", "pluginmanager", "pm"),
+    "PluginStateManager": ("state_manager", "plugin_state", "state_mgr"),
+    "ConfigManager": ("config_manager", "config_mgr", "configmanager"),
+    "LogoDownloader": ("logo_downloader", "downloader", "logodownloader"),
+    "APIHelper": ("api_helper", "apihelper", "api"),
+    "BackgroundDataService": ("background_service", "background_data_service", "bg_service",
+                              "data_service"),
+    "BaseOddsManager": ("odds_manager", "oddsmanager", "odds"),
+    "DynamicTeamResolver": ("dynamic_resolver", "team_resolver", "resolver"),
 }
 
 #: Directories never scanned (vendored environments, VCS metadata, caches).
@@ -330,8 +338,7 @@ class _Scanner(ast.NodeVisitor):
             return "call"
         definers = self.local_definers.get(m.method, ())
         if name in definers or self.built.get(name or "") in definers:
-            # e.g. the weather plugin's WeatherIcons.draw_sun, or
-            # self._strategy_component = CacheStrategy(); ...get_sport_live_interval()
+            # e.g. the weather plugin's WeatherIcons.draw_sun
             return "unrelated"
         return "review"
 

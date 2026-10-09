@@ -12,8 +12,8 @@ from typing import Any, Dict
 def _schema_type_is(prop: Any, wanted: str) -> bool:
     """Whether a schema property is of ``wanted`` type, unions included.
 
-    Mirrors ``_schema_type_is`` in ``web_interface/blueprints/api_v3`` (kept
-    here so src/ doesn't import the Flask blueprint). A union such as
+    The one copy: ``web_interface/blueprints/api_v3`` imports it from here
+    (src/ must not import the Flask blueprint). A union such as
     ``["array", "null"]`` -- the per-element style overrides, where null means
     "inherit" -- is still an array for recombining position-keyed inputs.
     """

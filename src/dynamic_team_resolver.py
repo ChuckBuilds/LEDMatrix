@@ -24,6 +24,7 @@ from typing import Any, Dict, List
 
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 from src.common.json_body import response_json
+from src.deprecation import deprecated
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,7 @@ class DynamicTeamResolver:
         DynamicTeamResolver._failure_timestamp = current_time
         return {}
     
+    @deprecated("3.10.0", "use resolve_teams()")
     def get_available_dynamic_teams(self) -> List[str]:
         """
         Get list of available dynamic team names.
@@ -210,6 +212,7 @@ class DynamicTeamResolver:
         """
         return list(self.DYNAMIC_PATTERNS.keys())
     
+    @deprecated("3.10.0", "use resolve_teams()")
     def is_dynamic_team(self, team_name: str) -> bool:
         """
         Check if a team name is a dynamic team.

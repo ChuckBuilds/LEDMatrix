@@ -60,7 +60,9 @@ class TestRoundTrip:
     def test_start_args_round_trip(self):
         args = OnDemandStartArgs(plugin_id='clock', mode='clock_main', duration=45.0,
                                  pinned=True)
-        assert OnDemandStartArgs.from_dict(_wire(args.to_dict())) == args
+        wire = _wire({'plugin_id': 'clock', 'mode': 'clock_main', 'duration': 45.0,
+                      'pinned': True})
+        assert OnDemandStartArgs.from_dict(wire) == args
 
     def test_encoded_messages_are_ascii_single_lines(self):
         data = c.encode_message({'v': 1, 'id': 'x', 'cmd': 'ping',

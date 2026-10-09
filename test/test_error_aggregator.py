@@ -218,24 +218,6 @@ class TestPatternDetection:
         assert pattern is not None
         assert pattern.severity in ["error", "critical"]
 
-    def test_pattern_callback_called(self):
-        """Pattern detection callback should be called."""
-        aggregator = ErrorAggregator(pattern_threshold=2)
-
-        callback_called = []
-
-        def callback(pattern):
-            callback_called.append(pattern)
-
-        aggregator.on_pattern_detected(callback)
-
-        # Trigger pattern
-        for _ in range(3):
-            aggregator.record_error(error=ValueError("Pattern trigger"))
-
-        assert len(callback_called) == 1
-        assert callback_called[0].error_type == "ValueError"
-
 
 class TestErrorSummary:
     """Test error summary generation."""
@@ -316,37 +298,6 @@ class TestPluginHealth:
 
         assert health["status"] == "unhealthy"
         assert health["recent_error_count"] == 10
-
-
-class TestRecordClearing:
-    """Test clearing old records."""
-
-    def test_clear_old_records(self):
-        """Old records should be cleared."""
-        aggregator = ErrorAggregator()
-
-        # Add a record
-        aggregator.record_error(error=ValueError("Old error"))
-
-        # Manually age the record
-        aggregator._records[0].timestamp = datetime.now() - timedelta(hours=48)
-
-        # Clear records older than 24 hours
-        cleared = aggregator.clear_old_records(max_age_hours=24)
-
-        assert cleared == 1
-        assert len(aggregator._records) == 0
-
-    def test_recent_records_not_cleared(self):
-        """Recent records should not be cleared."""
-        aggregator = ErrorAggregator()
-
-        aggregator.record_error(error=ValueError("Recent error"))
-
-        cleared = aggregator.clear_old_records(max_age_hours=24)
-
-        assert cleared == 0
-        assert len(aggregator._records) == 1
 
 
 class TestThreadSafety:
