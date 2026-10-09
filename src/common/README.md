@@ -53,6 +53,7 @@ Rules for the package:
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
+| [`sports_rotation`](#sports_rotation) | Which non-favourite games a scoreboard shows, and when the slice moves | Yes (scoreboards) | next release |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
 | [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
@@ -367,6 +368,21 @@ helpers of a scoreboard's `BasePlugin` subclass. `get_vegas_priority_weight()`
 shape), `_dispatch_switch_refresh()` (a manager refresh on a daemon thread, so
 `display()` never waits on the network), `get_vegas_content_type()` and small
 dynamic-duration helpers. List it before `BasePlugin`.
+
+### sports_rotation
+
+[`sports_rotation.py`](sports_rotation.py). Sports family 7:
+`SportsRotationMixin` (`SportsCore`), the other-games rotation.
+`_by_importance` orders the non-favourite pool best matchup first, one game per
+team, when `_rankings_loaded()` says a poll loaded (football overrides that to
+count its by-id rankings). `_other_games_window` cuts the slice on screen,
+advancing by its width every `other_rotation_interval_seconds` under
+`_games_lock`, catching up on missed intervals and wrapping.
+`_rotate_other_games_on_display` (with `_advance_other_games_if_due`) re-cuts
+it from `display()` between fetches, looking at the pool `_compose_selection`
+will cut, unfiltered fallback included, and keeps the card on screen when it
+survives; `_attach_odds_to_rotated_games` fetches odds for the games it brought
+in when `show_odds` is on.
 
 ### sports_scroll
 

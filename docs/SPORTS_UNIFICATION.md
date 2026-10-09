@@ -128,6 +128,7 @@ deprecation cycle.
 | `_custom_scorebug_layout(game, draw)` | Per-sport overlay on the base layout | no-op |
 | `score_phrase(points, team_abbr)` | Celebration wording (`"GOOOOAAALLL!"` vs `"TOUCHDOWN!"`). `points` is the score delta, which sports with variable-value scores use to name the play | `"<abbr> SCORES!"` — only consulted when `CelebrationMixin` is present |
 | `win_phrase(team_abbr)` | Win-celebration wording | `"<abbr> WINS!"` — mixin only |
+| `_rankings_loaded()` | Whether a poll loaded, so `_by_importance` orders by rank (`sports_rotation`) | `_team_rankings_cache` is non-empty. football also counts its rankings keyed by team id |
 | `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching. `sports_favorites` compares it, and each `favorite_teams` entry, stripped and upper-cased; a `None` matches nothing | `game["<side>_abbr"]`. nrl returns the ESPN team id, `None` when it is missing |
 | `_config_schema_path()` | Plugin's `config_schema.json` — returning it routes `_get_layout_offset` through the `src.element_style` resolver (and gives it the defaults to compare against) | `None`, i.e. the classic inline `customization.layout` read |
 | `_font_root()` | Directory to resolve `assets/fonts` against | core install root |
@@ -303,7 +304,7 @@ Left in the plugins, though identical:
   renderers) is already core's, in `SportsHelpersMixin`; a renderer that
   wants it can inherit that.
 
-### Family 5: the game-over check (core done; adoption waits for a release)
+### Family 5: the game-over check (done: core 3.8.1, adopted)
 
 The pilot of the method below. ledmatrix-plugins `scripts/test_game_over_check.py`
 (#621) pinned 3,115 answers across the nine plugins first; the reconcile
@@ -315,9 +316,10 @@ clock rule (65 cells), baseball's dormant one (53, every one a game with a
 cells in hockey, basketball, football and lacrosse). The harness renders
 were pixel-identical. `src/common/sports_game_over.py` holds the body;
 `test/test_sports_game_over_parity.py` compares it, and each plugin's
-`FINAL_PERIOD`, with the plugin copies.
+`FINAL_PERIOD`, with the plugin copies. Core 3.8.1 shipped it, and all nine
+scoreboards inherit it and floor on 3.8.1 (ledmatrix-plugins #631).
 
-### Family 6: favourite matching (core done; adoption waits for a release)
+### Family 6: favourite matching (done: core 3.8.2, adopted)
 
 ledmatrix-plugins `scripts/test_favourite_matching.py` (#634) pinned 204 rows
 across the nine plugins first: `_is_favorite_game` on each manager role, the
@@ -337,7 +339,8 @@ each), nrl's key (6) and its "None" match (6), and the INFO line in baseball,
 football and ufc. The harness renders were byte-identical. `src/common/sports_favorites.py` holds the
 bodies, one mixin per carrying class; `test/test_sports_favorites_parity.py`
 compares them with the plugin copies and checks that only nrl overrides
-`_favorite_key`.
+`_favorite_key`. Core 3.8.2 shipped it, and all nine scoreboards inherit it and
+floor on 3.8.2 (ledmatrix-plugins #637).
 
 Left for later families: the live screens' favourites-only filter
 (`_classify_live_game` and its inline copies) and favourites-first sort still
@@ -345,6 +348,38 @@ compare abbreviations exactly, and
 `SportsCoreSharedMixin._round_robin_favorites` groups favourites by raw
 abbreviation (or by `_team_in` where a plugin has one) instead of through
 `_favorite_key`. The result-colour helpers also wait (decision above).
+
+### Family 7: the other-games rotation (core done; adoption waits for a release)
+
+ledmatrix-plugins `scripts/test_other_games_rotation.py` (#640) pinned 96 rows
+across the nine plugins first: `_by_importance` per rankings table, core's
+`_favorites_first` pools per favourites, quality, divisions and rankings, the
+window over time, the real `update()` followed by `display()`'s rotation call
+(the list, the card on screen, redraws and how often the list is recomposed),
+`update()` and `display()` advancing the window in sequence and interleaved on
+two threads, odds for rotated-in games, and `favorite_rotation_boost`'s
+switch order. The reconcile (ledmatrix-plugins `claude/family7-reconcile`)
+made `_by_importance`, `_other_games_window`, `_advance_other_games_if_due`,
+`_rotate_other_games_on_display` and `_attach_odds_to_rotated_games` one body
+on `SportsCore` (ufc gains the odds helper), with `_rankings_loaded` as the
+seam `_by_importance` asks: the abbreviation table by default, football's
+override also counts its rankings keyed by team id. Of 864 cells only those
+the decisions below explain changed: the window lock (the interleaved row, in
+the seven plugins with a reachable `update()` other than football), the
+due-check's fallback pool (two rows in the same seven) and ufc's rotated-in
+odds (one cell). The harness renders were byte-identical (208 PNGs).
+`src/common/sports_rotation.py` holds the bodies in one mixin,
+`SportsRotationMixin`; `test/test_sports_rotation_parity.py` compares them
+with the plugin copies and checks that only football overrides
+`_rankings_loaded`.
+
+Left for later families: in eight plugins the no-favourites branch of
+`update()` still picks a fixed "next N" through `_filtered_or_all` and never
+builds the pools, so nothing rotates on a board with no favourites; football
+routes it through `_favorites_first(games, 0, N)` (decision below, family 13).
+ufc's MMA managers override `update()` and never build the pools, so the
+rotation is dormant there. `_best_rank`, `_is_ranked_game` and
+`_passes_other_filters` are family 8.
 
 ### Why the method changes
 
@@ -430,9 +465,9 @@ release.
 | # | Family | Methods (variants) | Why here |
 |---|---|---|---|
 | 4 | Identical sweep | `manager.py`: `_dispatch_switch_refresh`, `_favorite_team_is_live`, `get_vegas_priority_weight`, `_game_involves`, `_favorite_scan_targets`, `_favorite_scan_games`, `_get_total_games_for_manager` (all nine, 1); the live-scroll helpers `_preserving_scroll_position`, `_refresh_live_scroll_managers`, `_live_scroll_managers`, `_note_live_scroll_built`, `_live_scroll_needs_rebuild`, `_live_scroll_fields` (eight, 1). `sports.py`: `_card_option`, `_filtered_or_all`, `_effective_live_duration`, `_recent_date_text` (eight, 1). 58 identical families in all | Nothing to decide; brings `manager.py` into core as a `SportsPluginHostMixin`. `_resolve_font_path` (identical in nine `sports.py` and eight renderers) becomes `sports_font_path.resolve_font_path`, not `font_layout.resolve_asset_path`, which skips the cwd. Core side done; see [Stage 4](#stage-4-the-identical-sweep-core-done-adoption-waits-for-a-release) |
-| 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; one seam, `FINAL_PERIOD`. The pilot for the procedure. Reconciled to one body and promoted as `sports_game_over`; adoption waits for the release that ships it. See [Family 5](#family-5-the-game-over-check-core-done-adoption-waits-for-a-release) |
-| 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; adoption waits for the release that ships it. See [Family 6](#family-6-favourite-matching-core-done-adoption-waits-for-a-release) |
-| 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc) | One outlier each; football carries two fixes the other eight lack |
+| 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; one seam, `FINAL_PERIOD`. The pilot for the procedure. Reconciled to one body and promoted as `sports_game_over`; shipped in 3.8.1 and adopted. See [Family 5](#family-5-the-game-over-check-done-core-381-adopted) |
+| 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; shipped in 3.8.2 and adopted. See [Family 6](#family-6-favourite-matching-done-core-382-adopted) |
+| 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; adoption waits for the release that ships it. See [Family 7](#family-7-the-other-games-rotation-core-done-adoption-waits-for-a-release) |
 | 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it |
 | 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
 | 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
@@ -486,11 +521,21 @@ suspected behaviour that needs a payload or a rig to confirm first.
   nine. ufc stays on the shared body, dormant: its favourites are fighters,
   which its MMA managers match themselves (a follow-up). Fix ported: only a
   game with an id can be a duplicate in the selection methods.
-- **7, other-games rotation.** football advances the rotation window under
-  `_games_lock` (update() and display() both advance it; interleaved, a
-  window of games is skipped) and fixes a favourites-only pool that recomposed
-  the list on every frame. Port both. ufc does not attach odds to fights
-  rotated in: decide whether rotated fights show odds.
+- **7, other-games rotation. Decided 2026-10-09, done:** two fixes ported
+  from football. The window advances under `_games_lock`: `update()` and
+  `display()` both advance it, and interleaved, each added a width and a
+  window of games was never shown. The display path's due-check looks at the
+  pool `_compose_selection` actually cuts from, including the unfiltered
+  fallback when nothing else survived. The other eight never rotated that
+  fallback between fetches (it moved only when `update()` ran, then several
+  windows at once); guessing it whenever the filtered pool was empty would
+  recompose an identical list on every frame while a favourite played.
+  Rotated-in fights in ufc follow its `show_odds` like every other fight (no
+  separate toggle; the rotation is dormant in ufc today, so no board
+  changes). `_rankings_loaded` is a seam (default: the abbreviation table is
+  non-empty; football counts its by-id table too). Kept for family 13: the
+  no-favourites branch of `update()` keeps its fixed "next N" in the eight
+  plugins that have it, rather than football's rotating pools.
 - **8, rankings.** (a) afl, basketball, nrl and soccer turn a *standings*
   payload into ranks (a pro league's standings position becomes the rank
   badge); baseball, hockey, lacrosse, ufc and football do not. Which is
