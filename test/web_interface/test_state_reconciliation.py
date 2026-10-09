@@ -100,7 +100,6 @@ class TestStateReconciliation(unittest.TestCase):
         inconsistency = result.inconsistencies_found[0]
         self.assertEqual(inconsistency.plugin_id, "plugin1")
         self.assertEqual(inconsistency.inconsistency_type, InconsistencyType.PLUGIN_MISSING_IN_CONFIG)
-        self.assertTrue(inconsistency.can_auto_fix)
         self.assertEqual(inconsistency.fix_action, FixAction.AUTO_FIX)
 
     def test_plugin_missing_on_disk(self):
@@ -115,7 +114,6 @@ class TestStateReconciliation(unittest.TestCase):
         inconsistency = result.inconsistencies_found[0]
         self.assertEqual(inconsistency.plugin_id, "plugin1")
         self.assertEqual(inconsistency.inconsistency_type, InconsistencyType.PLUGIN_MISSING_ON_DISK)
-        self.assertFalse(inconsistency.can_auto_fix)
         self.assertEqual(inconsistency.fix_action, FixAction.MANUAL_FIX_REQUIRED)
 
     def test_enabled_but_not_loaded_is_reported_not_fixed(self):
@@ -139,7 +137,6 @@ class TestStateReconciliation(unittest.TestCase):
         inconsistency = result.inconsistencies_found[0]
         self.assertEqual(inconsistency.inconsistency_type, InconsistencyType.PLUGIN_ENABLED_MISMATCH)
         self.assertEqual(inconsistency.fix_action, FixAction.NO_ACTION)
-        self.assertFalse(inconsistency.can_auto_fix)
         self.assertIn("No module named", inconsistency.description)
         self.assertEqual(result.inconsistencies_fixed, [])
         self.assertEqual(result.inconsistencies_manual, [])
@@ -410,7 +407,6 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
         # Still one inconsistency, still no install attempt, no new registry fetch
         self.assertEqual(len(result.inconsistencies_found), 1)
         inc = result.inconsistencies_found[0]
-        self.assertFalse(inc.can_auto_fix)
         self.assertEqual(inc.fix_action, FixAction.MANUAL_FIX_REQUIRED)
         self.store_manager.install_plugin.assert_not_called()
         self.store_manager.fetch_registry.assert_not_called()
@@ -458,7 +454,6 @@ class TestStateReconciliationUnrecoverable(unittest.TestCase):
 
         self.assertEqual(len(result.inconsistencies_found), 1)
         inc = result.inconsistencies_found[0]
-        self.assertFalse(inc.can_auto_fix)
         self.assertEqual(inc.fix_action, FixAction.MANUAL_FIX_REQUIRED)
         self.store_manager.install_plugin.assert_not_called()
 

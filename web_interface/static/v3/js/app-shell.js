@@ -17,7 +17,7 @@
  *                      is the one Alpine uses)
  *   end of <body>, defer, in this order: app.js, js/tooltips.js,
  *                      js/settings-search.js, js/utils/dialog.js,
- *                      js/utils/error_handler.js, js/plugins/api_client.js,
+ *                      js/plugins/api_client.js,
  *                      state_manager.js, install_manager.js, list_filter.js,
  *                      the widget bundle (web_interface/widget_bundle.py),
  *                      plugins_manager.js

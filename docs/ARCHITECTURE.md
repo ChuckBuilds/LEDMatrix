@@ -42,11 +42,11 @@ each other. They share three things:
 | State | Where | Written by | Read by |
 |---|---|---|---|
 | On-demand command | control socket `/run/ledmatrix/control.sock` ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)) | web: `start_on_demand_display()` / `stop_on_demand_display()` in [`api_v3/display.py`](../web_interface/blueprints/api_v3/display.py), via [`src/ipc/client.py`](../src/ipc/client.py) | display: [`src/ipc/server.py`](../src/ipc/server.py) acks; the render thread applies it in `_poll_on_demand_requests()` |
-| On-demand request (fallback) | cache `display_on_demand_request` | web, when the socket fails; four plugins write it directly | display: `_poll_on_demand_requests()` |
+| On-demand request (fallback) | cache `display_on_demand_request` | web, only when the socket could not carry the request (`should_fall_back`); four plugins write it directly | display: `_poll_on_demand_requests()`, a `stat()` every 1 s while the socket is up (0.25 s without), read only when the file changed |
 | On-demand state | cache `display_on_demand_state` | display: `_publish_on_demand_state()` | web: `/api/v3/display/on-demand/status` |
 | Current screen | cache `display_current_state` | display | web: `/api/v3/display/current-status` |
 | Plugin errors | cache `plugin_error_snapshot` | display: `ErrorSnapshotPublisher` ([`src/error_aggregator.py`](../src/error_aggregator.py)) | web: `read_error_report()` for `/api/v3/errors/*` |
-| Error clear | cache `plugin_error_clear_request` | web | display |
+| Error clear | control socket `errors.clear`; cache `plugin_error_clear_request` as the fallback | web: `POST /api/v3/errors/clear` | display: applied before the socket answers; the mailbox on the error publisher's 5 s tick, read only when the file changed |
 | Font usage | cache `font_usage_snapshot` | display: `FontUsagePublisher` ([`src/font_usage.py`](../src/font_usage.py)) | web: Fonts tab |
 | Fetch statistics (requests per plugin and host) | cache `fetch_stats_snapshot` | display: `FetchStatsPublisher` ([`src/common/fetch_service.py`](../src/common/fetch_service.py)), at most once a minute on change | web: `read_fetch_stats()` for `/api/v3/plugins/fetch-stats` |
 | Plugin health | cache `plugin_health:<id>` | display (web writes on reset) | web: `/api/v3/plugins/health` |
@@ -58,11 +58,16 @@ each other. They share three things:
 
 The on-demand start route starts `ledmatrix.service` when it is not running
 (`start_service`, on by default) but never restarts a running one. The routes
-send the command over the display's control socket and get an ack; when that
-fails (a stopped display, one older than the socket) they write the mailbox
-instead, which the display reads every `ON_DEMAND_POLL_INTERVAL` (0.25s), from
-its dwell sleep, its render loops and Vegas's interrupt check as well as the
-main loop. Both ways end in the same handler, `_handle_on_demand_request()`.
+send the command over the display's control socket and get an ack; only when
+the socket could not carry it (a stopped display, one older than the socket
+or the command) do they write the mailbox instead. A display that had the
+request and refused it is answered with the error, not posted a mailbox
+copy. The display looks at the mailbox every
+`MAILBOX_POLL_INTERVAL_WITH_SOCKET` (1 s) while it serves the socket, and
+every `ON_DEMAND_POLL_INTERVAL` (0.25 s) without one, from its dwell sleep,
+its render loops and Vegas's interrupt check as well as the main loop; a
+look is one `stat()` unless the file changed. Both ways end in the same
+handler, `_handle_on_demand_request()`.
 The socket's handlers only queue; see [IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)
 for the protocol, the permission model and the plan to retire the mailboxes.
 
@@ -71,10 +76,10 @@ for the protocol, the permission model and the plan to retire the mailboxes.
 Only the display process imports plugin code, instantiates plugins and calls
 their lifecycle hooks (`update`, `display`, `on_config_change`, `on_enable`,
 `on_disable`). The web process is metadata-only: it reads plugins as files
-through `PluginCatalog`
-([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py))
--- manifests, config schemas (through `SchemaManager`), each plugin's
-section of `config.json`, and installed versions. The catalog keeps the
+-- manifests and directories through `PluginCatalog`
+([`src/plugin_system/plugin_catalog.py`](../src/plugin_system/plugin_catalog.py)),
+config schemas through `SchemaManager`, and each plugin's section of
+`config.json` through `ConfigManager`. The catalog keeps the
 read-only method names of `PluginManager` and has nothing that can run a
 plugin (no `load_plugin`, `get_plugin` or `plugins`).
 
@@ -138,7 +143,9 @@ loaded and when. Nothing else keeps plugin state:
 `DisplayController` right after it creates the `PluginManager`, writes the
 cache key `plugin_runtime_snapshot`: per plugin `loaded`, `state`, `error`
 (type, a redacted message of at most 200 characters, when, recoverable),
-`version` and `loaded_at`, plus `published_at`, `stale_after` and `running`.
+`version`, `loaded_at` and `modes` (the display modes `DisplayController`
+registered -- `plugin.modes` when the plugin computes them, else the
+manifest's), plus `published_at`, `stale_after` and `running`.
 The cache is on disk, usually the SD card, so it writes when something a
 reader sees changes -- throttled to once per 10 s -- and otherwise once a
 minute as a heartbeat. RUNNING, which every `update()` passes through, is
@@ -154,6 +161,9 @@ truth cannot leak into a response. `/api/v3/plugins/installed` returns
 `loaded`, `state`, `error_info`, `loaded_version` and `loaded_at` per
 plugin and `data.runtime` (`status`, `published_at`, `age_seconds`);
 `/api/v3/plugins/state` returns the same beside the desired state.
+`PluginCatalog.get_plugin_display_modes` and `find_plugin_for_mode` prefer a
+live view's `modes` to the manifest's `display_modes`, so `/display/modes`
+and on-demand see modes a plugin generates from its config (#668).
 
 **Reconciliation**
 ([`state_reconciliation.py`](../src/plugin_system/state_reconciliation.py))
@@ -289,7 +299,7 @@ and must not vouch for it.
 | Base class plugins implement | [`base_plugin.py`](../src/plugin_system/base_plugin.py) (`BasePlugin`, `VegasDisplayMode`) |
 | Finding a plugin's directory | [`plugin_dirs.py`](../src/plugin_system/plugin_dirs.py): manifest `id` first, then directory `<id>` or `ledmatrix-<id>` |
 | Discovery, load, unload, scheduled updates (display process) | [`plugin_manager.py`](../src/plugin_system/plugin_manager.py) (`PluginManager`) |
-| Manifest, schema, config and version reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
+| Manifest reads (web process) | [`plugin_catalog.py`](../src/plugin_system/plugin_catalog.py) (`PluginCatalog`; see [who runs plugins](#web-and-display-processes-who-runs-plugins)) |
 | Import and instantiate | [`plugin_loader.py`](../src/plugin_system/plugin_loader.py) (`PluginLoader.load_plugin()`: dependencies, module, class) |
 | Timeouts | [`plugin_executor.py`](../src/plugin_system/plugin_executor.py) (`PluginExecutor`, 30 s default; a timed-out thread is abandoned, not killed) |
 | Circuit breaker | [`plugin_health.py`](../src/plugin_system/plugin_health.py) (`PluginHealthTracker`: 3 consecutive failures open the circuit for 300 s) |

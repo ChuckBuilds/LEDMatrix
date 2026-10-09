@@ -25,8 +25,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('TimePicker', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -77,9 +75,9 @@
                 <div class="relative flex-1">
                     <input type="time"
                            id="${fieldId}_input"
-                           name="${escapeHtml(options.name || fieldId)}"
-                           value="${escapeHtml(currentValue)}"
-                           ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ''}
+                           name="${window.LEDEscape.html(options.name || fieldId)}"
+                           value="${window.LEDEscape.html(currentValue)}"
+                           ${placeholder ? `placeholder="${window.LEDEscape.html(placeholder)}"` : ''}
                            ${disabled ? 'disabled' : ''}
                            ${required ? 'required' : ''}
                            onchange="window.LEDMatrixWidgets.getHandlers('time-picker').onChange('${fieldId}')"

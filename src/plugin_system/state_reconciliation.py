@@ -38,7 +38,6 @@ class InconsistencyType(Enum):
     PLUGIN_MISSING_ON_DISK = "plugin_missing_on_disk"
     PLUGIN_ENABLED_MISMATCH = "plugin_enabled_mismatch"
     PLUGIN_VERSION_MISMATCH = "plugin_version_mismatch"
-    PLUGIN_STATE_CORRUPTED = "plugin_state_corrupted"
 
 
 class FixAction(Enum):
@@ -57,7 +56,6 @@ class Inconsistency:
     fix_action: FixAction
     current_state: Dict[str, Any]
     expected_state: Dict[str, Any]
-    can_auto_fix: bool = False
 
 
 @dataclass
@@ -270,7 +268,7 @@ class StateReconciliation:
 
             # Attempt to fix auto-fixable inconsistencies
             for inconsistency in inconsistencies:
-                if inconsistency.can_auto_fix and inconsistency.fix_action == FixAction.AUTO_FIX:
+                if inconsistency.fix_action == FixAction.AUTO_FIX:
                     if self._fix_inconsistency(inconsistency):
                         fixed.append(inconsistency)
                     else:
@@ -428,7 +426,6 @@ class StateReconciliation:
                 fix_action=FixAction.AUTO_FIX,
                 current_state={'exists_in_config': False},
                 expected_state={'exists_in_config': True, 'enabled': False},
-                can_auto_fix=True
             ))
         
         # Check: Plugin in config but not on disk
@@ -459,7 +456,6 @@ class StateReconciliation:
                 fix_action=FixAction.AUTO_FIX if can_repair else FixAction.MANUAL_FIX_REQUIRED,
                 current_state={'exists_on_disk': False},
                 expected_state={'exists_on_disk': True},
-                can_auto_fix=can_repair
             ))
         
         # Observed checks: only against a live snapshot, and only for a plugin
@@ -486,7 +482,6 @@ class StateReconciliation:
                     fix_action=FixAction.NO_ACTION,
                     current_state={'loaded': loaded, 'state': runtime.get('state')},
                     expected_state={'loaded': config_enabled},
-                    can_auto_fix=False
                 ))
             loaded_version = runtime.get('loaded_version')
             disk_version = disk.get('version')
@@ -500,7 +495,6 @@ class StateReconciliation:
                     fix_action=FixAction.NO_ACTION,
                     current_state={'version': loaded_version},
                     expected_state={'version': disk_version},
-                    can_auto_fix=False
                 ))
 
         return inconsistencies

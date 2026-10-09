@@ -28,20 +28,20 @@ import os
 import time
 from datetime import datetime
 import pytz
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 import threading
 import tempfile
 from src.cache.memory_cache import MemoryCache, default_max_size
 from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
-from src.cache.cache_metrics import CacheMetrics
 from src.logging_config import get_logger
 
 # Canonical implementation lives in src.cache.disk_cache; re-exported here
 # because this module's docstring documents it and external code may import
 # it from either path.
 from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-export
+from src.deprecation import deprecated
 
 # CacheManager.config_manager not built yet (None means "not available").
 _UNSET: Any = object()
@@ -70,6 +70,43 @@ def _outlived(record: Any, max_age: Optional[float], now: float) -> bool:
         return now - float(stamp) > max_age
     except (TypeError, ValueError):
         return False
+
+
+_NOT_SEEN: Any = object()
+
+
+class MailboxWatch:
+    """Tells the poller of a mailbox key whether its file changed since the
+    last look, from one stat() (:meth:`CacheManager.file_signature`).
+
+    The display polls the mailboxes the web interface falls back to. Reading
+    one is an open and a JSON parse; with this a poll that finds the same file
+    (or none) costs a stat, and the file is read only after a new write. A
+    cache without ``file_signature`` (a test double) is read every time.
+    """
+
+    def __init__(self, key: str):
+        self.key = key
+        self._seen: Any = _NOT_SEEN
+
+    def changed(self, cache_manager: Any) -> bool:
+        """True when the poller should read the key now."""
+        signature = getattr(cache_manager, 'file_signature', None)
+        sig = signature(self.key) if callable(signature) else _NOT_SEEN
+        if sig is not None and not isinstance(sig, tuple):
+            return True   # cannot tell: read it
+        if sig is None:
+            self._seen = None
+            return False   # no file, nothing to read
+        if sig == self._seen:
+            return False
+        self._seen = sig
+        return True
+
+    def forget(self) -> None:
+        """Read the key on the next poll even if its file has not changed
+        (the last read failed)."""
+        self._seen = _NOT_SEEN
 
 
 class CacheManager:
@@ -112,10 +149,7 @@ class CacheManager:
             max_size=default_max_size(), cleanup_interval=300.0
         )
         self._disk_cache_component = DiskCache(cache_dir=self.cache_dir, logger=self.logger)
-        # No config manager: CacheStrategy keeps the parameter for callers but
-        # reads nothing from it, and passing ours would build it eagerly.
-        self._strategy_component = CacheStrategy(logger=self.logger)
-        self._metrics_component = CacheMetrics(logger=self.logger)
+        self._strategy_component = CacheStrategy()
         
         # Disk cleanup configuration
         self._disk_cleanup_interval_hours = 24  # Run cleanup every 24 hours
@@ -295,7 +329,25 @@ class CacheManager:
     def _get_cache_path(self, key: str) -> Optional[str]:
         """Get the path for a cache file."""
         return self._disk_cache_component.get_cache_path(key)
-        
+
+    def file_signature(self, key: str) -> Optional[Tuple[int, int, int]]:
+        """``(st_ino, st_mtime_ns, st_size)`` of ``key``'s file, or None when
+        there is no file (the key is absent, or this cache has no disk tier).
+
+        One stat(), no read: a poller of a mailbox another process writes
+        compares it with the last one it saw and reads the file only when it
+        changed. Every write replaces the file (a temp file renamed into
+        place), so a new write always has a new inode, however fast it came.
+        """
+        path = self._get_cache_path(key)
+        if not path:
+            return None
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
+
     def get_cached_data(self, key: str, max_age: int = 300, memory_ttl: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Get data from cache (memory first, then disk) honoring TTLs.
 
@@ -343,6 +395,7 @@ class CacheManager:
         # caller gets as is.
         self._disk_cache_component.set(key, data)
 
+    @deprecated("3.10.0", "use get(key, max_age=3600)")
     def load_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """Load data from cache with memory caching."""
         # Check memory cache first (1 minute TTL)
@@ -552,13 +605,6 @@ class CacheManager:
             duration = time.time() - start_time
             space_freed_mb = stats['space_freed_bytes'] / (1024 * 1024)
             
-            # Record metrics
-            self._metrics_component.record_disk_cleanup(
-                files_cleaned=stats['files_deleted'],
-                space_freed_mb=space_freed_mb,
-                duration_sec=duration
-            )
-            
             # Log summary
             if stats['files_deleted'] > 0:
                 self.logger.info(
@@ -741,6 +787,7 @@ class CacheManager:
         data_type = self.get_data_type_from_key(key)
         return self.get_cached_data_with_strategy(key, data_type)
 
+    @deprecated("3.10.0")
     def generate_sport_cache_key(self, sport: str, date_str: Optional[str] = None) -> str:
         """
         Centralized cache key generation for sports data.

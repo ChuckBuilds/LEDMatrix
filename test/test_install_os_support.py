@@ -50,9 +50,11 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     path.chmod(0o755)
 
 
-def _stubs(tmp_path: Path, python_version="3.11", network="NetworkManager") -> Path:
+def _stubs(tmp_path: Path, python_version="3.11", network="NetworkManager",
+           active=(), packages=()) -> Path:
     """python3 reports ``python_version`` (None: not installed); systemctl
-    reports ``network`` as the only active unit; dpkg lists no desktop."""
+    reports ``network`` and ``active`` as the only active units; dpkg-query
+    lists ``packages`` as installed (none by default, so no desktop)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     if python_version is None:
@@ -61,10 +63,14 @@ def _stubs(tmp_path: Path, python_version="3.11", network="NetworkManager") -> P
     else:
         _stub(bin_dir, "python3", f'case "$*" in *"%d.%d.%d"*) echo "{python_version}.1" ;; '
                                   f'*) echo "{python_version}" ;; esac\n')
-    _stub(bin_dir, "systemctl",
-          f'case "$*" in *"is-active --quiet {network}") exit 0 ;; esac\nexit 3\n')
+    units = "|".join(f'*"is-active --quiet {unit}"' for unit in (network, *active))
+    _stub(bin_dir, "systemctl", f'case "$*" in {units}) exit 0 ;; esac\nexit 3\n')
     _stub(bin_dir, "dpkg", "exit 0\n")
-    _stub(bin_dir, "dpkg-query", "exit 1\n")
+    if packages:
+        listing = "".join(f"ii  {name}\\n" for name in packages)
+        _stub(bin_dir, "dpkg-query", f'printf "{listing}"\n')
+    else:
+        _stub(bin_dir, "dpkg-query", "exit 1\n")
     _stub(bin_dir, "ping", "exit 0\n")
     return bin_dir
 
@@ -149,20 +155,22 @@ class TestLibrary:
 
 # --- first_time_install.sh's OS check ------------------------------------------
 
-def _os_check_section() -> str:
+def _os_check_section(marker_root: str = "/nonexistent") -> str:
     """first_time_install.sh from the OS check up to the next section, with
-    the desktop-marker directories pointed somewhere that cannot exist."""
+    the desktop-marker directories moved under ``marker_root`` (by default
+    somewhere that cannot exist)."""
     text = FIRST_TIME.read_text(encoding="utf-8").replace("\r\n", "\n")
     start = text.index("# Check OS version")
     end = text.index("# The user who ran the installer")
     section = text[start:end]
     for marker in ("/usr/share/raspberrypi-ui-mods", "/usr/share/xsessions"):
         assert marker in section
-        section = section.replace(marker, "/nonexistent" + marker)
+        section = section.replace(marker, marker_root + marker)
     return section
 
 
-def run_os_check(tmp_path: Path, release: str, **stub_args) -> subprocess.CompletedProcess:
+def run_os_check(tmp_path: Path, release: str, marker_root: str = "/nonexistent",
+                 **stub_args) -> subprocess.CompletedProcess:
     """Run the OS check as the installer would, from a copy of the project
     layout so ``$(dirname "$0")/scripts/install/lib_os.sh`` resolves."""
     project = tmp_path / "project"
@@ -171,7 +179,7 @@ def run_os_check(tmp_path: Path, release: str, **stub_args) -> subprocess.Comple
     script = project / "first_time_install.sh"
     script.write_text("set -Eeuo pipefail\n"
                       "trap 'echo ERR-TRAP line $LINENO >&2; exit 99' ERR\n"
-                      + _os_check_section() + '\necho "SECTION-DONE"\n',
+                      + _os_check_section(marker_root) + '\necho "SECTION-DONE"\n',
                       encoding="utf-8", newline="\n")
     env = _env(tmp_path, release, _stubs(tmp_path, **stub_args))
     return subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env)
@@ -229,6 +237,47 @@ class TestInstallerOsCheck:
     def test_networkmanager_is_confirmed(self, tmp_path):
         result = run_os_check(tmp_path, "trixie", python_version="3.13")
         assert "✓ NetworkManager is managing the network" in result.stdout
+
+    # A running desktop stops the install; one that is only installed warns.
+
+    @pytest.mark.parametrize("unit", ["display-manager", "lightdm", "gdm", "sddm"])
+    def test_running_desktop_stops(self, tmp_path, unit):
+        result = run_os_check(tmp_path, "trixie", python_version="3.13", active=(unit,))
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "A desktop is running" in result.stdout
+        assert "multi-user.target" in result.stdout
+        assert "SECTION-DONE" not in result.stdout
+
+    @pytest.mark.parametrize("package", [
+        "raspberrypi-ui-mods", "rpd-wayland-core", "rpd-x-core", "xfce4",
+        "lxde-core", "gnome-shell", "kde-plasma-desktop", "plasma-workspace:arm64",
+        "task-desktop", "task-mate-desktop",
+    ])
+    def test_installed_desktop_that_is_not_running_warns(self, tmp_path, package):
+        result = run_os_check(tmp_path, "trixie", python_version="3.13",
+                              packages=("bash", package))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Desktop packages are installed, but no desktop is running" in result.stdout
+        assert "✓ OS requirements met" in result.stdout
+
+    def test_desktop_session_files_warn(self, tmp_path):
+        (tmp_path / "markers" / "usr" / "share" / "xsessions").mkdir(parents=True)
+        result = run_os_check(tmp_path, "trixie", python_version="3.13",
+                              marker_root=str(tmp_path / "markers"))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Desktop packages are installed, but no desktop is running" in result.stdout
+
+    @pytest.mark.parametrize("packages", [
+        # libblockdev contains "kde" mid-word; the old check stopped on it.
+        ("libblockdev-crypto3", "libblockdev3:arm64"),
+        ("gnome-keyring", "xfce4-terminal", "xfconf", "lxde-icon-theme",
+         "kde-cli-tools", "gnome-session-common", "task-ssh-server", "rpd-plym-splash"),
+    ])
+    def test_lite_with_desktop_named_parts_is_lite(self, tmp_path, packages):
+        result = run_os_check(tmp_path, "trixie", python_version="3.13", packages=packages)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "✓ Lite version confirmed" in result.stdout
+        assert "WARNING: Desktop" not in result.stdout
 
 
 # --- check_system_compatibility.sh ---------------------------------------------

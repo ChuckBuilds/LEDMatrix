@@ -29,8 +29,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('TextInput', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -80,14 +78,14 @@
 
             const currentValue = value !== null && value !== undefined ? String(value) : '';
 
-            let html = `<div id="${fieldId}_widget" class="text-input-widget" data-field-id="${fieldId}" data-pattern-message="${escapeHtml(patternMessage)}">`;
+            let html = `<div id="${fieldId}_widget" class="text-input-widget" data-field-id="${fieldId}" data-pattern-message="${window.LEDEscape.html(patternMessage)}">`;
 
             // Container for prefix/input/suffix layout
             const hasAddons = prefix || suffix || clearable;
             if (hasAddons) {
                 html += '<div class="flex items-center">';
                 if (prefix) {
-                    html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">${escapeHtml(prefix)}</span>`;
+                    html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-r-0 border-gray-300 rounded-l-md">${window.LEDEscape.html(prefix)}</span>`;
                 }
             }
 
@@ -98,10 +96,10 @@
             html += `
                 <input type="text"
                        id="${fieldId}_input"
-                       name="${escapeHtml(options.name || fieldId)}"
-                       value="${escapeHtml(currentValue)}"
-                       placeholder="${escapeHtml(placeholder)}"
-                       ${pattern ? `pattern="${escapeHtml(pattern)}"` : ''}
+                       name="${window.LEDEscape.html(options.name || fieldId)}"
+                       value="${window.LEDEscape.html(currentValue)}"
+                       placeholder="${window.LEDEscape.html(placeholder)}"
+                       ${pattern ? `pattern="${window.LEDEscape.html(pattern)}"` : ''}
                        ${minLength !== null ? `minlength="${minLength}"` : ''}
                        ${maxLength !== null ? `maxlength="${maxLength}"` : ''}
                        ${disabled ? 'disabled' : ''}
@@ -123,7 +121,7 @@
             }
 
             if (suffix) {
-                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">${escapeHtml(suffix)}</span>`;
+                html += `<span class="inline-flex items-center px-3 text-sm text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">${window.LEDEscape.html(suffix)}</span>`;
             }
 
             if (hasAddons) {

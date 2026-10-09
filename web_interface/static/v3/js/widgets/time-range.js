@@ -32,8 +32,6 @@
     // Use BaseWidget utilities if available
     const base = window.BaseWidget ? new window.BaseWidget('TimeRange', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -149,18 +147,18 @@
             let html = `<div id="${fieldId}_widget" class="time-range-widget" data-field-id="${fieldId}" data-allow-overnight="${allowOvernight}">`;
 
             // Hidden inputs for form submission
-            html += `<input type="hidden" id="${fieldId}_start_time" name="${inputName}_start_time" value="${escapeHtml(startTime)}">`;
-            html += `<input type="hidden" id="${fieldId}_end_time" name="${inputName}_end_time" value="${escapeHtml(endTime)}">`;
+            html += `<input type="hidden" id="${fieldId}_start_time" name="${inputName}_start_time" value="${window.LEDEscape.html(startTime)}">`;
+            html += `<input type="hidden" id="${fieldId}_end_time" name="${inputName}_end_time" value="${window.LEDEscape.html(endTime)}">`;
 
             html += `<div class="grid grid-cols-1 md:grid-cols-2 gap-4">`;
 
             // Start time input
             html += `
                 <div class="form-group">
-                    <label for="${fieldId}_start_input" class="block text-sm font-medium text-gray-700">${escapeHtml(startLabel)}</label>
+                    <label for="${fieldId}_start_input" class="block text-sm font-medium text-gray-700">${window.LEDEscape.html(startLabel)}</label>
                     <input type="time"
                            id="${fieldId}_start_input"
-                           value="${escapeHtml(startTime)}"
+                           value="${window.LEDEscape.html(startTime)}"
                            ${disabledAttr}
                            onchange="window.LEDMatrixWidgets.getHandlers('time-range').onChange('${fieldId}')"
                            class="form-control mt-1 ${disabledClass}">
@@ -170,10 +168,10 @@
             // End time input
             html += `
                 <div class="form-group">
-                    <label for="${fieldId}_end_input" class="block text-sm font-medium text-gray-700">${escapeHtml(endLabel)}</label>
+                    <label for="${fieldId}_end_input" class="block text-sm font-medium text-gray-700">${window.LEDEscape.html(endLabel)}</label>
                     <input type="time"
                            id="${fieldId}_end_input"
-                           value="${escapeHtml(endTime)}"
+                           value="${window.LEDEscape.html(endTime)}"
                            ${disabledAttr}
                            onchange="window.LEDMatrixWidgets.getHandlers('time-range').onChange('${fieldId}')"
                            class="form-control mt-1 ${disabledClass}">
@@ -187,7 +185,7 @@
                 const duration = calculateDuration(startTime, endTime, allowOvernight);
                 html += `
                     <div id="${fieldId}_duration" class="mt-2 text-sm text-gray-500">
-                        Duration: <span class="font-medium">${escapeHtml(duration)}</span>
+                        Duration: <span class="font-medium">${window.LEDEscape.html(duration)}</span>
                     </div>
                 `;
             }

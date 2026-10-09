@@ -12,9 +12,10 @@
 //
 // CodeQL reported 83 js/incomplete-html-attribute-sanitization alerts for
 // exactly this. The web UI now has one implementation, window.LEDEscape in
-// app-early.js, and the old per-file escapers are one-line names for it. This
-// suite runs LEDEscape and every one of those names as shipped, and fails if a
-// hand-rolled escaper appears anywhere else in web_interface/.
+// app-early.js, which every page and widget calls directly (BaseWidget keeps
+// an escapeHtml method for plugin widgets). This suite runs LEDEscape and that
+// method as shipped, and fails if a hand-rolled escaper appears anywhere else
+// in web_interface/.
 
 const fs = require('fs');
 const path = require('path');
@@ -85,35 +86,10 @@ const ESCAPERS = [
   ['app-early.js (LEDEscape.attr)', null, null, 'attr'],
   ['base-widget.js (BaseWidget.escapeHtml)',
    'static/v3/js/widgets/base-widget.js', 'escapeHtml(text) {', 'escapeHtml', true],
-  ['plugins_manager.js (top-level escapeHtml)',
-   'static/v3/plugins_manager.js', 'function escapeHtml(text) {', 'escapeHtml', false],
-  ['plugins_manager.js (starlark escapeHtml)',
-   'static/v3/plugins_manager.js', 'function escapeHtml(str) {', 'escapeHtml', false],
-  ['json-file-manager.js (_esc)',
-   'static/v3/js/widgets/json-file-manager.js', '_esc(str) {', '_esc', true],
-  ['plugin-file-manager.js (escHtml)',
-   'static/v3/js/widgets/plugin-file-manager.js', 'function escHtml(s) {', 'escHtml', false],
-  ['plugins_manager.js (escapeAttribute)',
-   'static/v3/plugins_manager.js', 'function escapeAttribute(text) {', 'escapeAttribute', false],
-  ['notification.js (escapeHtml)',
-   'static/v3/js/widgets/notification.js', 'function escapeHtml(text) {', 'escapeHtml', false],
-  ['google-calendar-picker.js (escapeHtml)',
-   'static/v3/js/widgets/google-calendar-picker.js', 'function escapeHtml(str) {', 'escapeHtml', false],
-  ['text-input.js (escapeHtml)',
-   'static/v3/js/widgets/text-input.js', 'function escapeHtml(text) {', 'escapeHtml', false],
-  ['slider.js (escapeAttr)',
-   'static/v3/js/widgets/slider.js', 'function escapeAttr(text) {', 'escapeAttr', false],
-  ['display.html (escapeAttr)',
-   'templates/v3/partials/display.html', 'function escapeAttr(text) {', 'escapeAttr', false],
-  ['tools.html (escHtml)',
-   'templates/v3/partials/tools.html', 'function escHtml(s) {', 'escHtml', false],
-  ['tools.html (phEscape)',
-   'templates/v3/partials/tools.html', 'function phEscape(s) {', 'phEscape', false],
-  ['logs.html (escapeHtml)',
-   'templates/v3/partials/logs.html', 'function escapeHtml(text) {', 'escapeHtml', false],
-  // cache.html, backup_restore.html and operation_history.html have no
-  // script any more: their js/pages/ modules draw server data with
-  // textContent, and each page's suite in test/js/dom/ checks a hostile value.
+  // cache.html, backup_restore.html, operation_history.html and display.html
+  // have no script any more (display.html's two escapers were never called):
+  // their js/pages/ modules draw server data with textContent, and each
+  // page's suite in test/js/dom/ checks a hostile value.
 ];
 
 // The breakout payload: closes a double-quoted attribute and opens an event
@@ -170,9 +146,7 @@ console.log('\n4b. LEDEscape.jsStringAttr: a JS string literal that survives an 
 
 console.log('\n4c. no hand-rolled escaper outside app-early.js');
 {
-  const skip = new Set(['static/v3/js/app-early.js',
-                        // documentation example, kept self-contained on purpose
-                        'static/v3/js/widgets/example-color-picker.js']);
+  const skip = new Set(['static/v3/js/app-early.js']);
   const found = [];
   const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
     const p = path.join(dir, e.name);
@@ -309,7 +283,7 @@ console.log('\n6. url-input onInput: previewLink.href is guarded at the sink');
 
 // ── plugin-file-manager: cell edits travel via data-*, not inline handlers ──
 // A JSON key/day from an uploaded file used to be spliced, HTML-escaped,
-// into an oninput="...('${escHtml(col)}'...)" attribute. escHtml neutralises
+// into an oninput="...('${escHtml(col)}'...)" attribute. Escaping neutralises
 // a quote for an ordinary attribute, but here the value also has to survive
 // as a *JS string literal* -- the browser HTML-decodes the attribute before
 // running it as script, which turns the escaped quote back into a real one
@@ -333,11 +307,10 @@ console.log("\n7. plugin-file-manager: cell edits never go through an inline han
     process.exit(1);
   }
 
-  const escHtmlFn = loadFn('static/v3/js/widgets/plugin-file-manager.js', 'function escHtml(s) {', 'escHtml', false);
   const renderEntryTableSrc = extractFn('function renderEntryTable(fieldId, container, content) {');
 
   const calls = [];
-  const fakeWindow = { _pfmCellEdit: (fieldId, day, col, value) => calls.push({ fieldId, day, col, value }) };
+  const fakeWindow = { LEDEscape, _pfmCellEdit: (fieldId, day, col, value) => calls.push({ fieldId, day, col, value }) };
 
   class FakeContainer {
     constructor() { this._html = ''; this._listeners = {}; }
@@ -355,12 +328,11 @@ console.log("\n7. plugin-file-manager: cell edits never go through an inline han
   }
 
   // eslint-disable-next-line no-eval
-  const renderEntryTable = eval(`(function(getState, escHtml, safeSetHTML, window){
+  const renderEntryTable = eval(`(function(getState, safeSetHTML, window){
     ${renderEntryTableSrc}
     return renderEntryTable;
   })`)(
     () => ({ entriesPerPage: 20, _tablePage: 1 }),
-    escHtmlFn,
     (target, html) => { target.innerHTML = html; },
     fakeWindow
   );

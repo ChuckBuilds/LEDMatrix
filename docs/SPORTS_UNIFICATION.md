@@ -87,10 +87,12 @@ more. Shared sports code lives in `src/common`:
 | `sports_celebration.py` | 3.7.0 | `SportsCelebrationMixin` — draws the score/win takeover; colour helpers |
 | `sports_fetch.py` | 3.7.0 | `SportsFetchMixin` — season fetch, live lookback and live-odds decisions |
 | `sports_card_wrappers.py` | 3.7.0 | `SportsCardWrappersMixin` — the game renderer's `sports_card` delegations |
-| `sports_plugin_host.py` | next release | `SportsPluginHostMixin` — the plugin class's (`manager.py`) identical helpers: Vegas weight, off-thread switch refresh |
-| `sports_live_scroll.py` | next release | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
-| `sports_display_rules.py` | next release | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
-| `sports_font_path.py` | next release | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
+| `sports_plugin_host.py` | 3.8.0 | `SportsPluginHostMixin` — the plugin class's (`manager.py`) identical helpers: Vegas weight, off-thread switch refresh |
+| `sports_live_scroll.py` | 3.8.0 | `SportsLiveScrollMixin` — rebuild a live scroll strip mid-cycle, keeping the marquee's place |
+| `sports_display_rules.py` | 3.8.0 | `SportsCardOptionsMixin`, `SportsGameRulesMixin` — scorebug date options, the no-favourites filter, non-favourite live dwell |
+| `sports_font_path.py` | 3.8.0 | `resolve_font_path` — what the plugins' `_resolve_font_path` copies return |
+| `sports_game_over.py` | 3.8.1 | `SportsGameOverMixin` — `_is_game_really_over`, with the `FINAL_PERIOD` seam (family 5) |
+| `sports_favorites.py` | 3.8.2 | `SportsFavoritesMixin`, `SportsUpcomingFavoritesMixin`, `SportsRecentFavoritesMixin` — `_is_favorite_game` and the favourites-only picks, on the `_favorite_key` seam (family 6) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
@@ -102,7 +104,8 @@ modules taken from the plugin copies, each a **new module** rather than growth
 on an existing one: a plugin that deletes a method copy and relies on an older
 module having gained it fails at runtime with an `AttributeError`, while a
 missing module fails at load, where the version checks can see it.
-`sports_helpers.py` holds `_favorite_key`, the override point listed below.
+`sports_helpers.py` holds `_favorite_key`, the override point listed below;
+`sports_favorites.py` is what calls it.
 Each promoted module has a parity test that compares its bodies against the
 plugin copies when `LEDMATRIX_PLUGINS` points at a checkout
 (`test_sports_helpers.py`, `test_sports_stage3_parity.py`), and
@@ -125,7 +128,7 @@ deprecation cycle.
 | `_custom_scorebug_layout(game, draw)` | Per-sport overlay on the base layout | no-op |
 | `score_phrase(points, team_abbr)` | Celebration wording (`"GOOOOAAALLL!"` vs `"TOUCHDOWN!"`). `points` is the score delta, which sports with variable-value scores use to name the play | `"<abbr> SCORES!"` — only consulted when `CelebrationMixin` is present |
 | `win_phrase(team_abbr)` | Win-celebration wording | `"<abbr> WINS!"` — mixin only |
-| `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching | `game["<side>_abbr"]` |
+| `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching. `sports_favorites` compares it, and each `favorite_teams` entry, stripped and upper-cased; a `None` matches nothing | `game["<side>_abbr"]`. nrl returns the ESPN team id, `None` when it is missing |
 | `_config_schema_path()` | Plugin's `config_schema.json` — returning it routes `_get_layout_offset` through the `src.element_style` resolver (and gives it the defaults to compare against) | `None`, i.e. the classic inline `customization.layout` read |
 | `_font_root()` | Directory to resolve `assets/fonts` against | core install root |
 
@@ -134,8 +137,7 @@ constants rather than behavior:
 
 | Attribute | Meaning | Default |
 |---|---|---|
-| `FINAL_PERIOD` | Period at/after which a zero clock can mean "over" | `4` (hockey overrides to `3`) |
-| `CLOCK_COUNTS_DOWN` | Whether `0:00` means "expired" | `True` (soccer/afl/nrl override to `False` — their clocks count up, so `0:00` is kickoff) |
+| `FINAL_PERIOD` | Period from which a 0:00 clock ends a game (`sports_game_over`) | `None`: the clock never ends a game (afl, nrl, soccer, baseball, ufc). Hockey sets `3`; basketball, football and lacrosse `4` |
 | `COALESCE_SCORING_SEQUENCE` | Fold score increments arriving during an active celebration into that one celebration | `False` (football overrides to `True` — a touchdown lands as +6, then +1 for the extra point) |
 
 ### Why these are seams and not branches
@@ -146,11 +148,14 @@ so NRL matches favorites on team ID. Flattening every plugin to abbreviations
 would silently select the wrong club for NRL users. The base declares the seam,
 NRL fills it, and core never learns the string `"nrl"`.
 
-`CLOCK_COUNTS_DOWN` exists for the same reason in the opposite direction: a
+`FINAL_PERIOD` exists for the same reason in the opposite direction: a
 soccer clock reading `0:00` means the match has not kicked off, so running the
-clock-expiry branch there would evict live games.
+clock-expiry rule there would evict live games. Those sports declare `None`,
+and so do baseball (innings, not a clock) and ufc (a bout ends only on ESPN's
+final status). One attribute covers both questions, whether the clock can end
+a game and from which period, so no separate count-down flag was added.
 
-`COALESCE_SCORING_SEQUENCE` is the third of the same kind. In football one
+`COALESCE_SCORING_SEQUENCE` is another of the same kind. In football one
 scoring play arrives as two score updates, so the follow-up must be folded into
 the first celebration; in soccer two increments a few seconds apart are two real
 goals, and folding them would swallow one. Neither default is "right" — which is
@@ -298,6 +303,49 @@ Left in the plugins, though identical:
   renderers) is already core's, in `SportsHelpersMixin`; a renderer that
   wants it can inherit that.
 
+### Family 5: the game-over check (core done; adoption waits for a release)
+
+The pilot of the method below. ledmatrix-plugins `scripts/test_game_over_check.py`
+(#621) pinned 3,115 answers across the nine plugins first; the reconcile
+(ledmatrix-plugins #625) made the five bodies one and
+changed only the cells the owner's decisions under
+[Product decisions](#product-decisions-each-family-needs) explain: ufc's
+clock rule (65 cells), baseball's dormant one (53, every one a game with a
+`period` baseball's games never carry), and a level score at 0:00 (five
+cells in hockey, basketball, football and lacrosse). The harness renders
+were pixel-identical. `src/common/sports_game_over.py` holds the body;
+`test/test_sports_game_over_parity.py` compares it, and each plugin's
+`FINAL_PERIOD`, with the plugin copies.
+
+### Family 6: favourite matching (core done; adoption waits for a release)
+
+ledmatrix-plugins `scripts/test_favourite_matching.py` (#634) pinned 204 rows
+across the nine plugins first: `_is_favorite_game` on each manager role, the
+two selection methods, the real `update()` with favourites-only on and off,
+and the INFO summary; the reconcile extends it to 217 (a lower-case and a
+padded favourite through `update()`, and the live favourite boost). The reconcile (ledmatrix-plugins
+#635) made `_is_favorite_game` one body on `SportsCore`
+(afl and soccer's `SportsUpcoming` copies and five `SportsLive` copies, all
+redundant, are gone), added `_favorite_code` beside it, and gave nrl a
+`_favorite_key` override instead of its own copies. So that a lower-case
+favourite works on a favourites-only Upcoming board, the Upcoming `update()`'s
+favourites-only pre-filter and the basketball, hockey and lacrosse live boost
+now ask `_is_favorite_game` too (a one-line change each; `update()` itself is
+family 13). Of 3,897 cells only those the decisions above explain changed:
+case and spaces in eight plugins (30-40 each), the id-less duplicate fix (6-8
+each), nrl's key (6) and its "None" match (6), and the INFO line in baseball,
+football and ufc. The harness renders were byte-identical. `src/common/sports_favorites.py` holds the
+bodies, one mixin per carrying class; `test/test_sports_favorites_parity.py`
+compares them with the plugin copies and checks that only nrl overrides
+`_favorite_key`.
+
+Left for later families: the live screens' favourites-only filter
+(`_classify_live_game` and its inline copies) and favourites-first sort still
+compare abbreviations exactly, and
+`SportsCoreSharedMixin._round_robin_favorites` groups favourites by raw
+abbreviation (or by `_team_in` where a plugin has one) instead of through
+`_favorite_key`. The result-colour helpers also wait (decision above).
+
 ### Why the method changes
 
 Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
@@ -333,8 +381,8 @@ game-over check); the report measures each method in it. The procedure:
      line in each plugin.
    - *A per-sport fact* (hockey ends in period 3; a soccer clock counts up).
      Make it a declared class constant or override point with a default, as
-     `FINAL_PERIOD`, `CLOCK_COUNTS_DOWN`, `COALESCE_SCORING_SEQUENCE` and
-     `_favorite_key` are, and add it to the tables above. Never a sport-name
+     `FINAL_PERIOD`, `COALESCE_SCORING_SEQUENCE` and `_favorite_key` are,
+     and add it to the tables above. Never a sport-name
      branch: core must not learn sport names.
    - *A product difference*: anything a user can see (which games show, a
      colour, a date, a badge, how long a screen stays). The owner picks the
@@ -382,8 +430,8 @@ release.
 | # | Family | Methods (variants) | Why here |
 |---|---|---|---|
 | 4 | Identical sweep | `manager.py`: `_dispatch_switch_refresh`, `_favorite_team_is_live`, `get_vegas_priority_weight`, `_game_involves`, `_favorite_scan_targets`, `_favorite_scan_games`, `_get_total_games_for_manager` (all nine, 1); the live-scroll helpers `_preserving_scroll_position`, `_refresh_live_scroll_managers`, `_live_scroll_managers`, `_note_live_scroll_built`, `_live_scroll_needs_rebuild`, `_live_scroll_fields` (eight, 1). `sports.py`: `_card_option`, `_filtered_or_all`, `_effective_live_duration`, `_recent_date_text` (eight, 1). 58 identical families in all | Nothing to decide; brings `manager.py` into core as a `SportsPluginHostMixin`. `_resolve_font_path` (identical in nine `sports.py` and eight renderers) becomes `sports_font_path.resolve_font_path`, not `font_layout.resolve_asset_path`, which skips the cwd. Core side done; see [Stage 4](#stage-4-the-identical-sweep-core-done-adoption-waits-for-a-release) |
-| 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; its seams (`FINAL_PERIOD`, `CLOCK_COUNTS_DOWN`) were designed in B1. The pilot for the procedure |
-| 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam |
+| 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; one seam, `FINAL_PERIOD`. The pilot for the procedure. Reconciled to one body and promoted as `sports_game_over`; adoption waits for the release that ships it. See [Family 5](#family-5-the-game-over-check-core-done-adoption-waits-for-a-release) |
+| 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; adoption waits for the release that ships it. See [Family 6](#family-6-favourite-matching-core-done-adoption-waits-for-a-release) |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc) | One outlier each; football carries two fixes the other eight lack |
 | 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it |
 | 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
@@ -416,21 +464,28 @@ family 9 prepares.
 Owner calls to make before (or while) reconciling. Items marked *verify* are
 suspected behaviour that needs a payload or a rig to confirm first.
 
-- **5, game-over check.** Which rule each sport gets: the clock never ends a
-  game in afl, nrl and soccer (`CLOCK_COUNTS_DOWN = False`); hockey ends at
-  0:00 from period 3, basketball, football and lacrosse from period 4.
-  baseball and ufc share a copy that reads a missing clock as "0:00": dormant
-  in baseball (its games carry no `period`), and not triggered by ufc's round
-  breaks either. ESPN sends a break as `STATUS_END_OF_ROUND` with displayClock
-  `-`, not `0:00` (verified against recorded payloads; ledmatrix-plugins#580
-  pins it). Whatever rule ufc gets must not read `-` as `0:00`. Decide ufc's
-  rule: no clock rule (ESPN's `STATUS_FINAL` is the only end signal it needs;
-  this also closes a ~1 s window at the horn when the ticking clock reads
-  `0:00`), or its own final period.
-- **6, favourite matching.** NRL keeps matching favourites by team id
-  (abbreviations collide: NEW, CAN), through `_favorite_key` rather than its
-  own copies of the selection methods. Six plugins log the recent-games
-  selection at INFO; baseball, football and ufc do not.
+- **5, game-over check. Decided 2026-10-05, done:** one seam,
+  `FINAL_PERIOD`: hockey 3; basketball, football and lacrosse 4; `None` (the
+  clock never ends a game) for afl, nrl and soccer (clocks that count up),
+  baseball (its games carry no `period`, so the old rule was dormant) and
+  ufc (a bout ends only on ESPN's final status, which also closes the ~1 s
+  window at the horn when the ticking clock reads `0:00`; ESPN's round-break
+  displayClock `-` was never a zero clock, ledmatrix-plugins#580). Only a
+  non-empty clock string counts (the baseball/ufc copy read a missing clock
+  as `0:00`). A score level at 0:00 is not over: the game stays live through
+  the break before overtime, and one that really ends tied ends on its final
+  status. Baseball keeps its postponed/suspended override in `BaseballLive`.
+- **6, favourite matching. Decided 2026-10-05, done:** each side of a game is
+  named by `_favorite_key` (the abbreviation; NRL overrides it with the ESPN
+  team id, and `None` for a missing id, which fixes a favourite typed "None"
+  matching every game without one) and compared with `favorite_teams`
+  stripped and upper-cased, so " bos" matches BOS. NRL's ambiguous "NEW"
+  still matches nothing and is logged; routing the result-colour helpers
+  (`side_is_favorite`, which tint both NEW clubs) through `_favorite_key` is
+  left for a later family. The recent-games selection logs at INFO in all
+  nine. ufc stays on the shared body, dormant: its favourites are fighters,
+  which its MMA managers match themselves (a follow-up). Fix ported: only a
+  game with an id can be a duplicate in the selection methods.
 - **7, other-games rotation.** football advances the rotation window under
   `_games_lock` (update() and display() both advance it; interleaved, a
   window of games is skipped) and fixes a favourites-only pool that recomposed

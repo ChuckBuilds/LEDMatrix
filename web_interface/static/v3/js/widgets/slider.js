@@ -28,10 +28,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('Slider', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
-    function escapeAttr(text) { return window.LEDEscape.attr(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -78,14 +74,14 @@
             const currentValue = value !== null && value !== undefined ? value : min;
             const colorClass = COLOR_CLASSES[color] || COLOR_CLASSES.blue;
 
-            let html = `<div id="${fieldId}_widget" class="slider-widget" data-field-id="${fieldId}" data-prefix="${escapeAttr(prefix)}" data-suffix="${escapeAttr(suffix)}">`;
+            let html = `<div id="${fieldId}_widget" class="slider-widget" data-field-id="${fieldId}" data-prefix="${window.LEDEscape.attr(prefix)}" data-suffix="${window.LEDEscape.attr(suffix)}">`;
 
             // Value display above slider
             if (showValue) {
                 html += `
                     <div class="flex justify-center mb-2">
                         <span id="${fieldId}_value" class="text-lg font-semibold text-gray-700">
-                            ${escapeHtml(prefix)}${escapeHtml(currentValue)}${escapeHtml(suffix)}
+                            ${window.LEDEscape.html(prefix)}${window.LEDEscape.html(currentValue)}${window.LEDEscape.html(suffix)}
                         </span>
                     </div>
                 `;
@@ -95,11 +91,11 @@
             html += `
                 <input type="range"
                        id="${fieldId}_input"
-                       name="${escapeHtml(options.name || fieldId)}"
-                       value="${escapeAttr(currentValue)}"
-                       min="${escapeAttr(min)}"
-                       max="${escapeAttr(max)}"
-                       step="${escapeAttr(step)}"
+                       name="${window.LEDEscape.html(options.name || fieldId)}"
+                       value="${window.LEDEscape.attr(currentValue)}"
+                       min="${window.LEDEscape.attr(min)}"
+                       max="${window.LEDEscape.attr(max)}"
+                       step="${window.LEDEscape.attr(step)}"
                        ${disabled ? 'disabled' : ''}
                        oninput="window.LEDMatrixWidgets.getHandlers('slider').onInput('${fieldId}')"
                        onchange="window.LEDMatrixWidgets.getHandlers('slider').onChange('${fieldId}')"
@@ -110,8 +106,8 @@
             if (showMinMax) {
                 html += `
                     <div class="flex justify-between mt-1">
-                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${escapeHtml(min)}${escapeHtml(suffix)}</span>
-                        <span class="text-xs text-gray-400">${escapeHtml(prefix)}${escapeHtml(max)}${escapeHtml(suffix)}</span>
+                        <span class="text-xs text-gray-400">${window.LEDEscape.html(prefix)}${window.LEDEscape.html(min)}${window.LEDEscape.html(suffix)}</span>
+                        <span class="text-xs text-gray-400">${window.LEDEscape.html(prefix)}${window.LEDEscape.html(max)}${window.LEDEscape.html(suffix)}</span>
                     </div>
                 `;
             }

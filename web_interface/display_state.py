@@ -133,6 +133,39 @@ def on_demand_state(snapshot: Optional[Dict[str, Any]],
     return state
 
 
+def display_gone(snapshot: Optional[Dict[str, Any]]) -> bool:
+    """Is there positively no display behind a fallback to the cache?
+
+    True only when the socket should be there (this platform has one and it
+    is not switched off) but gave no ``snapshot``, and the render loop's
+    heartbeat file says nothing is running either: it is absent (systemd
+    removes its directory when the service stops), stale, or written by a
+    process that no longer exists -- #726's rules for the runtime snapshot.
+    Then what the display last left in the cache is a dead process's answer.
+
+    False whenever the answer is in doubt: a snapshot came in, the socket is
+    off or unsupported (Windows, the test suite, a deliberate ``off``), or a
+    live heartbeat says the display is running without a socket (an older
+    display). Those read the cache exactly as before.
+    """
+    if snapshot is not None:
+        return False
+    if not socket_supported() or not client_socket_paths():
+        return False
+    from src import display_watchdog
+    from src.plugin_system.plugin_runtime import process_exists
+    heartbeat = display_watchdog.read_heartbeat(display_watchdog.HEARTBEAT_PATH)
+    if heartbeat is None:
+        return True
+    age = display_watchdog.heartbeat_age(heartbeat)
+    if age is None or age >= display_watchdog.HEARTBEAT_STALE_SECONDS:
+        return True
+    pid = heartbeat.get('pid')
+    if isinstance(pid, int) and not isinstance(pid, bool) and process_exists(pid) is False:
+        return True
+    return False
+
+
 def loop_heartbeat_age(snapshot: Optional[Dict[str, Any]]) -> Optional[float]:
     """The render loop's heartbeat age now; None when the display has no
     beat to report yet (or there is no snapshot)."""
@@ -141,5 +174,5 @@ def loop_heartbeat_age(snapshot: Optional[Dict[str, Any]]) -> Optional[float]:
     return control_client.snapshot_loop_age(snapshot)
 
 
-__all__ = ['current_status', 'loop_heartbeat_age', 'on_demand_state', 'read_state',
-           'stop_subscription']
+__all__ = ['current_status', 'display_gone', 'loop_heartbeat_age', 'on_demand_state',
+           'read_state', 'stop_subscription']

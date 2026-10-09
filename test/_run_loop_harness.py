@@ -143,12 +143,24 @@ class FakeCache:
     def __init__(self):
         self.data: Dict[str, Any] = {}
         self.cache_dir = "/nonexistent/run-loop-harness"
+        self._writes = 0
+        self._written: Dict[str, int] = {}
 
     def get(self, key, max_age=None, memory_ttl=None):
         return self.data.get(key)
 
     def set(self, key, data, ttl=None):
         self.data[key] = data
+        # Every write is a new file, as DiskCache's rename makes it.
+        self._writes += 1
+        self._written[key] = self._writes
+
+    def file_signature(self, key):
+        """CacheManager.file_signature: None without a file, else a value
+        that changes with every write."""
+        if key not in self.data:
+            return None
+        return (self._written.get(key, 0), 0, 0)
 
     def delete(self, key):
         self.data.pop(key, None)
@@ -724,11 +736,14 @@ class RunLoopHarness:
         self.clock.at(t, post)
 
     def restore_on_demand(self, plugin_id: str, mode: Optional[str] = None,
-                          duration: Optional[float] = None, pinned: bool = False):
+                          duration: Optional[float] = None, pinned: bool = False,
+                          named_mode: Optional[str] = None):
         """Start with an on-demand session resumed from the cache, as after
         a restart: the state _select_startup_plugins restores, then
-        _populate_on_demand_modes_from_plugin, as __init__ calls it."""
+        _populate_on_demand_modes_from_plugin, as __init__ calls it. A
+        session that cannot resume is logged as ``on-demand-error``."""
         dc = self.controller
+        dc._on_demand_named_mode = named_mode
         dc.on_demand_active = True
         dc.on_demand_plugin_id = plugin_id
         dc.on_demand_mode = mode
@@ -739,6 +754,8 @@ class RunLoopHarness:
         dc.on_demand_status = 'active'
         dc.on_demand_schedule_override = True
         dc._populate_on_demand_modes_from_plugin()
+        if dc.on_demand_status == 'error':
+            self.log("on-demand-error", dc.on_demand_last_error)
 
     def wifi_message(self, t: float, message: str, duration: float = 5):
         def write():

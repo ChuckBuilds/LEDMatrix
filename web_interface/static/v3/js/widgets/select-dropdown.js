@@ -28,8 +28,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('SelectDropdown', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -73,7 +71,7 @@
 
             html += `
                 <select id="${fieldId}_input"
-                        name="${escapeHtml(options.name || fieldId)}"
+                        name="${window.LEDEscape.html(options.name || fieldId)}"
                         ${disabled ? 'disabled' : ''}
                         ${required ? 'required' : ''}
                         onchange="window.LEDMatrixWidgets.getHandlers('select-dropdown').onChange('${fieldId}')"
@@ -82,14 +80,14 @@
 
             // Placeholder option
             if (placeholder && !required) {
-                html += `<option value="" ${!currentValue ? 'selected' : ''}>${escapeHtml(placeholder)}</option>`;
+                html += `<option value="" ${!currentValue ? 'selected' : ''}>${window.LEDEscape.html(placeholder)}</option>`;
             }
 
             // Options
             for (const optValue of enumValues) {
                 const label = labels[optValue] || String(optValue).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                 const isSelected = String(optValue) === currentValue;
-                html += `<option value="${escapeHtml(String(optValue))}" ${isSelected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+                html += `<option value="${window.LEDEscape.html(String(optValue))}" ${isSelected ? 'selected' : ''}>${window.LEDEscape.html(label)}</option>`;
             }
 
             html += '</select>';

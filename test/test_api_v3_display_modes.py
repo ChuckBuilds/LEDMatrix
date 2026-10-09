@@ -7,7 +7,7 @@ manifest.json off disk and reimplemented PluginManager's own fallbacks.
 """
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -155,3 +155,14 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
             side_effect=RuntimeError("GET https://x/y?api_key=SEC123 failed"))
         body = api_v3_client.get('/api/v3/display/modes').get_json()
         assert 'SEC123' not in json.dumps(body)
+
+
+class TestOnDemandUsesTheRegisteredSpelling:
+    def test_a_mode_differing_in_case_is_sent_as_registered(self, client):
+        with patch('web_interface.blueprints.api_v3.display._deliver_on_demand',
+                   return_value=('socket', None)) as deliver:
+            response = client.post('/api/v3/display/on-demand/start',
+                                   json={'plugin_id': 'football-scoreboard',
+                                         'mode': 'NFL_LIVE', 'start_service': False})
+        assert response.status_code == 200, response.get_json()
+        assert deliver.call_args.args[0]['mode'] == 'nfl_live'

@@ -149,12 +149,13 @@ class Command:
     PLUGIN_RELOAD = 'plugin.reload'
     STATE_GET = 'state.get'
     STATE_SUBSCRIBE = 'state.subscribe'
+    ERRORS_CLEAR = 'errors.clear'
 
 
 #: Every command version 1 defines, in the order ``hello`` reports them.
-#: ``brightness.set`` and ``plugin.reload`` came in stage 2, and ``state.get``
-#: and ``state.subscribe`` in stage 3, all within version 1 (see the module
-#: docstring on adding commands).
+#: ``brightness.set`` and ``plugin.reload`` came in stage 2, ``state.get``
+#: and ``state.subscribe`` in stage 3, and ``errors.clear`` in stage 4, all
+#: within version 1 (see the module docstring on adding commands).
 COMMANDS: Tuple[str, ...] = (
     Command.HELLO,
     Command.PING,
@@ -165,7 +166,14 @@ COMMANDS: Tuple[str, ...] = (
     Command.PLUGIN_RELOAD,
     Command.STATE_GET,
     Command.STATE_SUBSCRIBE,
+    Command.ERRORS_CLEAR,
 )
+
+#: Commands the connection thread answers itself, through a handler the
+#: display registers (``ControlServer(handlers=...)``), because they touch
+#: nothing the render thread owns. A display that registered none answers
+#: ``unknown_command``, and the client falls back as from an older display.
+DIRECT_COMMANDS = frozenset({Command.ERRORS_CLEAR})
 
 #: Commands that are queued for the render thread.
 QUEUED_COMMANDS = frozenset({Command.ON_DEMAND_START, Command.ON_DEMAND_STOP,
@@ -391,9 +399,6 @@ class HelloArgs:
     versions: Tuple[int, ...] = (PROTOCOL_VERSION,)
     client: str = ''
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'versions': list(self.versions), 'client': self.client}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'HelloArgs':
         versions = args.get('versions', [PROTOCOL_VERSION])
@@ -418,10 +423,6 @@ class OnDemandStartArgs:
     duration: Optional[float] = None
     pinned: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'plugin_id': self.plugin_id, 'mode': self.mode,
-                'duration': self.duration, 'pinned': self.pinned}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'OnDemandStartArgs':
         plugin_id = _optional_name(args, 'plugin_id')
@@ -441,9 +442,6 @@ class OnDemandStartArgs:
 class OnDemandStopArgs:
     """``on_demand.stop``: end the on-demand session and resume rotation."""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'OnDemandStopArgs':
         return cls()
@@ -452,9 +450,6 @@ class OnDemandStopArgs:
 @dataclass(frozen=True)
 class NoArgs:
     """``ping`` and ``on_demand.status`` take no arguments (extra ones are ignored)."""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'NoArgs':
@@ -471,9 +466,6 @@ class BrightnessSetArgs:
     The dim schedule still applies on top, as it does to the saved value.
     """
     brightness: int
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'brightness': self.brightness}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'BrightnessSetArgs':
@@ -494,9 +486,6 @@ class PluginReloadArgs:
     makes the display import anything it was not already running.
     """
     plugin_id: str
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'plugin_id': self.plugin_id}
 
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'PluginReloadArgs':
@@ -538,9 +527,6 @@ class StateGetArgs:
     since: Optional[int] = None
     epoch: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {'since': self.since, 'epoch': self.epoch}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'StateGetArgs':
         return cls(since=_optional_version(args, 'since'), epoch=_optional_epoch(args))
@@ -557,16 +543,34 @@ class StateSubscribeArgs:
     and a ``tick`` at least every :data:`SUBSCRIBE_KEEPALIVE_SECONDS`.
     """
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {}
-
     @classmethod
     def from_dict(cls, args: Mapping[str, Any]) -> 'StateSubscribeArgs':
         return cls()
 
 
+@dataclass(frozen=True)
+class ErrorsClearArgs:
+    """``errors.clear``: forget the plugin errors recorded at or before
+    ``cutoff`` (seconds since the epoch), as ``POST /api/v3/errors/clear``
+    asks. The request id is the clear's id, which the display's error
+    snapshot then reports as ``applied_clear_id``.
+    """
+    cutoff: float
+
+    @classmethod
+    def from_dict(cls, args: Mapping[str, Any]) -> 'ErrorsClearArgs':
+        value = args.get('cutoff')
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ProtocolError(ErrorCode.INVALID_ARGS, 'cutoff must be a number of seconds')
+        if not math.isfinite(value) or value < 0:
+            raise ProtocolError(ErrorCode.INVALID_ARGS,
+                                'cutoff must be a finite, non-negative number of seconds')
+        return cls(cutoff=float(value))
+
+
 CommandArgs = Union[HelloArgs, OnDemandStartArgs, OnDemandStopArgs, NoArgs,
-                    BrightnessSetArgs, PluginReloadArgs, StateGetArgs, StateSubscribeArgs]
+                    BrightnessSetArgs, PluginReloadArgs, StateGetArgs, StateSubscribeArgs,
+                    ErrorsClearArgs]
 
 #: The arguments of a command that goes on the render thread's queue.
 QueuedArgs = Union[OnDemandStartArgs, OnDemandStopArgs, BrightnessSetArgs, PluginReloadArgs]
@@ -581,6 +585,7 @@ _ARG_TYPES: Dict[str, Any] = {
     Command.PLUGIN_RELOAD: PluginReloadArgs,
     Command.STATE_GET: StateGetArgs,
     Command.STATE_SUBSCRIBE: StateSubscribeArgs,
+    Command.ERRORS_CLEAR: ErrorsClearArgs,
 }
 
 
@@ -651,6 +656,13 @@ class PluginReloadResult(TypedDict):
     reloaded: bool
     version: Optional[str]
     modes: List[str]
+
+
+class ErrorsClearResult(TypedDict):
+    """``errors.clear``, once applied and the error snapshot republished."""
+    request_id: str
+    cutoff: float
+    cleared: int
 
 
 class LoopState(TypedDict):

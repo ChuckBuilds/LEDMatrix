@@ -123,8 +123,7 @@ class ErrorAggregator:
         self._error_counts: Dict[str, int] = defaultdict(int)
         self._plugin_error_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self._patterns: Dict[str, ErrorPattern] = {}
-        self._pattern_callbacks: List[Callable[[ErrorPattern], None]] = []
-        self._lock = threading.RLock()  # RLock: build_snapshot and pattern callbacks re-enter
+        self._lock = threading.RLock()  # RLock: build_snapshot re-enters
 
         # Track session start for relative timing
         self._session_start = datetime.now()
@@ -238,13 +237,6 @@ class ErrorAggregator:
                     f"{count} times in last {self.pattern_window}. "
                     f"Affected plugins: {set(affected_plugins) or 'unknown'}"
                 )
-
-                # Notify callbacks
-                for callback in self._pattern_callbacks:
-                    try:
-                        callback(pattern)
-                    except Exception as e:
-                        self.logger.error(f"Pattern callback failed: {e}")
             else:
                 # Update existing pattern
                 self._patterns[pattern_key].count = count
@@ -252,15 +244,6 @@ class ErrorAggregator:
                 self._patterns[pattern_key].severity = severity
                 known = self._patterns[pattern_key].affected_plugins
                 known.extend(p for p in affected_plugins if p not in known)
-
-    def on_pattern_detected(self, callback: Callable[[ErrorPattern], None]) -> None:
-        """
-        Register a callback to be called when a new error pattern is detected.
-
-        Args:
-            callback: Function that takes an ErrorPattern as argument
-        """
-        self._pattern_callbacks.append(callback)
 
     def get_error_summary(self) -> Dict[str, Any]:
         """
@@ -325,27 +308,6 @@ class ErrorAggregator:
                 "last_error": recent_plugin_errors[-1].to_dict() if recent_plugin_errors else None
             }
 
-    def clear_old_records(self, max_age_hours: int = 24) -> int:
-        """
-        Clear records older than specified age.
-
-        Args:
-            max_age_hours: Maximum age in hours
-
-        Returns:
-            Number of records cleared
-        """
-        with self._lock:
-            cutoff = datetime.now() - timedelta(hours=max_age_hours)
-            original_count = len(self._records)
-            self._records = [r for r in self._records if r.timestamp > cutoff]
-            cleared = original_count - len(self._records)
-
-            if cleared > 0:
-                self.logger.info(f"Cleared {cleared} old error records")
-
-            return cleared
-
     @property
     def version(self) -> int:
         """Changes whenever the recorded errors do (see ErrorSnapshotPublisher)."""
@@ -354,7 +316,7 @@ class ErrorAggregator:
     def clear_before(self, cutoff: datetime) -> int:
         """Forget every error recorded at or before ``cutoff``.
 
-        Unlike clear_old_records, this also resets what the summary reports:
+        This also resets what the summary reports:
         the per-type and per-plugin counts are rebuilt from the records that
         remain, and detected patterns that began before the cutoff are dropped
         (one that is still happening is detected again on its next
@@ -490,10 +452,13 @@ def record_error(
 # user reads, and the other way round for the clear request.
 #
 #   ERROR_SNAPSHOT_KEY       written by the display service only
-#   ERROR_CLEAR_REQUEST_KEY  written by the web interface only
+#   ERROR_CLEAR_REQUEST_KEY  written by the web interface only, as a fallback
 #
-# A clear is asynchronous: the web interface records a request, and the
-# display service applies it (clear_before) on its next tick and republishes.
+# A clear goes over the control socket (``errors.clear``): the display applies
+# it (clear_before) and republishes the snapshot before it answers. Only when
+# the socket cannot carry it (no socket, or a display older than the command)
+# does the web interface record a request in the mailbox, which the display
+# applies on its next tick; its tick reads that file only when it changed.
 # Until it has, the web interface hides whatever the snapshot shows from
 # before the cutoff, so a clear takes effect for readers immediately and a
 # snapshot published just before the request cannot bring old errors back.
@@ -598,13 +563,43 @@ class ErrorSnapshotPublisher:
         self._published_version: Optional[int] = None
         self._last_attempt: Optional[float] = None
         self._applied_clear_id: Optional[str] = None
+        # The widest cutoff applied in this process: a clear request at or
+        # before it has nothing left to clear (see _pending_cutoff).
+        self._applied_clear_cutoff: Optional[float] = None
+        from src.cache_manager import MailboxWatch  # the display's cache, loaded already
+        self._mailbox = MailboxWatch(ERROR_CLEAR_REQUEST_KEY)
         self._tick_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
+    def _clear(self, request_id: str, cutoff: float) -> int:
+        """Apply one clear and remember it. Caller holds _tick_lock."""
+        cleared = 0
+        if math.isfinite(cutoff):
+            cleared = self.aggregator.clear_before(datetime.fromtimestamp(cutoff))
+            _snapshot_logger.info("Cleared %d plugin error record(s) as requested (%s)",
+                                  cleared, request_id)
+            if self._applied_clear_cutoff is None or cutoff > self._applied_clear_cutoff:
+                self._applied_clear_cutoff = cutoff
+        # A malformed request is acknowledged too, so it is not retried forever.
+        self._applied_clear_id = request_id
+        return cleared
+
     def _apply_clear_request(self) -> bool:
-        """Honour a clear request we have not applied yet. True if one was."""
-        request = self.cache_manager.get(ERROR_CLEAR_REQUEST_KEY, max_age=None, memory_ttl=0)
+        """Honour a mailbox clear request we have not applied yet. True if one was.
+
+        The mailbox is the fallback for a web interface that could not use
+        the control socket (``errors.clear``, :meth:`clear_now`). It is read
+        only when its file changed since the last tick; otherwise a tick
+        costs one stat().
+        """
+        if not self._mailbox.changed(self.cache_manager):
+            return False
+        try:
+            request = self.cache_manager.get(ERROR_CLEAR_REQUEST_KEY, max_age=None, memory_ttl=0)
+        except Exception:
+            self._mailbox.forget()
+            raise
         if not isinstance(request, dict):
             return False
         request_id = request.get("request_id")
@@ -614,13 +609,29 @@ class ErrorSnapshotPublisher:
             cutoff = float(request.get("cutoff"))
         except (TypeError, ValueError):
             cutoff = float("nan")
-        if math.isfinite(cutoff):
-            cleared = self.aggregator.clear_before(datetime.fromtimestamp(cutoff))
-            _snapshot_logger.info("Cleared %d plugin error record(s) as requested (%s)",
-                                  cleared, request_id)
-        # A malformed request is acknowledged too, so it is not retried forever.
-        self._applied_clear_id = request_id
+        self._clear(request_id, cutoff)
         return True
+
+    def clear_now(self, request_id: str, cutoff: float) -> int:
+        """``errors.clear`` over the control socket: apply a clear at once and
+        republish the snapshot, so the web interface's next read has it.
+        Returns how many records were cleared. Raises when the snapshot
+        could not be written, so the caller is not told it worked."""
+        with self._tick_lock:
+            cleared = self._clear(request_id, float(cutoff))
+            self._publish(self.aggregator.version, self._clock())
+            return cleared
+
+    def _publish(self, version: int, now: float) -> None:
+        """Write the snapshot. Caller holds _tick_lock."""
+        # Stamp the attempt before writing: a cache that keeps failing
+        # is retried at the throttled rate, not on every tick.
+        self._last_attempt = now
+        snapshot = self.aggregator.build_snapshot()
+        snapshot["applied_clear_id"] = self._applied_clear_id
+        snapshot["applied_clear_cutoff"] = self._applied_clear_cutoff
+        self.cache_manager.set(ERROR_SNAPSHOT_KEY, snapshot)
+        self._published_version = version
 
     def tick(self) -> bool:
         """Apply a pending clear and publish if due. True if a snapshot was written."""
@@ -635,13 +646,7 @@ class ErrorSnapshotPublisher:
                     if (self._last_attempt is not None
                             and now - self._last_attempt < self.min_interval):
                         return False
-                # Stamp the attempt before writing: a cache that keeps failing
-                # is retried at the throttled rate, not on every tick.
-                self._last_attempt = now
-                snapshot = self.aggregator.build_snapshot()
-                snapshot["applied_clear_id"] = self._applied_clear_id
-                self.cache_manager.set(ERROR_SNAPSHOT_KEY, snapshot)
-                self._published_version = version
+                self._publish(version, now)
                 return True
             except Exception as err:  # never let reporting break the display
                 _snapshot_logger.debug("Could not publish the plugin error snapshot: %s",
@@ -693,6 +698,22 @@ def start_error_snapshot_publisher(cache_manager: Any) -> Optional[ErrorSnapshot
         return None
 
 
+def apply_error_clear(request_id: str, args: Any) -> Dict[str, Any]:
+    """The display's handler for ``errors.clear`` on the control socket.
+
+    ``args`` is the contract's ErrorsClearArgs (``cutoff``, epoch seconds).
+    Runs on the socket's connection thread: the aggregator and the publisher
+    have their own locks, and nothing here touches rendering. Returns
+    ErrorsClearResult once the clear is applied and the snapshot rewritten.
+    """
+    publisher = _snapshot_publisher
+    if publisher is None:
+        raise RuntimeError("the error snapshot publisher is not running")
+    cutoff = float(args.cutoff)
+    cleared = publisher.clear_now(request_id, cutoff)
+    return {"request_id": request_id, "cutoff": cutoff, "cleared": cleared}
+
+
 # --- Reading side (web interface) -------------------------------------------
 
 def read_error_report(cache_manager: Any) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
@@ -731,7 +752,15 @@ def _pending_cutoff(snapshot: Optional[Dict[str, Any]],
         cutoff = float(clear_request.get("cutoff"))
     except (TypeError, ValueError):
         return None
-    return cutoff if math.isfinite(cutoff) else None
+    if not math.isfinite(cutoff):
+        return None
+    # A wider clear has been applied since (over the control socket): this
+    # older request has nothing left to hide.
+    applied = snapshot.get("applied_clear_cutoff") if snapshot is not None else None
+    if (isinstance(applied, (int, float)) and not isinstance(applied, bool)
+            and applied >= cutoff):
+        return None
+    return cutoff
 
 
 def _is_after(item: Any, field_name: str, cutoff: float) -> bool:
@@ -831,13 +860,31 @@ def _count_cleared(summary: Dict[str, Any], cutoff: float) -> Optional[int]:
     return None
 
 
-def request_error_clear(cache_manager: Any, cutoff: float) -> Dict[str, Any]:
+#: ``send(request_id, cutoff)`` hands a clear to the display over the control
+#: socket and returns its ErrorsClearResult, or None when the socket could
+#: not carry it and the mailbox should be written instead. Any exception it
+#: raises reaches the caller: the display had the request and failed it.
+ClearSender = Callable[[str, float], Optional[Dict[str, Any]]]
+
+
+def request_error_clear(cache_manager: Any, cutoff: float,
+                        send: Optional[ClearSender] = None) -> Dict[str, Any]:
     """Ask the display service to forget errors recorded at or before ``cutoff``.
 
-    Returns ``request_id``, ``cutoff`` (ISO, local time), ``cleared_count``
-    (see _count_cleared) and ``clear_requested``. Raises OSError when the
-    request did not reach the shared cache, since a cache without a usable
-    directory accepts set() and keeps nothing.
+    Over the control socket when ``send`` is given and carries it: the
+    display applies the clear and republishes its snapshot before it
+    answers, so nothing is written here. Otherwise (no socket, or a display
+    older than ``errors.clear``) a request is written to the
+    ``plugin_error_clear_request`` mailbox, which the display applies on
+    its next tick, and readers hide the cleared errors until then.
+
+    Returns ``request_id``, ``cutoff`` (ISO, local time), ``cleared_count``,
+    ``clear_requested``, ``applied`` (the display has already cleared them)
+    and ``transport`` (``socket`` or ``mailbox``). ``cleared_count`` is the
+    display's own count over the socket, else an estimate from the snapshot
+    (see _count_cleared). Raises OSError when a mailbox request did not reach
+    the shared cache, since a cache without a usable directory accepts set()
+    and keeps nothing.
 
     A request the display has not applied yet is only ever widened: a later,
     narrower one ("older than 24 hours" after "everything") overwriting it
@@ -848,8 +895,21 @@ def request_error_clear(cache_manager: Any, cutoff: float) -> Dict[str, Any]:
     if pending is not None:
         cutoff = max(cutoff, pending)
     before = error_summary_from_report(snapshot, clear_request)
+    request_id = uuid.uuid4().hex
+    answer = {
+        "clear_requested": True,
+        "request_id": request_id,
+        "cutoff": datetime.fromtimestamp(cutoff).isoformat(),
+    }
+    if send is not None:
+        result = send(request_id, cutoff)
+        if result is not None:
+            count = result.get("cleared")
+            return dict(answer, applied=True, transport="socket",
+                        cleared_count=count if isinstance(count, int) and not isinstance(count, bool)
+                        else _count_cleared(before, cutoff))
     request = {
-        "request_id": uuid.uuid4().hex,
+        "request_id": request_id,
         "cutoff": cutoff,
         "requested_at": time.time(),
     }
@@ -857,9 +917,5 @@ def request_error_clear(cache_manager: Any, cutoff: float) -> Dict[str, Any]:
     stored = cache_manager.get(ERROR_CLEAR_REQUEST_KEY, max_age=None, memory_ttl=0)
     if not isinstance(stored, dict) or stored.get("request_id") != request["request_id"]:
         raise OSError("the clear request was not stored in the shared cache")
-    return {
-        "cleared_count": _count_cleared(before, cutoff),
-        "clear_requested": True,
-        "request_id": request["request_id"],
-        "cutoff": datetime.fromtimestamp(cutoff).isoformat(),
-    }
+    return dict(answer, applied=False, transport="mailbox",
+                cleared_count=_count_cleared(before, cutoff))

@@ -46,6 +46,7 @@ from src.web_interface.error_handler import (describe_exception, http_exception_
                                              redact_text, unhandled_exception_payload)
 from werkzeug.exceptions import HTTPException
 from src.plugin_system.operation_types import OperationType
+from src.web_interface.config_arrays import _schema_type_is
 from src.web_interface.validators import (
     validate_file_upload
 )
@@ -881,46 +882,6 @@ def deep_merge(base_dict, update_dict):
             # For non-dict values or new keys, use the update value
             result[key] = value
     return result
-def _parse_form_value(value):
-    """
-    Parse a form value into the appropriate Python type.
-    Handles booleans, numbers, JSON arrays/objects, and strings.
-    """
-    if value is None:
-        return None
-
-    # Handle string values
-    if isinstance(value, str):
-        stripped = value.strip()
-
-        # Check for boolean strings
-        if stripped.lower() == 'true':
-            return True
-        if stripped.lower() == 'false':
-            return False
-        if stripped.lower() in ('null', 'none') or stripped == '':
-            return None
-
-        # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
-        # This handles RGB arrays like "[255, 0, 0]" correctly
-        if stripped.startswith('[') or stripped.startswith('{'):
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError:
-                pass
-
-        # Try parsing as number
-        try:
-            if '.' in stripped:
-                return float(stripped)
-            return int(stripped)
-        except ValueError:
-            pass
-
-        # Return as string (original value, not stripped)
-        return value
-
-    return value
 def _get_schema_property(schema, key_path):
     """
     Get the schema property for a given key path (supports dot notation).
@@ -957,6 +918,19 @@ def _get_schema_property(schema, key_path):
                     i = j
                     matched = True
                     break
+                # Through an array to its items: a table row posts its cells
+                # as "cities.0.timezone", where the index names no property.
+                # Stopping here left each cell parsed with no schema at all,
+                # so a blank text cell became null and "2027" a number.
+                items = prop.get('items') if _schema_type_is(prop, 'array') else None
+                if isinstance(items, dict) and parts[j].isdigit():
+                    if j + 1 == len(parts):
+                        return items
+                    if 'properties' in items:
+                        current = items['properties']
+                        i = j + 1
+                        matched = True
+                        break
                 # Matched a non-object before consuming the path — can't go deeper.
                 return None
         if not matched:
@@ -999,22 +973,6 @@ def _is_field_required(key_path, schema):
 _SKIP_FIELD = object()
 
 
-def _schema_type_is(prop, wanted):
-    """Whether a schema property is of ``wanted`` type.
-
-    JSON Schema allows a union (``["array", "null"]``), which the per-element
-    style system uses for its per-mode override fields: null there means
-    "inherit the base", so the type genuinely is "an array or nothing". A
-    bare ``prop.get('type') == 'array'`` reads False for those, which meant
-    the indexed colour inputs a form posts as ``...text_color.0/.1/.2`` were
-    never recombined into a list.
-    """
-    if not isinstance(prop, dict):
-        return False
-    declared = prop.get('type')
-    if isinstance(declared, list):
-        return wanted in declared
-    return declared == wanted
 
 
 def _schema_allows_null(prop):
@@ -1040,6 +998,16 @@ def _parse_form_value_with_schema(value, key_path, schema):
 
     # Handle None/empty values
     if value is None or (isinstance(value, str) and value.strip() == ''):
+        # The form draws a stored secret blank, so a blank secret means
+        # "unchanged", and "" is what the save drops as unchanged
+        # (remove_empty_secrets). A required one with no default fell
+        # through to None below, failed validation, and blocked every save
+        # of the page until the secret was typed in again. Not _SKIP_FIELD:
+        # that keeps the merged value from load_config(), which the save
+        # would then write back to config_secrets.json. Text secrets only:
+        # a list or object one gets its empty value below, dropped the same.
+        if prop and prop.get('x-secret') and prop.get('type', 'string') == 'string':
+            return ""
         # A nullable field left blank means null, not an empty container.
         # This is the inherit sentinel for per-mode style overrides: an
         # empty list there would read as "the user chose no colour" rather
@@ -1073,6 +1041,14 @@ def _parse_form_value_with_schema(value, key_path, schema):
     # Handle string values
     if isinstance(value, str):
         stripped = value.strip()
+
+        # A text field keeps what was typed. The guesses below ran first, so
+        # "true", "False", "[1, 2]" or "{}" in a text field became a boolean,
+        # list or object, and the save failed validation for a good string.
+        declared = prop.get('type') if isinstance(prop, dict) else None
+        if declared == 'string' or (isinstance(declared, list) and
+                                    [t for t in declared if t != 'null'] == ['string']):
+            return value
 
         # Check for boolean strings
         if stripped.lower() == 'true':

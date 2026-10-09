@@ -16,7 +16,7 @@ const container = {
   innerHTML: '',
   querySelectorAll: () => [],   // no skeletons in this harness
 };
-// escapeHtml() escapes via a detached element, so mirror what a browser does
+// LEDEscape.html() escapes via a detached element, so mirror what a browser does
 // when you read innerHTML back off textContent: & < > are escaped, quotes are not.
 class FakeEl {
   set textContent(v) { this._t = String(v == null ? '' : v); }
@@ -36,7 +36,7 @@ global.PLUGIN_DEBUG = false;
 global.debugLog = () => {};
 function setupInstalledEventDelegation() {}   // stubbed; tested separately
 
-eval(slice('function escapeHtml(text)', '\nfunction isNewPlugin'));
+eval(slice('function jsStringAttr(value)', '\nfunction isNewPlugin'));
 eval(slice('function renderInstalledCards(plugins, total)',
            '// Set up event delegation for plugin action buttons'));
 

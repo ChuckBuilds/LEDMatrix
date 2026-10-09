@@ -55,19 +55,40 @@
 <script>
 (function () {
     var DISMISS_KEY = 'ledmatrix-recon-dismissed';
+    // Startup reconciliation is done within seconds of the web service
+    // starting. The route also answers done: false when its status file is
+    // missing (reconciliation raised before writing it, or /tmp was cleaned
+    // under a long-running service), which used to keep this polling every
+    // 2 s for as long as the page was open, on every tab. So: give up after
+    // a minute, and poll only while the Overview is on screen.
+    var POLL_MS = 2000;
+    var MAX_POLLS = 30;
     var _recon_timer = null;
+    var _polls = 0;
+    var _finished = false;   // done, given up, or dismissed
+    var _active = false;
+    var _inFlight = false;
 
     function checkReconciliation() {
+        _recon_timer = null;
+        _inFlight = true;
         fetch('/api/v3/plugins/reconciliation-status')
             .then(function (r) { return r.json(); })
             .then(function (resp) {
+                _inFlight = false;
+                if (_finished) return;
                 var d = resp.data || {};
                 if (!d.done) {
-                    // Reconciliation still running — poll again shortly
-                    _recon_timer = setTimeout(checkReconciliation, 2000);
+                    // Reconciliation still running (or it never wrote its
+                    // status): ask again shortly, a bounded number of times.
+                    if (++_polls >= MAX_POLLS) {
+                        _finished = true;
+                        return;
+                    }
+                    if (_active) _recon_timer = setTimeout(checkReconciliation, POLL_MS);
                     return;
                 }
-                _recon_timer = null;
+                _finished = true;
                 if (!d.unresolved || d.unresolved.length === 0) return;
                 var key = d.unresolved.map(function (i) { return i.plugin_id; }).sort().join(',');
                 if (sessionStorage.getItem(DISMISS_KEY) === key) return;
@@ -102,13 +123,33 @@
                 banner.dataset.dismissKey = key;
                 banner.style.setProperty('display', 'flex', 'important');
             })
-            .catch(function () {});
+            .catch(function () { _inFlight = false; });
     }
-    checkReconciliation();
+
+    function startReconciliationPoll() {
+        _active = true;
+        if (!_finished && _recon_timer === null && !_inFlight) checkReconciliation();
+    }
+    function stopReconciliationPoll() {
+        _active = false;
+        if (_recon_timer !== null) {
+            clearTimeout(_recon_timer);
+            _recon_timer = null;
+        }
+    }
+    // Keyed apart from any other Overview registration, which a shared key
+    // would replace.
+    if (window.LEDVisibility) {
+        window.LEDVisibility.onActive('overview', startReconciliationPoll,
+                                      stopReconciliationPoll, 'overview-reconciliation');
+    } else {
+        startReconciliationPoll();
+    }
 
     window.dismissReconciliationBanner = function () {
         var banner = document.getElementById('reconciliation-banner');
         banner.style.setProperty('display', 'none', 'important');
+        _finished = true;
         if (_recon_timer !== null) {
             clearTimeout(_recon_timer);
             _recon_timer = null;

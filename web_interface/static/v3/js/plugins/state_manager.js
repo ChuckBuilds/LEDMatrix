@@ -22,8 +22,9 @@ const PluginStateManager = {
             window.installedPlugins = plugins; // For backward compatibility
             return plugins;
         } catch (error) {
-            if (window.errorHandler) {
-                window.errorHandler.displayError(error, 'Failed to load installed plugins');
+            if (typeof window.showNotification === 'function') {
+                window.showNotification('Failed to load installed plugins: '
+                    + ((error && error.message) || String(error)), 'error');
             }
             throw error;
         }

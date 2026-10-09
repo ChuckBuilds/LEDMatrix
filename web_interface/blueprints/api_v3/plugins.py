@@ -106,8 +106,13 @@ def get_installed_plugins():
             plugin_config = {}
         enabled = bool(plugin_config.get('enabled', False))
 
-        # Verified + latest published version from registry (no network call)
-        store_info = api_v3.plugin_store_manager.get_registry_info(plugin_id)
+        # Verified + latest published version from the registry copy already
+        # in memory. Never a fetch: on a cold cache get_registry_info would
+        # download plugins.json, and offline wait out its timeout and retries
+        # for every plugin. With no copy yet these are absent (no update or
+        # verified badge) and a background refresh fills them in for a
+        # later load.
+        store_info = api_v3.plugin_store_manager.get_cached_registry_info(plugin_id)
         verified = store_info.get('verified', False) if store_info else False
         latest_version = store_info.get('latest_version', '') if store_info else ''
         installed_version = plugin_info.get('version', '')
@@ -145,8 +150,9 @@ def get_installed_plugins():
         vegas_participation, vegas_participation_source = _vegas_participation(
             plugin_id, plugin_config, plugin_info)
 
-        # The modes the manifest declares, from the catalog as /display/modes
-        # and on-demand/start read them. The on-demand modal offers these;
+        # The plugin's modes, from the catalog as /display/modes and
+        # on-demand/start read them: what the running display registered,
+        # else what the manifest declares. The on-demand modal offers these;
         # without them it offered only the plugin id, which the display
         # turns into the first mode. Strings only: a manifest is hand-edited.
         declared_modes = api_v3.plugin_catalog.get_plugin_display_modes(plugin_id)
@@ -439,6 +445,10 @@ sys.exit(proc.returncode)
                     import tempfile
                     import json as json_lib
 
+                    # The params reach the wrapper on its stdin, never in
+                    # its source: written there as `params = <JSON>`, a
+                    # true, false or null was an undefined name and the
+                    # wrapper died with a NameError before the script ran.
                     params_json = json_lib.dumps(action_params)
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as wrapper:
                         wrapper.write(f'''import sys
@@ -448,6 +458,9 @@ import json
 
 # Set LEDMATRIX_ROOT
 os.environ['LEDMATRIX_ROOT'] = r"{PROJECT_ROOT}"
+
+# The params, as JSON on this wrapper's own stdin
+params = json.loads(sys.stdin.read())
 
 # Run the script and provide params as JSON via stdin
 proc = subprocess.Popen(
@@ -460,7 +473,6 @@ proc = subprocess.Popen(
 )
 
 # Send params as JSON to stdin
-params = {params_json}
 stdout, _ = proc.communicate(input=json.dumps(params), timeout=120)
 print(stdout)
 sys.exit(proc.returncode)
@@ -470,6 +482,7 @@ sys.exit(proc.returncode)
                     try:
                         result = subprocess.run(
                             ['python3', wrapper_path],
+                            input=params_json,
                             capture_output=True,
                             text=True,
                             timeout=120,

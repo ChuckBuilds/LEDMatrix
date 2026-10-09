@@ -39,6 +39,13 @@ module.exports = {
     'sm:hidden', 'sm:inline', 'sm:max-w-4xl', 'md:flex',
     'lg:grid-cols-5', 'lg:grid-cols-6', 'lg:gap-x-6',
     'xl:grid-cols-5', 'xl:grid-cols-6', 'xl:grid-cols-7', 'xl:grid-cols-8', 'xl:gap-x-8',
+    // Used only by the removed js/utils/error_handler.js modal; kept for the
+    // same reason (soccer-scoreboard's custom-leagues widget uses max-h-48).
+    'align-bottom', 'bg-opacity-75', 'leading-6', 'list-inside', 'max-h-48',
+    'pb-20', 'pt-5', 'transition-opacity', 'focus:ring-indigo-500',
+    'sm:align-middle', 'sm:flex', 'sm:flex-row-reverse', 'sm:h-10', 'sm:items-start',
+    'sm:max-w-lg', 'sm:ml-3', 'sm:ml-4', 'sm:mt-0', 'sm:mx-0', 'sm:my-8', 'sm:p-0',
+    'sm:p-6', 'sm:pb-4', 'sm:text-left', 'sm:w-10', 'sm:w-auto', 'sm:w-full',
   ],
 
   // Rules app.css defines on purpose and Tailwind must not override. Tailwind

@@ -98,7 +98,11 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
 
   const lists = () => requests.filter(r => r.url === '/api/v3/plugins/installed').length;
   const $ = id => doc.getElementById(id);
-  const order = () => JSON.parse($('rotation_plugin_order_value').value || '[]');
+  // The rows' ids, in order. The input also keeps saved ids that have no row
+  // (a disabled plugin's place, see test/js/unit/test_plugin_order_list.js),
+  // and the saved order comes from whatever config the server has.
+  const SHOWN = plugins.filter(p => p.enabled).map(p => p.id);
+  const order = () => JSON.parse($('rotation_plugin_order_value').value || '[]').filter(id => SHOWN.includes(id));
   async function swap() {
     panel.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { bubbles: true, detail: { target: panel, shouldSwap: true } }));
     panel.innerHTML = partial;

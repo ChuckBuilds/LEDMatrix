@@ -77,6 +77,31 @@ The Vegas **Scroll Speed** slider in the web UI shows the same thing live: a
 line under it says what your speed will run as on this panel, and links to the
 nearest smooth speeds.
 
+### A panel that cannot reach its cap
+
+Speeds are solved against `limit_refresh_rate_hz`, the configured cap, but a
+cap is only a ceiling: a long chain, a high `pwm_bits` or a big
+`gpio_slowdown` can leave the panel below it. One Pi 4 driving 2×128×64 on
+`adafruit-hat-pwm` with `pwm_bits 9` and `gpio_slowdown 5` measured
+107.6–113.1 Hz under a 120 Hz cap. Frames still move whole pixels, but
+every scroll runs that much slower than configured (60 px/s ran at 55 px/s),
+and the smooth speeds are the cap's rather than the panel's.
+
+The display measures the real rate from its own frames. About a minute
+into scrolling, a panel more than 3% short of its cap is logged once:
+
+```
+WARNING - src.common.frame_timing - The panel refreshes at about 113 Hz, below
+the 120 Hz that scroll speeds are planned for ... Set Limit Refresh Rate to
+100 Hz (web UI, Display tab), which this panel can hold, and restart.
+```
+
+The Display tab says the same under **Limit Refresh Rate**, with a button
+that fills in the suggested cap (`GET /api/v3/config/refresh-rate`). The
+suggestion is a multiple of 10 at least 5% under the measurement, because
+an uncapped panel drifts and the measurement is the fast end of it. A cap the
+panel holds also stops the drift.
+
 ### How a slow speed stays crisp
 
 `SwapOnVSync(canvas, framerate_fraction)` holds each frame for N panel

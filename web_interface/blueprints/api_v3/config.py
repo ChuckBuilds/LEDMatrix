@@ -17,6 +17,8 @@ from src.pi5_matrix_support import is_raspberry_pi_5
 from web_interface.cache import invalidate_cache
 from web_interface.auth import SECTION as _WEB_AUTH_SECTION, strip_auth_section
 import web_interface.blueprints.api_v3 as _pkg
+import copy
+from typing import Any, Dict, Iterable, Tuple
 
 # Read through the module rather than bound by value: tests patch these
 # as module attributes, and a value binding would not see the patch.
@@ -32,6 +34,50 @@ FORM_SECTION_FIELD = '__form_section'
 #: General form was submitted, so its unchecked checkboxes read as False.
 GENERAL_FIELDS = ('timezone', 'city', 'state', 'country', 'web_display_autostart',
                   'plugins_directory', 'auto_update_enabled', 'auto_update_channel')
+
+#: Settings in config.json the running display applies without a restart,
+#: as key paths (a path covers everything under it). Brightness goes over the
+#: control socket (brightness.set) and the config watcher's refresh
+#: (DisplayController._refresh_config_cache); the per-mode durations are read
+#: from the live config each time a mode starts (_get_display_duration).
+#: Plugin sections are live as well (each plugin's on_config_change), and
+#: save_main_config adds the ones a request saves.
+LIVE_CONFIG_PATHS: Tuple[Tuple[str, ...], ...] = (
+    ('display', 'hardware', 'brightness'),
+    ('display', 'display_durations'),
+)
+
+
+_MISSING = object()
+
+
+def _config_leaves(config: Any, prefix: Tuple[str, ...] = ()) -> Dict[Tuple[str, ...], Any]:
+    """Every non-dict value in ``config``, by key path. An empty dict has none,
+    so a section created empty on the way to a field is not a change."""
+    if not isinstance(config, dict):
+        return {prefix: config}
+    leaves: Dict[Tuple[str, ...], Any] = {}
+    for key, value in config.items():
+        leaves.update(_config_leaves(value, prefix + (str(key),)))
+    return leaves
+
+
+def restart_needed(before: Dict[str, Any], after: Dict[str, Any],
+                   live_paths: Iterable[Tuple[str, ...]] = LIVE_CONFIG_PATHS) -> bool:
+    """Does going from config ``before`` to ``after`` need a display restart?
+
+    True when anything changed outside ``live_paths``. A save that changes
+    only live settings, or nothing at all, does not.
+    """
+    live = tuple(live_paths)
+    old, new = _config_leaves(before), _config_leaves(after)
+    for path in set(old) | set(new):
+        if old.get(path, _MISSING) == new.get(path, _MISSING):
+            continue
+        if not any(path[:len(prefix)] == prefix for prefix in live):
+            return True
+    return False
+
 
 #: Top-level fields save_main_config stores somewhere of its own (location,
 #: plugin_system, ...), never as a config key of the same name.
@@ -72,6 +118,22 @@ def _day_setting(data, day, flat_key, nested_key):
     return False, None
 
 
+def _disabled_day_times(data, day, start_key, end_key):
+    """The times posted for a day that is off, the valid ones.
+
+    Nothing reads them while the day is off, but the schedule picker posts
+    them and GET returns them, so keeping them means turning the day back on
+    finds what was there. An invalid one is dropped rather than refused, for
+    the same reason.
+    """
+    times = {}
+    for field, key in (('start_time', start_key), ('end_time', end_key)):
+        value = _day_setting(data, day, key, field)[1]
+        if value and _validate_time_format(value)[0]:
+            times[field] = value
+    return times
+
+
 @api_v3.route('/config/main', methods=['GET'])
 def get_main_config():
     """Get main configuration, with credentials redacted."""
@@ -96,11 +158,23 @@ def _panel_refresh_hz(config):
     cap = scroll_config.refresh_hz_from_config(config)
     try:
         with open(frame_timing.default_stats_path(), encoding='utf-8') as fh:
-            measured = float(json.load(fh).get('measured_refresh_hz') or 0)
+            stats = json.load(fh)
+        measured = float(stats.get('measured_refresh_hz') or 0)
+        recorded = 'planned_refresh_hz' in stats
+        planned = float(stats.get('planned_refresh_hz') or 0)
     except (OSError, ValueError, TypeError, AttributeError):
+        measured = planned = 0.0
+        recorded = False
+    # Reject a stale file from a previous hardware config: one written under
+    # another cap (the display has not restarted since it changed), or, from
+    # a display too old to record its cap (no such key), a measurement far
+    # off this one. A key that is present but null means the display's frames
+    # are not paced by a panel (the emulator, the fallback canvas): its
+    # "refresh rate" says nothing about the cap.
+    if recorded and not planned:
         measured = 0.0
-    # Reject a stale file from a previous hardware config: a measurement far
-    # off the cap says the config changed since it was written.
+    elif planned and abs(planned - cap) > 0.5:
+        measured = 0.0
     if measured > 0 and 0.5 * cap <= measured <= 1.5 * cap:
         return measured, 'measured'
     return cap, 'configured'
@@ -125,6 +199,29 @@ def get_scroll_speed_advice():
     advice = scroll_config.speed_advice(speed, hz, lo, hi)
     advice['refresh_source'] = source
     return jsonify({'status': 'success', 'data': advice})
+
+
+@api_v3.route('/config/refresh-rate', methods=['GET'])
+def get_refresh_rate():
+    """The refresh cap, what the panel measured, and a cap it can hold.
+
+    Backs the hint under the Display tab's Limit Refresh Rate field. Scroll
+    speeds are solved against the cap, so a panel that cannot reach it runs
+    every scroll slow; ``shortfall`` (None when the panel keeps up, or nothing
+    has been measured yet) says by how much and suggests a cap.
+    """
+    from src.common import scroll_config
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    config = api_v3.config_manager.load_config()
+    planned = scroll_config.refresh_hz_from_config(config)
+    hz, source = _panel_refresh_hz(config)
+    measured = hz if source == 'measured' else None
+    return jsonify({'status': 'success', 'data': {
+        'planned_hz': planned,
+        'measured_hz': round(measured, 1) if measured else None,
+        'shortfall': scroll_config.refresh_shortfall(measured, planned),
+    }})
 
 
 @api_v3.route('/config/schedule', methods=['GET'])
@@ -257,11 +354,16 @@ def save_schedule_config():
 
                     day_config['start_time'] = start_time
                     day_config['end_time'] = end_time
+                else:
+                    day_config.update(_disabled_day_times(data, day, start_key, end_key))
 
                 schedule_config['days'][day] = day_config
 
-            # Validate that at least one day is enabled in per-day mode
-            if enabled_days_count == 0:
+            # An enabled per-day schedule needs a day to be on. A disabled
+            # one does not: every day off with the schedule off is what
+            # config.template.json ships, so refusing it meant a fresh
+            # install could not post back the schedule GET returned.
+            if enabled_days_count == 0 and enabled_value:
                 return error_response(
                     ErrorCode.VALIDATION_ERROR,
                     "At least one day must be enabled in per-day schedule mode",
@@ -465,11 +567,13 @@ def save_dim_schedule_config():
 
                     day_config['start_time'] = start_time
                     day_config['end_time'] = end_time
+                else:
+                    day_config.update(_disabled_day_times(data, day, start_key, end_key))
 
                 dim_schedule_config['days'][day] = day_config
 
-            # Validate that at least one day is enabled in per-day mode
-            if enabled_days_count == 0:
+            # As for the on/off schedule: only an enabled one needs a day on.
+            if enabled_days_count == 0 and enabled_value:
                 return error_response(
                     ErrorCode.VALIDATION_ERROR,
                     "At least one day must be enabled in per-day dim schedule mode",
@@ -507,7 +611,11 @@ def save_main_config():
         # Try to get JSON data first, fallback to form data
         data = None
         if request.is_json:
-            data = request.get_json()
+            # silent=True, as in save_raw_main_config: get_json() raised
+            # Werkzeug's BadRequest into the catch-all below, a 500.
+            data = request.get_json(silent=True)
+            if data is None and request.get_data():
+                return jsonify({'status': 'error', 'message': 'Invalid JSON in request body'}), 400
             if data is not None and not isinstance(data, dict):
                 return jsonify({'status': 'error', 'message': 'Request body must be a JSON object'}), 400
         else:
@@ -553,6 +661,8 @@ def save_main_config():
 
         # Merge with existing config (similar to original implementation)
         current_config = api_v3.config_manager.load_config()
+        # What was stored, to tell which settings this save changed.
+        stored_config = copy.deepcopy(current_config)
         was_auto_update_enabled = bool((current_config.get('auto_update') or {}).get('enabled'))
 
         is_general_update = any(k in data for k in GENERAL_FIELDS)
@@ -1190,13 +1300,15 @@ def save_main_config():
                 message = f'{message}. {note}'
         except Exception:
             logger.warning("Automatic update setup could not be started", exc_info=True)
-        # Display hardware, rotation/durations and general settings take
-        # effect after a display restart; the UI shows its restart banner on
-        # this flag.
-        extra = {'restart_required': True}
-        # Brightness is the exception: the display applies a saved one
-        # without a restart. Over the control socket it lands at once,
-        # instead of when the config watcher next looks (up to ~2 s).
+        # Display hardware, rotation order and general settings take effect
+        # after a display restart; the UI shows its restart banner on this
+        # flag. Brightness, mode durations and plugin settings are applied by
+        # the running display (LIVE_CONFIG_PATHS), so a save that changed
+        # only those -- or nothing -- does not ask for one.
+        live_paths = LIVE_CONFIG_PATHS + tuple((plugin_id,) for plugin_id in plugin_keys_to_remove)
+        extra = {'restart_required': restart_needed(stored_config, current_config, live_paths)}
+        # Over the control socket a saved brightness lands at once, instead
+        # of when the config watcher next looks (up to ~2 s).
         if 'brightness' in data:
             saved = (current_config.get('display', {}).get('hardware', {}) or {}).get('brightness')
             if isinstance(saved, int) and not isinstance(saved, bool):

@@ -50,11 +50,13 @@ class FakeResult:
         self.plugins_to_install = plugins_to_install or []
         self.plugins_installed = []
         self.plugins_failed = []
+        self.skipped = []
 
     def to_dict(self):
         return {
             "success": self.success,
             "restored": self.restored,
+            "skipped": self.skipped,
             "errors": self.errors,
             "plugins_installed": self.plugins_installed,
             "plugins_failed": self.plugins_failed,
@@ -284,6 +286,109 @@ class TestPluginReinstall:
         api_v3.plugin_store_manager = None
         body = post(client).get_json()
         assert body["data"]["plugins_failed"][0]["error"] == "Store manager unavailable"
+
+
+class TestInstalledPluginsAreNotReinstalled:
+    """"Reinstall missing plugins" installs only what is missing.
+
+    Every plugin the backup listed went to install_plugin, which replaces an
+    installed copy with a fresh download: restoring onto the same device
+    re-downloaded all of them inside the request. One installed from its own
+    URL is not in the registry, so its "reinstall" returned False and the
+    whole restore answered 500 "Restore failed" with the plugin still there.
+    """
+
+    @staticmethod
+    def _installed(tmp_path, *names):
+        found = {}
+        for name in names:
+            (tmp_path / name).mkdir()
+            found[name] = tmp_path / name
+        return lambda plugin_id: found.get(plugin_id)
+
+    def test_an_installed_plugin_is_skipped_and_a_missing_one_installed(
+            self, client, restore, tmp_path):
+        restore.return_value = FakeResult(
+            plugins_to_install=[{"plugin_id": "clock"}, {"plugin_id": "weather"}])
+        store = api_v3.plugin_store_manager
+        store._existing_install.side_effect = self._installed(tmp_path, "clock")
+        store.install_plugin.return_value = True
+        response = post(client)
+        assert response.status_code == 200
+        store.install_plugin.assert_called_once_with("weather")
+        data = response.get_json()["data"]
+        assert data["plugins_installed"] == ["weather"]
+        assert data["plugins_failed"] == []
+        assert "plugin:clock (installed)" in data["skipped"]
+
+    def test_an_installed_plugin_the_store_cannot_install_is_not_a_failure(
+            self, client, restore, tmp_path):
+        restore.return_value = FakeResult(plugins_to_install=[{"plugin_id": "my-3p"}])
+        store = api_v3.plugin_store_manager
+        store._existing_install.side_effect = self._installed(tmp_path, "my-3p")
+        store.install_plugin.return_value = False
+        response = post(client)
+        assert response.status_code == 200
+        assert response.get_json()["data"]["plugins_failed"] == []
+        store.install_plugin.assert_not_called()
+
+    @pytest.fixture
+    def real_store(self, tmp_path):
+        from src.plugin_system.store_manager import PluginStoreManager
+        plugins_dir = tmp_path / "plugin-repos"
+        for folder, manifest_id in (("ledmatrix-weather", "ledmatrix-weather"),
+                                    ("my-3p", "my-3p")):
+            (plugins_dir / folder).mkdir(parents=True)
+            (plugins_dir / folder / "manifest.json").write_text(
+                json.dumps({"id": manifest_id, "version": "1.0.0"}))
+        store = PluginStoreManager(plugins_dir=str(plugins_dir),
+                                   uninstalled_registry_path=str(tmp_path / "uninstalled.json"))
+        # The official weather plugin's registry id differs from the id it
+        # installs under; my-3p was installed from its own URL.
+        registry = {"plugins": [{
+            "id": "weather", "repo": "https://github.com/ChuckBuilds/ledmatrix-plugins",
+            "plugin_path": "plugins/ledmatrix-weather"}]}
+        store.registry_cache = registry
+        store.fetch_registry = lambda *a, **k: registry
+        store.install_plugin = MagicMock(return_value=True)
+        api_v3.plugin_store_manager = store
+        return store
+
+    def test_with_the_real_store_aliases_and_third_party_installs_count(
+            self, client, restore, real_store):
+        restore.return_value = FakeResult(plugins_to_install=[
+            {"plugin_id": "weather"}, {"plugin_id": "my-3p"}, {"plugin_id": "clock"}])
+        response = post(client)
+        assert response.status_code == 200
+        real_store.install_plugin.assert_called_once_with("clock")
+        skipped = response.get_json()["data"]["skipped"]
+        assert "plugin:weather (installed)" in skipped
+        assert "plugin:my-3p (installed)" in skipped
+
+
+class TestFontsCatalogCache:
+    """The Fonts tab's catalog is cached for 5 minutes (fonts.py).
+
+    Upload and delete clear it; a restore did not, so restored fonts were
+    missing from the Fonts tab and every font picker until it expired.
+    """
+
+    @pytest.fixture
+    def cached_catalog(self):
+        from web_interface.cache import delete_cached, get_cached, set_cached
+        set_cached('fonts_catalog', {'fonts': ['5x7.bdf']}, ttl_seconds=300)
+        yield lambda: get_cached('fonts_catalog', ttl_seconds=300)
+        delete_cached('fonts_catalog')
+
+    def test_a_restore_that_restored_fonts_clears_it(self, client, restore, cached_catalog):
+        restore.return_value = FakeResult(restored=["config", "fonts (2)"])
+        assert post(client).status_code == 200
+        assert cached_catalog() is None
+
+    def test_a_restore_without_fonts_keeps_it(self, client, restore, cached_catalog):
+        restore.return_value = FakeResult(restored=["config"])
+        assert post(client).status_code == 200
+        assert cached_catalog() == {'fonts': ['5x7.bdf']}
 
 
 class TestFailureReporting:

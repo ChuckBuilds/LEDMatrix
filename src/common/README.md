@@ -28,6 +28,7 @@ Rules for the package:
 | [`api_helper`](#api_helper) | HTTP GET/POST with caching and rate limiting | Yes | — |
 | [`bdf_font`](#bdf_font) | Load and draw BDF bitmap fonts | Yes, if drawing BDF text directly | 3.5.0 |
 | [`espn_dates`](#espn_dates) | Fetch ESPN scoreboards across a date range | Yes (scoreboards) | 3.5.0 |
+| [`espn_payload`](#espn_payload) | Drop the parts of an ESPN scoreboard payload no scoreboard reads | No, core-internal (used by `BackgroundDataService`) | n/a |
 | [`favorite_team_check`](#favorite_team_check) | Log why a favourite team code shows nothing | Yes (scoreboards) | 3.6.0 |
 | [`fetch_service`](#fetch_service) | Pooled, merged, budgeted and counted HTTP for core fetch paths | No, core-internal (reached through `api_helper` and `espn_dates`) | n/a |
 | [`font_layout`](#font_layout) | Reproducible TrueType loading, crisp sizes | Yes | 3.4.0 |
@@ -44,8 +45,10 @@ Rules for the package:
 | [`sports_card_wrappers`](#sports_card_wrappers) | The game renderer's `sports_card` delegations | Yes (scoreboards) | 3.7.0 |
 | [`sports_celebration`](#sports_celebration) | Draw a scoreboard's score/win celebration | Yes (scoreboards) | 3.7.0 |
 | [`sports_display_rules`](#sports_display_rules) | Which games a scoreboard shows, for how long, and its scorebug date line | Yes (scoreboards) | 3.8.0 |
+| [`sports_favorites`](#sports_favorites) | Which games involve a favourite team, and the favourites-only picks | Yes (scoreboards) | 3.8.2 |
 | [`sports_fetch`](#sports_fetch) | Scoreboard season fetch, lookback and live-odds decisions | Yes (scoreboards) | 3.7.0 |
 | [`sports_font_path`](#sports_font_path) | Find a scoreboard's bundled font whatever the cwd | Yes (scoreboards) | 3.8.0 |
+| [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
@@ -109,11 +112,26 @@ and the plugin test harness all use it. Most plugins get BDF text through
 [`espn_dates.py`](espn_dates.py). ESPN's site API rejects `dates=` ranges
 and truncates results when `limit` is above 500. `fetch_espn_scoreboard()`
 splits a range into month and day requests ESPN accepts and merges the
-results; `espn_date_chunks()`, `fetch_espn_date_chunks()`,
-`clamp_espn_limit()` and `merge_scoreboard_payloads()` are the pieces.
+results; `espn_date_chunks()`, `espn_request_chunks()`,
+`fetch_espn_date_chunks()`, `clamp_espn_limit()` and
+`merge_scoreboard_payloads()` are the pieces. A window's partial edge months
+are asked whole and trimmed to its days (US Eastern), and chunk requests share
+one process-wide cap of `ESPN_CHUNK_WORKERS` in flight.
 Every request goes through [`fetch_service`](#fetch_service), the chunks
 counted against the plugin that asked. Scoreboard plugins also bundle a copy
 for older cores.
+
+### espn_payload
+
+[`espn_payload.py`](espn_payload.py). Core-internal. ESPN scoreboard
+responses carry stat leaders, athlete cards, links, headlines and highlights
+that no scoreboard draws. `slim_scoreboard_payload(payload)` removes exactly
+those keys, in place, and leaves everything it does not know about alone;
+`is_espn_scoreboard_url(url)` says whether a URL is an ESPN site-API
+scoreboard. `BackgroundDataService` slims each scoreboard window before
+caching it, which cuts the five sports windows from ~40MB to ~12MB of parsed
+objects. Adding a key to the drop lists means first checking that nothing
+reads it.
 
 ### favorite_team_check
 
@@ -276,6 +294,19 @@ list it before `SportsCoreSharedMixin`) and `SportsGameRulesMixin`
 `_effective_live_duration()`, the shorter dwell for a non-favourite live
 game).
 
+### sports_favorites
+
+[`sports_favorites.py`](sports_favorites.py). Sports family 6, one mixin per
+class that carried the methods: `SportsFavoritesMixin` (`SportsCore`:
+`_is_favorite_game(game)` and `_favorite_code(value)`),
+`SportsUpcomingFavoritesMixin` (`_select_games_for_display`) and
+`SportsRecentFavoritesMixin` (`_select_recent_games_for_display`). Each side
+of a game is named by `_favorite_key` (from `SportsHelpersMixin`; NRL
+overrides it with the team id) and compared with `favorite_teams` stripped and
+upper-cased. The selection methods give each favourite up to the per-team
+limit, count a game between two favourites for both, and treat only games
+with an id as possible duplicates.
+
 ### sports_fetch
 
 [`sports_fetch.py`](sports_fetch.py). `SportsFetchMixin`: the `SportsCore`
@@ -290,6 +321,16 @@ lookback) and `_wants_live_odds()` (odds only for games near the screen).
 path as given when it exists (relative to the cwd), else
 `font_layout.resolve_asset_path(path)`. What the scoreboards'
 `_resolve_font_path` copies return on a core that ships it.
+
+### sports_game_over
+
+[`sports_game_over.py`](sports_game_over.py). `SportsGameOverMixin`:
+`_is_game_really_over(game)`, the `SportsLive` check that drops a game ESPN
+still lists as live (`SportsLiveSharedMixin._detect_stale_games` calls it).
+Over on a final period text, or on a 0:00 clock from period `FINAL_PERIOD`
+on unless the score is level. `FINAL_PERIOD` is a class attribute the host
+sets per sport; the default `None` means the clock never ends a game. List
+it before `SportsLiveSharedMixin`.
 
 ### sports_game_renderer
 
@@ -388,7 +429,7 @@ Created by `DisplayController`; works with any plugin.
 `draw_multiline_text()`, `create_text_image()`.
 
 `draw_text_outlined(draw, xy, text, font, fill, outline_color=(0, 0, 0),
-offsets=OUTLINE_SQUARE)` (Unreleased) draws the text in `outline_color` at
+offsets=OUTLINE_SQUARE)` (3.8.1) draws the text in `outline_color` at
 each offset, then in `fill` on top: the same pixels as one `draw.text` per
 offset, but the string is rasterized once. `OUTLINE_SQUARE` is the
 eight-sided one-pixel outline the scoreboards draw, `OUTLINE_CROSS` the

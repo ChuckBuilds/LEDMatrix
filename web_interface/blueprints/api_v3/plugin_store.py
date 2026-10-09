@@ -81,6 +81,27 @@ def _listed_plugin_dir(base: Path, name: str) -> Optional[Path]:
     return None
 
 
+def _enqueue_or_conflict(operation_type, plugin_id, callback):
+    """``(operation_id, None)``, or ``(None, a 409 response)``.
+
+    The queue raises ValueError when the plugin already has an operation
+    waiting or running -- a double-clicked Install, an uninstall during an
+    install. That is the caller's timing, not a server fault: it reached
+    the client as a 500, and the uninstall route recorded a failed
+    uninstall that had never started.
+    """
+    try:
+        return api_v3.operation_queue.enqueue_operation(
+            operation_type, plugin_id, operation_callback=callback), None
+    except ValueError:
+        return None, error_response(
+            ErrorCode.PLUGIN_OPERATION_CONFLICT,
+            f'Plugin {plugin_id} already has an install, update or uninstall '
+            'in progress; wait for it to finish, then try again',
+            status_code=409
+        )
+
+
 @api_v3.route('/plugins/update', methods=['POST'])
 def update_plugin():
     """Update plugin"""
@@ -402,11 +423,10 @@ def uninstall_plugin():
                                                 preserve_config=preserve_config)}
 
             # Enqueue operation
-            operation_id = api_v3.operation_queue.enqueue_operation(
-                OperationType.UNINSTALL,
-                plugin_id,
-                operation_callback=uninstall_callback
-            )
+            operation_id, conflict = _enqueue_or_conflict(
+                OperationType.UNINSTALL, plugin_id, uninstall_callback)
+            if conflict:
+                return conflict
 
             return success_response(
                 data={'operation_id': operation_id},
@@ -510,11 +530,13 @@ def install_plugin():
                     )
 
                 branch_msg = f" (branch: {branch})" if branch else ""
-                # plugin_id: the id to enable it by (see _installed_plugin_id).
+                # plugin_id: the id to enable it by, and the id its config
+                # section is under (see _installed_plugin_id).
+                installed_id = _installed_plugin_id(plugin_id)
                 return {'success': True,
                         'message': f'Plugin {plugin_id} installed successfully{branch_msg}',
-                        'plugin_id': _installed_plugin_id(plugin_id),
-                        **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))}
+                        'plugin_id': installed_id,
+                        **_store_restart_fields('install', _plugin_enabled_in_config(installed_id))}
             else:
                 error_msg = f'Failed to install plugin {plugin_id}'
                 if branch:
@@ -538,11 +560,10 @@ def install_plugin():
                 raise Exception(error_msg)
 
         # Enqueue operation
-        operation_id = api_v3.operation_queue.enqueue_operation(
-            OperationType.INSTALL,
-            plugin_id,
-            operation_callback=install_callback
-        )
+        operation_id, conflict = _enqueue_or_conflict(
+            OperationType.INSTALL, plugin_id, install_callback)
+        if conflict:
+            return conflict
 
         branch_msg = f" (branch: {branch})" if branch else ""
         return success_response(
@@ -569,10 +590,11 @@ def install_plugin():
                 )
 
             branch_msg = f" (branch: {branch})" if branch else ""
+            installed_id = _installed_plugin_id(plugin_id)
             return success_response(
                 message=f'Plugin installed successfully{branch_msg}',
-                extra={'plugin_id': _installed_plugin_id(plugin_id),
-                       **_store_restart_fields('install', _plugin_enabled_in_config(plugin_id))})
+                extra={'plugin_id': installed_id,
+                       **_store_restart_fields('install', _plugin_enabled_in_config(installed_id))})
         else:
             error_msg = f'Failed to install plugin {plugin_id}'
             if branch:

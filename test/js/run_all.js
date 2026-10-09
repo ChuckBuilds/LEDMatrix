@@ -17,6 +17,7 @@ const fs = require('fs');
 
 const BASE = process.env.BASE || 'http://localhost:5000';
 const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
+              'unit/test_plugin_order_list.js',
               'unit/test_html_escaping.js', 'unit/test_style_editor_element_keys.js',
               'unit/test_style_editor_layout_leaf_columns.js',
               'unit/test_style_editor_layout_leaf_collision.js',
@@ -28,11 +29,16 @@ const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
               'unit/test_inline_handler_escaping.js',
               'unit/test_plugin_action_delegation.js', 'unit/test_file_upload_widget.js',
               'unit/test_store_registry_fields.js', 'unit/test_restart_banner.js',
-              'unit/test_page_registry.js', 'unit/test_core_modules.js'];
+              'unit/test_page_registry.js', 'unit/test_core_modules.js',
+              'unit/test_overview_reconciliation_poll.js',
+              'unit/test_display_partial_ids.js',
+              'unit/test_general_web_login_token.js'];
 const DOM = ['dom/test_installed_dom.js', 'dom/test_store_dom.js', 'dom/test_no_double_fetch.js',
              'dom/test_tools_sections.js', 'dom/test_cache_page.js',
              'dom/test_durations_page.js', 'dom/test_operation_history_page.js',
-             'dom/test_raw_json_page.js', 'dom/test_backup_restore_page.js'];
+             'dom/test_raw_json_page.js', 'dom/test_backup_restore_page.js',
+             'dom/test_schedule_page.js', 'dom/test_general_page.js',
+             'dom/test_visibility_service.js', 'dom/test_display_page.js'];
 
 function reachable(url) {
   return new Promise(res => {

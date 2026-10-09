@@ -42,7 +42,8 @@ static/v3/js/
     registry.js         page lifecycle: init/destroy on htmx swaps
     api.js              fetch wrapper for /api/v3 (JSON envelope, login redirect)
     facade.js           window.LEDMatrix and deprecated aliases
-    (later) escape.js, notify.js, dialog.js, streams.js, visibility.js,
+    visibility.js       ctx.visibility: a page's timers run only while it is on screen
+    (later) escape.js, notify.js, dialog.js, streams.js,
             store.js (the one installed-plugin store), form/renderer.js
   pages/                one module per tab partial
     cache.js            export init(root, ctx), destroy(root, ctx)
@@ -81,6 +82,20 @@ The conventions the converted pages share:
   to the module's export of the same name and warns once.
 - **Timers are cleared in `destroy()`**, the one thing `ctx.signal` cannot
   undo by itself.
+- **Polling goes through `ctx.visibility`.** A refresh that repeats
+  (`ctx.visibility.every(ms, fn)`) or work that should run only while the
+  page is on screen (`ctx.visibility.whileVisible(start, stop)`) is
+  registered there, never with a bare `setInterval`. It runs only while the
+  page's tab is the active tab and the browser tab is visible, and it ends
+  when the page is destroyed, with no code in `destroy()`.
+- **A page reports its own htmx saves.** A form whose result a page module
+  shows (an `htmx:afterRequest` listener on the page root, in place of an
+  `hx-on` attribute naming a global) carries `data-reports-result`. `app.js`
+  then leaves the server's message to the page, as it does for a form with
+  an `hx-on` after-request handler, so a save shows one notification.
+- **Server data for the module goes in `data-*` attributes**, as JSON where
+  it is structured (`data-schedule-config='{{ schedule_config | tojson }}'`),
+  not templated into a script.
 
 `core/registry.js` handles the rest:
 
@@ -103,6 +118,7 @@ Each mount gets a `ctx` object:
 | `ctx.state` | A per-mount object for the page's own state |
 | `ctx.api` | Shared service from `boot.js` |
 | `ctx.notify` | Shared service from `boot.js` |
+| `ctx.visibility` | This page's handle on `core/visibility.js` (below), made per mount by `boot.js` through the registry's `mountContext` option |
 
 A page that passes `{ signal: ctx.signal }` to `addEventListener` and
 `fetch` needs no teardown code. Its listeners and in-flight requests go
@@ -110,6 +126,30 @@ away when the partial is swapped out. `pages/cache.js` is the worked
 example: its delete buttons use one delegated listener, rows are built with
 `textContent` rather than markup strings, and a newer load supersedes an
 older one.
+
+### Page visibility
+
+`core/visibility.js` gives each mounted page `ctx.visibility`:
+
+| Member | What it does |
+|---|---|
+| `whileVisible(start, stop)` | Runs `start()` when the page comes on screen (at once, if it mounts on screen) and `stop()` when it leaves. Returns a function that ends the registration, running `stop()` first if needed |
+| `every(ms, fn)` | `fn()` at once, then every `ms` while on screen. The interval is cleared while hidden and restarted, with an immediate `fn()`, when the page is back. Returns the same kind of end function |
+| `isVisible()` | True while the page is on screen |
+| `tab` | The tab the page belongs to: its name, or `forPage(ctx, { tab })` |
+
+"On screen" means the page's tab is the active tab and the browser tab is
+visible. Everything a page registered ends when its `ctx.signal` aborts,
+after `destroy()`, so a swapped-out partial leaves no interval behind.
+
+The answer comes from `window.LEDVisibility` (`app-shell.js`), read at call
+time, so the page modules and the classic partials that still call it
+(Overview, Logs, Tools) agree on the active tab, and the SSE streams keep
+pausing with them. Each registration takes its own `LEDVisibility` key, so
+registrations never replace each other or a classic partial's. Without
+`LEDVisibility` (a page outside `base.html`), the browser tab's visibility
+alone decides. Moving the tracker itself into the module (the shell table
+below) changes only `core/visibility.js`.
 
 ### One facade
 
@@ -239,9 +279,9 @@ are the inline script in each partial today.
 | 3 | Operation History | 293 lines, now 0 | **Done in stage 2.** Read-only list; rows drawn with `textContent`, the search debounce cleared on destroy. The "Showing x to y" counters now also reset when nothing matches |
 | 4 | Config Editor (`raw_json.html`) | 212 lines, now 0 | **Done in stage 2.** Plain textareas (no CodeMirror on this page). It defined 5 globals after all (`formatJson`, `manualValidateJson`, `validateJSON`, `saveMainConfig`, `saveSecretsConfig`); nothing else used them, and they are deprecated aliases now. The live "Invalid JSON" line no longer puts the parser's message into `innerHTML` |
 | 5 | Backup & Restore | 232 lines, now 0 | **Done in stage 2.** Its 5 globals (`exportBackup`, `loadBackupList`, `validateRestoreFile`, `clearRestore`, `runRestore`) are deprecated aliases; the buttons are delegated `data-action`s. Uploads go through `ctx.api.request(..., { body: formData })` (`api.js` gained a raw `body` option) |
-| 6 | Schedule | 193 | 2 globals used as `hx-on` response handlers. Moves `hx-on` handlers into page listeners |
-| 7 | General | 147 | `webLogin` global and the security section. The first page that touches login |
-| 8 | Display | 231 | First page with `LEDVisibility` timers: those move to a `ctx.visibility` service that stops on destroy |
+| 6 | Schedule | 193 lines, now 0 | **Done in stage 3.** Its 2 `hx-on` response handlers (`handleScheduleResponse`, `handleDimScheduleResponse`) are one `htmx:afterRequest` listener on the page root, and deprecated aliases. The forms are marked `data-reports-result` so `app.js` does not repeat the server's message. The saved schedules reach the module as JSON in `data-schedule-config` / `data-dim-schedule-config` instead of being templated into the script |
+| 7 | General | 153 lines, now 0 | **Done in stage 3.** The Security section's three forms and two buttons are delegated `data-action`s (one submit and one click listener); `window.webLogin` is a deprecated alias of an object with its five methods. Login requests go through `ctx.api`, so the login redirect is quiet. The settings form keeps its `hx-on` call to the shared `showSaveResult`, as Rotation's does |
+| 8 | Display | 292 lines (2 scripts), now 0 | **Done in stage 4.** The first page with a timer: the 5 s multi-display sync poll is `ctx.visibility.every(5000, ...)` (above), so it runs only while the tab is on screen and stops when the partial is swapped out. Its one global, `updateSyncUI` (the Role menu's `onchange`), is a deprecated alias; the Advanced section's `onclick` is a delegated `data-action="toggle-section"` that calls the shared `toggleSection`. The status poll and the scroll-speed hint go through `ctx.api` with `ctx.signal`, as does the Vegas order widget's plugin-list request. The settings form keeps its `hx-on` call to `showSaveResult` and its `onsubmit` call to `fixInvalidNumberInputs`, as Rotation's does |
 | 9 | Overview | 410 (4 scripts) | First-run surface: Getting Started, update banner, live preview. Five globals |
 | 10 | WiFi | 364 | `x-data="wifiSetup()"` is defined by its own script. Moves to `Alpine.data()` registered from the module. AP-mode first screen, so it needs the AP-mode test on a real device |
 | 11 | Fonts | 681 | Large, but self-contained (6 globals) |
@@ -258,7 +298,7 @@ the order:
 | `showNotification` | 4 versions | `core/notify.js` |
 | The modal helper | `utils/dialog.js` | `core/dialog.js` |
 | SSE streams | `app-shell.js` | `core/streams.js` |
-| `LEDVisibility` | `app-shell.js` | `core/visibility.js` |
+| `LEDVisibility` | `app-shell.js` | `core/visibility.js` (the page-facing `ctx.visibility` is there since step 8; it reads the tracker from `app-shell.js`) |
 
 Each move leaves the old global as an alias. When the last inline script is
 gone, the script re-execution in `htmx-config.js` and the "HTMX never
@@ -278,12 +318,16 @@ Unit suites need only node. They import the shipped modules directly:
 
 | Suite | Kind | What it covers |
 |---|---|---|
-| `unit/test_page_registry.js` | Unit, minimal DOM shim | The lifecycle: one init per root, destroy on swap, a veto keeps the page, swaps elsewhere leave it alone, the sweep, lazy loading, a destroy while loading, error containment |
+| `unit/test_page_registry.js` | Unit, minimal DOM shim | The lifecycle: one init per root, destroy on swap, a veto keeps the page, swaps elsewhere leave it alone, the sweep, lazy loading, a destroy while loading, error containment, `mountContext` fields per mount |
+| `dom/test_visibility_service.js` | DOM: real `LEDVisibility` from `app-shell.js`, real registry, no server | `whileVisible` and `every` start and stop with the active tab and the browser tab's visibility; no interval runs while hidden or after a swap-out; one interval after five swaps; registrations never replace each other or a classic partial's; a destroyed page registers nothing; a throwing `start()` is contained; the no-`LEDVisibility` fallback |
 | `unit/test_core_modules.js` | Unit | `api.js` (envelope, errors, abort, login redirect, path check) and `facade.js` (facade, aliases) |
 | `dom/test_cache_page.js` | DOM: real partial, real API shape | No inline script; one request per swap and per Refresh after five swaps; a cancelled request draws nothing; hostile keys stay text; delete, empty, error, network and login states |
 | `dom/test_durations_page.js` | DOM: real partial, real widget, real API shape | One plugin-list request per swap; Move down moves one place after five swaps; the swap cancels a request in flight; a late-loading widget is waited for, and a page swapped away while waiting starts nothing; hostile names stay text |
 | `dom/test_operation_history_page.js` | DOM: real partial, real API shape | One history request per swap and per Refresh; the plugin filter filled once (from `PluginAPI`'s cache when loaded); paging, filters, debounced search, Clear (one DELETE), error/network/login states, cancel on swap; hostile ids, users and errors stay text |
 | `dom/test_raw_json_page.js` | DOM: real partial, real config | One POST per Save after five swaps, to the right file; Format and Validate act once; invalid JSON never sent and its message stays text; a save survives a swap and is still reported; the old globals' entry points |
+| `dom/test_schedule_page.js` | DOM: real partial, real widget | Both pickers drawn once per swap from the saved config; after five swaps each form's answer is one notification (message, fallback, refused, non-JSON, `null`), a request from outside the forms none; the brightness label; a late widget waited for, a page swapped away while waiting draws nothing; the old globals' entry points |
+| `dom/test_display_page.js` | DOM: real partial, real widget, real `LEDVisibility`, real API shape | After five swaps one page, one sync interval, the Vegas order drawn once and each control acting once (brightness, resolution, the two show/hide toggles, the Advanced toggle, one debounced hint request); the sync poll only while on screen and never after a swap-out; sync states and hostile peer names as text, failure and login answers; a late widget waited for; `updateSyncUI`'s entry point |
+| `dom/test_general_page.js` | DOM: real partial, real widget, real API shape | The timezone picker drawn once per swap with the saved zone; the settings form left to htmx; after five swaps each Security action makes one request (create, copy, revoke and its cancel, password and its mismatch); hostile token names stay text; refused, network and login answers; a create made before a swap is still reported and draws nothing; `webLogin`'s entry points |
 | `dom/test_backup_restore_page.js` | DOM: real partial, real API shape | One request per Refresh, Delete, Export (busy button ignores a second click), Inspect and Restore after five swaps; the upload's fields and the six restore options; reads cancelled by a swap, writes not; hostile file and host names stay text; the old globals' entry points |
 | `test/web_interface/test_es_modules.py` | pytest | MIME type; `no-cache` without `?v` and immutable with it; `boot.js` loads last; every import resolves inside `core/` and `pages/`; the converted pages are exactly the registered ones, each with its module, `init`, and one root in the rendered partial; a converted partial has no `<script>` and no `onclick`; every moved global is aliased in `boot.js` and exported by its module, and no template defines it any more |
 | `test/test_field_model_parity.py` | pytest | The model against the macro for every available schema |

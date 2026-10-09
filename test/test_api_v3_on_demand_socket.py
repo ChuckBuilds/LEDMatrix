@@ -1,10 +1,13 @@
 """POST /display/on-demand/start and /stop: control socket first, mailbox fallback.
 
 The routes hand the request to the display over the control socket
-(src/ipc) and get an acknowledgement. On any failure -- no socket (a stopped
-display, or one older than the socket), a timeout, a refusal, a bug in the
-client -- they write the file mailbox exactly as they did before the socket
-existed. These tests pin both paths, that exactly one of them is used, that
+(src/ipc) and get an acknowledgement. When the socket could not carry the
+request -- no socket (a stopped display, or one older than the socket), a
+refused or timed-out connect, a display too old to know the command, a bug
+in the client -- they write the file mailbox exactly as they did before the
+socket existed. When the display had the request and failed it (a full
+queue, bad arguments, no answer in time) the route says so and writes
+nothing. These tests pin each path, that at most one of them is used, that
 the response says which, and that the request id is the same either way (the
 display deduplicates on it).
 
@@ -101,12 +104,15 @@ class TestSocketPath:
 class TestMailboxFallback:
     @pytest.mark.parametrize("reason", [
         "no_socket", "refused", "timeout", "closed", "bad_response", "invalid_request",
-        "busy", "unknown_command", "unsupported_version", "disabled", "unsupported",
+        "busy", "forbidden", "unknown_command", "unsupported_version", "disabled",
+        "unsupported",
     ])
-    def test_any_socket_failure_writes_the_mailbox_as_before(
+    def test_a_request_the_socket_never_carried_writes_the_mailbox(
             self, api_v3_client, service, reason):
+        # sent=False: the display never had it (no socket, a refused or
+        # timed-out connect, turned away at the door).
         with patch(f"{CLIENT}.on_demand_start",
-                   side_effect=control_client.ControlError(reason, "x")):
+                   side_effect=control_client.ControlError(reason, "x", sent=False)):
             resp = api_v3_client.post(START_URL, json={
                 "plugin_id": "weather", "mode": "weather_current",
                 "duration": 60, "pinned": True})
@@ -168,6 +174,60 @@ class TestMailboxFallback:
         assert data["socket_error"] in ("disabled", "unsupported")   # Linux, Windows
 
 
+class TestTheDisplayHadIt:
+    """Once the display has the request, its answer stands: no mailbox copy.
+
+    A busy queue, a refusal or silence after the request was sent mean the
+    display may have applied it, or would refuse the mailbox copy too, so
+    the route reports the failure instead of posting it a second time.
+    """
+
+    @pytest.mark.parametrize("reason,status", [
+        ("busy", 503), ("internal", 503), ("timeout", 503), ("closed", 503),
+        ("bad_response", 503), ("invalid_args", 400),
+    ])
+    def test_start_is_answered_with_the_failure(self, api_v3_client, service, reason, status):
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=control_client.ControlError(reason, "x", sent=True)):
+            resp = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+        assert resp.status_code == status
+        body = resp.get_json()
+        assert body["status"] == "error"
+        assert body["data"]["transport"] == "socket"
+        assert body["data"]["socket_error"] == reason
+        assert _mailbox_writes(service["cache"]) == []
+        assert not [call for call in service["calls"] if call[0] == "systemctl"]
+
+    def test_stop_is_answered_with_the_failure(self, api_v3_client, service):
+        with patch(f"{CLIENT}.on_demand_stop",
+                   side_effect=control_client.ControlError("busy", "x", sent=True)):
+            resp = api_v3_client.post(STOP_URL, json={})
+        assert resp.status_code == 503
+        assert _mailbox_writes(service["cache"]) == []
+
+    def test_a_stop_with_stop_service_still_stops_the_service(self, api_v3_client, service):
+        with patch(f"{CLIENT}.on_demand_stop",
+                   side_effect=control_client.ControlError("timeout", "x", sent=True)), \
+             patch("web_interface.blueprints.api_v3.display._stop_display_service",
+                   return_value={"active": False}) as stop:
+            resp = api_v3_client.post(STOP_URL, json={"stop_service": True})
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        assert data["transport"] == "socket" and data["socket_error"] == "timeout"
+        stop.assert_called_once()
+        assert _mailbox_writes(service["cache"]) == []
+
+    @pytest.mark.parametrize("reason", ["unknown_command", "unsupported_version"])
+    def test_an_older_display_that_does_not_speak_it_gets_the_mailbox(
+            self, api_v3_client, service, reason):
+        # The upgrade case: new web interface, display still on an old build.
+        with patch(f"{CLIENT}.on_demand_start",
+                   side_effect=control_client.ControlError(reason, "x", sent=True)):
+            data = api_v3_client.post(START_URL, json={"plugin_id": "weather"}).get_json()["data"]
+        assert data["transport"] == "mailbox" and data["socket_error"] == reason
+        assert len(_mailbox_writes(service["cache"])) == 1
+
+
 @pytest.mark.skipif(not c.socket_supported(), reason="AF_UNIX sockets are Linux/macOS only")
 class TestRealSocket:
     @pytest.fixture
@@ -204,3 +264,23 @@ class TestRealSocket:
         data = api_v3_client.post(START_URL, json={"plugin_id": "weather"}).get_json()["data"]
         assert data["transport"] == "mailbox" and data["socket_error"] == "no_socket"
         assert len(_mailbox_writes(service["cache"])) == 1
+
+    def test_a_full_queue_is_reported_not_mailed(self, api_v3_client, service, monkeypatch):
+        import shutil
+        import tempfile
+        from src.ipc.server import ControlServer
+        d = tempfile.mkdtemp(prefix="lmipc-")
+        path = os.path.join(d, "control.sock")
+        server = ControlServer(path, status_provider=dict, queue_size=1)
+        assert server.start()
+        monkeypatch.setenv(c.SOCKET_PATH_ENV, path)
+        try:
+            first = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+            assert first.get_json()["data"]["transport"] == "socket"
+            second = api_v3_client.post(START_URL, json={"plugin_id": "weather"})
+            assert second.status_code == 503
+            assert second.get_json()["data"]["socket_error"] == "busy"
+            assert _mailbox_writes(service["cache"]) == []
+        finally:
+            server.close()
+            shutil.rmtree(d, ignore_errors=True)

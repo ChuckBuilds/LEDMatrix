@@ -22,6 +22,7 @@ from src.plugin_system.plugin_loader import (
     contained_plugin_dir, requirements_to_install,
 )
 from src.plugin_system.plugin_dirs import BACKUP_MARKER
+from src.plugin_system.plugin_local_files import carry_over_local_files
 from src.plugin_system.repo_urls import (
     USER_AGENT, github_api_headers, github_owner_repo, normalize_repo_url,
 )
@@ -92,7 +93,9 @@ class _InstallMixin:
                 raise
 
             if installed:
-                self._discard_backup(plugin_id, backup_path, "install")
+                self._discard_backup(
+                    plugin_id, backup_path, "install",
+                    new_path=self._existing_install(plugin_id) or plugin_path)
                 return True
 
             self._restore_backup(plugin_id, plugin_path, backup_path, "Install")
@@ -133,8 +136,33 @@ class _InstallMixin:
             return f"could not set aside {plugin_path}: {e}"
         return None
 
-    def _discard_backup(self, plugin_id: str, backup_path: Path, action: str) -> None:
-        """Remove the set-aside copy after a successful (re)install."""
+    def _discard_backup(
+        self, plugin_id: str, backup_path: Path, action: str,
+        new_path: Optional[Path] = None,
+    ) -> None:
+        """Remove the set-aside copy after a successful (re)install.
+
+        With ``new_path`` (where the new copy landed), first carries the
+        plugin's own runtime files -- OAuth tokens, client secrets, anything
+        its .gitignore excludes -- from the old copy into the new one: no
+        release contains them, so deleting the old copy would destroy them.
+        See src/plugin_system/plugin_local_files.py. If any could not be
+        copied the old copy is kept, so nothing is lost.
+        """
+        if new_path is not None and new_path.is_dir():
+            copied, failed = carry_over_local_files(backup_path, new_path)
+            if copied:
+                self.logger.info(
+                    "Kept %d local file(s) of %s across the %s: %s",
+                    len(copied), plugin_id, action, ", ".join(copied))
+            if failed:
+                self.logger.error(
+                    "Could not carry %s's local files into the new copy (%s); "
+                    "the previous copy is kept at %s -- copy them back by hand",
+                    plugin_id,
+                    "; ".join(f"{rel}: {err}" for rel, err in failed),
+                    backup_path)
+                return
         if not self._safe_remove_directory(backup_path):
             self.logger.warning(
                 "%s of %s succeeded but the previous copy at %s could not be "
@@ -542,7 +570,8 @@ class _InstallMixin:
                     raise
                 temp_dir = None  # Prevent cleanup since we moved it
                 if backup_path is not None:
-                    self._discard_backup(plugin_id, backup_path, "install")
+                    self._discard_backup(
+                        plugin_id, backup_path, "install", new_path=final_path)
 
             # Install dependencies
             self._install_dependencies(final_path)

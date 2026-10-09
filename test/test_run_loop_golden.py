@@ -133,6 +133,32 @@ def scenario_on_demand_restored(h: RunLoopHarness):
     h.restore_on_demand("sports", mode="sports_upcoming", duration=40)
 
 
+def scenario_on_demand_named_live(h: RunLoopHarness):
+    # Games are on until t=70, but none involves a favourite, so
+    # has_live_content() (the live-priority answer) stays False throughout.
+    # A request naming sports_live still opens on it (it opened on
+    # sports_recent); asked for again after the games end, it has nothing to
+    # draw and the session moves on to the plugin's next mode.
+    h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
+    h.add_plugin(FakePlugin(
+        "sports", ["sports_live", "sports_recent", "sports_upcoming"], duration=15,
+        live_priority=True,
+        content=lambda t, mode: mode != "sports_live" or t < 70))
+    h.on_demand_request(5, "n1", plugin_id="sports", mode="sports_live")
+    h.on_demand_request(40, "n2", action="stop")
+    h.on_demand_request(100, "n3", plugin_id="sports", mode="sports_live")
+    h.on_demand_request(140, "n4", action="stop")
+
+
+def scenario_on_demand_restore_failed(h: RunLoopHarness):
+    # A restart during a session whose plugin then fails to load: the
+    # session ends as an error before the first screen, and the rotation
+    # runs normally from the top.
+    h.add_plugin(FakePlugin("clock", ["clock"], duration=20))
+    h.add_plugin(FakePlugin("weather", ["weather"], duration=20))
+    h.restore_on_demand("gone", mode="gone", duration=40)
+
+
 def scenario_schedule(h: RunLoopHarness):
     # The clock starts at 22:59:30. Off from 23:01 until 23:05 (the window
     # spans midnight); dimmed from 23:00 until 23:01.
@@ -194,6 +220,8 @@ SCENARIOS = {
     "on_demand": (scenario_on_demand, 240),
     "on_demand_pinned": (scenario_on_demand_pinned, 160),
     "on_demand_restored": (scenario_on_demand_restored, 100),
+    "on_demand_named_live": (scenario_on_demand_named_live, 160),
+    "on_demand_restore_failed": (scenario_on_demand_restore_failed, 60),
     "schedule": (scenario_schedule, 400),
     "wifi_notice": (scenario_wifi_notice, 150),
     "follower": (scenario_follower, 80),

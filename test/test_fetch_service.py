@@ -576,6 +576,42 @@ class TestCounters:
         assert snap["hosts"]["site.api.espn.com"]["requests"] == 1
         assert snap["totals"]["bytes"] == 3 * len(b'{"ok": 1}')
 
+    def test_wire_bytes_are_the_compressed_size(self, service):
+        # Built the way requests builds a real response: a urllib3
+        # HTTPResponse carrying a gzip body, decoded when .content is read.
+        import gzip
+        import io
+
+        from requests.adapters import HTTPAdapter
+        from urllib3.response import HTTPResponse
+
+        decoded = json.dumps({"events": [{"id": str(i), "name": "x" * 200}
+                                         for i in range(50)]}).encode()
+        wire = gzip.compress(decoded)
+
+        def handler(url, kwargs):
+            raw = HTTPResponse(body=io.BytesIO(wire), status=200,
+                               headers={"Content-Encoding": "gzip",
+                                        "Content-Type": "application/json"},
+                               preload_content=False, decode_content=True)
+            request = requests.Request("GET", url).prepare()
+            response = HTTPAdapter().build_response(request, raw)
+            response.content  # what Session.get does for a non-streamed call
+            return response
+
+        response = service.get(FakeSession(handler), "https://site.api.espn.com/x")
+        assert response.content == decoded
+        totals = _counters(service)
+        assert totals["bytes"] == len(decoded)
+        assert totals["wire_bytes"] == len(wire) < len(decoded)
+
+    def test_wire_bytes_fall_back_to_the_decoded_size(self, service):
+        # No urllib3 response behind it (a test double, another adapter):
+        # count what is known rather than nothing.
+        service.get(FakeSession(), "https://api.test/x")
+        totals = _counters(service)
+        assert totals["wire_bytes"] == totals["bytes"] == len(b'{"ok": 1}')
+
     def test_errors_and_http_errors(self, service):
         def handler(url, kwargs):
             if url.endswith("/down"):
@@ -670,14 +706,14 @@ class TestCallerIdentity:
         assert _counters(global_service, plugin="football-scoreboard")["requests"] == 1
 
     def test_espn_chunks_on_worker_threads_count_against_the_caller(self, global_service):
-        from src.common.espn_dates import espn_date_chunks, fetch_espn_date_chunks, parse_espn_date_range
+        from src.common.espn_dates import espn_request_chunks, fetch_espn_date_chunks, parse_espn_date_range
 
         session = FakeSession(lambda url, kw: make_response(body=b'{"events": []}', url=url))
         dates = "20260801-20261015"
         with plugin_scope("baseball-scoreboard"):
             fetch_espn_date_chunks(session, "https://site.api.espn.com/s/scoreboard",
                                    params={"dates": dates})
-        chunks = len(espn_date_chunks(*parse_espn_date_range(dates)))
+        chunks = len(espn_request_chunks(*parse_espn_date_range(dates)))
         assert chunks > 1
         assert len(session.calls) == chunks
         assert _counters(global_service, plugin="baseball-scoreboard")["requests"] == chunks

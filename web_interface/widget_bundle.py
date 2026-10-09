@@ -55,16 +55,10 @@ BUNDLE_ORDER = [
     "password-input.js",
     "timezone-selector.js",
     "plugin-loader.js",
-    # Reusable JSON file manager (used via x-widget: json-file-manager)
-    "json-file-manager.js",
 ]
 
 # Widget files that must NOT be bundled, with the reason.
-EXCLUDED = {
-    # Documentation example (docs/widget-guide.md); it registers the name
-    # 'color-picker' and would shadow the real color-picker.js.
-    "example-color-picker.js": "documentation example",
-}
+EXCLUDED = {}
 
 _lock = Lock()
 _cache = {"version": None, "body": None}

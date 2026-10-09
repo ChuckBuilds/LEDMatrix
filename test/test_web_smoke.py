@@ -174,7 +174,7 @@ def test_widget_bundle_is_served_and_requested(client):
     assert resp.mimetype == "application/javascript"
     body = resp.get_data(as_text=True)
     assert body.index("/* registry.js */") < body.index("/* notification.js */")
-    assert "/* json-file-manager.js */" in body
+    assert "/* plugin-loader.js */" in body
 
 
 def test_durations_page_groups_by_plugin(client):

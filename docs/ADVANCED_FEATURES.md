@@ -649,7 +649,9 @@ When nothing is running on demand, `data.state` is
 > on-demand machinery is internal — drive it through the REST endpoints
 > above (or the web UI buttons). The API handlers
 > (`start_on_demand_display()` / `stop_on_demand_display()` in
-> `web_interface/blueprints/api_v3/display.py`) write a request into the cache
+> `web_interface/blueprints/api_v3/display.py`) send the request over the
+> display's control socket ([IPC_CONTROL_SOCKET.md](IPC_CONTROL_SOCKET.md)).
+> Only when the socket cannot carry it do they write it into the cache
 > manager under the `display_on_demand_request` key, which
 > `DisplayController._poll_on_demand_requests()`
 > (`src/display_controller.py`) picks up. A separate
@@ -747,8 +749,14 @@ keys helps troubleshoot stuck states.
   "timestamp": 1234567890.123
 }
 ```
-**Purpose:** Communication from web interface to display controller
-**When Set:** API endpoint receives request
+**Purpose:** Communication from web interface to display controller, as the
+fallback when the control socket cannot carry the request (deprecated; it
+will be removed in a later release)
+**When Set:** API endpoint receives a request and the display's control
+socket is unavailable (display stopped, or older than the socket or the
+command); some plugins also write it directly
+**Read:** once a second while the display serves the control socket (0.25 s
+without it), and only when the file changed since the last look
 **Auto-Cleared:** After processing or 1 hour TTL
 
 **2. display_on_demand_config** (No TTL)

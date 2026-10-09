@@ -291,49 +291,6 @@ class VegasModeConfig:
             max_cycle_duration=int(get('max_cycle_duration', d.max_cycle_duration)),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary for serialization."""
-        return {
-            'enabled': self.enabled,
-            'scroll_speed': self.scroll_speed,
-            'separator_width': self.separator_width,
-            'intra_plugin_gap': self.intra_plugin_gap,
-            'render_width_pct': self.render_width_pct,
-            'min_content_separation': self.min_content_separation,
-            'min_cut_gap': self.min_cut_gap,
-            'smooth_scroll': self.smooth_scroll,
-            'sub_pixel_blend': self.sub_pixel_blend,
-            'continuous_scroll': self.continuous_scroll,
-            'offscreen_prefetch': self.offscreen_prefetch,
-            'switch_interval_ms': self.switch_interval_ms,
-            'prefetch_gate': self.prefetch_gate,
-            'live_refresh': self.live_refresh,
-            'live_max_hz': self.live_max_hz,
-            'live_min_interval': self.live_min_interval,
-            'live_lead_screens': self.live_lead_screens,
-            'extend_threshold_screens': self.extend_threshold_screens,
-            'auto_trim': self.auto_trim,
-            'trim_threshold': self.trim_threshold,
-            'content_padding': self.content_padding,
-            'min_plugin_width': self.min_plugin_width,
-            'lead_in_width': self.lead_in_width,
-            'plugins_per_cycle': self.plugins_per_cycle,
-            'max_plugin_width_ratio': self.max_plugin_width_ratio,
-            'live_in_ticker': self.live_in_ticker,
-            'live_weight': self.live_weight,
-            'favorite_live_weight': self.favorite_live_weight,
-            'overflow_mode': self.overflow_mode,
-            'plugin_order': self.plugin_order,
-            'excluded_plugins': list(self.excluded_plugins),
-            'target_fps': self.target_fps,
-            'buffer_ahead': self.buffer_ahead,
-            'frame_based_scrolling': self.frame_based_scrolling,
-            'scroll_delay': self.scroll_delay,
-            'dynamic_duration_enabled': self.dynamic_duration_enabled,
-            'min_cycle_duration': self.min_cycle_duration,
-            'max_cycle_duration': self.max_cycle_duration,
-        }
-
     def get_frame_interval(self) -> float:
         """Get the frame interval in seconds for target FPS."""
         return 1.0 / max(1, self.target_fps)

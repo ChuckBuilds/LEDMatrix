@@ -446,7 +446,7 @@ class TestInstalledPluginsApi:
                     **(manifest_extra or {})}
             api.plugin_catalog.get_all_plugin_info = MagicMock(return_value=[info])
             api.plugin_catalog.get_plugin_directory = MagicMock(return_value=None)
-            api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
+            api.plugin_store_manager.get_cached_registry_info = MagicMock(return_value=None)
             api.config_manager.load_config = MagicMock(return_value={'demo': config})
             response = api_v3_client.get('/api/v3/plugins/installed')
             assert response.status_code == 200

@@ -1,58 +1,16 @@
 """CacheStrategy intervals, pinned across the whole input grid.
 
 The strategy table used to carry a per-sport defaults dict whose every value
-was 60, and a soccer branch identical to its else. These tests pin the
-returned strategy for every data type x sport key x config shape, so
-simplifying the lookup cannot change what any caller gets back. They were
-written against the pre-cleanup code and pass on it unchanged, except for
-the legacy `<sport>_scoreboard` config shape (see below), which that code
-still read.
+was 60, a soccer branch identical to its else, and a config lookup of
+`<sport>_scoreboard` sections that only the replaced built-in scoreboards
+had. These tests pin the returned strategy for every data type x sport key,
+so simplifying the lookup cannot change what any caller gets back.
 """
 
 import pytest
 
 from src.cache.cache_strategy import CacheStrategy
 
-
-class _Cfg:
-    def __init__(self, config):
-        self.config = config
-
-
-class _NoConfigAttr:
-    pass
-
-
-# Plugin config sections are keyed by plugin id. Their intervals belong to the
-# plugin, and the strategy table has never read them.
-_PLUGIN_ID_CONFIG = {
-    pid: {"live_update_interval": 5, "recent_update_interval": 7,
-          "upcoming_update_interval": 9}
-    for pid in ("football-scoreboard", "basketball-scoreboard",
-                "baseball-scoreboard", "hockey-scoreboard", "soccer-scoreboard")
-}
-
-# `<sport>_scoreboard` sections come from the built-in scoreboards the plugin
-# system replaced. An install upgraded from that era can still carry them in
-# config.json (nothing deletes them). No current caller passes a sport key to
-# the strategy, but a stale section must not steer cache TTLs if one does.
-_LEGACY_SCOREBOARD_CONFIG = {
-    f"{sport}_scoreboard": {"live_update_interval": 5,
-                            "recent_update_interval": 7,
-                            "upcoming_update_interval": 9}
-    for sport in ("nfl", "nba", "mlb", "nhl", "soccer", "ncaa_fb",
-                  "ncaa_baseball", "ncaam_basketball", "milb")
-}
-
-CONFIG_MANAGERS = {
-    "no_config_manager": None,
-    "empty_config": _Cfg({}),
-    "plugin_id_config": _Cfg(_PLUGIN_ID_CONFIG),
-    "legacy_scoreboard_config": _Cfg(_LEGACY_SCOREBOARD_CONFIG),
-    "config_is_none": _Cfg(None),
-    "config_is_not_a_dict": _Cfg("x"),
-    "config_manager_without_config": _NoConfigAttr(),
-}
 
 SPORT_KEYS = [None, "", "nfl", "nba", "mlb", "nhl", "soccer", "ncaa_fb",
               "ncaa_baseball", "ncaam_basketball", "milb",
@@ -93,16 +51,8 @@ def _expected(data_type, sport_key):
     return FIXED.get(data_type, DEFAULT)
 
 
-@pytest.mark.parametrize("cm_name", sorted(CONFIG_MANAGERS))
-def test_live_interval_is_60_for_every_sport(cm_name):
-    strategy = CacheStrategy(config_manager=CONFIG_MANAGERS[cm_name])
-    for sport_key in SPORT_KEYS:
-        assert strategy.get_sport_live_interval(sport_key) == 60, sport_key
-
-
-@pytest.mark.parametrize("cm_name", sorted(CONFIG_MANAGERS))
-def test_strategy_table_for_every_data_type_and_sport(cm_name):
-    strategy = CacheStrategy(config_manager=CONFIG_MANAGERS[cm_name])
+def test_strategy_table_for_every_data_type_and_sport():
+    strategy = CacheStrategy()
     data_types = ["live_scores", "sports_live", *FIXED, "unknown", ""]
     for data_type in data_types:
         for sport_key in SPORT_KEYS:

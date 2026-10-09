@@ -1,4 +1,9 @@
 {% import 'v3/partials/_macros.html' as ui %}
+{# No inline script: static/v3/js/pages/general.js draws the timezone picker
+   and runs the Security section's forms and buttons (data-action). The page
+   registry (static/v3/js/core/registry.js) starts it when this root appears
+   and stops it when the partial is swapped away. #}
+<div data-page="general">
 <div class="bg-white rounded-lg shadow p-6">
     <div class="border-b border-gray-200 pb-4 mb-6">
         <h2 class="text-lg font-semibold text-gray-900">General Settings</h2>
@@ -88,7 +93,7 @@
         <!-- Timezone -->
         <div class="form-group" id="setting-general-timezone" data-setting-key="timezone">
             <label for="timezone" class="block text-sm font-medium text-gray-700">Timezone{{ ui.help_tip('Time zone used for clocks, schedules, and time-based content.\nChoose the zone where the display physically lives so on/off schedules fire at the correct local time.', 'Timezone') }}</label>
-            <div id="timezone_container" class="mt-1"></div>
+            <div id="timezone_container" class="mt-1" data-timezone="{{ main_config.timezone or 'America/Chicago' }}"></div>
         </div>
 
         <!-- Legacy scroll frame rate (device-wide). Core scrolling no longer reads it. -->
@@ -102,32 +107,6 @@
                    max="200"
                    class="form-control">
         </div>
-        <script>
-        (function() {
-            function initTimezoneWidget() {
-                if (!window.LEDMatrixWidgets) { setTimeout(initTimezoneWidget, 50); return; }
-                var widget = window.LEDMatrixWidgets.get('timezone-selector');
-                if (!widget) { setTimeout(initTimezoneWidget, 50); return; }
-                var container = document.getElementById('timezone_container');
-                if (!container) return;
-
-                // Only render if container is empty (not already rendered)
-                if (container.children.length > 0) return;
-
-                widget.render(container, {
-                    'x-options': { showOffset: true, placeholder: 'Select your timezone...' }
-                }, {{ (main_config.timezone or "America/Chicago")|tojson }}, {
-                    fieldId: 'timezone',
-                    name: 'timezone'
-                });
-            }
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', initTimezoneWidget);
-            } else {
-                setTimeout(initTimezoneWidget, 50);
-            }
-        })();
-        </script>
 
         <!-- Location Information -->
         <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-3 gap-4">
@@ -216,7 +195,7 @@
                    the password inputs keep their own labels. #}
                 <label>{% if web_login.enabled %}Change the web interface password{% else %}Web interface password{% endif %}{{ ui.help_tip('Optional. With a password set, every page and API call needs a login or an API token.\nAlways allowed without one: this Pi itself (localhost), and the Wi-Fi setup page while the Pi is in access-point mode.\nForgot it? On the Pi run: sudo python3 ~/LEDMatrix/scripts/reset_web_password.py', 'Web interface password') }}</label>
             </h3>
-            <form class="space-y-4" onsubmit="window.webLogin.setPassword(this); return false;" autocomplete="off">
+            <form class="space-y-4" data-action="set-password" autocomplete="off">
                 {% if web_login.enabled %}
                 <div>
                     <label for="web-login-current" class="block text-sm font-medium text-gray-700">Current password</label>
@@ -251,7 +230,7 @@
         {% if web_login.enabled %}
         <div class="border-t border-gray-200 pt-6">
             <h3 class="text-lg font-semibold text-gray-900 mb-2">Turn login off</h3>
-            <form class="flex flex-wrap items-end gap-2" onsubmit="window.webLogin.disable(this); return false;" autocomplete="off">
+            <form class="flex flex-wrap items-end gap-2" data-action="disable-login" autocomplete="off">
                 <div class="flex-1">
                     <label for="web-login-disable-current" class="block text-sm font-medium text-gray-700">Current password</label>
                     <input type="password" id="web-login-disable-current" name="current_password" required
@@ -280,8 +259,7 @@
                         <span class="text-gray-600 ml-2">created {{ (token.created_at or '')[:10] }}</span>
                     </div>
                     <button type="button" class="text-sm text-red-600 hover:underline"
-                            data-token-name="{{ token.name }}"
-                            onclick="window.webLogin.revoke(this.closest('[data-token-id]').dataset.tokenId, this.dataset.tokenName)">
+                            data-action="revoke-token" data-token-name="{{ token.name }}">
                         Revoke
                     </button>
                 </div>
@@ -289,7 +267,7 @@
                 <p class="text-sm text-gray-600" data-empty>No tokens yet.</p>
                 {% endfor %}
             </div>
-            <form class="flex flex-wrap items-end gap-2" onsubmit="window.webLogin.createToken(this); return false;" autocomplete="off">
+            <form class="flex flex-wrap items-end gap-2" data-action="create-token" autocomplete="off">
                 <div class="flex-1">
                     <label for="web-login-token-name" class="block text-sm font-medium text-gray-700">New token name</label>
                     <input type="text" id="web-login-token-name" name="name" required maxlength="60"
@@ -304,7 +282,7 @@
                 <div class="flex flex-wrap items-center gap-2">
                     <code id="web-login-new-token-value" class="font-mono break-all bg-white border border-gray-200 rounded-md px-4 py-2 flex-1"></code>
                     <button type="button" class="btn bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-md"
-                            onclick="window.webLogin.copyToken()">
+                            data-action="copy-token">
                         <i class="fas fa-copy mr-2" aria-hidden="true"></i>Copy
                     </button>
                 </div>
@@ -312,127 +290,5 @@
         </div>
     </div>
 </div>
-<script>
-(function() {
-    var API = '/api/v3/auth';
-
-    function notify(message, type) {
-        if (typeof window.showNotification === 'function') window.showNotification(message, type);
-        else window.alert(message);
-    }
-
-    function send(method, url, body) {
-        return fetch(url, {
-            method: method,
-            headers: {'Content-Type': 'application/json'},
-            body: body === undefined ? undefined : JSON.stringify(body)
-        }).then(function(r) {
-            return r.json().catch(function() { return {}; }).then(function(d) { return {ok: r.ok, d: d}; });
-        });
-    }
-
-    function reloadSection() {
-        if (window.htmx) {
-            window.htmx.ajax('GET', '/v3/partials/general', {target: '#general-content', swap: 'innerHTML'});
-        } else {
-            window.location.reload();
-        }
-    }
-
-    function field(form, name) {
-        var el = form.querySelector('[name="' + name + '"]');
-        return el ? el.value : '';
-    }
-
-    function tokenRow(record) {
-        var row = document.createElement('div');
-        row.className = 'flex flex-wrap items-center justify-between gap-2 border border-gray-200 rounded-md px-4 py-2';
-        row.dataset.tokenId = record.id;
-        var text = document.createElement('div');
-        text.className = 'text-sm';
-        [['font-semibold text-gray-900', record.name],
-         ['font-mono text-gray-600 ml-2', record.prefix + '…'],
-         ['text-gray-600 ml-2', 'created just now']].forEach(function(part) {
-            var span = document.createElement('span');
-            span.className = part[0];
-            span.textContent = part[1];
-            text.appendChild(span);
-        });
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'text-sm text-red-600 hover:underline';
-        btn.textContent = 'Revoke';
-        btn.addEventListener('click', function() { window.webLogin.revoke(record.id, record.name); });
-        row.appendChild(text);
-        row.appendChild(btn);
-        return row;
-    }
-
-    window.webLogin = {
-        setPassword: function(form) {
-            var next = field(form, 'new_password');
-            if (next !== field(form, 'confirm_password')) {
-                notify('The two new passwords do not match.', 'error');
-                return;
-            }
-            var body = {new_password: next};
-            if (form.querySelector('[name="current_password"]')) body.current_password = field(form, 'current_password');
-            send('POST', API + '/password', body).then(function(res) {
-                notify(res.d.message || (res.ok ? 'Saved' : 'Could not save the password'), res.ok ? 'success' : 'error');
-                if (res.ok) reloadSection();
-            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
-        },
-        disable: function(form) {
-            if (!window.confirm('Turn login off? Anyone on your network will be able to open this page.')) return;
-            send('POST', API + '/disable', {current_password: field(form, 'current_password')}).then(function(res) {
-                notify(res.d.message || (res.ok ? 'Login is off' : 'Could not turn login off'), res.ok ? 'success' : 'error');
-                if (res.ok) reloadSection();
-            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
-        },
-        createToken: function(form) {
-            send('POST', API + '/tokens', {name: field(form, 'name')}).then(function(res) {
-                if (!res.ok) {
-                    notify(res.d.message || 'Could not create the token', 'error');
-                    return;
-                }
-                var list = document.getElementById('web-login-tokens');
-                if (list) {
-                    var empty = list.querySelector('[data-empty]');
-                    if (empty) empty.remove();
-                    list.appendChild(tokenRow(res.d.data.record));
-                }
-                document.getElementById('web-login-new-token-value').textContent = res.d.data.token;
-                document.getElementById('web-login-new-token').classList.remove('hidden');
-                form.reset();
-                notify(res.d.message || 'Token created', 'success');
-            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
-        },
-        copyToken: function() {
-            var box = document.getElementById('web-login-new-token-value');
-            if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(box.textContent).then(function() { notify('Token copied', 'success'); });
-                return;
-            }
-            // Plain http on a LAN is not a secure context: select it instead.
-            var range = document.createRange();
-            range.selectNodeContents(box);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-            notify('Selected: press Ctrl+C (or Cmd+C) to copy.', 'info');
-        },
-        revoke: function(id, name) {
-            if (!window.confirm('Revoke the token "' + name + '"? Anything using it stops working.')) return;
-            send('DELETE', API + '/tokens/' + encodeURIComponent(id)).then(function(res) {
-                notify(res.d.message || (res.ok ? 'Token revoked' : 'Could not revoke the token'), res.ok ? 'success' : 'error');
-                if (!res.ok) return;
-                var rows = document.querySelectorAll('#web-login-tokens [data-token-id]');
-                Array.prototype.forEach.call(rows, function(row) {
-                    if (row.dataset.tokenId === id) row.remove();
-                });
-            }).catch(function(err) { notify('Request failed: ' + err.message, 'error'); });
-        }
-    };
-})();
-</script>
 {% endif %}
+</div>

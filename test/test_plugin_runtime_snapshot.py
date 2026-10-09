@@ -162,7 +162,7 @@ class TestPublisher:
         assert snapshot["stale_after"] == rt.STALE_AFTER
         assert snapshot["plugins"] == {"clock": {
             "loaded": True, "state": "enabled", "error": None,
-            "version": "1.0.0", "loaded_at": 10.0}}
+            "version": "1.0.0", "loaded_at": 10.0, "modes": None}}
 
     def test_changes_are_throttled_and_quiet_displays_refresh(self):
         cache = MagicMock()
@@ -423,7 +423,7 @@ def web_listing(api_v3_module, api_v3_client, shared_cache, tmp_path):  # noqa: 
         {"id": "clock", "name": "Clock", "version": "1.1.0"},
         {"id": "weather", "name": "Weather", "version": "3.0.0"},
     ])
-    api.plugin_store_manager.get_registry_info = MagicMock(return_value=None)
+    api.plugin_store_manager.get_cached_registry_info = MagicMock(return_value=None)
     api.plugin_store_manager._get_local_git_info = MagicMock(return_value=None)
     api.config_manager.load_config = MagicMock(return_value={
         "clock": {"enabled": True}, "weather": {"enabled": True}})
