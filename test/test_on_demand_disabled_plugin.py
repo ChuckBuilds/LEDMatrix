@@ -217,6 +217,15 @@ class TestReleasingThePlugin:
         assert controller.current_display_mode == 'clock'
         assert controller.force_change is True
 
+    def test_a_failed_request_that_ends_the_session_drops_its_saved_copy(self, controller):
+        """Otherwise the next restart resumes the session that just ended."""
+        _start(controller, plugin_id='clock')
+        controller.cache_manager.clear_cache.reset_mock()
+
+        _start(controller, plugin_id='uninstalled')
+
+        controller.cache_manager.clear_cache.assert_called_once_with('display_on_demand_config')
+
     def test_a_plugin_enabled_during_the_session_stays_loaded(self, controller):
         _start(controller)
         controller.test_config['preview-me'] = {'enabled': True}

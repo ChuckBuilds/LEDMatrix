@@ -655,7 +655,6 @@ class DisplayController:
             except Exception:  # pylint: disable=broad-except
                 cached_session = None
             if self.on_demand_active or cached_session:
-                self.cache_manager.clear_cache('display_on_demand_config')
                 self._set_on_demand_error('restore-failed')
             # Its state machine no longer describes what runs; let the last
             # snapshot go stale (readers then say unknown) rather than keep
@@ -1804,8 +1803,14 @@ class DisplayController:
             logger.error("Failed to publish on-demand state: %s", err, exc_info=True)
 
     def _set_on_demand_error(self, message: str) -> None:
-        """Set on-demand state to error and publish."""
+        """Set on-demand state to error and publish.
+
+        Ends any running session, so its saved copy goes too: a failed
+        request that replaced a session left display_on_demand_config
+        behind, and the next restart resumed the session that had ended.
+        """
         self._reset_on_demand_fields()
+        self.cache_manager.clear_cache('display_on_demand_config')
         self.on_demand_status = 'error'
         self.on_demand_last_error = message
         self.on_demand_last_event = None
@@ -2743,7 +2748,6 @@ class DisplayController:
             logger.error("On-demand session for plugin '%s' cannot resume after the "
                          "restart: the plugin has no loaded display modes (did it "
                          "fail to load?); ending it", plugin_id)
-            self.cache_manager.clear_cache('display_on_demand_config')
             self._set_on_demand_error('restore-failed')
             return
 

@@ -983,7 +983,6 @@ def stop_pixlet_editor():
                     'status': 'error',
                     'message': 'Editor force-stopped, but the display could not be '
                                'restarted automatically - start it manually.',
-                    'details': (result.get('stderr') or '').strip(),
                     'data': {'running': False}}), 500
             return jsonify({'status': 'success',
                             'message': 'Editor force-stopped; the display has been '

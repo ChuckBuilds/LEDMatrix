@@ -86,7 +86,7 @@ def refresh_after_update(run=None, systemd_dir=None, helper_source=None, helper_
     except Exception as e:  # a broken template must not fail the update itself
         if type(e).__name__ != 'UnitsUnreadable':
             logger.warning("Could not compare the installed systemd units with the new templates: %s", e)
-            return _result(FAILED, f'The service settings could not be checked: {e}.')
+            return _result(FAILED, 'The service settings could not be checked; see logs for details.')
         # Units installed mode 0600 (install_service.sh run on its own, before
         # it set 0644): only root can compare them, so let the helper decide.
         stale = []
@@ -110,7 +110,7 @@ def refresh_after_update(run=None, systemd_dir=None, helper_source=None, helper_
                      timeout=TIMEOUT_SECONDS)
     except (subprocess.SubprocessError, OSError) as e:
         logger.warning("Refreshing the systemd units failed: %s", e)
-        return _result(FAILED, f'Updating the service settings ({names}) failed: {e}.', stale)
+        return _result(FAILED, f'Updating the service settings ({names}) failed; see logs for details.', stale)
     if result.returncode == 0:
         # The helper says what it did: "units refreshed: a b" or "units: up to date".
         done = next((line.split(':', 1)[1].split() for line in (result.stdout or '').splitlines()

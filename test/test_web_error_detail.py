@@ -11,26 +11,32 @@ than even logging it.
 
 import pytest
 
-from src.web_interface.error_handler import describe_exception
+from src.web_interface.error_handler import describe_exception, redact_text
 
 
 class TestDescribeException:
-    def test_names_the_type_and_message(self):
-        detail = describe_exception(OSError(5, "Input/output error", "systemctl"))
-        assert detail == "OSError: [Errno 5] Input/output error: 'systemctl'"
+    """describe_exception is a reason code: type and errno, never the message.
 
-    def test_the_reported_failure_is_legible(self):
-        # The whole point: this string is the diagnosis.
-        assert "Input/output error" in describe_exception(
-            OSError(5, "Input/output error", "systemctl"))
+    The message can quote paths, URLs or credentials (CodeQL
+    py/stack-trace-exposure), so it goes to the log; the code still names the
+    fault, as "[Errno 5]" did.
+    """
+
+    def test_an_oserror_names_its_errno(self):
+        assert describe_exception(
+            OSError(5, "Input/output error", "systemctl")) == "OSError:EIO"
 
     def test_a_bare_exception_still_names_its_type(self):
-        # A PermissionError with no message still says more than "unknown".
         assert describe_exception(PermissionError()) == "PermissionError"
         assert describe_exception(Exception()) == "Exception"
 
-    def test_message_is_kept_when_present(self):
-        assert describe_exception(ValueError("bad port")) == "ValueError: bad port"
+    def test_the_message_never_reaches_the_code(self):
+        assert describe_exception(ValueError("bad port /etc/secret")) == "ValueError"
+
+    def test_the_message_is_logged_instead(self, caplog):
+        describe_exception(RuntimeError("disk on fire token=abc123"))
+        assert "disk on fire" in caplog.text
+        assert "abc123" not in caplog.text
 
 
 class TestCredentialRedaction:
@@ -56,47 +62,44 @@ class TestCredentialRedaction:
         ("authorization: barecredential", "barecredential"),
     ])
     def test_credentials_never_reach_the_response(self, secret_text, leaked):
-        detail = describe_exception(RuntimeError(secret_text))
+        detail = redact_text(secret_text)
         assert leaked not in detail
         assert "<redacted>" in detail
 
     def test_the_parameter_name_survives_redaction(self):
         # Knowing *which* credential was involved is part of the diagnosis.
-        detail = describe_exception(RuntimeError("https://x/y?api_key=SEC123"))
+        detail = redact_text("https://x/y?api_key=SEC123")
         assert "api_key" in detail
 
     def test_unknown_schemes_keep_their_name(self):
         for scheme in ("ApiKey", "Negotiate", "NTLM", "AWS4-HMAC-SHA256"):
-            detail = describe_exception(
-                RuntimeError("Authorization: %s SECRETVALUE" % scheme))
+            detail = redact_text("Authorization: %s SECRETVALUE" % scheme)
             assert scheme in detail, detail
             assert "SECRETVALUE" not in detail, detail
 
     def test_auth_scheme_and_username_survive(self):
         # Which kind of credential, and whose, without the credential itself.
-        assert "Bearer" in describe_exception(
-            RuntimeError("Authorization: Bearer eyJ.SECRET.sig"))
-        assert "user" in describe_exception(
-            RuntimeError("https://user:hunter2@example.com"))
+        assert "Bearer" in redact_text("Authorization: Bearer eyJ.SECRET.sig")
+        assert "user" in redact_text("https://user:hunter2@example.com")
 
     def test_non_secret_context_is_preserved(self):
-        detail = describe_exception(RuntimeError("https://api.x.com/v1?city=Tampa"))
+        detail = redact_text("https://api.x.com/v1?city=Tampa")
         assert "city=Tampa" in detail
         assert "<redacted>" not in detail
 
 
 class TestBounds:
     def test_long_messages_are_truncated(self):
-        detail = describe_exception(ValueError("x" * 5000))
+        detail = redact_text("x" * 5000)
         assert len(detail) <= 400
 
     def test_newlines_are_collapsed_to_one_line(self):
-        detail = describe_exception(ValueError("line one\nline two\tthree"))
+        detail = redact_text("line one\nline two\tthree")
         assert "\n" not in detail and "\t" not in detail
-        assert detail == "ValueError: line one line two three"
+        assert detail == "line one line two three"
 
     def test_custom_length_is_honoured(self):
-        assert len(describe_exception(ValueError("y" * 500), max_length=50)) <= 50
+        assert len(redact_text("y" * 500, max_length=50)) <= 50
 
 
 class TestHandlersCarryDetail:
@@ -319,10 +322,10 @@ class TestHandlersCarryDetail:
         assert resp.status_code == 405, "a wrong method must stay a 405"
         assert resp.get_json()["error_code"] == "METHOD_NOT_ALLOWED"
 
-        # A genuine server fault still reports as one, with its detail.
+        # A genuine server fault still reports as one, with its reason code.
         resp = client.get("/boom")
         assert resp.status_code == 500
-        assert "Input/output error" in resp.get_json()["details"]
+        assert resp.get_json()["details"] == "OSError:EIO"
 
     def test_global_handler_reports_the_underlying_error(self):
         from flask import Flask, jsonify
@@ -345,4 +348,5 @@ class TestHandlersCarryDetail:
         client = app.test_client()
         body = client.get("/boom").get_json()
         assert body["error_code"] == "UNKNOWN_ERROR"
-        assert "Input/output error" in body["details"]
+        assert body["details"] == "OSError:EIO"
+        assert "Input/output error" not in str(body)
