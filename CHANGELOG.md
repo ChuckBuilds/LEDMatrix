@@ -19,6 +19,25 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Scroll speed: a panel slower than its refresh cap is reported
+
+- Scroll speeds are solved against `limit_refresh_rate_hz`, so a panel that
+  cannot reach its cap ran every scroll slow by the shortfall, with no sign
+  why (one Pi 4 on a 120 Hz cap refreshed at ~110 Hz: 60 px/s ran at 55).
+  Once the display has measured the real rate over three windows of
+  scrolling, a panel more than 3% short of the cap is logged once, as a
+  warning from `src.common.frame_timing` that names a cap it can hold (a
+  multiple of 10, 5% under the measurement). The Display tab shows the same
+  under Limit Refresh Rate, with a button that fills it in, from the new
+  `GET /api/v3/config/refresh-rate`. Not checked in the emulator or on the
+  fallback canvas.
+- The frame-stats file records `planned_refresh_hz` (additive), and the
+  scroll-speed advice behind the Vegas slider ignores a measurement written
+  under a different cap. Until now, after the cap changed, the slider kept
+  advising from the old rate until the display restarted.
+- New in `src.common.scroll_config`: `refresh_shortfall()`, `holdable_cap()`
+  and `describe_refresh_shortfall()`.
+
 ## 3.8.3
 
 Fresh installs on Raspberry Pi OS Lite work again: 3.8.2's installer reported

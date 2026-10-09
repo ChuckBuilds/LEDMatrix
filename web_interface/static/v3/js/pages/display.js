@@ -92,6 +92,45 @@ function refreshScrollSpeedHint(root, ctx) {
     }, HINT_DELAY_MS);
 }
 
+// ── the refresh-cap hint ─────────────────────────────────────────────────────
+// Scroll speeds are worked out against the cap, so a panel that cannot reach
+// it runs every scroll slow. The display has measured a cap it can hold.
+function showRefreshRateHint(root, ctx) {
+    const hint = root.querySelector('#limit_refresh_rate_hz_hint');
+    const input = root.querySelector('#limit_refresh_rate_hz');
+    if (!hint || !input) return;
+    const doc = root.ownerDocument;
+    const win = doc.defaultView;
+    ctx.api.get('/api/v3/config/refresh-rate', { signal: ctx.signal })
+        .then(function(body) {
+            const s = body.status === 'success' && body.data.shortfall;
+            hint.textContent = '';
+            if (!s) return;
+            hint.appendChild(doc.createTextNode(
+                'This panel refreshes at about ' + Math.round(s.measured_hz) +
+                ' Hz, below this ' + Math.round(s.planned_hz) + ' Hz cap, so scrolls run about ' +
+                s.slow_percent + '% slower than set.' + (s.suggested_cap_hz ? ' ' : '')));
+            if (!s.suggested_cap_hz) return;
+            const btn = doc.createElement('button');
+            btn.type = 'button';
+            btn.className = 'underline font-medium';
+            btn.textContent = 'Use ' + s.suggested_cap_hz + ' Hz';
+            btn.addEventListener('click', function() {
+                input.value = s.suggested_cap_hz;
+                input.dispatchEvent(new win.Event('input', { bubbles: true }));
+                input.dispatchEvent(new win.Event('change', { bubbles: true }));
+                hint.textContent = 'Save, then restart the display, to apply ' +
+                    s.suggested_cap_hz + ' Hz.';
+            });
+            hint.appendChild(btn);
+            hint.appendChild(doc.createTextNode(', a cap it can hold.'));
+        })
+        .catch(function(error) {
+            if (quiet(error) || error.body) return;
+            hint.textContent = '';
+        });
+}
+
 function renderScrollSpeedHint(root, hint, slider, a) {
     const doc = root.ownerDocument;
     const win = doc.defaultView;
@@ -303,6 +342,7 @@ export function init(root, ctx) {
     // when it already is), then every 5 s while it stays there.
     ctx.visibility.every(SYNC_POLL_MS, function() { pollSyncStatus(root, ctx); });
 
+    showRefreshRateHint(root, ctx);
     startPluginOrder(root, ctx);
     active = ctx;
 }
