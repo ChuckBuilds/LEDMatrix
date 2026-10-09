@@ -1369,7 +1369,7 @@ class WiFiManager:
                         self.enable_ap_mode(force=True)
                     except Exception as ap_error:  # nosec B110 - last-resort; do not re-raise, but log for debugging
                         logger.error("Last-resort AP mode enable failed in recovery path: %s", ap_error, exc_info=True)
-            return False, str(e)
+            return False, f"Connection failed ({type(e).__name__}); see logs for details"
     
     def _failsafe_ap(self, enabled_msg: str, failed_msg: str) -> Tuple[bool, str]:
         """Force the setup AP up after a connect that left no working network,
@@ -1585,7 +1585,7 @@ class WiFiManager:
         except Exception as e:
             logger.error(f"Error connecting with nmcli: {e}")
             self._show_led_message("Connection error", duration=5)
-            return False, str(e)
+            return False, f"Connection failed ({type(e).__name__}); see logs for details"
 
     # 802.11 caps an SSID at 32 octets. Control characters cannot appear in a
     # real one, and a leading "-" would be read by nmcli as an option rather
@@ -1725,7 +1725,7 @@ class WiFiManager:
                 return False, "nmcli is required to disconnect from WiFi"
         except Exception as e:
             logger.error(f"Error disconnecting from WiFi: {e}")
-            return False, str(e)
+            return False, f"Disconnect failed ({type(e).__name__}); see logs for details"
     
     def _ensure_wifi_radio_enabled(self, max_retries: int = 3) -> bool:
         """
@@ -2004,7 +2004,7 @@ class WiFiManager:
             return False, "No WiFi tools available (nmcli, hostapd, or dnsmasq required)"
         except Exception as e:
             logger.error(f"Error in enable_ap_mode: {e}")
-            return False, str(e)
+            return False, f"Could not enable AP mode ({type(e).__name__}); see logs for details"
     
     def _mark_forced(self) -> None:
         """Record that AP mode was forced on, so the periodic check leaves it
@@ -2099,10 +2099,10 @@ class WiFiManager:
                 return True, "AP mode enabled"
             except Exception as e:
                 logger.error(f"Error starting AP services: {e}")
-                return False, str(e)
+                return False, f"Could not enable AP mode ({type(e).__name__}); see logs for details"
         except Exception as e:
             logger.error(f"Error enabling AP mode: {e}")
-            return False, str(e)
+            return False, f"Could not enable AP mode ({type(e).__name__}); see logs for details"
     
     def _enable_ap_mode_nmcli_hotspot(self) -> Tuple[bool, str]:
         """
@@ -2227,7 +2227,7 @@ class WiFiManager:
             logger.error(f"Error starting AP mode with nmcli: {e}")
             self._remove_nm_dnsmasq_captive_conf()
             self._show_led_message("Setup mode error", duration=5)
-            return False, str(e)
+            return False, f"Could not enable AP mode ({type(e).__name__}); see logs for details"
     
     def _get_ap_status_nmcli(self) -> Dict:
         """
@@ -2409,10 +2409,10 @@ class WiFiManager:
                 return True, "AP mode disabled"
             except Exception as e:
                 logger.error(f"Error stopping AP services: {e}")
-                return False, str(e)
+                return False, f"Could not disable AP mode ({type(e).__name__}); see logs for details"
         except Exception as e:
             logger.error(f"Error disabling AP mode: {e}")
-            return False, str(e)
+            return False, f"Could not disable AP mode ({type(e).__name__}); see logs for details"
     
     def _create_hostapd_config(self):
         """Create hostapd configuration file"""

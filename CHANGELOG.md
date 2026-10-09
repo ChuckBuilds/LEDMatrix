@@ -38,6 +38,18 @@ accepts both, but the store flags the old spelling as deprecated
 - New in `src.common.scroll_config`: `refresh_shortfall()`, `holdable_cap()`
   and `describe_refresh_shortfall()`.
 
+### Fixes
+
+- Web API error responses no longer carry an exception's message (CodeQL
+  `py/stack-trace-exposure`). `describe_exception()` now returns a reason
+  code -- the exception type, plus the errno for an `OSError`
+  (`OSError:EIO`, `PermissionError:EACCES`) -- and logs the message
+  instead, so `details` still names the fault without quoting paths, URLs
+  or library internals. The display service status and the on-demand
+  start/stop `service` results keep `active`, `returncode` and `started`
+  but drop systemctl's `stdout`/`stderr`; WiFi, unit-refresh and
+  config-save failures say what failed and point at the log.
+
 ## 3.8.3
 
 Fresh installs on Raspberry Pi OS Lite work again: 3.8.2's installer reported

@@ -147,7 +147,8 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
             side_effect=RuntimeError("disk is gone"))
         resp = api_v3_client.get('/api/v3/display/modes')
         assert resp.status_code == 500
-        assert 'disk is gone' in resp.get_json()['details']
+        assert resp.get_json()['details'] == 'RuntimeError'
+        assert 'disk is gone' not in json.dumps(resp.get_json())
 
     def test_credentials_in_the_exception_are_redacted(self, api_v3_module, api_v3_client):
         """describe_exception is what makes returning detail safe."""

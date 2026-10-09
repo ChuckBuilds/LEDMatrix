@@ -946,21 +946,27 @@ class TestTheStoreReportsWhyItIsEmpty:
 
 
 class TestACrashCarriesItsDetail:
-    """Seventeen Starlark handlers answered 5xx with no detail at all."""
+    """Seventeen Starlark handlers answered 5xx with no detail at all.
 
-    def test_browse_returns_the_exception_detail(self, client):
+    The detail is a reason code (the exception type), not the exception's
+    message, which stays in the log (CodeQL py/stack-trace-exposure).
+    """
+
+    def test_browse_returns_the_reason_code(self, client):
         with patch('web_interface.blueprints.api_v3._get_tronbyte_repository_class',
                    side_effect=ImportError("No module named 'yaml'")):
             body = client.get('/api/v3/starlark/repository/browse').get_json()
 
-        assert 'yaml' in body.get('details', ''), body
+        assert body.get('details') == 'ImportError', body
+        assert 'yaml' not in str(body), body
 
-    def test_status_returns_the_exception_detail(self, client):
+    def test_status_returns_the_reason_code(self, client):
         with patch('web_interface.blueprints.api_v3._get_starlark_plugin',
                    side_effect=RuntimeError("plugin manager is not attached")):
             body = client.get('/api/v3/starlark/status').get_json()
 
-        assert 'plugin manager is not attached' in body.get('details', ''), body
+        assert body.get('details') == 'RuntimeError', body
+        assert 'plugin manager is not attached' not in str(body), body
 
 
 class TestTheListingIsNotCappedAtOneThousand:
