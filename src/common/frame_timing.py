@@ -181,10 +181,10 @@ MAX_REFRESH_DROP = 0.2
 #: trusted -- about a second of scrolling.
 MIN_FRAMES_FOR_REFRESH = 90
 
-#: Trusted windows, counting the one that adopted the period, before a panel
-#: slower than its cap is reported. The estimate can still fall (the refresh
-#: rate rise) by up to MAX_REFRESH_DROP per window early on; the warning
-#: should not name a rate one more window would have corrected.
+#: Consecutive windows that agree with the adopted refresh period (the one
+#: that adopted it counts) before a panel slower than its cap is reported. The
+#: estimate can still fall by up to MAX_REFRESH_DROP per window early on; the
+#: warning should not name a rate one more window would have corrected.
 REFRESH_CHECK_WINDOWS = 3
 
 FLUSH_INTERVAL = 10.0
@@ -653,8 +653,16 @@ class FrameTimingRecorder:
                     self._refresh_candidate = estimate
             elif current * (1.0 - MAX_REFRESH_DROP) <= estimate < current:
                 self.refresh_period = estimate
-            if self.refresh_period is not None:
-                self._refresh_windows += 1
+            # Only a run of windows that agree with the period counts toward
+            # the shortfall check. One that disagrees (a faster one than the
+            # period may fall to, say, after a loaded start fixed a slow one)
+            # was rejected above, so the period does not reflect it, and a
+            # warning built on that period would name a rate the panel is not
+            # at. It resets the run; the check then waits for three that agree.
+            current = self.refresh_period
+            if current is not None:
+                agrees = abs(estimate - current) <= current * MAX_REFRESH_DROP
+                self._refresh_windows = self._refresh_windows + 1 if agrees else 0
         period = self.refresh_period
         if (period and not self._shortfall_checked
                 and self._refresh_windows >= REFRESH_CHECK_WINDOWS):
@@ -711,7 +719,7 @@ class FrameTimingRecorder:
         """Say what rate scroll speeds are solved against, before frames arrive.
 
         ``DisplayManager.refresh_hz``: the configured cap. Once the measured
-        rate has held for :data:`REFRESH_CHECK_WINDOWS` windows, a panel that
+        rate has held for :data:`REFRESH_CHECK_WINDOWS` windows in a row, a panel that
         falls short of it is logged once, with a cap it can hold (see
         :func:`src.common.scroll_config.refresh_shortfall`). The display
         manager calls this only for a real panel.

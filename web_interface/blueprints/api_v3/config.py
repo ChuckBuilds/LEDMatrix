@@ -160,13 +160,20 @@ def _panel_refresh_hz(config):
         with open(frame_timing.default_stats_path(), encoding='utf-8') as fh:
             stats = json.load(fh)
         measured = float(stats.get('measured_refresh_hz') or 0)
+        recorded = 'planned_refresh_hz' in stats
         planned = float(stats.get('planned_refresh_hz') or 0)
     except (OSError, ValueError, TypeError, AttributeError):
         measured = planned = 0.0
+        recorded = False
     # Reject a stale file from a previous hardware config: one written under
     # another cap (the display has not restarted since it changed), or, from
-    # a display too old to record its cap, a measurement far off this one.
-    if planned and abs(planned - cap) > 0.5:
+    # a display too old to record its cap (no such key), a measurement far
+    # off this one. A key that is present but null means the display's frames
+    # are not paced by a panel (the emulator, the fallback canvas): its
+    # "refresh rate" says nothing about the cap.
+    if recorded and not planned:
+        measured = 0.0
+    elif planned and abs(planned - cap) > 0.5:
         measured = 0.0
     if measured > 0 and 0.5 * cap <= measured <= 1.5 * cap:
         return measured, 'measured'

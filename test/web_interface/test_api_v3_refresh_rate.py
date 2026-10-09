@@ -61,3 +61,13 @@ def test_a_file_written_under_another_cap_is_stale(client):
 def test_a_file_from_a_display_too_old_to_record_its_cap_still_counts(client):
     client.stats_path.write_text(json.dumps({"measured_refresh_hz": 110.4}))
     assert _get(client)["shortfall"]["suggested_cap_hz"] == 100
+
+
+def test_a_measurement_recorded_without_a_planned_rate_is_not_a_panel(client):
+    # The emulator and the fallback canvas write the key as null: their frames
+    # are not paced by a panel, so a rate under the cap is no shortfall.
+    client.stats_path.write_text(json.dumps(
+        {"measured_refresh_hz": 60.0, "planned_refresh_hz": None}))
+    data = _get(client)
+    assert data["measured_hz"] is None
+    assert data["shortfall"] is None
