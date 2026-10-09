@@ -807,3 +807,54 @@ def test_a_process_with_the_gc_monitor_exits_cleanly():
     assert proc.returncode == 0, proc.stderr
     assert "Exception ignored" not in proc.stderr
     assert "installed at exit: False" in proc.stdout
+
+
+SLOW = 1 / 110.0  # a panel that cannot reach a 120 Hz cap
+
+
+def _windows(recorder, n, interval, start=0.0):
+    for i in range(n):
+        _feed(recorder, [interval] * 200, start=start + 50.0 * i)
+        _aggregate(recorder)
+
+
+def _shortfall_warnings(caplog):
+    return [r for r in caplog.records
+            if r.name == "src.common.frame_timing" and "Limit Refresh Rate" in r.getMessage()]
+
+
+def test_a_panel_slower_than_its_cap_is_reported_once(tmp_path, caplog):
+    r = _recorder(tmp_path)
+    r.plan_refresh(120.0)
+    caplog.set_level("WARNING")
+    _windows(r, 3, SLOW)          # adopted on the 2nd window, checked on the 4th
+    assert _shortfall_warnings(caplog) == []
+    _windows(r, 3, SLOW, start=1000.0)
+    warnings = _shortfall_warnings(caplog)
+    assert len(warnings) == 1
+    assert "about 110 Hz" in warnings[0].getMessage()
+    assert "to 100 Hz" in warnings[0].getMessage()
+
+
+def test_a_panel_that_reaches_its_cap_is_not_reported(tmp_path, caplog):
+    r = _recorder(tmp_path)
+    r.plan_refresh(100.0)
+    caplog.set_level("WARNING")
+    _windows(r, 6, PERIOD)
+    assert _shortfall_warnings(caplog) == []
+
+
+def test_without_a_planned_rate_nothing_is_checked(tmp_path, caplog):
+    # The emulator and the fallback canvas: DisplayManager never calls
+    # plan_refresh(), since their frames are not paced by a panel.
+    r = _recorder(tmp_path)
+    caplog.set_level("WARNING")
+    _windows(r, 6, SLOW)
+    assert _shortfall_warnings(caplog) == []
+
+
+def test_the_snapshot_records_the_planned_rate(tmp_path):
+    r = _recorder(tmp_path)
+    assert r.snapshot()["planned_refresh_hz"] is None
+    r.plan_refresh(120.0)
+    assert r.snapshot()["planned_refresh_hz"] == 120.0

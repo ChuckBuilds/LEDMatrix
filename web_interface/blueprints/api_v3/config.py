@@ -158,11 +158,16 @@ def _panel_refresh_hz(config):
     cap = scroll_config.refresh_hz_from_config(config)
     try:
         with open(frame_timing.default_stats_path(), encoding='utf-8') as fh:
-            measured = float(json.load(fh).get('measured_refresh_hz') or 0)
+            stats = json.load(fh)
+        measured = float(stats.get('measured_refresh_hz') or 0)
+        planned = float(stats.get('planned_refresh_hz') or 0)
     except (OSError, ValueError, TypeError, AttributeError):
+        measured = planned = 0.0
+    # Reject a stale file from a previous hardware config: one written under
+    # another cap (the display has not restarted since it changed), or, from
+    # a display too old to record its cap, a measurement far off this one.
+    if planned and abs(planned - cap) > 0.5:
         measured = 0.0
-    # Reject a stale file from a previous hardware config: a measurement far
-    # off the cap says the config changed since it was written.
     if measured > 0 and 0.5 * cap <= measured <= 1.5 * cap:
         return measured, 'measured'
     return cap, 'configured'
@@ -187,6 +192,29 @@ def get_scroll_speed_advice():
     advice = scroll_config.speed_advice(speed, hz, lo, hi)
     advice['refresh_source'] = source
     return jsonify({'status': 'success', 'data': advice})
+
+
+@api_v3.route('/config/refresh-rate', methods=['GET'])
+def get_refresh_rate():
+    """The refresh cap, what the panel measured, and a cap it can hold.
+
+    Backs the hint under the Display tab's Limit Refresh Rate field. Scroll
+    speeds are solved against the cap, so a panel that cannot reach it runs
+    every scroll slow; ``shortfall`` (None when the panel keeps up, or nothing
+    has been measured yet) says by how much and suggests a cap.
+    """
+    from src.common import scroll_config
+    if not api_v3.config_manager:
+        return jsonify({'status': 'error', 'message': 'Config manager not initialized'}), 500
+    config = api_v3.config_manager.load_config()
+    planned = scroll_config.refresh_hz_from_config(config)
+    hz, source = _panel_refresh_hz(config)
+    measured = hz if source == 'measured' else None
+    return jsonify({'status': 'success', 'data': {
+        'planned_hz': planned,
+        'measured_hz': round(measured, 1) if measured else None,
+        'shortfall': scroll_config.refresh_shortfall(measured, planned),
+    }})
 
 
 @api_v3.route('/config/schedule', methods=['GET'])

@@ -135,6 +135,8 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
+from src.common import scroll_config
+
 logger = logging.getLogger(__name__)
 
 #: Bumped when a field changes meaning, so a reader can refuse stale files.
@@ -178,6 +180,12 @@ MAX_REFRESH_DROP = 0.2
 #: A window needs this many scrolling frames before its refresh estimate is
 #: trusted -- about a second of scrolling.
 MIN_FRAMES_FOR_REFRESH = 90
+
+#: Trusted windows, counting the one that adopted the period, before a panel
+#: slower than its cap is reported. The estimate can still fall (the refresh
+#: rate rise) by up to MAX_REFRESH_DROP per window early on; the warning
+#: should not name a rate one more window would have corrected.
+REFRESH_CHECK_WINDOWS = 3
 
 FLUSH_INTERVAL = 10.0
 
@@ -441,6 +449,12 @@ class FrameTimingRecorder:
             1.0 / refresh_hz if refresh_hz and refresh_hz > 0 else None)
         # The first estimate, until a second window agrees with it.
         self._refresh_candidate: Optional[float] = None
+        # The rate scroll speeds are solved against; see plan_refresh().
+        self.planned_refresh_hz: Optional[float] = None
+        # Trusted windows seen since the period was adopted, until the
+        # shortfall check has run.
+        self._refresh_windows = 0
+        self._shortfall_checked = True
         self.totals: Dict[str, Any] = {
             "static_frames": 0,
             "scroll_frames": 0,
@@ -639,7 +653,12 @@ class FrameTimingRecorder:
                     self._refresh_candidate = estimate
             elif current * (1.0 - MAX_REFRESH_DROP) <= estimate < current:
                 self.refresh_period = estimate
+            if self.refresh_period is not None:
+                self._refresh_windows += 1
         period = self.refresh_period
+        if (period and not self._shortfall_checked
+                and self._refresh_windows >= REFRESH_CHECK_WINDOWS):
+            self._check_refresh_shortfall(1.0 / period)
 
         histograms = self.histograms
         for frame in batch:
@@ -688,6 +707,25 @@ class FrameTimingRecorder:
                 elif missed <= -1:
                     totals["early_frames"] += 1
 
+    def plan_refresh(self, hz: Optional[float]) -> None:
+        """Say what rate scroll speeds are solved against, before frames arrive.
+
+        ``DisplayManager.refresh_hz``: the configured cap. Once the measured
+        rate has held for :data:`REFRESH_CHECK_WINDOWS` windows, a panel that
+        falls short of it is logged once, with a cap it can hold (see
+        :func:`src.common.scroll_config.refresh_shortfall`). The display
+        manager calls this only for a real panel.
+        """
+        self.planned_refresh_hz = hz
+        self._shortfall_checked = not hz
+
+    def _check_refresh_shortfall(self, measured_hz: float) -> None:
+        """Log, once, a panel that cannot reach the rate speeds assume."""
+        self._shortfall_checked = True
+        shortfall = scroll_config.refresh_shortfall(measured_hz, self.planned_refresh_hz)
+        if shortfall:
+            logger.warning(scroll_config.describe_refresh_shortfall(shortfall))
+
     def snapshot(self) -> Dict[str, Any]:
         """The JSON document: cumulative since this process started."""
         if not self._binding_checked:
@@ -704,6 +742,9 @@ class FrameTimingRecorder:
             "bucket_ms": BUCKET_MS,
             "freeze_seconds": FREEZE_SECONDS,
             "measured_refresh_hz": round(1.0 / period, 2) if period else None,
+            # Additive: what scroll speeds were solved against, so a reader can
+            # tell a stale file (written under another cap) from this one.
+            "planned_refresh_hz": self.planned_refresh_hz,
             "binding_releases_gil": self._binding_gil,
             "info": info,
             "totals": copy.deepcopy(self.totals),

@@ -176,6 +176,15 @@
     ]
   ],
   [
+    "/api/v3/config/refresh-rate",
+    "api_v3.get_refresh_rate",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
     "/api/v3/config/schedule",
     "api_v3.get_schedule_config",
     [
