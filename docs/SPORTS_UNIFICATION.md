@@ -358,7 +358,7 @@ window over time, the real `update()` followed by `display()`'s rotation call
 (the list, the card on screen, redraws and how often the list is recomposed),
 `update()` and `display()` advancing the window in sequence and interleaved on
 two threads, odds for rotated-in games, and `favorite_rotation_boost`'s
-switch order. The reconcile (ledmatrix-plugins `claude/family7-reconcile`)
+switch order. The reconcile (ledmatrix-plugins #641)
 made `_by_importance`, `_other_games_window`, `_advance_other_games_if_due`,
 `_rotate_other_games_on_display` and `_attach_odds_to_rotated_games` one body
 on `SportsCore` (ufc gains the odds helper), with `_rankings_loaded` as the
