@@ -288,11 +288,6 @@ def errors_clear(request_id: str, cutoff: float, *,
                    timeout=timeout, paths=paths)
 
 
-def ping(*, timeout: float = DEFAULT_TIMEOUT_SECONDS,
-         paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-    return request(Command.PING, {}, timeout=timeout, paths=paths)
-
-
 def hello(client: str = 'web', *, timeout: float = DEFAULT_TIMEOUT_SECONDS,
           paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Version negotiation: the result's ``version`` is the one both sides speak."""

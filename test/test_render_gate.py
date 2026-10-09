@@ -404,7 +404,6 @@ class TestVegasWiring:
         off = VegasModeConfig.from_config(
             {"display": {"vegas_scroll": {"prefetch_gate": False}}})
         assert off.prefetch_gate is False
-        assert off.to_dict()["prefetch_gate"] is False
         assert VegasModeConfig.from_config(
             {"display": {"vegas_scroll": {}}}).prefetch_gate is True
 

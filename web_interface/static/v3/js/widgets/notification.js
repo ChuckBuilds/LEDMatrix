@@ -161,8 +161,6 @@
         setTimeout(() => { region.textContent = text; }, 50);
     }
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function clearTimer(notificationId) {
         const t = timers.get(notificationId);
         if (t && t.timer) clearTimeout(t.timer);
@@ -294,7 +292,7 @@
             html += `<i class="fas ${style.icon} flex-shrink-0" aria-hidden="true"></i>`;
         }
 
-        html += `<span class="flex-1 text-sm"><span style="${VISUALLY_HIDDEN}">${style.label}: </span>${escapeHtml(message)}</span>`;
+        html += `<span class="flex-1 text-sm"><span style="${VISUALLY_HIDDEN}">${style.label}: </span>${window.LEDEscape.html(message)}</span>`;
 
         // Optional inline action button (e.g. "Restart Now" on a restart nudge).
         // The callback is stored by id and invoked via triggerAction, which
@@ -306,7 +304,7 @@
                         onclick="window.LEDMatrixWidgets.get('notification').triggerAction('${notificationId}')"
                         class="flex-shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-md bg-white bg-opacity-20 hover:bg-opacity-30 transition-colors duration-150"
                         style="background:rgba(255,255,255,.2);color:inherit;border:0;">
-                    ${escapeHtml(options.actionLabel)}
+                    ${window.LEDEscape.html(options.actionLabel)}
                 </button>
             `;
         }

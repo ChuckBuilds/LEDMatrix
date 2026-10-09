@@ -522,7 +522,7 @@ class TestLiveStream:
             # max_clients is 2 and three streams are open: subscribers gave
             # their request slots back.
             for _ in range(4):
-                assert client.ping(paths=[path]) == {'pong': True}
+                assert client.request(Command.PING, paths=[path]) == {'pong': True}
             hub.publish('display', _display(mode='weather'), volatile=('last_updated',))
             assert _wait_until(lambda: all(
                 s.latest()['state']['display']['mode'] == 'weather' for s in subs))

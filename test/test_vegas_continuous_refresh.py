@@ -189,7 +189,6 @@ class TestCoordinatorWiring:
         coordinator.render_pipeline.is_cycle_complete.return_value = False
         coordinator.render_pipeline.should_recompose.return_value = False
         coordinator.stream_manager = MagicMock()
-        coordinator.stats = {'cycles_completed': 0}
         coordinator._state_lock = threading.Lock()
         coordinator._is_active = True
         coordinator._is_paused = False

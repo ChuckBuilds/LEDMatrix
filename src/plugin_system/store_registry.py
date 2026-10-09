@@ -183,16 +183,7 @@ class _RegistryMixin:
     @staticmethod
     def _distinct_sequence(values: List[str]) -> List[str]:
         """Return list preserving order while removing duplicates and falsey entries."""
-        seen = set()
-        ordered = []
-        for value in values:
-            if not value:
-                continue
-            if value in seen:
-                continue
-            seen.add(value)
-            ordered.append(value)
-        return ordered
+        return list(dict.fromkeys(v for v in values if v))
 
     def _validate_manifest_version_fields(self, manifest: Dict[str, Any]) -> List[str]:
         """

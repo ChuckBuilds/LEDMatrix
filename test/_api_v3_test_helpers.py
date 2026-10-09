@@ -41,8 +41,7 @@ def mock_plugin_catalog():
     """
     from src.plugin_system.plugin_catalog import PluginCatalog
     catalog = MagicMock(spec=PluginCatalog)
-    for name in ('plugins_dir', 'config_manager', 'schema_manager',
-                 'plugin_manifests', 'plugin_directories'):
+    for name in ('plugins_dir', 'plugin_manifests', 'plugin_directories'):
         setattr(catalog, name, MagicMock())
     return catalog
 

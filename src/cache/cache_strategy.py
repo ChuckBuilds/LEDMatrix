@@ -4,7 +4,6 @@ Cache Strategy
 Manages cache strategies (TTLs) for different data types.
 """
 
-import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 import pytz
@@ -13,51 +12,25 @@ import pytz
 class CacheStrategy:
     """Manages cache strategies for different data types."""
     
-    def __init__(self, config_manager: Optional[Any] = None, logger: Optional[logging.Logger] = None) -> None:
-        """
-        Initialize cache strategy manager.
-        
-        Args:
-            config_manager: Optional ConfigManager instance. Kept for callers
-                that pass one; no strategy currently reads it.
-            logger: Optional logger instance
-        """
-        self.config_manager = config_manager
-        self.logger = logger or logging.getLogger(__name__)
-    
-    def get_sport_live_interval(self, sport_key: str) -> int:
-        """
-        Live-data cache interval, in seconds, for a sport: 60 for every sport.
-
-        This used to read ``live_update_interval`` from a ``<sport>_scoreboard``
-        config section. Those sections belonged to the built-in scoreboards
-        that the plugin system replaced; plugin config is keyed by plugin id
-        (``football-scoreboard``), so the lookup always fell back to 60.
-
-        Args:
-            sport_key: Sport identifier (e.g., 'nba', 'nfl')
-
-        Returns:
-            Live update interval in seconds
-        """
-        return 60
-
     def get_cache_strategy(self, data_type: str, sport_key: Optional[str] = None) -> Dict[str, Any]:
         """
         Get cache strategy for different data types.
 
         Args:
             data_type: Type of data (e.g., 'live_scores', 'stocks', 'weather_current')
-            sport_key: Optional sport key; for live data it selects the
-                per-sport interval from :meth:`get_sport_live_interval`
-                instead of the generic live default.
+            sport_key: Optional sport key; for live data any sport key
+                selects a 60s interval instead of the generic live default.
+                (That used to be a per-sport ``live_update_interval`` from
+                ``<sport>_scoreboard`` config sections, which belonged to the
+                built-in scoreboards the plugin system replaced, so every
+                lookup fell back to 60.)
 
         Returns:
             Dictionary with cache strategy (max_age, memory_ttl, etc.)
         """
         live_interval = None
         if sport_key and data_type in ['sports_live', 'live_scores']:
-            live_interval = self.get_sport_live_interval(sport_key)
+            live_interval = 60
 
         strategies = {
             # Ultra time-sensitive data (live scores, current weather)

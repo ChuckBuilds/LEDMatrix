@@ -26,8 +26,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('Textarea', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -75,15 +73,15 @@
 
             html += `
                 <textarea id="${fieldId}_input"
-                          name="${escapeHtml(options.name || fieldId)}"
+                          name="${window.LEDEscape.html(options.name || fieldId)}"
                           rows="${rows}"
-                          placeholder="${escapeHtml(placeholder)}"
+                          placeholder="${window.LEDEscape.html(placeholder)}"
                           ${maxLength ? `maxlength="${maxLength}"` : ''}
                           ${minLength ? `minlength="${minLength}"` : ''}
                           ${disabled ? 'disabled' : ''}
                           onchange="window.LEDMatrixWidgets.getHandlers('textarea').onChange('${fieldId}')"
                           oninput="window.LEDMatrixWidgets.getHandlers('textarea').onInput('${fieldId}')"
-                          class="form-textarea w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 ${resizeClass} ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'} text-black placeholder:text-gray-400">${escapeHtml(currentValue)}</textarea>
+                          class="form-textarea w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 ${resizeClass} ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'} text-black placeholder:text-gray-400">${window.LEDEscape.html(currentValue)}</textarea>
             `;
 
             // Character count

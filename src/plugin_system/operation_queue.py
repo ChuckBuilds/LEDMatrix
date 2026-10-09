@@ -2,7 +2,7 @@
 Plugin operation queue manager.
 
 Serializes plugin operations to prevent conflicts and provides
-status tracking and cancellation support.
+status tracking.
 """
 
 import threading
@@ -25,8 +25,8 @@ class PluginOperationQueue:
     - Serialized execution (one operation at a time)
     - Prevents concurrent operations on same plugin
     - Operation status tracking
-    - Operation cancellation
-    - In-memory history of finished operations
+    - A bounded in-memory history of finished operations, which also caps
+      how many finished operations get_operation_status() remembers
 
     The history is not persisted. The web UI's operation history comes from
     OperationHistory (operation_history.py), which has its own file; a copy
@@ -133,56 +133,6 @@ class PluginOperationQueue:
         with self._lock:
             return self._operations.get(operation_id)
     
-    def cancel_operation(self, operation_id: str) -> bool:
-        """
-        Cancel a pending operation.
-        
-        Args:
-            operation_id: Operation identifier
-        
-        Returns:
-            True if operation was cancelled, False if not found or already running
-        """
-        with self._lock:
-            operation = self._operations.get(operation_id)
-            if not operation:
-                return False
-            
-            if operation.status == OperationStatus.RUNNING:
-                self.logger.warning(
-                    f"Cannot cancel running operation {operation_id}"
-                )
-                return False
-            
-            if operation.status == OperationStatus.PENDING:
-                operation.status = OperationStatus.CANCELLED
-                operation.completed_at = datetime.now()
-                operation.message = "Operation cancelled by user"
-                self._add_to_history(operation)
-                self.logger.info(f"Cancelled operation {operation_id}")
-                return True
-            
-            return False
-    
-    def get_operation_history(self, limit: int = 50) -> List[PluginOperation]:
-        """
-        Get operation history.
-        
-        Args:
-            limit: Maximum number of operations to return
-        
-        Returns:
-            List of operations, sorted by creation time (newest first)
-        """
-        with self._lock:
-            # Sort by creation time (newest first)
-            history = sorted(
-                self._operation_history,
-                key=lambda op: op.created_at,
-                reverse=True
-            )
-            return history[:limit]
-    
     def _start_worker(self) -> None:
         """Start the worker thread that processes operations."""
         if self._worker_thread and self._worker_thread.is_alive():
@@ -205,11 +155,6 @@ class PluginOperationQueue:
                 try:
                     operation = self._operation_queue.get(timeout=1.0)
                 except queue.Empty:
-                    continue
-                
-                # Check if operation was cancelled
-                if operation.status == OperationStatus.CANCELLED:
-                    self._operation_queue.task_done()
                     continue
                 
                 # Execute operation

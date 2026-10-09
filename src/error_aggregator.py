@@ -123,8 +123,7 @@ class ErrorAggregator:
         self._error_counts: Dict[str, int] = defaultdict(int)
         self._plugin_error_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self._patterns: Dict[str, ErrorPattern] = {}
-        self._pattern_callbacks: List[Callable[[ErrorPattern], None]] = []
-        self._lock = threading.RLock()  # RLock: build_snapshot and pattern callbacks re-enter
+        self._lock = threading.RLock()  # RLock: build_snapshot re-enters
 
         # Track session start for relative timing
         self._session_start = datetime.now()
@@ -238,13 +237,6 @@ class ErrorAggregator:
                     f"{count} times in last {self.pattern_window}. "
                     f"Affected plugins: {set(affected_plugins) or 'unknown'}"
                 )
-
-                # Notify callbacks
-                for callback in self._pattern_callbacks:
-                    try:
-                        callback(pattern)
-                    except Exception as e:
-                        self.logger.error(f"Pattern callback failed: {e}")
             else:
                 # Update existing pattern
                 self._patterns[pattern_key].count = count
@@ -252,15 +244,6 @@ class ErrorAggregator:
                 self._patterns[pattern_key].severity = severity
                 known = self._patterns[pattern_key].affected_plugins
                 known.extend(p for p in affected_plugins if p not in known)
-
-    def on_pattern_detected(self, callback: Callable[[ErrorPattern], None]) -> None:
-        """
-        Register a callback to be called when a new error pattern is detected.
-
-        Args:
-            callback: Function that takes an ErrorPattern as argument
-        """
-        self._pattern_callbacks.append(callback)
 
     def get_error_summary(self) -> Dict[str, Any]:
         """
@@ -325,27 +308,6 @@ class ErrorAggregator:
                 "last_error": recent_plugin_errors[-1].to_dict() if recent_plugin_errors else None
             }
 
-    def clear_old_records(self, max_age_hours: int = 24) -> int:
-        """
-        Clear records older than specified age.
-
-        Args:
-            max_age_hours: Maximum age in hours
-
-        Returns:
-            Number of records cleared
-        """
-        with self._lock:
-            cutoff = datetime.now() - timedelta(hours=max_age_hours)
-            original_count = len(self._records)
-            self._records = [r for r in self._records if r.timestamp > cutoff]
-            cleared = original_count - len(self._records)
-
-            if cleared > 0:
-                self.logger.info(f"Cleared {cleared} old error records")
-
-            return cleared
-
     @property
     def version(self) -> int:
         """Changes whenever the recorded errors do (see ErrorSnapshotPublisher)."""
@@ -354,7 +316,7 @@ class ErrorAggregator:
     def clear_before(self, cutoff: datetime) -> int:
         """Forget every error recorded at or before ``cutoff``.
 
-        Unlike clear_old_records, this also resets what the summary reports:
+        This also resets what the summary reports:
         the per-type and per-plugin counts are rebuilt from the records that
         remain, and detected patterns that began before the cutoff are dropped
         (one that is still happening is detected again on its next

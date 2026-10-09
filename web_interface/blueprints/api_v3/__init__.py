@@ -46,6 +46,7 @@ from src.web_interface.error_handler import (describe_exception, http_exception_
                                              redact_text, unhandled_exception_payload)
 from werkzeug.exceptions import HTTPException
 from src.plugin_system.operation_types import OperationType
+from src.web_interface.config_arrays import _schema_type_is
 from src.web_interface.validators import (
     validate_file_upload
 )
@@ -886,46 +887,6 @@ def deep_merge(base_dict, update_dict):
             # For non-dict values or new keys, use the update value
             result[key] = value
     return result
-def _parse_form_value(value):
-    """
-    Parse a form value into the appropriate Python type.
-    Handles booleans, numbers, JSON arrays/objects, and strings.
-    """
-    if value is None:
-        return None
-
-    # Handle string values
-    if isinstance(value, str):
-        stripped = value.strip()
-
-        # Check for boolean strings
-        if stripped.lower() == 'true':
-            return True
-        if stripped.lower() == 'false':
-            return False
-        if stripped.lower() in ('null', 'none') or stripped == '':
-            return None
-
-        # Try parsing as JSON (for arrays and objects) - do this BEFORE number parsing
-        # This handles RGB arrays like "[255, 0, 0]" correctly
-        if stripped.startswith('[') or stripped.startswith('{'):
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError:
-                pass
-
-        # Try parsing as number
-        try:
-            if '.' in stripped:
-                return float(stripped)
-            return int(stripped)
-        except ValueError:
-            pass
-
-        # Return as string (original value, not stripped)
-        return value
-
-    return value
 def _get_schema_property(schema, key_path):
     """
     Get the schema property for a given key path (supports dot notation).
@@ -1017,22 +978,6 @@ def _is_field_required(key_path, schema):
 _SKIP_FIELD = object()
 
 
-def _schema_type_is(prop, wanted):
-    """Whether a schema property is of ``wanted`` type.
-
-    JSON Schema allows a union (``["array", "null"]``), which the per-element
-    style system uses for its per-mode override fields: null there means
-    "inherit the base", so the type genuinely is "an array or nothing". A
-    bare ``prop.get('type') == 'array'`` reads False for those, which meant
-    the indexed colour inputs a form posts as ``...text_color.0/.1/.2`` were
-    never recombined into a list.
-    """
-    if not isinstance(prop, dict):
-        return False
-    declared = prop.get('type')
-    if isinstance(declared, list):
-        return wanted in declared
-    return declared == wanted
 
 
 def _schema_allows_null(prop):

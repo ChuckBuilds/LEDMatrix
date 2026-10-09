@@ -23,8 +23,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('TimezoneSelector', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -230,7 +228,7 @@
             let html = `<div id="${fieldId}_widget" class="timezone-selector-widget" data-field-id="${fieldId}">`;
 
             // Hidden input for form submission
-            html += `<input type="hidden" id="${fieldId}_data" name="${escapeHtml(options.name || fieldId)}" value="${escapeHtml(currentValue)}">`;
+            html += `<input type="hidden" id="${fieldId}_data" name="${window.LEDEscape.html(options.name || fieldId)}" value="${window.LEDEscape.html(currentValue)}">`;
 
             html += `
                 <select id="${fieldId}_input"
@@ -240,11 +238,11 @@
             `;
 
             // Placeholder option
-            html += `<option value="" ${!currentValue ? 'selected' : ''} disabled>${escapeHtml(placeholder)}</option>`;
+            html += `<option value="" ${!currentValue ? 'selected' : ''} disabled>${window.LEDEscape.html(placeholder)}</option>`;
 
             // Build options grouped by region
             for (const [groupName, timezones] of Object.entries(TIMEZONE_GROUPS)) {
-                html += `<optgroup label="${escapeHtml(groupName)}">`;
+                html += `<optgroup label="${window.LEDEscape.html(groupName)}">`;
 
                 for (const tz of timezones) {
                     const isSelected = currentValue === tz.value;
@@ -258,7 +256,7 @@
                         }
                     }
 
-                    html += `<option value="${escapeHtml(tz.value)}" ${isSelected ? 'selected' : ''}>${escapeHtml(displayLabel)}</option>`;
+                    html += `<option value="${window.LEDEscape.html(tz.value)}" ${isSelected ? 'selected' : ''}>${window.LEDEscape.html(displayLabel)}</option>`;
                 }
 
                 html += '</optgroup>';

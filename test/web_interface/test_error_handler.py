@@ -1,24 +1,23 @@
 """
-Tests for the response builders in src/web_interface/error_handler.py and
-the success path in src/web_interface/api_helpers.py.
+Tests for the response builders in src/web_interface/api_helpers.py.
 
-describe_exception() in the same module is already covered by
+describe_exception() in error_handler.py is already covered by
 test/test_web_error_detail.py and is not duplicated here.
 
-Regression coverage for one fixed bug: create_success_response used
+Regression coverage for one fixed bug: the success builder used
 truthiness for `message` and `metadata` while using `is not None` for
 `data`, so an explicitly-passed "" or {} was silently dropped —
-api_helpers.success_response() repeated the same gate, which is the path
-every api_v3 endpoint actually calls.
+success_response() repeated the same gate, which is the path every api_v3
+endpoint actually calls.
 """
 
 import pytest
 from flask import Flask
 
-from src.web_interface.api_helpers import exception_error_response, success_response
-from src.web_interface.error_handler import (
-    create_error_response,
-    create_success_response,
+from src.web_interface.api_helpers import (
+    error_response,
+    exception_error_response,
+    success_response,
 )
 from src.web_interface.errors import ErrorCode, WebInterfaceError
 
@@ -28,23 +27,23 @@ def app():
     return Flask(__name__)
 
 
-class TestCreateErrorResponse:
+class TestErrorResponse:
     def test_returns_response_and_status_tuple(self, app):
         with app.test_request_context():
-            response, status = create_error_response(
+            response, status = error_response(
                 ErrorCode.CONFIG_SAVE_FAILED, "could not save")
         assert status == 500
         assert response.get_json()["message"] == "could not save"
 
     def test_status_code_passthrough(self, app):
         with app.test_request_context():
-            _, status = create_error_response(
+            _, status = error_response(
                 ErrorCode.INVALID_INPUT, "bad", status_code=400)
         assert status == 400
 
     def test_body_matches_the_error_dataclass(self, app):
         with app.test_request_context():
-            response, _ = create_error_response(
+            response, _ = error_response(
                 ErrorCode.NETWORK_ERROR, "offline",
                 details="connection refused", context={"url": "http://x"})
         expected = WebInterfaceError(
@@ -54,12 +53,12 @@ class TestCreateErrorResponse:
 
     def test_none_context_produces_no_context_key(self, app):
         with app.test_request_context():
-            response, _ = create_error_response(ErrorCode.SYSTEM_ERROR, "boom")
+            response, _ = error_response(ErrorCode.SYSTEM_ERROR, "boom")
         assert "context" not in response.get_json()
 
     def test_suggested_fixes_passed_through(self, app):
         with app.test_request_context():
-            response, _ = create_error_response(
+            response, _ = error_response(
                 ErrorCode.SYSTEM_ERROR, "boom", suggested_fixes=["Try again"])
         assert response.get_json()["suggested_fixes"] == ["Try again"]
 
@@ -74,7 +73,6 @@ class TestExceptionErrorResponse:
 
     @staticmethod
     def _by_hand(exc, code, with_context):
-        from src.web_interface.api_helpers import error_response
         error = WebInterfaceError.from_exception(exc, code)
         if with_context:
             return error_response(error.error_code, error.message,
@@ -117,39 +115,45 @@ class TestExceptionErrorResponse:
         assert "context" not in response.get_json()
 
 
-class TestCreateSuccessResponse:
+def _success_body(**kwargs):
+    """success_response()'s body, outside any request timing."""
+    with Flask(__name__).test_request_context():
+        return success_response(**kwargs).get_json()
+
+
+class TestSuccessResponseBody:
     def test_bare_success(self):
-        assert create_success_response() == {"status": "success"}
+        assert _success_body() == {"status": "success"}
 
     def test_data_included(self):
-        assert create_success_response(data={"a": 1})["data"] == {"a": 1}
+        assert _success_body(data={"a": 1})["data"] == {"a": 1}
 
     @pytest.mark.parametrize("falsy", [0, "", False, {}, []])
     def test_falsy_data_is_still_included(self, falsy):
-        assert create_success_response(data=falsy)["data"] == falsy
+        assert _success_body(data=falsy)["data"] == falsy
 
     def test_none_data_omitted(self):
-        assert "data" not in create_success_response(data=None)
+        assert "data" not in _success_body(data=None)
 
     def test_message_included(self):
-        assert create_success_response(message="done")["message"] == "done"
+        assert _success_body(message="done")["message"] == "done"
 
     def test_empty_message_is_still_included(self):
         # Regression: `if message:` dropped an explicitly-passed "".
-        assert create_success_response(message="")["message"] == ""
+        assert _success_body(message="")["message"] == ""
 
     def test_none_message_omitted(self):
-        assert "message" not in create_success_response(message=None)
+        assert "message" not in _success_body(message=None)
 
     def test_metadata_included(self):
-        assert create_success_response(metadata={"v": 1})["metadata"] == {"v": 1}
+        assert _success_body(metadata={"v": 1})["metadata"] == {"v": 1}
 
     def test_empty_metadata_is_still_included(self):
         # Regression: `if metadata:` dropped an explicitly-passed {}.
-        assert create_success_response(metadata={})["metadata"] == {}
+        assert _success_body(metadata={})["metadata"] == {}
 
     def test_none_metadata_omitted(self):
-        assert "metadata" not in create_success_response(metadata=None)
+        assert "metadata" not in _success_body(metadata=None)
 
 
 class TestSuccessResponseHelper:
@@ -162,8 +166,8 @@ class TestSuccessResponseHelper:
 
     def test_explicit_empty_metadata_survives_the_wrapper(self, app):
         # Regression: the wrapper re-gated metadata on truthiness after
-        # create_success_response had already included it, so {} was
-        # dropped again on the way out.
+        # the body builder had already included it, so {} was dropped
+        # again on the way out.
         with app.test_request_context():
             body = success_response(data=None, metadata={}).get_json()
         assert body["metadata"] == {}

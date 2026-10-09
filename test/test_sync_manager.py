@@ -78,7 +78,6 @@ def make_manager(role=SyncRole.STANDALONE, hw_config=None):
     mgr._last_leader_frame_time = 0.0
     mgr._frame_lock = threading.Lock()
     mgr._leader_ip = None
-    mgr._on_new_cycle = None
     mgr._on_scroll_image = None
     mgr._pending_scroll_image = None
     mgr._scroll_image_lock = threading.Lock()
@@ -495,31 +494,35 @@ class TestFollowerRecvLoop:
         assert mgr._peer_compatible is True
         assert mgr.logger.error.called is False
 
-    def test_scroll_x_switches_to_follower_and_builds_cycle(self):
+    def test_scroll_x_switches_to_follower(self):
         mgr = make_manager(role=SyncRole.FOLLOWER)
-        calls = []
-        mgr._on_new_cycle = lambda: calls.append(1)
         self._drive(mgr, json.dumps({"t": "sx", "x": 12.34}).encode())
         assert mgr._follower_state is FollowerState.FOLLOWER
         assert mgr.get_latest_scroll_x() == 12.34
-        assert calls == [1]
 
-    def test_scroll_x_while_already_following_does_not_rebuild(self):
+    def test_scroll_x_while_already_following_updates_the_position(self):
         mgr = make_manager(role=SyncRole.FOLLOWER)
         mgr._follower_state = FollowerState.FOLLOWER
-        calls = []
-        mgr._on_new_cycle = lambda: calls.append(1)
         self._drive(mgr, json.dumps({"t": "sx", "x": 5.0}).encode())
         assert mgr.get_latest_scroll_x() == 5.0
-        assert calls == []
 
-    def test_new_cycle_message_triggers_callback(self):
+    @pytest.mark.parametrize("payload", [{"t": "nc"}, {"t": "some-future-type"}])
+    def test_an_older_or_newer_leaders_message_is_ignored(self, payload):
+        # Older leaders send "nc" at each new cycle. Nothing uses it, and a
+        # follower must take it -- or any type it does not know -- quietly:
+        # not as a frame, not as a malformed packet, no error back-off.
         mgr = make_manager(role=SyncRole.FOLLOWER)
         mgr._follower_state = FollowerState.FOLLOWER
-        calls = []
-        mgr._on_new_cycle = lambda: calls.append(1)
-        self._drive(mgr, json.dumps({"t": "nc"}).encode())
-        assert calls == [1]
+        sleeps = MagicMock()
+        with patch.object(sync_manager, "time",
+                          SimpleNamespace(time=time.time, monotonic=time.monotonic,
+                                          sleep=sleeps)):
+            self._drive(mgr, json.dumps(payload).encode())
+        assert mgr._follower_state is FollowerState.FOLLOWER
+        assert mgr.get_latest_frame() is None
+        assert mgr.get_latest_scroll_x() is None
+        assert not mgr.logger.debug.called
+        sleeps.assert_not_called()
 
     def test_non_object_json_does_not_reach_the_outer_handler(self):
         # A bare JSON scalar parses, then msg.get() raises AttributeError.
@@ -546,28 +549,6 @@ class TestFollowerRecvLoop:
                 self._drive(mgr, json.dumps(payload).encode())
             assert mgr.get_latest_scroll_x() is None
             sleeps.assert_not_called()
-
-    def test_callback_failure_is_not_mistaken_for_a_malformed_packet(self, monkeypatch):
-        # A payload that parses is a control message, full stop. If the
-        # callback it triggers raises one of the types the field guard
-        # catches, that fault belongs to the callback: it must not send
-        # the packet to the image decoder, which would report it as a
-        # decode error and bury the real cause. The loop still survives
-        # it — the outer handler catches it like any other fault.
-        mgr = make_manager(role=SyncRole.FOLLOWER)
-        mgr._follower_state = FollowerState.FOLLOWER
-
-        def boom():
-            raise ValueError("callback is broken")
-
-        mgr._on_new_cycle = boom
-        fake_clock(monkeypatch, sleep_fn=MagicMock())
-        self._drive(mgr, json.dumps({"t": "nc"}).encode())
-
-        logged = " | ".join(str(c) for c in mgr.logger.debug.call_args_list)
-        assert "callback is broken" in logged
-        assert "frame decode error" not in logged
-        assert "malformed control message" not in logged
 
     def test_oversized_legacy_frame_is_rejected_before_decode(self, monkeypatch):
         # The UDP path is reachable by any host on the LAN, so it caps
@@ -603,12 +584,9 @@ class TestFollowerRecvLoop:
         for payload in (b'{"t": "sx", "x": ' + literal.encode() + b'}',
                         json.dumps({"t": "sx", "x": literal}).encode()):
             mgr = make_manager(role=SyncRole.FOLLOWER)
-            calls = []
-            mgr._on_new_cycle = lambda: calls.append(1)
             self._drive(mgr, payload)
             assert mgr.get_latest_scroll_x() is None
             assert mgr._follower_state is FollowerState.STANDALONE
-            assert calls == []
 
     def test_non_finite_scroll_x_leaves_a_good_value_in_place(self):
         # The reject must not clear the last usable position either — a
@@ -697,17 +675,10 @@ class TestSendControlMessages:
         msg = json.loads(mgr._send_sock.sendto.call_args[0][0].decode())
         assert msg == {"t": "sx", "x": 3.14}
 
-    def test_send_new_cycle(self):
-        mgr = self._connected_leader()
-        mgr.send_new_cycle()
-        msg = json.loads(mgr._send_sock.sendto.call_args[0][0].decode())
-        assert msg == {"t": "nc"}
-
     def test_control_messages_noop_when_disconnected(self):
         mgr = self._connected_leader()
         mgr._leader_state = LeaderState.NO_PEER
         mgr.send_scroll_x(1.0)
-        mgr.send_new_cycle()
         assert not mgr._send_sock.sendto.called
 
     def test_set_leader_width(self):

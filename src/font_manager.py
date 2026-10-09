@@ -41,6 +41,7 @@ from PIL import ImageFont
 from src.common.bdf_font import load_bdf_face, read_bdf_native_size
 from src.common.font_layout import load_truetype, resolve_asset_path
 from typing import Dict, Tuple, Optional, Union, Any
+from src.deprecation import deprecated
 
 logger = logging.getLogger(__name__)
 
@@ -533,6 +534,7 @@ class FontManager:
         """
         return load_bdf_face(font_path, size_px)[0]
 
+    @deprecated("3.10.0", "use src.common.bdf_font.read_bdf_native_size()")
     def get_native_bdf_size(self, family: str) -> Optional[int]:
         """The one true pixel size of a BDF family in the catalog, or None
         for scalable (TTF) families / unknown families."""
@@ -553,6 +555,7 @@ class FontManager:
 
     # ==================== Font Measurement ====================
 
+    @deprecated("3.10.0", "use src.adaptive_layout.measure_ink()")
     def measure_text(self, text: str, font: Union[ImageFont.FreeTypeFont, freetype.Face]) -> Tuple[int, int, int]:
         """
         Measure text dimensions and baseline.

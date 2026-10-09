@@ -88,6 +88,8 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
   let syncAnswer = { status: 'success', data: { role: 'leader', state: 'no_peer' } };
   let syncMode = 'ok';
   let advice = smooth;
+  const shortfall = { measured_hz: 110.4, planned_hz: 120, suggested_cap_hz: 100, slow_percent: 8 };
+  let refreshAnswer = { status: 'success', data: { planned_hz: 120, measured_hz: 110.4, shortfall } };
   const requests = [];
   function fakeFetch(url, init = {}) {
     requests.push(url);
@@ -99,6 +101,7 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
     });
     if (url === '/api/v3/plugins/installed') return respond(200, { status: 'success', data: { plugins } });
     if (url.startsWith('/api/v3/config/scroll-speed-advice?')) return respond(200, advice);
+    if (url === '/api/v3/config/refresh-rate') return respond(200, refreshAnswer);
     if (url === '/api/v3/sync/status') {
       if (syncMode === 'network') return Promise.reject(new TypeError('Failed to fetch'));
       if (syncMode === 'login') return respond(401, { status: 'error' }, { 'X-LEDMatrix-Login': '/login' });
@@ -148,6 +151,14 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
   // ── first load ──────────────────────────────────────────────────────────
   ok('one plugin-list request on start', count('/api/v3/plugins/installed') === 1, requests);
   ok('one scroll-speed hint request on start (after the debounce)', count('/api/v3/config/scroll-speed-advice') === 1, requests);
+  const refreshHint = $('limit_refresh_rate_hz_hint');
+  ok('a panel short of its cap says so, as text, with a button for a cap it can hold',
+     /about 110 Hz, below this 120 Hz cap.*8% slower/.test(refreshHint.textContent)
+     && refreshHint.querySelector('button').textContent === 'Use 100 Hz', refreshHint.textContent);
+  refreshHint.querySelector('button').click();
+  ok('the button fills the field and says to save and restart',
+     $('limit_refresh_rate_hz').value === '100' && /Save, then restart/.test(refreshHint.textContent),
+     [$('limit_refresh_rate_hz').value, refreshHint.textContent]);
   ok('the saved role is standalone: no sync request, no interval work',
      $('sync_role').value === 'standalone' && syncPolls() === 0, [$('sync_role').value, syncPolls()]);
   ok('the sync poll interval runs while the tab is on screen', intervals.size === 1

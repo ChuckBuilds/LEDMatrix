@@ -538,3 +538,66 @@ def speed_advice(
         "smooth": smooth,
         "alternatives": [as_dict(c) for c in alternatives],
     }
+
+
+#: A measured refresh this far below the rate speeds are planned for means
+#: the panel cannot reach its cap. Smaller gaps are the cap's own slack and
+#: the estimate's: one rig measured 99.95 Hz under a 100 Hz cap.
+REFRESH_SHORTFALL = 0.03
+
+#: How far under the measured rate a suggested cap sits. The measurement is
+#: the fast end of the panel's refreshes (frame_timing takes the 10th
+#: percentile of intervals), and an uncapped panel drifts: one read
+#: 107.6-113.1 Hz over 15 seconds. A cap inside that band would not hold.
+CAP_HEADROOM = 0.05
+
+
+def holdable_cap(measured_hz: Any) -> Optional[int]:
+    """A refresh cap the panel can hold: a multiple of 10, 5% under what it measured.
+
+    A multiple of 10 because its whole-pixel speeds are round numbers (a
+    100 Hz cap gives 50 and 100 px/s). None without a usable measurement, or
+    when the panel is too slow for any cap of 10 Hz or more.
+    """
+    hz = _coerce(measured_hz)
+    if hz is None:
+        return None
+    cap = int(hz * (1.0 - CAP_HEADROOM) // 10) * 10
+    return cap if cap >= 10 else None
+
+
+def refresh_shortfall(measured_hz: Any, planned_hz: Any) -> Optional[Dict[str, Any]]:
+    """When the panel refreshes measurably slower than speeds are planned for.
+
+    ``planned_hz`` is what :func:`configure` solves against -- the
+    ``limit_refresh_rate_hz`` cap, or :data:`DEFAULT_REFRESH_HZ` when it is 0.
+    A panel that cannot reach it still moves whole pixels per frame, but every
+    speed runs slow by the shortfall and the ladder of smooth speeds is the
+    cap's, not the panel's. None when there is no measurement, or the panel
+    reaches the cap (or beats it, as some do by a few Hz).
+    """
+    measured, planned = _coerce(measured_hz), _coerce(planned_hz)
+    if measured is None or planned is None:
+        return None
+    if measured >= planned * (1.0 - REFRESH_SHORTFALL):
+        return None
+    return {
+        "measured_hz": round(measured, 1),
+        "planned_hz": round(planned, 1),
+        "suggested_cap_hz": holdable_cap(measured),
+        "slow_percent": round((1.0 - measured / planned) * 100),
+    }
+
+
+def describe_refresh_shortfall(shortfall: Dict[str, Any]) -> str:
+    """One log line for :func:`refresh_shortfall`'s answer."""
+    text = (
+        f"The panel refreshes at about {shortfall['measured_hz']:.0f} Hz, below "
+        f"the {shortfall['planned_hz']:.0f} Hz that scroll speeds are planned "
+        f"for (display.hardware.limit_refresh_rate_hz), so every scroll runs "
+        f"about {shortfall['slow_percent']}% slower than configured and the "
+        f"smooth speeds are worked out for a rate this panel never reaches.")
+    if shortfall.get("suggested_cap_hz"):
+        text += (f" Set Limit Refresh Rate to {shortfall['suggested_cap_hz']} Hz "
+                 f"(web UI, Display tab), which this panel can hold, and restart.")
+    return text

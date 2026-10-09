@@ -26,8 +26,6 @@
 
     const base = window.BaseWidget ? new window.BaseWidget('DatePicker', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -70,11 +68,11 @@
                 <div class="relative flex-1">
                     <input type="date"
                            id="${fieldId}_input"
-                           name="${escapeHtml(options.name || fieldId)}"
-                           value="${escapeHtml(currentValue)}"
-                           ${min ? `min="${escapeHtml(min)}"` : ''}
-                           ${max ? `max="${escapeHtml(max)}"` : ''}
-                           ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ''}
+                           name="${window.LEDEscape.html(options.name || fieldId)}"
+                           value="${window.LEDEscape.html(currentValue)}"
+                           ${min ? `min="${window.LEDEscape.html(min)}"` : ''}
+                           ${max ? `max="${window.LEDEscape.html(max)}"` : ''}
+                           ${placeholder ? `placeholder="${window.LEDEscape.html(placeholder)}"` : ''}
                            ${disabled ? 'disabled' : ''}
                            ${required ? 'required' : ''}
                            onchange="window.LEDMatrixWidgets.getHandlers('date-picker').onChange('${fieldId}')"
@@ -109,7 +107,7 @@
                 } else {
                     constraintText = `Until ${max}`;
                 }
-                html += `<div class="text-xs text-gray-400 mt-1">${escapeHtml(constraintText)}</div>`;
+                html += `<div class="text-xs text-gray-400 mt-1">${window.LEDEscape.html(constraintText)}</div>`;
             }
 
             // Error message area

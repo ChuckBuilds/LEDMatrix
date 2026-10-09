@@ -51,44 +51,36 @@ class OperationHistory:
     def __init__(
         self,
         history_file: Optional[str] = None,
-        max_records: int = 1000,
-        lazy_load: bool = False
+        max_records: int = 1000
     ):
         """
-        Initialize operation history.
-        
+        Initialize operation history. The history file is read on first use,
+        not here, so constructing this costs the web app's startup nothing.
+
         Args:
             history_file: Path to file for persisting history
             max_records: Maximum number of records to keep
-            lazy_load: If True, defer loading history file until first access
         """
         self.logger = get_logger(__name__)
         self.history_file = Path(history_file) if history_file else None
         self.max_records = max_records
-        self._lazy_load = lazy_load
         self._history_loaded = False
-        
+
         # In-memory history
         self._history: List[OperationRecord] = []
         self._lock = threading.RLock()
-        
-        # Load history from file if it exists (unless lazy loading)
-        if not self._lazy_load and self.history_file and self.history_file.exists():
-            self._load_history()
-            self._history_loaded = True
-    
+
     def _ensure_loaded(self) -> None:
-        """Ensure history is loaded (for lazy loading)."""
+        """Load the history file on first use."""
         if not self._history_loaded and self.history_file and self.history_file.exists():
             self._load_history()
             self._history_loaded = True
-    
+
     def record_operation(
         self,
         operation_type: str,
         plugin_id: Optional[str] = None,
         status: str = "completed",
-        user: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
         operation_id: Optional[str] = None
@@ -100,7 +92,6 @@ class OperationHistory:
             operation_type: Type of operation (install, update, uninstall, etc.)
             plugin_id: Plugin identifier
             status: Operation status
-            user: User who performed operation
             details: Optional operation details
             error: Optional error message
             operation_id: Optional operation ID
@@ -118,7 +109,6 @@ class OperationHistory:
             plugin_id=plugin_id,
             timestamp=datetime.now(),
             status=status,
-            user=user,
             details=details,
             error=error
         )

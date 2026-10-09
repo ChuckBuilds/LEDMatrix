@@ -3,6 +3,7 @@ Tests for the Vegas mode density work: dead-space trimming in PluginAdapter
 and the configurable lead-in gap in ScrollHelper.
 """
 
+import dataclasses
 from contextlib import contextmanager
 
 import pytest
@@ -297,9 +298,6 @@ class TestPluginBoundaryGaps:
         class FakeStream:
             def get_grouped_content_for_composition(self):
                 return grouped
-
-            def get_active_plugin_ids(self):
-                return [pid for pid, _ in grouped]
 
         class DM:
             width = DISPLAY_W
@@ -615,10 +613,10 @@ class TestConfigSurface:
         assert cfg.lead_in_width == 0
         assert cfg.content_padding == 8
 
-    def test_round_trips_through_to_dict(self):
+    def test_round_trips_through_asdict(self):
         cfg = VegasModeConfig(trim_threshold=20, lead_in_width=64)
         restored = VegasModeConfig.from_config(
-            {'display': {'vegas_scroll': cfg.to_dict()}})
+            {'display': {'vegas_scroll': dataclasses.asdict(cfg)}})
         assert restored.trim_threshold == 20
         assert restored.lead_in_width == 64
 
@@ -697,9 +695,6 @@ class TestMeasuredSeparation:
         class FakeStream:
             def get_grouped_content_for_composition(self):
                 return grouped
-
-            def get_active_plugin_ids(self):
-                return [pid for pid, _ in grouped]
 
         class DM:
             width = DISPLAY_W
@@ -815,9 +810,6 @@ class TestCycleEndsBeforeWrap:
         class FakeStream:
             def get_grouped_content_for_composition(self):
                 return [('a', [Image.new('RGB', (strip_width, DISPLAY_H), (255, 255, 255))])]
-
-            def get_active_plugin_ids(self):
-                return ['a']
 
         class DM:
             width = DISPLAY_W
@@ -961,9 +953,6 @@ class TestBudgetUsesMeasuredGaps:
         class FakeStream:
             def get_grouped_content_for_composition(self):
                 return [('rows', selected)]
-
-            def get_active_plugin_ids(self):
-                return ['rows']
 
         class DM:
             width = DISPLAY_W
@@ -1258,9 +1247,6 @@ class TestContinuousExtension:
             def get_grouped_content_for_composition(self):
                 return groups[0] if groups else []
 
-            def get_active_plugin_ids(self):
-                return [pid for pid, _ in (groups[0] if groups else [])]
-
             def take_next_group(self, count=None, offscreen_only=False):
                 self.calls.append(offscreen_only)
                 if self._i >= len(groups):
@@ -1449,9 +1435,6 @@ class TestDeferredDraining:
 
             def get_grouped_content_for_composition(self):
                 return [('seed', [Image.new('RGB', (600, DISPLAY_H), (255, 255, 255))])]
-
-            def get_active_plugin_ids(self):
-                return ['seed']
 
             def take_next_group(self, count=None, offscreen_only=False):
                 if self._served:

@@ -54,8 +54,6 @@
     // Use BaseWidget utilities if available
     const base = window.BaseWidget ? new window.BaseWidget('SchedulePicker', '1.0.0') : null;
 
-    function escapeHtml(text) { return window.LEDEscape.html(text); }
-
     function sanitizeId(id) {
         if (base) return base.sanitizeId(id);
         return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -239,7 +237,7 @@
                             <label for="${fieldId}_global_start" class="block text-sm font-medium text-gray-700">Start Time</label>
                             <input type="time"
                                    id="${fieldId}_global_start"
-                                   value="${escapeHtml(schedule.start_time)}"
+                                   value="${window.LEDEscape.html(schedule.start_time)}"
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onGlobalTimeChange('${fieldId}')"
                                    class="form-control mt-1">
                             <p class="mt-1 text-sm text-gray-600">When to start displaying content (HH:MM)</p>
@@ -248,7 +246,7 @@
                             <label for="${fieldId}_global_end" class="block text-sm font-medium text-gray-700">End Time</label>
                             <input type="time"
                                    id="${fieldId}_global_end"
-                                   value="${escapeHtml(schedule.end_time)}"
+                                   value="${window.LEDEscape.html(schedule.end_time)}"
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onGlobalTimeChange('${fieldId}')"
                                    class="form-control mt-1">
                             <p class="mt-1 text-sm text-gray-600">When to stop displaying content (HH:MM)</p>
@@ -279,7 +277,7 @@
             // Render each day row
             DAYS.forEach(day => {
                 const dayConfig = schedule.days[day];
-                const dayLabel = escapeHtml(DAY_LABEL_MAP.get(day) || day);
+                const dayLabel = window.LEDEscape.html(DAY_LABEL_MAP.get(day) || day);
                 const disabled = !dayConfig.enabled;
                 const disabledClass = disabled ? 'bg-gray-100' : '';
 
@@ -300,7 +298,7 @@
                             <input type="time"
                                    id="${fieldId}_${day}_start"
                                    aria-label="${dayLabel} start time"
-                                   value="${escapeHtml(dayConfig.start_time)}"
+                                   value="${window.LEDEscape.html(dayConfig.start_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${disabledClass}">
@@ -309,7 +307,7 @@
                             <input type="time"
                                    id="${fieldId}_${day}_end"
                                    aria-label="${dayLabel} end time"
-                                   value="${escapeHtml(dayConfig.end_time)}"
+                                   value="${window.LEDEscape.html(dayConfig.end_time)}"
                                    ${disabled ? 'disabled' : ''}
                                    onchange="window.LEDMatrixWidgets.getHandlers('schedule-picker').onDayTimeChange('${fieldId}', '${day}')"
                                    class="block w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${disabledClass}">
@@ -345,15 +343,15 @@
             html += `<input type="hidden" id="${fieldId}_mode_value" name="mode" value="${schedule.mode}">`;
 
             // Global times (used when mode is global)
-            html += `<input type="hidden" id="${fieldId}_start_time_hidden" name="start_time" value="${escapeHtml(schedule.start_time)}">`;
-            html += `<input type="hidden" id="${fieldId}_end_time_hidden" name="end_time" value="${escapeHtml(schedule.end_time)}">`;
+            html += `<input type="hidden" id="${fieldId}_start_time_hidden" name="start_time" value="${window.LEDEscape.html(schedule.start_time)}">`;
+            html += `<input type="hidden" id="${fieldId}_end_time_hidden" name="end_time" value="${window.LEDEscape.html(schedule.end_time)}">`;
 
             // Per-day values (used when mode is per_day)
             DAYS.forEach(day => {
                 const dayConfig = schedule.days[day];
                 html += `<input type="hidden" id="${fieldId}_${day}_enabled_hidden" name="${day}_enabled" value="${dayConfig.enabled}">`;
-                html += `<input type="hidden" id="${fieldId}_${day}_start_hidden" name="${day}_start" value="${escapeHtml(dayConfig.start_time)}">`;
-                html += `<input type="hidden" id="${fieldId}_${day}_end_hidden" name="${day}_end" value="${escapeHtml(dayConfig.end_time)}">`;
+                html += `<input type="hidden" id="${fieldId}_${day}_start_hidden" name="${day}_start" value="${window.LEDEscape.html(dayConfig.start_time)}">`;
+                html += `<input type="hidden" id="${fieldId}_${day}_end_hidden" name="${day}_end" value="${window.LEDEscape.html(dayConfig.end_time)}">`;
             });
 
             return html;

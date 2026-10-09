@@ -19,6 +19,27 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Scroll speed: a panel slower than its refresh cap is reported
+
+- Scroll speeds are solved against `limit_refresh_rate_hz`, so a panel that
+  cannot reach its cap ran every scroll slow by the shortfall, with no sign
+  why (one Pi 4 on a 120 Hz cap refreshed at ~110 Hz: 60 px/s ran at 55).
+  Once the display has measured the real rate over three windows of
+  scrolling, a panel more than 3% short of the cap is logged once, as a
+  warning from `src.common.frame_timing` that names a cap it can hold (a
+  multiple of 10, 5% under the measurement). The Display tab shows the same
+  under Limit Refresh Rate, with a button that fills it in, from the new
+  `GET /api/v3/config/refresh-rate`. Not checked in the emulator or on the
+  fallback canvas.
+- The frame-stats file records `planned_refresh_hz` (additive), and the
+  scroll-speed advice behind the Vegas slider ignores a measurement written
+  under a different cap. Until now, after the cap changed, the slider kept
+  advising from the old rate until the display restarted.
+- New in `src.common.scroll_config`: `refresh_shortfall()`, `holdable_cap()`
+  and `describe_refresh_shortfall()`.
+
+### Fixes
+
 - Web API error responses no longer carry an exception's message (CodeQL
   `py/stack-trace-exposure`). `describe_exception()` now returns a reason
   code -- the exception type, plus the errno for an `OSError`
@@ -28,6 +49,136 @@ accepts both, but the store flags the old spelling as deprecated
   start/stop `service` results keep `active`, `returncode` and `started`
   but drop systemctl's `stdout`/`stderr`; WiFi, unit-refresh and
   config-save failures say what failed and point at the log.
+
+## 3.8.3
+
+Fresh installs on Raspberry Pi OS Lite work again: 3.8.2's installer reported
+a desktop on Lite and stopped (#780, #781). Also lighter cached ESPN
+scoreboard windows (#749), a Vegas static-pause fix and a store reinstall
+restart prompt (#753), and display modes a plugin computes from its config in
+the web UI (#769).
+
+### Install
+
+- The installer no longer stops Raspberry Pi OS Lite with "Desktop environment
+  detected". Its package check searched whole `dpkg -l` lines, and `.*kde`
+  matched inside `libblockdev` ("bloc**kde**v"), which Lite ships; it now
+  matches installed package names from their start (#780). Desktop
+  metapackages and session managers are matched as whole names, so
+  `gnome-keyring` and similar standalone parts no longer count, and the list
+  now includes Raspberry Pi OS Trixie's `rpd-wayland-core` / `rpd-x-core`
+  (which replaced `raspberrypi-ui-mods`), Debian's `task-*-desktop` and
+  multi-arch names (#781).
+- Only a **running** desktop stops the install: a display manager that
+  `systemctl is-active` reports (`display-manager`, lightdm, gdm, sddm,
+  lxdm), with directions to boot to the console instead. Desktop packages or
+  session files on a Pi that boots to the console print a warning and the
+  install continues (#781).
+
+### Fixed
+
+- A Vegas static pause no longer ends at once for a plugin whose
+  `display_duration` is not a number (a string such as `"20"` or `null` from
+  config.json, as clock-simple, calendar and countdown return it). The pause
+  reads the duration the way the rotation does, with the same fallbacks: 30 s
+  for anything that is not a number, 15 s for zero or less. The helper moved
+  from `display_controller._finite_seconds` to `base_plugin.finite_seconds`,
+  unchanged (#753).
+- Reinstalling an enabled plugin from the store now asks for a restart for
+  plugins that install under their manifest id (Weather as
+  `ledmatrix-weather`, Music, Stocks, Leaderboard): the route checked the
+  enabled flag under the registry id (#753).
+- `/display/modes`, the on-demand dialog and `on-demand/start` by mode see the
+  modes a plugin computes from its config (soccer-scoreboard's custom
+  leagues), which no manifest can list. The display records the modes it
+  registered in the runtime snapshot, and the web catalog prefers them while
+  the plugin is loaded, falling back to the manifest otherwise. No manifest or
+  plugin change needed (#769, fixes #668).
+
+### Performance
+
+- `BackgroundDataService` drops the parts of an ESPN `/scoreboard` response no
+  scoreboard reads (stat leaders, athlete cards, links, headlines, highlights,
+  geo broadcasts) before caching it (`src/common/espn_payload.py`,
+  core-internal). Measured on one Pi (hdpi), the five scoreboard windows went
+  from 10.6 MB to 3.0 MB of JSON and ~40 MB to ~12 MB of parsed objects.
+  `submit_fetch_request(slim_payload=False)` caches a response whole (#749).
+
+### Tooling
+
+- `test/test_sports_helpers.py`'s parity tests pass again with
+  `LEDMATRIX_PLUGINS` set. The scoreboards deleted their copies of the
+  `sports_helpers` bodies and constants when they adopted `SportsHelpersMixin`
+  (ledmatrix-plugins #563/#564), and the 19 tests still expected them. A copy
+  that is gone now counts as adopted when the plugin imports
+  `src.common.sports_helpers`, as the stage 3/4 and game-over parity tests
+  already do; a copy that remains must still match. (#777)
+- `src/common/README.md` lists `espn_payload`, which
+  `test_common_readme_lists_every_module` requires (#782).
+
+### Dead code removed, unused plugin APIs deprecated
+
+An over-engineering audit of the whole tree. Every symbol below was checked
+against core, the plugin monorepo and all eight third-party plugins in
+`plugins.json` before it went. Nothing a plugin imports was removed;
+plugin-facing methods only get `@deprecated` (see below).
+
+- **Deprecated for removal in 3.10.0** (warn once per process, in
+  `journalctl -u ledmatrix`). No plugin in core, the monorepo or the registry
+  calls them. `docs/DEPRECATIONS_3.8.md` is the regenerated scan, which
+  `scripts/plugin_api_usage.py` now runs for these owners too:
+  - `LogoDownloader`: the bulk-download and RGBA-conversion methods
+    (`fetch_teams_data`, `extract_teams_from_data`,
+    `download_missing_logos_for_league`, `download_all_ncaa_football_logos`,
+    `download_all_missing_logos`, `convert_image_to_rgba`,
+    `convert_all_logos_to_rgba`). `download_missing_logo()` stays.
+  - `ConfigManager`: `rollback_config`, `list_backups`,
+    `validate_config_file`, `get_secret`, `cleanup_orphaned_plugin_configs`,
+    `validate_all_plugin_configs`.
+  - `APIHelper`: `fetch_espn_scoreboard`/`_standings`/`_rankings`,
+    `set_cache`, `get_cache`, `set_rate_limit`, `get_request_stats`. `get()`
+    stays.
+  - `BackgroundDataService`: `get_result`, `is_request_complete`,
+    `get_request_status` (pass `callback=` to `submit_fetch_request()`).
+  - `PluginManager`: `get_all_plugins`, `get_plugin_info`,
+    `get_all_plugin_info`, `get_plugin_display_modes`, `find_plugin_for_mode`.
+    `PluginStateManager`: `is_loaded`, `is_running`, `is_error`,
+    `get_last_update`, `get_error_info`, `get_state_info`.
+  - `CacheManager.load_cache`, `CacheManager.generate_sport_cache_key`,
+    `FontManager.measure_text`, `FontManager.get_native_bdf_size`,
+    `BaseOddsManager.get_odds_for_games`, `BaseOddsManager.format_odds_summary`,
+    `DynamicTeamResolver.get_available_dynamic_teams`,
+    `DynamicTeamResolver.is_dynamic_team`, `PluginTestCase`.
+- **Removed (core-internal, no caller):**
+  - `src/cache/cache_metrics.py`
+  - Vegas status/stats plumbing that nothing read (`get_status`,
+    `get_current_scroll_info`, `get_buffer_status`, `VegasModeConfig.to_dict`)
+  - the sync "new cycle" message, which no follower ever handled (followers
+    now ignore any message type they don't know)
+  - unused `OperationType` members, `PluginOperation.from_dict`,
+    `cancel_operation`
+  - the test-only `PluginCatalog` readers
+  - `IPC *Args.to_dict` and `client.ping()`
+  - `_parse_form_value`
+  - `CacheStrategyProtocol`
+  - `ErrorAggregator.on_pattern_detected` and `clear_old_records`
+  - the duplicate `create_error_response`/`create_success_response`
+- **Web UI:**
+  - `json-file-manager.js` was never mounted: the schema widget renders the
+    plugin's own file manager in an iframe.
+  - `example-color-picker.js` was a docs example; `utils/error_handler.js` had
+    one fallback caller.
+  - The 29 one-line `escapeHtml` shims now call `window.LEDEscape` directly.
+  - Four uncalled `PluginAPI` methods are gone.
+  - `window.escapeHtml`, `BaseWidget` and every widget name are unchanged.
+- **Scripts and dependencies:**
+  - One-off scripts removed: `add_defaults_to_schemas.py`,
+    `analyze_plugin_schemas.py`, `test_captive_portal.sh`,
+    `verify_wifi_before_testing.sh`, `dev/run_emulator.sh` (use
+    `python3 run.py -e`), `update_plugin_repos.py` (use
+    `git -C ../ledmatrix-plugins pull`).
+  - Unused pins dropped: `markupsafe` (Flask still installs it) and
+    `pytest-mock`.
 
 ## 3.8.2
 
@@ -1284,6 +1435,25 @@ policies are unchanged.
   a runtime publisher that stops still goes `stale`, and a subscription that
   goes quiet still falls back to the cache. The cache path's 120 s rule is
   unchanged.
+- A plugin that pauses the Vegas scroll gets its pause when its display
+  duration is not a plain number. Several plugins (clock-simple, calendar,
+  countdown) return `display_duration` as it is in config.json, so a value
+  saved as `"20"` or `null` (the raw config editor, a hand edit) reached the
+  pause as a string or None; comparing it with the clock raised, and the
+  plugin flashed up and the scroll went straight on, at every one of its
+  turns. `inf` held the pause until something interrupted it, and 0, a
+  negative number or NaN ended it at once. The pause now reads the duration
+  as the rotation does (`finite_seconds()` in `base_plugin`): a numeric
+  string counts, anything else that is not a finite number (or a
+  `get_display_duration()` that raises) pauses for 30 s, and a number at or
+  below zero for 15 s, with one warning per plugin.
+- Reinstalling Weather, Music, Stocks or Leaderboard from the Plugin Store
+  while it is enabled asks for a display restart, as reinstalling any other
+  enabled plugin does. `POST /api/v3/plugins/install` looked for the
+  plugin's `enabled` flag under the store id (`weather`), but its config
+  section is under the id its manifest declares (`ledmatrix-weather`), so
+  `restart_required` was always false and the display kept running the
+  copy it had loaded. The check now uses the installed id.
 
 ### Scrolling
 

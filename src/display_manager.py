@@ -393,6 +393,11 @@ class DisplayManager:
         
         self._setup_matrix()
         logger.info("Matrix setup completed in %.3f seconds", time.time() - start_time)
+        # Only a real panel's swaps wait on its refresh: the emulator and the
+        # fallback canvas pace themselves, so "slower than the cap" would be
+        # noise there.
+        if self.matrix is not None and os.environ.get('EMULATOR', 'false') != 'true':
+            self.frame_timing.plan_refresh(self.refresh_hz)
         self._setup_scan_order_compensation()
         
         font_time = time.time()
@@ -1501,7 +1506,9 @@ class DisplayManager:
         fractional-pixel motion. See src/common/scroll_config.py.
 
         Note this is the configured *cap*, not necessarily what the panel
-        achieves -- scripts/scroll_speeds.py --measure reports the real rate.
+        achieves -- scripts/scroll_speeds.py --measure reports the real rate,
+        and the frame-timing recorder logs a warning, with a cap the panel can
+        hold, once it has measured a panel that falls short of this.
         """
         hardware = (self.config.get('display') or {}).get('hardware') or {}
         try:

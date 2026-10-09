@@ -25,6 +25,7 @@ from src.plugin_system.testing.mocks import (
     MockConfigManager,
     MockPluginManager
 )
+from src.deprecation import deprecated
 
 
 class PluginTestCase(unittest.TestCase):
@@ -34,6 +35,7 @@ class PluginTestCase(unittest.TestCase):
     Provides common fixtures and helper methods.
     """
     
+    @deprecated("3.10.0", "use src.plugin_system.testing.harness and the mocks directly")
     def setUp(self):
         """Set up test fixtures."""
         # Create mock managers

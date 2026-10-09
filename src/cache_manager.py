@@ -35,13 +35,13 @@ import tempfile
 from src.cache.memory_cache import MemoryCache, default_max_size
 from src.cache.disk_cache import DiskCache
 from src.cache.cache_strategy import CacheStrategy
-from src.cache.cache_metrics import CacheMetrics
 from src.logging_config import get_logger
 
 # Canonical implementation lives in src.cache.disk_cache; re-exported here
 # because this module's docstring documents it and external code may import
 # it from either path.
 from src.cache.disk_cache import DateTimeEncoder  # noqa: F401 - deliberate re-export
+from src.deprecation import deprecated
 
 # CacheManager.config_manager not built yet (None means "not available").
 _UNSET: Any = object()
@@ -149,10 +149,7 @@ class CacheManager:
             max_size=default_max_size(), cleanup_interval=300.0
         )
         self._disk_cache_component = DiskCache(cache_dir=self.cache_dir, logger=self.logger)
-        # No config manager: CacheStrategy keeps the parameter for callers but
-        # reads nothing from it, and passing ours would build it eagerly.
-        self._strategy_component = CacheStrategy(logger=self.logger)
-        self._metrics_component = CacheMetrics(logger=self.logger)
+        self._strategy_component = CacheStrategy()
         
         # Disk cleanup configuration
         self._disk_cleanup_interval_hours = 24  # Run cleanup every 24 hours
@@ -398,6 +395,7 @@ class CacheManager:
         # caller gets as is.
         self._disk_cache_component.set(key, data)
 
+    @deprecated("3.10.0", "use get(key, max_age=3600)")
     def load_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """Load data from cache with memory caching."""
         # Check memory cache first (1 minute TTL)
@@ -607,13 +605,6 @@ class CacheManager:
             duration = time.time() - start_time
             space_freed_mb = stats['space_freed_bytes'] / (1024 * 1024)
             
-            # Record metrics
-            self._metrics_component.record_disk_cleanup(
-                files_cleaned=stats['files_deleted'],
-                space_freed_mb=space_freed_mb,
-                duration_sec=duration
-            )
-            
             # Log summary
             if stats['files_deleted'] > 0:
                 self.logger.info(
@@ -796,6 +787,7 @@ class CacheManager:
         data_type = self.get_data_type_from_key(key)
         return self.get_cached_data_with_strategy(key, data_type)
 
+    @deprecated("3.10.0")
     def generate_sport_cache_key(self, sport: str, date_str: Optional[str] = None) -> str:
         """
         Centralized cache key generation for sports data.

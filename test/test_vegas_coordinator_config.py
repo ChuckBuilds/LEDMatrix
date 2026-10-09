@@ -25,7 +25,6 @@ def _coordinator(active=True):
     c.render_pipeline.is_cycle_complete.return_value = False
     c.stream_manager = MagicMock()
     c.plugin_adapter = MagicMock()
-    c.stats = {'cycles_completed': 0, 'config_updates': 0}
     c._state_lock = threading.Lock()
     c._is_active = active
     c._is_paused = False

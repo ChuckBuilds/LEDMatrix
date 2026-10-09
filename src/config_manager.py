@@ -45,6 +45,7 @@ from src.common.permission_utils import (
     ensure_shared_group_ownership,
     get_config_dir_mode
 )
+from src.deprecation import deprecated
 
 
 def _private_copy(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -174,6 +175,7 @@ class ConfigManager:
         
         return result
     
+    @deprecated("3.10.0", "backups are handled by src.backup_manager")
     def rollback_config(self, backup_version: Optional[str] = None) -> bool:
         """
         Rollback configuration to a previous backup.
@@ -198,6 +200,7 @@ class ConfigManager:
         
         return success
     
+    @deprecated("3.10.0", "backups are handled by src.backup_manager")
     def list_backups(self) -> List[BackupInfo]:
         """
         List all available configuration backups.
@@ -208,6 +211,7 @@ class ConfigManager:
         atomic_mgr = self._get_atomic_manager()
         return atomic_mgr.list_backups()
     
+    @deprecated("3.10.0")
     def validate_config_file(self, config_path: Optional[str] = None) -> ValidationResult:
         """
         Validate a configuration file.
@@ -404,6 +408,7 @@ class ConfigManager:
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=self.config_path) from e
 
+    @deprecated("3.10.0", "secrets are merged into each plugin's config; read them with config.get()")
     def get_secret(self, key: str) -> Optional[Any]:
         """Get a secret value by key."""
         try:
@@ -757,6 +762,7 @@ class ConfigManager:
             self.logger.error(error_msg, exc_info=True)
             raise ConfigError(error_msg, config_path=self.config_path, field=plugin_id) from e
     
+    @deprecated("3.10.0")
     def cleanup_orphaned_plugin_configs(self, valid_plugin_ids: List[str]) -> List[str]:
         """
         Remove configuration sections for plugins that are no longer installed.
@@ -810,6 +816,7 @@ class ConfigManager:
             self.logger.error(f"Error cleaning up orphaned plugin configs: {e}")
             return removed
     
+    @deprecated("3.10.0")
     def validate_all_plugin_configs(self, plugin_schema_manager=None) -> Dict[str, Dict[str, Any]]:
         """
         Validate all plugin configurations against their schemas.

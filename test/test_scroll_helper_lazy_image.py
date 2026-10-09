@@ -187,9 +187,6 @@ def test_vegas_extends_without_building_the_image(no_fromarray):
         def get_grouped_content_for_composition(self):
             return groups[0]
 
-        def get_active_plugin_ids(self):
-            return ["a"]
-
         def take_next_group(self, count=None, offscreen_only=False):
             self.i += 1
             return groups[self.i] if self.i < len(groups) else []

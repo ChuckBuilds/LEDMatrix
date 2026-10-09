@@ -28,7 +28,7 @@ set by `BUNDLE_ORDER` there.
 | `file-upload-single` | string | One image upload; stores the uploaded file's relative path |
 | `google-oauth` | string | Step 2 of the calendar plugin's Google sign-in |
 | `plugin-file-manager` | null | Inline file manager driven by the plugin's `web_ui_actions` |
-| `json-file-manager` | null | JSON data-file manager driven by `web_ui_actions` |
+| `json-file-manager` | null | Embeds the plugin's own `web_ui/file_manager.html` in an iframe |
 | `toggle-switch` | boolean | On/off switch |
 | `slider` | integer / number | Range slider using `minimum` / `maximum` |
 | `number-input` | integer / number | Number field with min/max check |
@@ -51,7 +51,6 @@ Other files here:
 | `notification.js` | Toast notifications; owns `window.showNotification` |
 | `plugin-order-list.js` | Drag-and-drop plugin order list used by the Display and Durations tabs (`window.PluginOrderList`) |
 | `plugin-loader.js` | Loads a plugin-supplied widget on demand |
-| `example-color-picker.js` | Example custom widget. Not bundled: it registers `color-picker` and would replace the real one |
 
 Each widget file's header comment gives its schema options. The sections
 below cover the ones that need more than a line.
@@ -269,8 +268,6 @@ directory is the only place the core serves plugin widgets from.
     });
 })();
 ```
-
-[`example-color-picker.js`](example-color-picker.js) is a longer example.
 
 ### 2. Reference it in the schema
 

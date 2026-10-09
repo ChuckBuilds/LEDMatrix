@@ -29,6 +29,7 @@ from src.common.permission_utils import (
     get_assets_dir_mode,
     get_assets_file_mode
 )
+from src.deprecation import deprecated
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,7 @@ class LogoDownloader:
             logger.info(f"Using dynamic ESPN endpoint for custom soccer league: {league}")
         return api_url
 
+    @deprecated("3.10.0", "download logos one at a time with download_missing_logo()")
     def fetch_teams_data(self, league: str) -> Optional[Dict]:
         """Fetch team data from ESPN API for a specific league."""
         api_url = self._resolve_api_url(league)
@@ -518,6 +520,7 @@ class LogoDownloader:
             logger.error(f"Error parsing JSON response for {team_id} in {league}: {e}")
             return None
     
+    @deprecated("3.10.0", "download logos one at a time with download_missing_logo()")
     def extract_teams_from_data(self, data: Dict, league: str) -> List[Dict[str, str]]:
         """Extract team information from ESPN API response."""
         teams = []
@@ -621,6 +624,7 @@ class LogoDownloader:
         # Default to FBS for unknown conferences
         return 'FBS'
     
+    @deprecated("3.10.0", "download logos one at a time with download_missing_logo()")
     def download_missing_logos_for_league(self, league: str, force_download: bool = False) -> Tuple[int, int]:
         """Download missing logos for a specific league."""
         logger.info(f"Starting logo download for league: {league}")
@@ -675,6 +679,7 @@ class LogoDownloader:
         logger.info(f"Logo download complete for {league}: {downloaded_count} downloaded, {failed_count} failed")
         return downloaded_count, failed_count
     
+    @deprecated("3.10.0", "download logos one at a time with download_missing_logo()")
     def download_all_ncaa_football_logos(self, include_fcs: bool = True, force_download: bool = False) -> Tuple[int, int]:
         """Download all NCAA football team logos including FCS teams."""
         logger.info(f"Starting comprehensive NCAA football logo download (FCS: {include_fcs})")
@@ -763,6 +768,7 @@ class LogoDownloader:
             time.sleep(0.1)  # Small delay
         return success
     
+    @deprecated("3.10.0", "download logos one at a time with download_missing_logo()")
     def download_all_missing_logos(self, leagues: List[str] | None = None, force_download: bool = False) -> Dict[str, Tuple[int, int]]:
         """Download missing logos for all specified leagues."""
         if leagues is None:
@@ -858,6 +864,7 @@ class LogoDownloader:
             logger.error(f"Failed to create placeholder logo for {team_abbreviation}: {e}")
             return False
     
+    @deprecated("3.10.0")
     def convert_image_to_rgba(self, filepath: Path) -> bool:
         """Convert an image file to RGBA format to avoid PIL warnings."""
         try:
@@ -875,6 +882,7 @@ class LogoDownloader:
             logger.error(f"Failed to convert {filepath.name} to RGBA: {e}")
             return False
     
+    @deprecated("3.10.0")
     def convert_all_logos_to_rgba(self, league: str) -> Tuple[int, int]:
         """Convert all logos in a league directory to RGBA format."""
         logo_dir = Path(self.get_logo_directory(league))

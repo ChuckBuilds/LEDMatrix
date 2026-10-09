@@ -21,6 +21,7 @@ from typing import Dict, Any, Optional, List, cast
 from src.common.api_helper import DEFAULT_HTTP_HEADERS
 from src.common.fetch_service import fetch_get, share_connection_pool
 from src.common.json_body import response_json
+from src.deprecation import deprecated
 
 
 
@@ -277,6 +278,7 @@ class BaseOddsManager:
             self.logger.warning(f"Unexpected response structure: {json.dumps(data, indent=2)}")
             return None
     
+    @deprecated("3.10.0", "call get_odds() for each game")
     def get_odds_for_games(self, games: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Fetch odds for multiple games efficiently.
@@ -335,6 +337,7 @@ class BaseOddsManager:
             
         return False
     
+    @deprecated("3.10.0")
     def format_odds_summary(self, odds_data: Optional[Dict[str, Any]]) -> str:
         """
         Format odds data into a human-readable summary.
