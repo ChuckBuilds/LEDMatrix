@@ -19,6 +19,17 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixes
+
+- `SportsRankingsMixin` (#789's deferred review points, now that it is the
+  only copy): a poll entry whose `current` cannot be converted to an
+  integer (`None`, a non-numeric string) is skipped instead of throwing
+  away the whole poll -- which left
+  every team unranked and re-fetched the standings on every update -- and
+  `_ranked_positions()` decides id-or-abbreviation per side, so one side
+  without an id no longer drops the other side's id and lets a shared
+  abbreviation rank the wrong school. Well-formed ESPN data ranks as before.
+
 ## 3.8.5
 
 Fewer ESPN requests on the hourly schedule refresh (#754), and sports

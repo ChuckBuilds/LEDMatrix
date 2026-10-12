@@ -216,7 +216,12 @@ class SportsRankingsMixin:
             for team_data in poll.get("ranks", []):
                 team_info = team_data.get("team", {})
                 team_abbr = team_info.get("abbreviation", "")
-                current_rank = team_data.get("current", 0)
+                # One malformed entry (a None or non-numeric "current") is
+                # skipped, not allowed to throw away the whole poll.
+                try:
+                    current_rank = int(team_data.get("current"))
+                except (TypeError, ValueError):
+                    continue
                 if current_rank <= 0:
                     continue
                 if team_abbr:
@@ -337,28 +342,30 @@ class SportsRankingsMixin:
         return self._division_team_ids
 
     def _ranked_positions(self, game: Dict) -> List[int]:
-        """Poll positions held by either side: ids first, abbreviations second.
+        """Poll positions held by either side: by id, else by abbreviation.
 
-        The id table is authoritative whenever the game carries ids and a poll
+        The id table is authoritative whenever a side carries an id and a poll
         has been parsed, because it is built from a top-division poll alone --
         so an FCS side cannot appear in it however it is abbreviated, and an
         abbreviation shared across divisions cannot promote the wrong school.
-        The abbreviation table stays as the fallback for a game dict with no
-        ids on it.
+        Decided per side: a side without a usable id falls back to its
+        abbreviation, without costing the other side its id.
         """
         by_id = getattr(self, "_ranked_team_ids", None) or {}
-        ids = []
-        for side in ("home_id", "away_id"):
-            try:
-                ids.append(int(game.get(side)))  # type: ignore[arg-type]  # None: caught below
-            except (TypeError, ValueError):
-                ids = []
-                break
-        if by_id and ids:
-            return [rank for rank in (by_id.get(i, 0) for i in ids) if rank]
         by_abbr = getattr(self, "_team_rankings_cache", None) or {}
-        return [rank for rank in (by_abbr.get(game.get("home_abbr"), 0),
-                                  by_abbr.get(game.get("away_abbr"), 0)) if rank]
+        found = []
+        for side in ("home", "away"):
+            rank = None
+            if by_id:
+                try:
+                    rank = by_id.get(int(game.get(f"{side}_id")), 0)  # type: ignore[arg-type]  # None: caught below
+                except (TypeError, ValueError):
+                    pass
+            if rank is None:
+                rank = by_abbr.get(game.get(f"{side}_abbr"), 0)
+            if rank:
+                found.append(rank)
+        return found
 
     def _is_ranked_game(self, game: Dict) -> bool:
         return bool(self._ranked_positions(game))
