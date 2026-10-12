@@ -53,6 +53,7 @@ Rules for the package:
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
+| [`sports_rankings`](#sports_rankings) | Which teams are ranked, in which poll, and the "ranked" filter | Yes (scoreboards) | next release |
 | [`sports_rotation`](#sports_rotation) | Which non-favourite games a scoreboard shows, and when the slice moves | Yes (scoreboards) | 3.8.4 |
 | [`sports_scroll`](#sports_scroll) | Scoreboard scroll-display orchestration | Yes (scoreboards) | 3.2.0 |
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
@@ -368,6 +369,22 @@ helpers of a scoreboard's `BasePlugin` subclass. `get_vegas_priority_weight()`
 shape), `_dispatch_switch_refresh()` (a manager refresh on a daemon thread, so
 `display()` never waits on the network), `get_vegas_content_type()` and small
 dynamic-duration helpers. List it before `BasePlugin`.
+
+### sports_rankings
+
+[`sports_rankings.py`](sports_rankings.py). Sports family 8:
+`SportsRankingsMixin` (`SportsCore`), the rankings. `_fetch_team_rankings`
+loads the top-division poll hourly (only where `_league_has_rankings()`) as an
+abbreviation table, which the rank badge draws, and an ESPN team id table,
+which `_ranked_positions` reads first, so a school sharing a ranked team's
+abbreviation is not ranked. `_choose_poll` steps over seedings and lower
+divisions' polls and otherwise keeps ESPN's order;
+`choose_top_division_poll()` is the same rule for code without a scoreboard
+(the dynamic team resolvers). A poll whose season's `endDate` has passed loads
+nothing (`_poll_season_ended`), so between seasons no badge shows and the
+"ranked" filter fails open. `_load_division_team_ids` reads college football's
+FBS and FCS rosters for the season year; `_is_ranked_game`, `_best_rank` and
+`_passes_other_filters` serve the other-games selection.
 
 ### sports_rotation
 

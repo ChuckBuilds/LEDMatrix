@@ -55,13 +55,15 @@ State: ``config``, ``fonts``, ``logger``, ``display_width``, ``display_height``,
 Methods that stay per-plugin, because they are not identical across the eight
 (or, for ``_get_timezone``, because they bind per-plugin modules):
 ``_get_layout_offset``, ``_upcoming_date_and_time_text``,
-``_extract_game_details_common``, ``_load_division_team_ids``,
-``_get_timezone``, ``_is_ranked_game``, ``_passes_other_filters``. Three
-families were here until the plugins reconciled them: ``_is_game_really_over``,
-which ``_detect_stale_games`` below calls, is now ``src.common.sports_game_over``;
-``_is_favorite_game`` is ``src.common.sports_favorites``; and
+``_extract_game_details_common``, ``_get_timezone``. Four families were
+here until the plugins reconciled them: ``_is_game_really_over``, which
+``_detect_stale_games`` below calls, is now ``src.common.sports_game_over``;
+``_is_favorite_game`` is ``src.common.sports_favorites``;
 ``_by_importance`` and ``_other_games_window``, which ``_favorites_first`` and
-``_compose_selection`` below call, are ``src.common.sports_rotation``.
+``_compose_selection`` below call, are ``src.common.sports_rotation``; and
+``_load_division_team_ids``, ``_is_ranked_game`` and ``_passes_other_filters``
+(``_game_divisions``, ``_check_ranking_coverage`` and ``_favorites_first``
+below call them) are ``src.common.sports_rankings``.
 
 Of the fourteen shared class constants, thirteen are identical everywhere and
 live here. Only ``_SCORE_PROBE_TEXT`` varies -- afl and basketball reach three digits

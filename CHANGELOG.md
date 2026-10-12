@@ -19,6 +19,21 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### New modules
+
+- `src/common/sports_rankings.py` -- sports consolidation family 8, once the
+  plugins made `_fetch_team_rankings`, `_choose_poll` (three bodies each),
+  `_load_division_team_ids`, `_passes_other_filters`, `_best_rank` and
+  `_is_ranked_game` (two each) one each: `SportsRankingsMixin` (`SportsCore`),
+  with `_ranked_positions` and `_poll_season_ended` beside them, and
+  `choose_top_division_poll()` for the dynamic team resolvers. Ranks are kept
+  by ESPN team id as well as abbreviation and a game with ids is ranked by id;
+  a poll from a season that has ended (its `endDate` has passed) loads
+  nothing, so no rank badge shows between seasons; the college football
+  division rosters are asked for the season year. A plugin may inherit the
+  mixin once it floors on the release that ships it, and deletes its copies
+  then.
+
 ## 3.8.4
 
 A panel that cannot reach its refresh cap is reported with a cap it can hold
