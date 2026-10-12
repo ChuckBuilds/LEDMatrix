@@ -380,7 +380,39 @@ builds the pools, so nothing rotates on a board with no favourites; football
 routes it through `_favorites_first(games, 0, N)` (decision below, family 13).
 ufc's MMA managers override `update()` and never build the pools, so the
 rotation is dormant there. `_best_rank`, `_is_ranked_game` and
-`_passes_other_filters` are family 8.
+`_passes_other_filters` were family 8.
+
+### Family 8: rankings (reconciled; promoted, awaiting release)
+
+ledmatrix-plugins `scripts/test_rankings.py` (#644) pinned 79 rows across the
+nine plugins first, every ESPN request answered offline from recorded-shape
+payloads: which endpoints `_fetch_team_rankings` asks per league and the
+tables it keeps, `_choose_poll` over nine poll sets, the division rosters'
+season year across six dates, the rankings and roster caches, a poll from a
+finished season, malformed payloads, and `_is_ranked_game`, `_best_rank` and
+`_passes_other_filters` over games whose abbreviations collide. The reconcile
+(ledmatrix-plugins #645) made `_fetch_team_rankings`,
+`_choose_poll` (three bodies each), `_load_division_team_ids`,
+`_passes_other_filters`, `_best_rank` and `_is_ranked_game` (two each) one
+body each on `SportsCore`, with football's `_ranked_positions` and a new
+`_poll_season_ended` beside them, and dropped baseball's per-league
+class-level rankings copy. Every changed cell is one of the decisions below:
+the id table in all nine (and the games it re-ranks), /rankings first for
+every college or NCAA league in afl, basketball, nrl and soccer, the season
+year in the eight that asked for the calendar year, the stale-poll rows, and
+baseball's shared copy. The harness renders were byte-identical.
+`src/common/sports_rankings.py` holds the bodies in one mixin,
+`SportsRankingsMixin`, plus `choose_top_division_poll()` for the dynamic team
+resolvers; `test/test_sports_rankings_parity.py` compares them, and the
+constants, with the plugin copies.
+
+Left for later families: the rank badge (switch scorebug, scroll card and the
+plugins' `manager.py`, families 11, 12 and 14) still reads the abbreviation
+table; `manager.py`'s `_get_rankings_cache` merges every league's table for
+the scroll cards. `_rankings_loaded` stays the family 7 seam (football counts
+its id table too); the two differ only for a poll whose blocks carry ids and
+no abbreviations. The data sources' `fetch_standings` (held with
+`data_sources.py`) is still four bodies; only its endpoint order changed.
 
 ### Why the method changes
 
@@ -469,7 +501,7 @@ release.
 | 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; one seam, `FINAL_PERIOD`. The pilot for the procedure. Reconciled to one body and promoted as `sports_game_over`; shipped in 3.8.1 and adopted. See [Family 5](#family-5-the-game-over-check-done-core-381-adopted) |
 | 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; shipped in 3.8.2 and adopted. See [Family 6](#family-6-favourite-matching-done-core-382-adopted) |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; done: core 3.8.4, adopted (ledmatrix-plugins #643). See [Family 7](#family-7-the-other-games-rotation-done-core-384-adopted) |
-| 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it |
+| 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings` (next release). See [Family 8](#family-8-rankings-reconciled-promoted-awaiting-release) |
 | 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
 | 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
 | 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
@@ -537,18 +569,34 @@ suspected behaviour that needs a payload or a rig to confirm first.
   non-empty; football counts its by-id table too). Kept for family 13: the
   no-favourites branch of `update()` keeps its fixed "next N" in the eight
   plugins that have it, rather than football's rotating pools.
-- **8, rankings.** (a) afl, basketball, nrl and soccer turn a *standings*
-  payload into ranks (a pro league's standings position becomes the rank
-  badge); baseball, hockey, lacrosse, ufc and football do not. Which is
-  right is visible on every pro-league card with "show ranking" on.
-  (b) football also keys ranks by team id, so two schools sharing an
-  abbreviation across divisions cannot be confused: adopt for all.
-  (c) football asks for the division roster of the *season* year (July
-  onward is this year's season), which is right for football and wrong for
-  college basketball, hockey and lacrosse, whose ESPN season is the year it
-  ends: a per-sport seam, not football's constant. (d) baseball's
-  `_choose_poll` calls `dynamic_team_resolver.choose_top_division_poll`, the
-  others inline it: one home, in core.
+- **8, rankings. Decided 2026-10-12, reconciled.** Measured first, two of
+  the questions as first written did not hold. (a) afl, basketball, nrl and
+  soccer could turn a *standings* payload into ranks, but the branch never
+  ran: rankings are fetched only where `_league_has_rankings()` (a college or
+  NCAA league), and ESPN's site-API /standings answers `{}` or a link stub,
+  never a table. Deleted. The same four data sources asked /standings first
+  for any college league outside a fixed list, so a custom NCAA soccer
+  league (`usa.ncaa.m.1`) never showed its coaches poll; every college or
+  NCAA league now asks /rankings first, as in the other five (fix, visible
+  only there). (b) Ranks are kept by ESPN team id too, in all nine, and a
+  game with ids is ranked by id: ESPN lists Ohio State and Ohio State Newark
+  both as OSU. Changes the "ranked" filter and the other-games order only
+  where abbreviations collide; the badge still reads the abbreviation table.
+  (c) Only college football has division rosters (all nine carry the same
+  one-league table; college basketball, hockey and lacrosse publish none), so
+  football's July rule is promoted as is and there is no seam. In the other
+  eight the calendar year was unreachable. (d) One poll rule, in core:
+  `_choose_poll`, with `choose_top_division_poll()` for the resolvers that
+  expand `AP_TOP_n` (baseball's helper and the others' inline copies call it
+  once they adopt). (e) A poll from a season that has ended loads nothing:
+  ESPN keeps serving the last poll between seasons (on 2026-10-12, college
+  basketball's April final and college lacrosse's May poll), and each block
+  carries its season's `endDate`, so no calendar and no per-sport seam. No
+  badge shows and the "ranked" filter fails open until the new season's
+  first poll; visible on college basketball and lacrosse boards between
+  seasons. A block without a readable `endDate` counts as current. (f)
+  baseball's MLB, MiLB and NCAA Baseball managers drop their class-level
+  shared copy of the table (none of those leagues publishes a poll).
 - **9, live fetch and odds.** (a) afl, basketball, nrl and soccer cache the
   live scoreboard for 30 s under `<sport_key>_scoreboard_current`; the others
   do not (the harness fixtures seed that key, so the change shows up there).

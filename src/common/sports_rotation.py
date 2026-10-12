@@ -65,7 +65,7 @@ listed here. Every scoreboard ``SportsCore`` supplies all of them.
   getattr, so a manager that never built it does not rotate.
 - ``_compose_selection`` -- from ``SportsCoreSharedMixin``.
 - ``_best_rank`` -- a game's better poll position, 99 if neither side ranks
-  (family 8, still per-plugin).
+  (family 8: ``src.common.sports_rankings``).
 - ``_team_rankings_cache`` -- read with getattr by the default
   ``_rankings_loaded``.
 - ``games_list``, ``current_game``, ``current_game_index``,
