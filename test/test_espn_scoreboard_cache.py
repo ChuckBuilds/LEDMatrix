@@ -392,6 +392,15 @@ class TestGetEspnScoreboard:
                                 "20261004", cache_manager=cache)
         assert cache.records == {}
 
+    @pytest.mark.parametrize("payload", [{"events": None}, {}, {"events": "x"}, []])
+    def test_an_answer_without_an_events_list_is_returned_not_cached(self, service, payload):
+        espn = Espn()
+        espn.get = lambda url, **kwargs: _response(payload, url, None)
+        cache = RecordCache()
+        assert get_espn_scoreboard(espn, "football", "nfl", "20261004",
+                                   cache_manager=cache) == payload
+        assert cache.records == {}
+
     def test_no_cache_manager_just_fetches(self, service):
         espn = Espn()
         get_espn_scoreboard(espn, "football", "nfl", "20261004")
