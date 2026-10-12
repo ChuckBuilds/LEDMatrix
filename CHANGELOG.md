@@ -19,6 +19,23 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.5
+
+Fewer ESPN requests on the hourly schedule refresh (#754), and sports
+consolidation family 8: `src.common.sports_rankings`, which the scoreboards
+adopt by flooring on 3.8.5 (#789).
+
+### ESPN: settled days are not fetched again
+
+- A scoreboard's hourly Recent/Upcoming refresh asks ESPN for its window one
+  day at a time, and most of those days can no longer change. A chunk whose
+  last day is three or more days back is now kept in memory for 24 hours
+  (compressed, at most 512 entries / 8 MB) and answered from there, for
+  `fetch_espn_scoreboard` and the background service alike. Failed and
+  capped chunks are never kept, and each hit is parsed afresh. Against live
+  ESPN, a second refresh of five scoreboard windows went from 111 requests
+  and 10.2 MB to 50 requests and 3.2 MB with identical events. (#754)
+
 ### New modules
 
 - `src/common/sports_rankings.py` -- sports consolidation family 8, once the
@@ -31,8 +48,7 @@ accepts both, but the store flags the old spelling as deprecated
   a poll from a season that has ended (its `endDate` has passed) loads
   nothing, so no rank badge shows between seasons; the college football
   division rosters are asked for the season year. A plugin may inherit the
-  mixin once it floors on the release that ships it, and deletes its copies
-  then.
+  mixin once it floors on 3.8.5, and deletes its copies then. (#789)
 
 ## 3.8.4
 
