@@ -173,6 +173,11 @@ def test_only_a_league_with_a_poll_is_asked(clock, league, asked):
         {"current": 3, "team": {"id": "abc", "abbreviation": "OSU"}},
         {"current": 4, "team": {"abbreviation": "TEX"}}]}]},
      {"OSU": 3, "TEX": 4}, {87: 2}),
+    ({"rankings": [{"name": "AP Top 25", "type": "ap", "ranks": [     # #789: one bad entry
+        {"current": None, "team": {"id": "61", "abbreviation": "UGA"}},
+        {"current": "n/a", "team": {"id": "87", "abbreviation": "ND"}},
+        {"current": 3, "team": {"id": "194", "abbreviation": "OSU"}}]}]},
+     {"OSU": 3}, {194: 3}),
 ])
 def test_payload_shapes(clock, payload, abbr, ids):
     host = Host(payload=payload)
@@ -318,6 +323,17 @@ def test_ranked_and_best_rank(clock, label, best):
     host = loaded()
     assert host._best_rank(game(label)) == best
     assert host._is_ranked_game(game(label)) is (best != 99)
+
+
+@pytest.mark.parametrize("home, away, best", [
+    (NEWARK, (None, "VAN"), 99),         # Newark's id is unranked; "OSU" must not rank it
+    (("61", None), (None, "VAN"), 1),    # UGA's id still counts with no id on the other side
+])
+def test_each_side_is_ranked_by_its_own_id(clock, home, away, best):
+    """#789: one side's missing id no longer sends both sides to abbreviations."""
+    g = {f"{side}_{key}": value for side, team in (("home", home), ("away", away))
+         for key, value in zip(("id", "abbr"), team) if value is not None}
+    assert loaded()._best_rank(g) == best
 
 
 #: filter -> (quality, divisions, poll loaded?, kept: one Y/. per GAMES entry)

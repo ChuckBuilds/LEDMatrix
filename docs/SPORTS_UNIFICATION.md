@@ -383,7 +383,7 @@ ufc's MMA managers override `update()` and never build the pools, so the
 rotation is dormant there. `_best_rank`, `_is_ranked_game` and
 `_passes_other_filters` were family 8.
 
-### Family 8: rankings (reconciled; promoted, core 3.8.5)
+### Family 8: rankings (done: core 3.8.5, adopted)
 
 ledmatrix-plugins `scripts/test_rankings.py` (#644) pinned 79 rows across the
 nine plugins first, every ESPN request answered offline from recorded-shape
@@ -502,7 +502,7 @@ release.
 | 5 | Game-over check | `SportsLive._is_game_really_over` (5) | Pure logic, no pixels; one seam, `FINAL_PERIOD`. The pilot for the procedure. Reconciled to one body and promoted as `sports_game_over`; shipped in 3.8.1 and adopted. See [Family 5](#family-5-the-game-over-check-done-core-381-adopted) |
 | 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; shipped in 3.8.2 and adopted. See [Family 6](#family-6-favourite-matching-done-core-382-adopted) |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; done: core 3.8.4, adopted (ledmatrix-plugins #643). See [Family 7](#family-7-the-other-games-rotation-done-core-384-adopted) |
-| 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings` (core 3.8.5). See [Family 8](#family-8-rankings-reconciled-promoted-core-385) |
+| 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings`; done: core 3.8.5, adopted (ledmatrix-plugins #648). See [Family 8](#family-8-rankings-done-core-385-adopted) |
 | 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
 | 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
 | 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
