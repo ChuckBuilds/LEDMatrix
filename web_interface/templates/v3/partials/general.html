@@ -12,6 +12,22 @@
 
     {{ ui.settings_filter() }}
 
+    {# Display autostart is systemd's enable/disable of ledmatrix.service, not a
+       config.json key: outside the form so Save never posts it. general.js
+       applies it on change. Hidden when the unit's state cannot be read. #}
+    {% if display_autostart is not none %}
+    <div class="form-group mb-6" id="setting-general-display_autostart" data-setting-key="display_autostart">
+        <label class="flex items-center">
+            <input type="checkbox"
+                   data-action="display-autostart"
+                   {% if display_autostart %}checked{% endif %}
+                   class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+            <span class="ml-2 text-sm font-medium text-gray-900">Start Display on Boot</span>
+            {{ ui.help_tip('Start the LED display automatically when the device powers on.\nApplies right away; no Save needed.\nWhen off, start it with Start Display on the Overview tab. The web interface still starts on boot.\nDefault: on.', 'Start Display on Boot') }}
+        </label>
+    </div>
+    {% endif %}
+
     <form hx-post="/api/v3/config/main"
           hx-ext="json-enc"
           hx-headers='{"Content-Type": "application/json"}'
