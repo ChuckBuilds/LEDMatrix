@@ -391,7 +391,7 @@ tables it keeps, `_choose_poll` over nine poll sets, the division rosters'
 season year across six dates, the rankings and roster caches, a poll from a
 finished season, malformed payloads, and `_is_ranked_game`, `_best_rank` and
 `_passes_other_filters` over games whose abbreviations collide. The reconcile
-(ledmatrix-plugins `claude/family8-reconcile`) made `_fetch_team_rankings`,
+(ledmatrix-plugins #645) made `_fetch_team_rankings`,
 `_choose_poll` (three bodies each), `_load_division_team_ids`,
 `_passes_other_filters`, `_best_rank` and `_is_ranked_game` (two each) one
 body each on `SportsCore`, with football's `_ranked_positions` and a new
