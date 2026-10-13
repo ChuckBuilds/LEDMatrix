@@ -51,7 +51,7 @@ Rules for the package:
 | [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
-| [`sports_live_fetch`](#sports_live_fetch) | The live poll's scoreboard request, and odds off the update path | Yes (scoreboards) | next release |
+| [`sports_live_fetch`](#sports_live_fetch) | The live poll's scoreboard request, and odds off the update path | Yes (scoreboards) | 3.8.6 |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
 | [`sports_rankings`](#sports_rankings) | Which teams are ranked, in which poll, and the "ranked" filter | Yes (scoreboards) | 3.8.5 |
