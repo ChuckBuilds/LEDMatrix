@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Features
+
+- General tab: a **Start Display on Boot** toggle turns
+  `ledmatrix.service`'s autostart on or off right away (no Save needed),
+  through the existing `enable_autostart` / `disable_autostart` system
+  actions. It shows systemd's own state, so nothing is stored in
+  `config.json`; the default stays on (the installer enables the unit). The
+  web interface still starts on boot either way. Hidden when the unit's state
+  cannot be read (not installed, or no systemd).
+
 ### Fixes
 
 - `SportsRankingsMixin` (#789's deferred review points, now that it is the

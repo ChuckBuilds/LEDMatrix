@@ -4,6 +4,7 @@ from html.parser import HTMLParser
 import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 
 # Strict allowlists for URL-derived values used in path and script operations.
@@ -487,7 +488,23 @@ def _load_general_partial():
                              main_config=main_config,
                              auto_update_status=auto_update_status,
                              update_channel_status=update_channel_status,
+                             display_autostart=_display_autostart_state(),
                              web_login=_web_login_state())
+
+
+def _display_autostart_state():
+    """Whether ledmatrix.service starts at boot; None hides the toggle.
+
+    systemd's enablement is the setting itself (the installer enables the
+    unit), so nothing is stored in config.json. None when it cannot be read:
+    no systemctl (a dev machine) or the unit is not installed.
+    """
+    try:
+        result = subprocess.run(['systemctl', 'is-enabled', 'ledmatrix.service'],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {'enabled': True, 'disabled': False}.get(result.stdout.strip())
 
 
 def _web_login_state():

@@ -191,6 +191,28 @@ export function revokeToken(ctx, id, name) {
     }).catch(failed(ctx));
 }
 
+/**
+ * The "Start Display on Boot" checkbox: enable or disable ledmatrix.service
+ * at once. A refusal (e.g. the sudo rule is missing) puts the box back.
+ */
+export function setDisplayAutostart(ctx, box) {
+    const on = box.checked;
+    box.disabled = true;
+    return send(ctx, 'POST', '/api/v3/system/action', { action: on ? 'enable_autostart' : 'disable_autostart' }).then(function(res) {
+        if (!res) return false;
+        const ok = res.ok && res.d.status === 'success';
+        if (!ok) box.checked = !on;
+        ctx.notify(ok ? (on ? 'The display will start on boot' : 'The display will not start on boot')
+                      : (res.d.message || 'Could not change display autostart'), ok ? 'success' : 'error');
+        return ok;
+    }).catch(function(err) {
+        box.checked = !on;
+        failed(ctx)(err);
+    }).finally(function() {
+        box.disabled = false;
+    });
+}
+
 const FORM_ACTIONS = { 'set-password': setPassword, 'disable-login': disableLogin, 'create-token': createToken };
 
 function drawTimezone(root, ctx) {
@@ -237,6 +259,10 @@ export function init(root, ctx) {
             const row = button.closest('[data-token-id]');
             if (row) revokeToken(ctx, row.dataset.tokenId, button.dataset.tokenName);
         }
+    }, on);
+    root.addEventListener('change', function(event) {
+        const box = event.target;
+        if (box && box.dataset && box.dataset.action === 'display-autostart') setDisplayAutostart(ctx, box);
     }, on);
     drawTimezone(root, ctx);
     active = ctx;
