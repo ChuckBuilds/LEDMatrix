@@ -95,6 +95,7 @@ more. Shared sports code lives in `src/common`:
 | `sports_favorites.py` | 3.8.2 | `SportsFavoritesMixin`, `SportsUpcomingFavoritesMixin`, `SportsRecentFavoritesMixin` — `_is_favorite_game` and the favourites-only picks, on the `_favorite_key` seam (family 6) |
 | `sports_rotation.py` | 3.8.4 | `SportsRotationMixin` — the other-games rotation (importance order, the window, odds on rotated-in games), on the `_rankings_loaded` seam (family 7) |
 | `sports_rankings.py` | 3.8.5 | `SportsRankingsMixin` — which teams are ranked (by id and abbreviation), the poll choice, stale polls hidden, the "ranked" filter; `choose_top_division_poll()` (family 8) |
+| `sports_live_fetch.py` | 3.8.6 | `SportsLiveFetchMixin` — the live poll's scoreboard request (always fresh, shared key) and odds fetched off the update path by one worker per manager (family 9) |
 
 Each is described in [src/common/README.md](../src/common/README.md).
 
@@ -415,7 +416,7 @@ its id table too); the two differ only for a poll whose blocks carry ids and
 no abbreviations. The data sources' `fetch_standings` (held with
 `data_sources.py`) is still four bodies; only its endpoint order changed.
 
-### Family 9: live fetch and odds (reconciled; promoted, awaiting release)
+### Family 9: live fetch and odds (reconciled; promoted, core 3.8.6)
 
 ledmatrix-plugins `scripts/test_live_fetch_odds.py` (#649) pinned 44 rows
 across the nine plugins first, every ESPN request answered offline the way
@@ -542,7 +543,7 @@ release.
 | 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; shipped in 3.8.2 and adopted. See [Family 6](#family-6-favourite-matching-done-core-382-adopted) |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; done: core 3.8.4, adopted (ledmatrix-plugins #643). See [Family 7](#family-7-the-other-games-rotation-done-core-384-adopted) |
 | 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings`; done: core 3.8.5, adopted (ledmatrix-plugins #648). See [Family 8](#family-8-rankings-done-core-385-adopted) |
-| 9 | Live fetch and odds | `_fetch_todays_games` (7 when measured), `_fetch_odds` (3); `_attach_odds_to_rotated_games` went with 7 | The prerequisite for one shared ESPN poller across plugins. Reconciled to one body each and promoted as `sports_live_fetch` (next release). See [Family 9](#family-9-live-fetch-and-odds-reconciled-promoted-awaiting-release) |
+| 9 | Live fetch and odds | `_fetch_todays_games` (7 when measured), `_fetch_odds` (3); `_attach_odds_to_rotated_games` went with 7 | The prerequisite for one shared ESPN poller across plugins. Reconciled to one body each and promoted as `sports_live_fetch` (core 3.8.6). See [Family 9](#family-9-live-fetch-and-odds-reconciled-promoted-core-386) |
 | 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
 | 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
 | 12 | Scroll/Vegas card | `game_renderer.py`: `render_game_card` (6), `_load_and_resize_logo` (8), `_load_custom_font`, `preload_logos`, `__init__` (7 each), `_draw_records_or_rankings` (6), `_load_fonts`, `_draw_dynamic_odds`, `_draw_live_game_status`, `_draw_recent_game_status`, `_get_team_display_text` (5 each), `_draw_text_with_outline` (2: football) | Same decisions as 11; sequence after the scroll-performance work on pre-rendered strips lands |

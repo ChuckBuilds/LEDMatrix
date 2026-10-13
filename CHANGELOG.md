@@ -19,6 +19,14 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.6
+
+A **Start Display on Boot** toggle on the General tab (#792), two fixes to
+the shared rankings code (#791), `get_espn_scoreboard()` no longer caching a
+null-events answer, and sports consolidation family 9:
+`src.common.sports_live_fetch`, which the scoreboards adopt by flooring on
+3.8.6 (#793).
+
 ### Features
 
 - General tab: a **Start Display on Boot** toggle turns
@@ -41,8 +49,8 @@ accepts both, but the store flags the old spelling as deprecated
   answer whose `events` is not a list counts as no games. Odds never block
   `update()`: one daemon worker per manager answers a queue and attaches each
   line in place under `_games_lock`, one batch in flight at a time. A plugin
-  may inherit the mixin once it floors on the release that ships it, and
-  deletes its copies then.
+  may inherit the mixin once it floors on 3.8.6, and deletes its copies then.
+  (#793)
 
 ### Fixes
 
