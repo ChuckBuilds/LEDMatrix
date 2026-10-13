@@ -415,6 +415,45 @@ its id table too); the two differ only for a poll whose blocks carry ids and
 no abbreviations. The data sources' `fetch_standings` (held with
 `data_sources.py`) is still four bodies; only its endpoint order changed.
 
+### Family 9: live fetch and odds (reconciled; promoted, awaiting release)
+
+ledmatrix-plugins `scripts/test_live_fetch_odds.py` (#649) pinned 44 rows
+across the nine plugins first, every ESPN request answered offline the way
+ESPN answered on 2026-10-12 (a single date 200, a range 400): the requests,
+cache keys and TTLs of `_fetch_todays_games` per league and Eastern time,
+the live cache over time, empty, null and failed answers, `_fetch_odds` per
+game kind and odds endpoint on a virtual clock (which thread asks, how long
+the call waits, when the line lands), the real `update()` of every screen
+with a 3 s odds endpoint, and the league overrides (MiLB, HockeyTech, ufc's
+`MMALive`, which stay per-sport). Measuring found seven bodies of
+`_fetch_todays_games`, not five: the fetch service's shared key had split
+the old groups. The reconcile (ledmatrix-plugins #650)
+made `_fetch_todays_games` and `_fetch_odds` one body each on `SportsCore`,
+with the odds worker `_drain_odds_queue` beside them, and added a test that
+runs `update()` and `display()` on two threads against a slow endpoint.
+Every changed cell is one of the decisions below; the harness renders were
+byte-identical once the four fixtures that seeded the old live key seed the
+shared one. `src/common/sports_live_fetch.py` holds the bodies in one mixin,
+`SportsLiveFetchMixin`; `test/test_sports_live_fetch_parity.py` compares them
+with the plugin copies.
+
+Measured `update()` time with a 3 s odds endpoint and four games, before and
+after: Upcoming 6 s (afl, baseball, football, nrl, soccer, ufc), 12 s
+(hockey, lacrosse), 0 s (basketball) to 0 s everywhere; Recent 6 s / 12 s to
+0 s; Live's first pass 8 s / 12 s and next poll 4 s / 6 s to 0 s. The line
+now lands when ESPN answers (3 s here) instead of at the next `update()`
+(15 s for a live game, an hour for an upcoming or recent one) in the six.
+
+Left for later: ufc's MMA Recent manager never asks for odds and its Upcoming
+manager asks for every fight in the window before trimming to the headliners
+(both in `mma.py`'s `update()` overrides, family 13); basketball's NCAA
+Recent/Upcoming fallback still caches the undated scoreboard under
+`<sport_key>_scoreboard_current` with `limit=1000`, which ESPN truncates (held
+with the data fetching); `_attach_odds_to_rotated_games` still starts its own
+thread per rotation and can route through `_fetch_odds` once every plugin
+inherits this mixin; and ESPN lists only some college basketball games
+without `groups=50` (7 of 21 on 2026-03-14), dated or not.
+
 ### Why the method changes
 
 Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
@@ -503,7 +542,7 @@ release.
 | 6 | Favourite matching | `_is_favorite_game` (7 across three classes), `_select_games_for_display` (2: nrl), `_select_recent_games_for_display` (3) | Everything that asks "is this a favourite" goes through the 3.5.0 `_favorite_key` seam. Reconciled to one body each and promoted as `sports_favorites`; shipped in 3.8.2 and adopted. See [Family 6](#family-6-favourite-matching-done-core-382-adopted) |
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; done: core 3.8.4, adopted (ledmatrix-plugins #643). See [Family 7](#family-7-the-other-games-rotation-done-core-384-adopted) |
 | 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings`; done: core 3.8.5, adopted (ledmatrix-plugins #648). See [Family 8](#family-8-rankings-done-core-385-adopted) |
-| 9 | Live fetch and odds | `_fetch_todays_games` (5), `_fetch_odds` (3), `_attach_odds_to_rotated_games` (3) | The prerequisite for one shared ESPN poller across plugins |
+| 9 | Live fetch and odds | `_fetch_todays_games` (7 when measured), `_fetch_odds` (3); `_attach_odds_to_rotated_games` went with 7 | The prerequisite for one shared ESPN poller across plugins. Reconciled to one body each and promoted as `sports_live_fetch` (next release). See [Family 9](#family-9-live-fetch-and-odds-reconciled-promoted-awaiting-release) |
 | 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
 | 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
 | 12 | Scroll/Vegas card | `game_renderer.py`: `render_game_card` (6), `_load_and_resize_logo` (8), `_load_custom_font`, `preload_logos`, `__init__` (7 each), `_draw_records_or_rankings` (6), `_load_fonts`, `_draw_dynamic_odds`, `_draw_live_game_status`, `_draw_recent_game_status`, `_get_team_display_text` (5 each), `_draw_text_with_outline` (2: football) | Same decisions as 11; sequence after the scroll-performance work on pre-rendered strips lands |
@@ -598,15 +637,26 @@ suspected behaviour that needs a payload or a rig to confirm first.
   seasons. A block without a readable `endDate` counts as current. (f)
   baseball's MLB, MiLB and NCAA Baseball managers drop their class-level
   shared copy of the table (none of those leagues publishes a poll).
-- **9, live fetch and odds.** (a) afl, basketball, nrl and soccer cache the
-  live scoreboard for 30 s under `<sport_key>_scoreboard_current`; the others
-  do not (the harness fixtures seed that key, so the change shows up there).
-  (b) basketball fetches college games with no `dates` parameter, citing a
-  404 (*verify* now that `espn_dates` handles ranges). (c) odds are fetched
-  three ways: blocking (hockey, lacrosse), a thread waited on for 1.5–2 s
-  (six plugins), or fire-and-forget for upcoming games (basketball). This
-  sets how long `update()` takes and when an odds line appears. (d) nrl
-  guards on a missing odds manager; port it.
+- **9, live fetch and odds. Decided 2026-10-12, reconciled.** (a) Live
+  scores are always fresh: every poll asks ESPN and leaves the answer under
+  the shared `espn_scoreboard_cache_key` for its dates (`max_age=1`: only a
+  copy another reader fetched within the last second, the managers of one
+  display tick, is reused). afl, basketball, nrl and soccer had held it 30 s
+  under `<sport_key>_scoreboard_current`, so with the 15 s default poll every
+  other poll repeated the last one; lacrosse and ufc now share their copy.
+  (b) College basketball is asked by date like every other league: ESPN
+  answered single dates for both college leagues on 2026-10-12 (the 404 no
+  longer happens), so the lookback now reaches last night's late games there
+  too. `groups=50` is a separate question (left above). (c) Odds never block
+  `update()`: one daemon worker per manager answers a queue and attaches each
+  line in place under `_games_lock`; one batch in flight per manager, games
+  queued meanwhile join it. A card can draw once without odds and gain them;
+  a pre-rendered scroll strip gains them when it is next rebuilt. (d) The
+  missing-odds-manager guard (nrl's, already in `_attach_odds_to_rotated_games`
+  since family 7) is in `_fetch_odds` too, logged at debug, not ERROR. Fix
+  ported: an answer with `"events": null` is no games instead of a
+  `TypeError` out of the fetch (all nine), and `get_espn_scoreboard` no longer
+  caches it under the shared key.
 - **10, view model.** Per key, whether every sport emits it. Additive only:
   no key is renamed or removed.
 - **11 and 12, the scorebug and the card.** The pinned divergences in

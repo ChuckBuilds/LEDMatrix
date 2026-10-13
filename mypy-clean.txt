@@ -39,6 +39,7 @@ src/common/sports_favorites.py
 src/common/sports_fetch.py
 src/common/sports_font_path.py
 src/common/sports_game_over.py
+src/common/sports_live_fetch.py
 src/common/sports_live_scroll.py
 src/common/sports_plugin_host.py
 src/common/sports_rankings.py

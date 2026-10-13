@@ -29,7 +29,27 @@ accepts both, but the store flags the old spelling as deprecated
   web interface still starts on boot either way. Hidden when the unit's state
   cannot be read (not installed, or no systemd).
 
+### New modules
+
+- `src/common/sports_live_fetch.py` -- sports consolidation family 9, once the
+  plugins made `_fetch_todays_games` (seven bodies) and `_fetch_odds` (three)
+  one each: `SportsLiveFetchMixin` (`SportsCore`), with the odds worker
+  `_drain_odds_queue` beside them. The live poll asks ESPN on every poll
+  (a copy another reader fetched within the last second is reused) and
+  leaves the answer under the shared `espn_scoreboard_cache_key` for its
+  dates; college basketball is asked by date like every other league; an
+  answer whose `events` is not a list counts as no games. Odds never block
+  `update()`: one daemon worker per manager answers a queue and attaches each
+  line in place under `_games_lock`, one batch in flight at a time. A plugin
+  may inherit the mixin once it floors on the release that ships it, and
+  deletes its copies then.
+
 ### Fixes
+
+- `get_espn_scoreboard()` no longer caches an answer whose `events` is not a
+  list (ESPN has sent `"events": null`): every reader of the shared scoreboard
+  key -- odds-ticker, the other scoreboards -- inherited it until it aged out.
+  The answer is still returned to the caller as it came.
 
 - `SportsRankingsMixin` (#789's deferred review points, now that it is the
   only copy): a poll entry whose `current` cannot be converted to an

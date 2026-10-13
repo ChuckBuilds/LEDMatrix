@@ -51,6 +51,7 @@ Rules for the package:
 | [`sports_game_over`](#sports_game_over) | Whether a game ESPN still lists as live has ended | Yes (scoreboards) | 3.8.1 |
 | [`sports_game_renderer`](#sports_game_renderer) | Scoreboard scroll/Vegas card geometry | Yes (scoreboards) | 3.3.0 |
 | [`sports_helpers`](#sports_helpers) | Small helpers every scoreboard `sports.py` copies | Yes (scoreboards) | 3.5.0 |
+| [`sports_live_fetch`](#sports_live_fetch) | The live poll's scoreboard request, and odds off the update path | Yes (scoreboards) | next release |
 | [`sports_live_scroll`](#sports_live_scroll) | Rebuild a live scroll strip mid-cycle without moving it | Yes (scoreboards) | 3.8.0 |
 | [`sports_plugin_host`](#sports_plugin_host) | Helpers of a scoreboard's plugin class (`manager.py`) | Yes (scoreboards) | 3.8.0 |
 | [`sports_rankings`](#sports_rankings) | Which teams are ranked, in which poll, and the "ranked" filter | Yes (scoreboards) | 3.8.5 |
@@ -369,6 +370,19 @@ helpers of a scoreboard's `BasePlugin` subclass. `get_vegas_priority_weight()`
 shape), `_dispatch_switch_refresh()` (a manager refresh on a daemon thread, so
 `display()` never waits on the network), `get_vegas_content_type()` and small
 dynamic-duration helpers. List it before `BasePlugin`.
+
+### sports_live_fetch
+
+[`sports_live_fetch.py`](sports_live_fetch.py). Sports family 9:
+`SportsLiveFetchMixin` (`SportsCore`). `_fetch_todays_games` asks ESPN for
+today's scoreboard (and yesterday's while `_needs_previous_day()` says it can
+still hold a live game) on every live poll through `get_espn_scoreboard`, and
+leaves it under the shared `espn_scoreboard_cache_key` for odds-ticker and the
+other scoreboards; an answer without an `events` list is no games.
+`_fetch_odds` queues a game and returns at once; one daemon worker per manager
+(`_drain_odds_queue`) asks the odds manager for each queued game and attaches
+the line in place under `_games_lock`, so a card can draw once without odds and
+gain them. Games queued while the worker is busy join its batch.
 
 ### sports_rankings
 
