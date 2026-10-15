@@ -76,6 +76,17 @@ to for one release are gone.
   interface can no longer start or stop on-demand sessions or clear errors
   on a running display (the mailbox used to carry them).
 
+### Fixes
+
+- Vegas: a `pause` (STATIC) turn redraws its plugin for the whole pause,
+  once a second, or at the high-FPS rate for a plugin that declares
+  `needs_high_fps` (or scrolls) -- the rate the rotation uses. The pause used
+  to call `display()` once and sleep out the duration, so a plugin that
+  rotates its screens or animates was frozen on its first frame. The first
+  draw still passes `force_clear=True`; later ones pass nothing. A redraw
+  that finds the plugin's `update()` holding its lock is skipped; the pause
+  carries on.
+
 ## 3.8.7
 
 Sports consolidation family 10: `src.common.sports_view_model`, the game

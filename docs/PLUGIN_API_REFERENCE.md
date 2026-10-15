@@ -328,7 +328,7 @@ Each plugin takes part in Vegas mode in one of three ways:
 | Participation | What Vegas does |
 |---|---|
 | `'scroll'` | The plugin's content (`get_vegas_content()`) scrolls by with everything else |
-| `'pause'` | The scroll stops when the plugin's turn comes round; its `display()` draws it full screen for `get_display_duration()` seconds, then the scroll resumes |
+| `'pause'` | The scroll stops when the plugin's turn comes round; its `display()` draws it full screen for `get_display_duration()` seconds, then the scroll resumes. `display()` is called again through the pause, as in the rotation: once a second, or at the high-FPS rate if the plugin declares `needs_high_fps`; the first call passes `force_clear=True` |
 | `'exclude'` | The plugin is left out of Vegas mode |
 
 Declare the plugin's default in `manifest.json`:
