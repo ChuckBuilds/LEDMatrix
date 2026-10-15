@@ -947,7 +947,8 @@ def get_espn_scoreboard(
     split as ESPN needs -- caches the result under the canonical key and
     returns it. ``max_age=0`` always fetches (and still caches, for other
     readers). Errors raise exactly as :func:`fetch_espn_scoreboard` does,
-    and nothing is cached then. ``session=None`` uses the fetch service's
+    and nothing is cached then; nor is an answer whose ``events`` is not a
+    list (ESPN has sent ``"events": null``), which is returned as it came. ``session=None`` uses the fetch service's
     pooled session for the ESPN host.
     """
     key = espn_scoreboard_cache_key(sport, league, dates)
@@ -969,5 +970,7 @@ def get_espn_scoreboard(
         # cache read above would have accepted.
         cache_max_age=None if max_age is None else max(0.0, float(max_age)),
     )
-    store_espn_scoreboard_cache(cache_manager, key, data)
+    # Every reader of the shared key would inherit a malformed answer.
+    if isinstance(data, dict) and isinstance(data.get("events"), list):
+        store_espn_scoreboard_cache(cache_manager, key, data)
     return data

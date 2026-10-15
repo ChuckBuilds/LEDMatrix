@@ -76,6 +76,86 @@ to for one release are gone.
   interface can no longer start or stop on-demand sessions or clear errors
   on a running display (the mailbox used to carry them).
 
+## 3.8.6
+
+A **Start Display on Boot** toggle on the General tab (#792), two fixes to
+the shared rankings code (#791), `get_espn_scoreboard()` no longer caching a
+null-events answer, and sports consolidation family 9:
+`src.common.sports_live_fetch`, which the scoreboards adopt by flooring on
+3.8.6 (#793).
+
+### Features
+
+- General tab: a **Start Display on Boot** toggle turns
+  `ledmatrix.service`'s autostart on or off right away (no Save needed),
+  through the existing `enable_autostart` / `disable_autostart` system
+  actions. It shows systemd's own state, so nothing is stored in
+  `config.json`; the default stays on (the installer enables the unit). The
+  web interface still starts on boot either way. Hidden when the unit's state
+  cannot be read (not installed, or no systemd).
+
+### New modules
+
+- `src/common/sports_live_fetch.py` -- sports consolidation family 9, once the
+  plugins made `_fetch_todays_games` (seven bodies) and `_fetch_odds` (three)
+  one each: `SportsLiveFetchMixin` (`SportsCore`), with the odds worker
+  `_drain_odds_queue` beside them. The live poll asks ESPN on every poll
+  (a copy another reader fetched within the last second is reused) and
+  leaves the answer under the shared `espn_scoreboard_cache_key` for its
+  dates; college basketball is asked by date like every other league; an
+  answer whose `events` is not a list counts as no games. Odds never block
+  `update()`: one daemon worker per manager answers a queue and attaches each
+  line in place under `_games_lock`, one batch in flight at a time. A plugin
+  may inherit the mixin once it floors on 3.8.6, and deletes its copies then.
+  (#793)
+
+### Fixes
+
+- `get_espn_scoreboard()` no longer caches an answer whose `events` is not a
+  list (ESPN has sent `"events": null`): every reader of the shared scoreboard
+  key -- odds-ticker, the other scoreboards -- inherited it until it aged out.
+  The answer is still returned to the caller as it came.
+
+- `SportsRankingsMixin` (#789's deferred review points, now that it is the
+  only copy): a poll entry whose `current` cannot be converted to an
+  integer (`None`, a non-numeric string) is skipped instead of throwing
+  away the whole poll -- which left
+  every team unranked and re-fetched the standings on every update -- and
+  `_ranked_positions()` decides id-or-abbreviation per side, so one side
+  without an id no longer drops the other side's id and lets a shared
+  abbreviation rank the wrong school. Well-formed ESPN data ranks as before.
+
+## 3.8.5
+
+Fewer ESPN requests on the hourly schedule refresh (#754), and sports
+consolidation family 8: `src.common.sports_rankings`, which the scoreboards
+adopt by flooring on 3.8.5 (#789).
+
+### ESPN: settled days are not fetched again
+
+- A scoreboard's hourly Recent/Upcoming refresh asks ESPN for its window one
+  day at a time, and most of those days can no longer change. A chunk whose
+  last day is three or more days back is now kept in memory for 24 hours
+  (compressed, at most 512 entries / 8 MB) and answered from there, for
+  `fetch_espn_scoreboard` and the background service alike. Failed and
+  capped chunks are never kept, and each hit is parsed afresh. Against live
+  ESPN, a second refresh of five scoreboard windows went from 111 requests
+  and 10.2 MB to 50 requests and 3.2 MB with identical events. (#754)
+
+### New modules
+
+- `src/common/sports_rankings.py` -- sports consolidation family 8, once the
+  plugins made `_fetch_team_rankings`, `_choose_poll` (three bodies each),
+  `_load_division_team_ids`, `_passes_other_filters`, `_best_rank` and
+  `_is_ranked_game` (two each) one each: `SportsRankingsMixin` (`SportsCore`),
+  with `_ranked_positions` and `_poll_season_ended` beside them, and
+  `choose_top_division_poll()` for the dynamic team resolvers. Ranks are kept
+  by ESPN team id as well as abbreviation and a game with ids is ranked by id;
+  a poll from a season that has ended (its `endDate` has passed) loads
+  nothing, so no rank badge shows between seasons; the college football
+  division rosters are asked for the season year. A plugin may inherit the
+  mixin once it floors on 3.8.5, and deletes its copies then. (#789)
+
 ## 3.8.4
 
 A panel that cannot reach its refresh cap is reported with a cap it can hold

@@ -33,7 +33,8 @@ const UNIT = ['unit/test_list_filter.js', 'unit/test_render_cards.js',
               'unit/test_overview_reconciliation_poll.js',
               'unit/test_display_partial_ids.js',
               'unit/test_general_web_login_token.js',
-              'unit/test_on_demand_starting.js'];
+              'unit/test_on_demand_starting.js',
+              'unit/test_general_display_autostart.js'];
 const DOM = ['dom/test_installed_dom.js', 'dom/test_store_dom.js', 'dom/test_no_double_fetch.js',
              'dom/test_tools_sections.js', 'dom/test_cache_page.js',
              'dom/test_durations_page.js', 'dom/test_operation_history_page.js',
