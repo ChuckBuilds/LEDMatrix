@@ -60,7 +60,7 @@ Rules for the package:
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
 | [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
 | [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
-| [`sports_view_model`](#sports_view_model) | The game dict every scoreboard screen draws, built from one ESPN event | Yes (scoreboards) | next release |
+| [`sports_view_model`](#sports_view_model) | The game dict every scoreboard screen draws, built from one ESPN event | Yes (scoreboards) | 3.8.7 |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
 
