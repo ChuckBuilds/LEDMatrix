@@ -133,6 +133,7 @@ deprecation cycle.
 | `win_phrase(team_abbr)` | Win-celebration wording | `"<abbr> WINS!"` — mixin only |
 | `_rankings_loaded()` | Whether a poll loaded, so `_by_importance` orders by rank (`sports_rotation`) | `_team_rankings_cache` is non-empty. football also counts its rankings keyed by team id |
 | `_favorite_key(game, side)` | Which view-model field identifies a team for favorites matching. `sports_favorites` compares it, and each `favorite_teams` entry, stripped and upper-cased; a `None` matches nothing | `game["<side>_abbr"]`. nrl returns the ESPN team id, `None` when it is missing |
+| `_logo_filename(abbr, team_id)` | The file under `logo_dir` a team's logo is kept in (`sports_view_model`) | `<ABBR>.png`. nrl returns `<ABBR>_<id>.png`: its abbreviations are not unique |
 | `_config_schema_path()` | Plugin's `config_schema.json` — returning it routes `_get_layout_offset` through the `src.element_style` resolver (and gives it the defaults to compare against) | `None`, i.e. the classic inline `customization.layout` read |
 | `_font_root()` | Directory to resolve `assets/fonts` against | core install root |
 
@@ -455,6 +456,43 @@ thread per rotation and can route through `_fetch_odds` once every plugin
 inherits this mixin; and ESPN lists only some college basketball games
 without `groups=50` (7 of 21 on 2026-03-14), dated or not.
 
+### Family 10: the view model (reconciled; promoted)
+
+ledmatrix-plugins `scripts/test_view_model.py` (#653) pinned both
+`_extract_game_details_common` and each plugin's final `_extract_game_details`
+first, key by key, over 52 ESPN-shaped events: every state, OT, postponed,
+canceled, delayed and forfeit games, a missing `completed` flag, scores as
+int, "21.0", a dict, None, "" or missing, the two record shapes, missing logos
+or ids, colliding abbreviations, broadcast objects, and dates with offsets,
+without them, "TBD", and both DST changes. The nine bodies differed in how a
+final was decided (five rules), how a score was read (raw in five), which
+record and logo shapes were read, where a team id came from, how a time
+without an offset was read (UTC, US Eastern in hockey and lacrosse, the host's
+zone in ufc), and whether `favorite_teams` and basketball's tournament keys
+were built there. The reconcile (ledmatrix-plugins #654)
+made the method one body on `SportsCore`, with `_status_is_final`,
+`_score_text`, `_team_logo_url`, `_extract_team_record` and the
+`_logo_filename` seam beside it; basketball's tournament keys moved to its own
+`_extract_game_details` (its dict keeps them), football's missing-badge
+request to its own, and ufc's MMA extractor, which builds its own dict, uses the
+shared helpers. Every changed cell is one of the decisions below or a fix.
+All 208 harness renders of the nine are pixel-identical on core main.
+`src/common/sports_view_model.py` holds the bodies in one mixin,
+`SportsViewModelMixin`, whose docstring lists every key, its type and default;
+`test/test_sports_view_model_parity.py` compares them with the plugin copies.
+
+`period_text` is deliberately not given a default: the renderers read its
+absence (baseball's) as "draw ESPN's status text", which is how an
+extra-inning final reads "Final/10"; an empty default blanked baseball's
+Recent "Final". `period` (0) and `clock` ("") are, and baseball now carries
+them. `is_within_window` and `broadcast` are never read but are kept: keys are
+additive only.
+
+Left for later: the period labels stay in each sport's
+`_extract_game_details` (quarters, periods, halves, extra time, rounds), and
+soccer still names extra time's half-time "ETH"; ufc's MMA dict keeps its own
+keys and its ordinal date (`display_manager.format_date_with_ordinal`).
+
 ### Why the method changes
 
 Byte-identical promotion has nearly run dry. Measured on ledmatrix-plugins
@@ -544,7 +582,7 @@ release.
 | 7 | Other-games rotation | `_by_importance`, `_other_games_window`, `_advance_other_games_if_due` (2 each: football), `_rotate_other_games_on_display` (2: ufc), with `_attach_odds_to_rotated_games` (3; ufc had none) | One outlier each; football carried two fixes the other eight lacked. Reconciled to one body each, on a `_rankings_loaded` seam, and promoted as `sports_rotation`; done: core 3.8.4, adopted (ledmatrix-plugins #643). See [Family 7](#family-7-the-other-games-rotation-done-core-384-adopted) |
 | 8 | Rankings | `_fetch_team_rankings` (3), `_choose_poll` (3), `_load_division_team_ids`, `_passes_other_filters`, `_best_rank`, `_is_ranked_game` (2 each: football) | Needs 7; the rank badge and the "ranked only" filter read it. Reconciled to one body each and promoted as `sports_rankings`; done: core 3.8.5, adopted (ledmatrix-plugins #648). See [Family 8](#family-8-rankings-done-core-385-adopted) |
 | 9 | Live fetch and odds | `_fetch_todays_games` (7 when measured), `_fetch_odds` (3); `_attach_odds_to_rotated_games` went with 7 | The prerequisite for one shared ESPN poller across plugins. Reconciled to one body each and promoted as `sports_live_fetch` (core 3.8.6). See [Family 9](#family-9-live-fetch-and-odds-reconciled-promoted-core-386) |
-| 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details` |
+| 10 | View model | `_extract_game_details_common` (9 of 9) | Every renderer reads it; its keys are additive-only, so reconcile to the superset and leave sport extras in `_extract_game_details`. Reconciled to one body and promoted as `sports_view_model`. See [Family 10](#family-10-the-view-model-reconciled-promoted) |
 | 11 | Switch scorebug | `_load_fonts` (4), `_load_custom_font_from_element_config` (6), `_get_layout_offset` (5), `_fit_score_font` (2: football), `_load_and_resize_logo` (9), `_draw_dynamic_odds` (9), then `_draw_scorebug_layout` (20: Upcoming 9, Recent 8, Live 2, ufc's Core 1) | Needs 10 and the twin decisions below. Several releases: fonts and offsets, logos, odds, then one mode's layout per release |
 | 12 | Scroll/Vegas card | `game_renderer.py`: `render_game_card` (6), `_load_and_resize_logo` (8), `_load_custom_font`, `preload_logos`, `__init__` (7 each), `_draw_records_or_rankings` (6), `_load_fonts`, `_draw_dynamic_odds`, `_draw_live_game_status`, `_draw_recent_game_status`, `_get_team_display_text` (5 each), `_draw_text_with_outline` (2: football) | Same decisions as 11; sequence after the scroll-performance work on pre-rendered strips lands |
 | 13 | Mode lifecycle | `sports.py`: `update` (23), `__init__` (16), `display` (13), `_advance_live_game_if_due` (6) | Where per-sport behaviour lives; last in `sports.py`. Each difference becomes a seam or a strategy chosen by name (live rotation already has three) |
@@ -658,8 +696,26 @@ suspected behaviour that needs a payload or a rig to confirm first.
   ported: an answer with `"events": null` is no games instead of a
   `TypeError` out of the fetch (all nine), and `get_espn_scoreboard` no longer
   caches it under the shared key.
-- **10, view model.** Per key, whether every sport emits it. Additive only:
-  no key is renamed or removed.
+- **10, view model. Decided 2026-10-13, reconciled.** Additive only: no key
+  is renamed or removed. (a) One rule for a final, in all nine: state "post",
+  not `completed: false` (a payload without the flag is judged on state and
+  name), and not a not-played status, the union of the nine lists (postponed,
+  canceled, suspended, abandoned, delayed, a pending forfeit or no-contest).
+  A forfeit is a result (basketball and soccer had it as not played). (b)
+  Scores are integer text everywhere ("21" for 21, "21.0" or {"value": 21};
+  "0" for a missing or empty one, never "None"). (c) Halftime reads "HALF",
+  with no period or clock, in every sport's `period_text` (basketball,
+  football, hockey and lacrosse showed the period while ESPN said "in"; nrl
+  and soccer appended "0:00"). (d) A time without an offset is UTC (hockey and
+  lacrosse read US Eastern, ufc the host's zone). Fixes ported: football's
+  postponed or canceled game says so, not "Final"; the team-schedule record
+  shape is read in all nine; a logo URL is `team.logo`, else `logos[0].href`;
+  a team id is the competitor's, else its team's (eight dropped the game);
+  ufc never shows a score of "None"; a called-off game ESPN still reports as
+  "in" is not live (baseball's guard). Superset: ufc's fights carry
+  `favorite_teams` ([]), baseball's games `period` and `clock`. Per-sport:
+  ufc's own dict and ordinal date, nrl's id-based logo file and favourites,
+  the period labels.
 - **11 and 12, the scorebug and the card.** The pinned divergences in
   `test/test_sports_twins.py`, where switch mode and scroll mode draw the
   same game differently:

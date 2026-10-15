@@ -60,6 +60,7 @@ Rules for the package:
 | [`sports_shared`](#sports_shared) | Sport-independent `sports.py` methods | Yes (scoreboards) | 3.3.0 |
 | [`sports_vegas`](#sports_vegas) | Live Vegas cards: keys, card cache, sticky odds, finished games | Yes (scoreboards) | 3.8.0 |
 | [`sports_timezone`](#sports_timezone) | Which timezone a scoreboard draws start times in | Yes (scoreboards) | 3.6.0 |
+| [`sports_view_model`](#sports_view_model) | The game dict every scoreboard screen draws, built from one ESPN event | Yes (scoreboards) | next release |
 | [`sync_manager`](#sync_manager) | Leader/follower sync between two displays | No, core-internal | n/a |
 | [`text_helper`](#text_helper) | Outlined text, wrapping, measurement | Yes | — |
 
@@ -446,6 +447,20 @@ through a live poll that left them out), and `finished_games()` /
 `with_finished_games()` (a game that just went final keeps its card, showing
 FINAL). `SportsScrollDisplay.build_vegas_elements()` in `sports_scroll` puts
 them together; a scoreboard not built on it (UFC) uses them directly.
+
+### sports_view_model
+
+[`sports_view_model.py`](sports_view_model.py). Sports family 10:
+`SportsViewModelMixin` (`SportsCore`). `_extract_game_details_common` turns
+one ESPN scoreboard event into the game dict every renderer reads (the key
+table is in the module docstring; keys are additive only) and hands back the
+two competitors, the status and the situation for the sport's own
+`_extract_game_details`. One rule decides a final (`_status_is_final`: state
+"post", not `completed: false`, not a postponed, canceled, suspended,
+abandoned, delayed or pending status; a forfeit is final); a called-off game
+is never live; scores are integer text (`_score_text`); a time without an
+offset is UTC. `_logo_filename(abbr, team_id)` is the seam for the logo file
+under `logo_dir` (NRL names it by team id too).
 
 ### sports_timezone
 
