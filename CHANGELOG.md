@@ -19,6 +19,20 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### New modules
+
+- `src/common/sports_view_model.py` -- sports consolidation family 10, once
+  the plugins made `_extract_game_details_common` (nine bodies) one:
+  `SportsViewModelMixin` (`SportsCore`), the game dict every scoreboard screen
+  draws from one ESPN event, with `_status_is_final`, `_score_text`,
+  `_team_logo_url`, `_extract_team_record` and the `_logo_filename` seam
+  beside it. One rule for a final (state "post", not `completed: false`, not
+  postponed, canceled, suspended, abandoned, delayed or pending; a forfeit is
+  final); a called-off game is never live; scores are integer text; a time
+  without an offset is UTC. Keys are additive only; the module docstring
+  lists every key, its type and default. A plugin may inherit the mixin once
+  it floors on the release that ships it, and deletes its copies then.
+
 ## 3.8.6
 
 A **Start Display on Boot** toggle on the General tab (#792), two fixes to
