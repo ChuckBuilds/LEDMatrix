@@ -160,8 +160,7 @@ class TestOneBadConfigSectionDoesNotBlankTheList:
 
 class TestOnDemandUsesTheRegisteredSpelling:
     def test_a_mode_differing_in_case_is_sent_as_registered(self, client):
-        with patch('web_interface.blueprints.api_v3.display._deliver_on_demand',
-                   return_value=('socket', None)) as deliver:
+        with patch('web_interface.blueprints.api_v3.display._send_on_demand') as deliver:
             response = client.post('/api/v3/display/on-demand/start',
                                    json={'plugin_id': 'football-scoreboard',
                                          'mode': 'NFL_LIVE', 'start_service': False})
