@@ -75,6 +75,7 @@ to for one release are gone.
 - **Windows and `LEDMATRIX_CONTROL_SOCKET=off`:** with no socket, the web
   interface can no longer start or stop on-demand sessions or clear errors
   on a running display (the mailbox used to carry them).
+
 ## 3.8.7
 
 Sports consolidation family 10: `src.common.sports_view_model`, the game
