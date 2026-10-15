@@ -75,6 +75,25 @@ to for one release are gone.
 - **Windows and `LEDMATRIX_CONTROL_SOCKET=off`:** with no socket, the web
   interface can no longer start or stop on-demand sessions or clear errors
   on a running display (the mailbox used to carry them).
+## 3.8.7
+
+Sports consolidation family 10: `src.common.sports_view_model`, the game
+dict every scoreboard screen draws, which the scoreboards adopt by flooring
+on 3.8.7 (#796).
+
+### New modules
+
+- `src/common/sports_view_model.py` -- sports consolidation family 10, once
+  the plugins made `_extract_game_details_common` (nine bodies) one:
+  `SportsViewModelMixin` (`SportsCore`), the game dict every scoreboard screen
+  draws from one ESPN event, with `_status_is_final`, `_score_text`,
+  `_team_logo_url`, `_extract_team_record` and the `_logo_filename` seam
+  beside it. One rule for a final (state "post", not `completed: false`, not
+  postponed, canceled, suspended, abandoned, delayed or pending; a forfeit is
+  final); a called-off game is never live; scores are integer text; a time
+  without an offset is UTC. Keys are additive only; the module docstring
+  lists every key, its type and default. A plugin may inherit the mixin once
+  it floors on 3.8.7, and deletes its copies then. (#796)
 
 ## 3.8.6
 
