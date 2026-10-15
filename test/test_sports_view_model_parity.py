@@ -71,6 +71,13 @@ def _constant(cls, name):
 
 
 
+def _adopted(source, tree):
+    """The plugin imports core's module and its carrier inherits the mixin."""
+    bases = _class(tree, CARRIER).bases
+    return (sports_view_model.__name__ in source
+            and any(getattr(b, "id", getattr(b, "attr", None)) == MIXIN for b in bases))
+
+
 def _fingerprint(node):
     return (DRIFT._digest(node, DRIFT._Canonical()),
             tuple(ast.unparse(d) for d in node.decorator_list))
@@ -89,8 +96,8 @@ def test_every_remaining_plugin_copy_matches(sport, name):
     source, tree = _plugin_tree(_plugins_root(), sport)
     copy = _method(_class(tree, CARRIER), name)
     if copy is None:
-        assert sports_view_model.__name__ in source, (
-            f"{sport}: no {name} on {CARRIER} and no {sports_view_model.__name__} import")
+        assert _adopted(source, tree), (
+            f"{sport}: no {name} on {CARRIER}, and {CARRIER} does not inherit {MIXIN}")
     else:
         assert _fingerprint(copy) == _fingerprint(_method(OURS, name)), (
             f"{CARRIER}.{name} in {sport} differs from sports_view_model. "
@@ -103,8 +110,8 @@ def test_every_remaining_status_set_matches(sport, name):
     source, tree = _plugin_tree(_plugins_root(), sport)
     copy = _constant(_class(tree, CARRIER), name)
     if copy is None:
-        assert sports_view_model.__name__ in source, (
-            f"{sport}: no {name} on {CARRIER} and no {sports_view_model.__name__} import")
+        assert _adopted(source, tree), (
+            f"{sport}: no {name} on {CARRIER}, and {CARRIER} does not inherit {MIXIN}")
     else:
         assert copy == _constant(OURS, name), f"{CARRIER}.{name} in {sport} differs"
 
