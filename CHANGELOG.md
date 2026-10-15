@@ -19,6 +19,12 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.8.7
+
+Sports consolidation family 10: `src.common.sports_view_model`, the game
+dict every scoreboard screen draws, which the scoreboards adopt by flooring
+on 3.8.7 (#796).
+
 ### New modules
 
 - `src/common/sports_view_model.py` -- sports consolidation family 10, once
@@ -31,7 +37,7 @@ accepts both, but the store flags the old spelling as deprecated
   final); a called-off game is never live; scores are integer text; a time
   without an offset is UTC. Keys are additive only; the module docstring
   lists every key, its type and default. A plugin may inherit the mixin once
-  it floors on the release that ships it, and deletes its copies then.
+  it floors on 3.8.7, and deletes its copies then. (#796)
 
 ## 3.8.6
 
