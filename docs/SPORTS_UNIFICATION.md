@@ -469,7 +469,7 @@ final was decided (five rules), how a score was read (raw in five), which
 record and logo shapes were read, where a team id came from, how a time
 without an offset was read (UTC, US Eastern in hockey and lacrosse, the host's
 zone in ufc), and whether `favorite_teams` and basketball's tournament keys
-were built there. The reconcile (ledmatrix-plugins `claude/family10-reconcile`)
+were built there. The reconcile (ledmatrix-plugins #654)
 made the method one body on `SportsCore`, with `_status_is_final`,
 `_score_text`, `_team_logo_url`, `_extract_team_record` and the
 `_logo_filename` seam beside it; basketball's tournament keys moved to its own
