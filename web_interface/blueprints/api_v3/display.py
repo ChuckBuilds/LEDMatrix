@@ -9,7 +9,7 @@ from web_interface.blueprints.api_v3 import (
     _get_display_service_status, _socket_reason_code, _stop_display_service, api_v3,
     jsonify, logger, request, uuid,
 )
-from web_interface import display_preview, display_state
+from web_interface import display_preview, display_state, on_demand_dispatch
 import web_interface.blueprints.api_v3 as _pkg
 from src.ipc import client as control_client
 # Read through the module rather than bound by value: tests patch these
@@ -33,87 +33,97 @@ def _cache_manager():
 
 
 
-class _NotDelivered(Exception):
-    """The display took an on-demand request over the socket and did not
-    accept it (``busy``, ``invalid_args``, ...) or did not answer in time."""
+#: How long a start is sent again to a service that systemd reports running
+#: but that has no socket yet (a display still loading its plugins, or one
+#: someone else just restarted). A cold start gets the dispatcher's own
+#: START_WAIT_SECONDS. Either way the route answers at once (202) and the
+#: web process's dispatcher does the waiting.
+ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS = 10.0
 
-    def __init__(self, reason):
-        super().__init__(reason)
-        self.reason = reason
+
+def _dispatcher():
+    """The web process's on-demand dispatcher (web_interface/on_demand_dispatch.py)."""
+    return on_demand_dispatch.get_dispatcher(_send_on_demand)
 
 
-def _deliver_on_demand(payload):
-    """Hand an on-demand request to the display: control socket, else mailbox.
+def _pending_start_state():
+    """A start the dispatcher is still delivering, one it delivered but the
+    display has not acted on yet, or one it gave up on: what the status
+    routes report instead of the display's own state (see _shadows). None
+    when there is none.
 
-    The socket (src/ipc) answers with an acknowledgement as soon as the
-    display has the command queued for its render thread. The file mailbox
-    is written only when the socket could not carry the request at all
-    (``control_client.should_fall_back``): no socket (the display is stopped
-    or predates it), a refused connection, or a display too old to know the
-    command. The display reads it within its mailbox poll interval.
-
-    A display that had the request and refused it, or did not answer in
-    time, raises :class:`_NotDelivered`: a mailbox copy would be refused
-    the same way, or hide a stuck display behind a "success".
-
-    Returns ``(transport, socket_error)``: ``'socket'`` and None, or
-    ``'mailbox'`` and the socket failure's reason code.
+    A delivered start reads as ``status: "starting"`` with ``delivered:
+    true`` for at most DELIVERED_SHOWN_SECONDS: the display acknowledges it
+    when its socket opens and acts on it seconds later, and until then
+    publishes its own idle state, which would flash in the UI.
     """
-    try:
-        if payload['action'] == 'start':
-            control_client.on_demand_start(
-                payload['request_id'], payload.get('plugin_id'), payload.get('mode'),
-                payload.get('duration'), bool(payload.get('pinned', False)))
-        else:
-            control_client.on_demand_stop(payload['request_id'])
-        return 'socket', None
-    except control_client.ControlError as e:
-        reason = _socket_reason_code(e.reason)
-        if not control_client.should_fall_back(e):
-            logger.warning("The display did not accept on-demand %s %s (%s)",
-                           payload['action'], payload['request_id'], e)
-            raise _NotDelivered(reason) from None
-        if reason in _QUIET_SOCKET_REASONS:
-            logger.debug("On-demand %s via the mailbox: %s", payload['action'], e)
-        else:
-            logger.warning("Control socket did not take on-demand %s (%s); "
-                           "using the mailbox", payload['action'], e)
-    except Exception:  # never let the socket path break the route
-        logger.exception("Control socket client failed; using the mailbox")
-        reason = 'internal'
-    _cache_manager().set('display_on_demand_request', payload)
-    return 'mailbox', reason
+    dispatcher = on_demand_dispatch.current()
+    status = dispatcher.status() if dispatcher is not None else None
+    if status is None:
+        return None
+    if status.get('status') == 'delivered':
+        delivered_at = status.get('last_updated') or 0
+        if _pkg.time.time() - delivered_at > on_demand_dispatch.DELIVERED_SHOWN_SECONDS:
+            return None
+        return dict(status, status='starting', delivered=True, delivered_at=delivered_at)
+    if status.get('status') not in ('starting', 'error'):
+        return None
+    return status
 
 
-def _not_delivered_response(request_id, action, reason):
-    """The answer when the display had the request and did not accept it."""
+def _display_on_demand_state(snapshot):
+    """The display's own on-demand state: (state, source). From the socket's
+    snapshot, else the cache key it also writes; state None when neither."""
+    state = display_state.on_demand_state(snapshot)
+    if state is not None:
+        return state, 'socket'
+    # memory_ttl=0: the display service writes this key, so only the file
+    # is current. This process's memory tier would keep serving the first
+    # copy it read for the full max_age -- "active" for two minutes after
+    # the display had already stopped.
+    return _cache_manager().get('display_on_demand_state', max_age=120, memory_ttl=0), 'cache'
+
+
+def _send_on_demand(payload):
+    """Hand an on-demand request to the display over the control socket.
+
+    Returns the display's acknowledgement: it has the command queued for
+    its render thread. Raises ``control_client.ControlError`` when it did
+    not take it; there is no other way to reach the display (the file
+    mailbox ``display_on_demand_request`` is gone).
+    """
+    if payload['action'] == 'start':
+        return control_client.on_demand_start(
+            payload['request_id'], payload.get('plugin_id'), payload.get('mode'),
+            payload.get('duration'), bool(payload.get('pinned', False)))
+    return control_client.on_demand_stop(payload['request_id'])
+
+
+def _socket_error_response(request_id, action, reason, message=None, **extra):
+    """The answer when the display did not take an on-demand request: ``400``
+    for arguments it refused, else ``503``."""
     status = 400 if reason == 'invalid_args' else 503
+    data = {'request_id': request_id, 'transport': 'socket', 'socket_error': reason}
+    data.update(extra)
     return jsonify({
         'status': 'error',
-        'message': (f'The display service did not accept the on-demand {action} '
-                    f'request ({reason})'),
-        'data': {'request_id': request_id, 'transport': 'socket', 'socket_error': reason},
+        'message': message or (f'The display service did not accept the on-demand {action} '
+                               f'request ({reason})'),
+        'data': data,
     }), status
 
 
-def _withdraw_on_demand(request_id):
-    """Take a start request the route has refused back out of the mailbox.
-
-    The display reads the mailbox for an hour without looking at a
-    request's age, so one left there after an error answer ran whenever the
-    display next started. Only this request is removed: the mailbox is
-    re-read and cleared only while it still holds this request_id, as the
-    display's _consume_on_demand_request does, so a newer request posted in
-    the meantime stays for the display to take.
-    """
-    cache = _cache_manager()
-    try:
-        current = cache.get('display_on_demand_request', max_age=3600, memory_ttl=0)
-        if isinstance(current, dict) and current.get('request_id') == request_id:
-            cache.delete('display_on_demand_request')
-    except Exception:  # the route is answering an error already
-        logger.warning("Could not withdraw on-demand request %s from the mailbox",
-                       request_id, exc_info=True)
+def _socket_failure_reason(error):
+    """The reportable reason code for an exception from _send_on_demand, logged."""
+    if isinstance(error, control_client.ControlError):
+        reason = _socket_reason_code(error.reason)
+        if reason in _QUIET_SOCKET_REASONS:
+            logger.debug("On-demand request not taken over the control socket: %s", error)
+        else:
+            logger.warning("On-demand request not taken over the control socket: %s", error)
+        return reason
+    logger.error("Control socket client failed", exc_info=error)
+    return 'internal'
 
 
 @api_v3.route('/display/current', methods=['GET'])
@@ -218,16 +228,13 @@ def get_on_demand_status():
     available (``source: "socket"``), else the cache key it also writes
     (``source: "cache"``).
     """
-    state = display_state.on_demand_state(display_state.read_state())
-    source = 'socket'
-    if state is None:
-        source = 'cache'
-        cache = _cache_manager()
-        # memory_ttl=0: the display service writes this key, so only the file
-        # is current. This process's memory tier would keep serving the first
-        # copy it read for the full max_age -- "active" for two minutes after
-        # the display had already stopped.
-        state = cache.get('display_on_demand_state', max_age=120, memory_ttl=0)
+    state, source = _display_on_demand_state(display_state.read_state())
+    pending = _pending_start_state()
+    if pending is not None and _shadows(pending, state):
+        # A start the web process is still delivering, has delivered but
+        # the display has not answered yet, or gave up on (start-timeout):
+        # newer than anything the display has said.
+        state, source = pending, 'web'
     if state is None:
         state = {
             'active': False,
@@ -243,6 +250,31 @@ def get_on_demand_status():
             'source': source,
         }
     })
+def _shadows(pending, state):
+    """Whether the web process's start (or its failure) is newer than the
+    display's on-demand ``state``.
+
+    * Still being sent: always.
+    * Delivered: until the display publishes the state that answers it.
+      A display that names its request (``request_id``) answers when the
+      id matches; its startup state, published as the socket opens and so
+      possibly after the acknowledgement, names no request or an older one
+      and does not count. An older display without the field answers with
+      any state published after the delivery.
+    * Failed: until the display publishes something later.
+    """
+    if not isinstance(state, dict):
+        return True
+    if pending.get('status') == 'starting' and not pending.get('delivered'):
+        return True
+    if pending.get('delivered') and 'request_id' in state:
+        return state.get('request_id') != pending.get('request_id')
+    shown = state.get('last_updated')
+    if not isinstance(shown, (int, float)) or isinstance(shown, bool):
+        return True
+    return shown < (pending.get('last_updated') or 0)
+
+
 @api_v3.route('/display/on-demand/start', methods=['POST'])
 def start_on_demand_display():
     """Request the display controller to run a specific plugin on-demand."""
@@ -300,11 +332,10 @@ def start_on_demand_display():
                 resolved_plugin,
             )
 
-    # Deliver the request over the control socket, or post it to the
-    # mailbox the display process polls (DisplayController.
-    # _poll_on_demand_requests). Done before any service start: a stopped
-    # display has no socket, so the request lands in the mailbox, where a
-    # freshly started display finds it on its first poll.
+    # The request goes over the control socket, the only way to reach the
+    # display. A display that is not listening (stopped, or still starting)
+    # is started when start_service asks for it, and the request is sent
+    # again once its socket is up.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
@@ -315,69 +346,85 @@ def start_on_demand_display():
         'pinned': pinned,
         'timestamp': _pkg.time.time()
     }
+    # This start supersedes one the dispatcher is still delivering,
+    # whatever becomes of it: an older request must not land after it.
+    dispatcher = on_demand_dispatch.current()
+    if dispatcher is not None:
+        dispatcher.cancel('superseded')
     try:
-        transport, socket_error = _deliver_on_demand(request_payload)
-    except _NotDelivered as e:
-        return _not_delivered_response(request_id, 'start', e.reason)
-
-    # A socket acknowledgement is the display itself answering: it is
-    # running and has the request queued, whatever systemd says (a display
-    # run by hand or in the emulator has no active unit). So nothing is
-    # checked or started for it -- that answered "not running" for a request
-    # that had already taken effect. The service is still reported the way
-    # _ensure_display_service_running reports a running one.
-    if transport == 'socket':
+        _send_on_demand(request_payload)
+    except Exception as e:  # pylint: disable=broad-except
+        error = e
+    else:
+        # A socket acknowledgement is the display itself answering: it is
+        # running and has the request queued, whatever systemd says (a
+        # display run by hand or in the emulator has no active unit). So
+        # nothing is checked or started for it. The service is still
+        # reported the way _ensure_display_service_running reports a
+        # running one.
         service_result = (dict(_get_display_service_status(), started=False)
                           if start_service else None)
         return _on_demand_started(request_id, resolved_plugin, resolved_mode,
-                                  duration, pinned, service_result, transport,
-                                  socket_error)
+                                  duration, pinned, service_result)
+
+    reason = _socket_failure_reason(error)
+    if not control_client.display_not_listening(error):
+        # The display had it and refused it, is too old for the command, or
+        # this web process cannot use the socket at all (switched off, no
+        # Unix sockets): starting a service would not change that.
+        return _socket_error_response(request_id, 'start', reason)
 
     service_status = _get_display_service_status()
-
     if not service_status.get('active') and not start_service:
-        # The request is in the mailbox, and the display reads it whenever
-        # it next starts: taken back out, or a request answered with this
-        # error ran later anyway.
-        _withdraw_on_demand(request_id)
         return jsonify({
             'status': 'error',
             'message': 'Display service is not running. Please start the display service or enable "Start Service" option.',
-            'service_status': service_status
+            'service_status': service_status,
+            'data': {'request_id': request_id, 'transport': 'socket', 'socket_error': reason},
         }), 400
 
     # start_service means "start it if it is not running", as the UI's
-    # checkbox says; _ensure_display_service_running leaves a running service
-    # alone. This used to stop a running service, sleep 1.5s and start it
-    # again, so every on-demand or "Preview on display" click -- and every
-    # MQTT on-demand command, which posts here with the default -- cold-
-    # restarted the display process: every plugin reloaded and the panel was
-    # blank for seconds. The restart bought nothing. The running process
-    # looks at this mailbox at least once a second, from its dwell sleep,
-    # its render loops and Vegas's interrupt check as well as the main loop
-    # (DisplayController._mailbox_poll_interval), and a restarted one got
-    # the request the same way: the
-    # startup path only restores a session the display itself saved
-    # (display_on_demand_config), so it loaded nothing it would not have had.
+    # checkbox says; _ensure_display_service_running leaves a running
+    # service alone (restarting it cost seconds of blank panel for nothing).
+    # Either way the display has no socket yet. The route does not wait for
+    # it -- a cold start can outlast a client's timeout (the MQTT bridge's is
+    # 15 s) -- but answers 202 and leaves the sending to the dispatcher,
+    # whose outcome the status routes report.
+    wait = ON_DEMAND_SOCKET_WAIT_RUNNING_SECONDS
     service_result = None
-    if start_service:
+    if not service_status.get('active'):
         service_result = _ensure_display_service_running()
-        # Check if service actually started
         if service_result and not service_result.get('active'):
-            _withdraw_on_demand(request_id)
             return jsonify({
                 'status': 'error',
                 'message': 'Failed to start display service. Please check service logs or start it manually.',
                 'service_result': service_result
             }), 500
+        wait = on_demand_dispatch.START_WAIT_SECONDS
+    elif start_service:
+        service_result = dict(service_status, started=False)
 
-    return _on_demand_started(request_id, resolved_plugin, resolved_mode,
-                              duration, pinned, service_result, transport,
-                              socket_error)
+    _dispatcher().submit(request_payload, wait_seconds=wait)
+    return jsonify({
+        'status': 'starting',
+        'message': ('The display service is starting; the request is sent to it as soon '
+                    'as it is listening. Check the on-demand status for the outcome.'),
+        'data': {
+            'request_id': request_id,
+            'plugin_id': resolved_plugin,
+            'mode': resolved_mode,
+            'duration': duration,
+            'pinned': pinned,
+            'service': service_result,
+            'transport': 'socket',
+            'socket_error': reason,
+            'pending': True,
+            'wait_seconds': wait,
+        },
+    }), 202
 
 
-def _on_demand_started(request_id, plugin_id, mode, duration, pinned,
-                       service_result, transport, socket_error):
+def _on_demand_started(request_id, plugin_id, mode, duration, pinned, service_result):
     """The success answer of /display/on-demand/start."""
     response_data = {
         'request_id': request_id,
@@ -386,10 +433,8 @@ def _on_demand_started(request_id, plugin_id, mode, duration, pinned,
         'duration': duration,
         'pinned': pinned,
         'service': service_result,
-        'transport': transport,
+        'transport': 'socket',
     }
-    if socket_error:
-        response_data['socket_error'] = socket_error
     return jsonify({'status': 'success', 'data': response_data})
 @api_v3.route('/display/on-demand/stop', methods=['POST'])
 def stop_on_demand_display():
@@ -398,23 +443,38 @@ def stop_on_demand_display():
     # _coerce_to_bool: bool("false") is True, which stopped the service.
     stop_service = _coerce_to_bool(data.get('stop_service', False))
 
-    # The running display takes the stop over the control socket, or reads
-    # it from the mailbox within ON_DEMAND_POLL_INTERVAL, and resumes normal
-    # rotation in place (_clear_on_demand); nothing is restarted.
+    # The running display takes the stop over the control socket and
+    # resumes normal rotation in place (_clear_on_demand); nothing is
+    # restarted.
     request_id = data.get('request_id') or str(uuid.uuid4())
     request_payload = {
         'request_id': request_id,
         'action': 'stop',
         'timestamp': _pkg.time.time()
     }
+    socket_error = None
+    # A start the web process is still delivering is dropped first: the
+    # stop is newer, whatever happens to it below.
+    dispatcher = on_demand_dispatch.current()
+    cancelled = dispatcher.cancel('requested-stop') if dispatcher is not None else None
     try:
-        transport, socket_error = _deliver_on_demand(request_payload)
-    except _NotDelivered as e:
-        if not stop_service:
-            return _not_delivered_response(request_id, 'stop', e.reason)
+        _send_on_demand(request_payload)
+    except Exception as e:  # pylint: disable=broad-except
+        socket_error = _socket_failure_reason(e)
+        if not stop_service and not (cancelled and control_client.display_not_listening(e)):
+            if control_client.display_not_listening(e):
+                service_status = _get_display_service_status()
+                message = ('Display service is not running, so the stop could not be '
+                           'delivered. If it resumes an on-demand session when it starts, '
+                           'stop it then.' if not service_status.get('active') else
+                           f'The display service is running but its control socket did '
+                           f'not answer ({socket_error}). It may still be starting; '
+                           f'try again shortly.')
+                return _socket_error_response(request_id, 'stop', socket_error, message,
+                                              service=service_status)
+            return _socket_error_response(request_id, 'stop', socket_error)
         # Stopping the service ends on-demand too, whatever the display did
         # with the request.
-        transport, socket_error = 'socket', e.reason
 
     service_result = None
     if stop_service:
@@ -423,11 +483,16 @@ def stop_on_demand_display():
     response_data = {
         'request_id': request_id,
         'service': service_result,
-        'transport': transport,
+        'transport': 'socket',
     }
+    if cancelled:
+        # The start it ended never reached the display.
+        response_data['cancelled_request_id'] = cancelled
     if socket_error:
         response_data['socket_error'] = socket_error
     return jsonify({'status': 'success', 'data': response_data})
+
+
 @api_v3.route('/display/current-status', methods=['GET'])
 def get_current_display_status():
     """Return the display mode/plugin currently intended to be shown.
@@ -457,4 +522,11 @@ def get_current_display_status():
             'plugin_id': None,
             'last_updated': None,
         }
-    return jsonify({'status': 'success', 'data': dict(state, source=source)})
+    data = dict(state, source=source)
+    pending = _pending_start_state()
+    if pending is not None and _shadows(pending, _display_on_demand_state(snapshot)[0]):
+        # An on-demand start the web process is still delivering, has
+        # delivered but the display has not acted on yet, or gave up on:
+        # what the panel is about to show, or why it will not.
+        data['on_demand_pending'] = pending
+    return jsonify({'status': 'success', 'data': data})

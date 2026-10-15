@@ -5,11 +5,11 @@ a refused or timed-out connection, a reply that breaks the contract, or an
 error the display returned -- raises :class:`ControlError` with a short
 ``reason``. Nothing here blocks for longer than ``timeout`` in total.
 
-Whether the caller may then write the file mailbox instead is
-:func:`should_fall_back`: only when the display never took the request (it
-could not be reached, or it is too old to know the command). A display that
-took the request and then failed, refused or went quiet is answered as
-that, not posted a second time through the mailbox.
+There is no other way to reach the display: the file mailboxes the web
+interface used to fall back to are gone. :func:`display_not_listening` tells
+a caller when no display is listening yet (it is stopped, or still
+starting), the one case where sending the same request again later, once a
+display is up, can work.
 """
 
 from __future__ import annotations
@@ -43,8 +43,7 @@ from src.ipc.contract import (
 
 #: Total budget for one request: connect, send and the reply. The display
 #: answers from a thread that does no rendering, normally within a few
-#: milliseconds; this only bounds a wedged one. The web route then falls back
-#: to the mailbox, so a timeout costs this much latency and nothing else.
+#: milliseconds; this only bounds a wedged one.
 DEFAULT_TIMEOUT_SECONDS = 1.0
 
 
@@ -74,28 +73,25 @@ class ControlError(Exception):
 
 #: Answers from a display that read the request but does not speak it: one
 #: older than the command (an upgrade in progress) or the protocol version.
-#: It did nothing, so the mailbox is the way to reach it.
 UPGRADE_REASONS = frozenset({ErrorCode.UNKNOWN_COMMAND, ErrorCode.UNSUPPORTED_VERSION})
 
+#: Transport reasons that mean nothing is listening at the socket: no socket
+#: file (the display is stopped, or has not reached its run loop), or a file
+#: nobody accepts on (a stale socket) or that this user may not open.
+NOT_LISTENING_REASONS = frozenset({'no_socket', 'refused'})
 
-def should_fall_back(error: BaseException) -> bool:
-    """May the caller write the file mailbox after ``error``?
 
-    Yes when the display never took the request: there is no socket (the
-    display is stopped, predates the socket, or it is switched off), the
-    connection was refused or timed out, the display turned the connection
-    away before reading it, or it is too old to know the command
-    (:data:`UPGRADE_REASONS`). Also for an error that is not a
-    :class:`ControlError` (a bug in the client), as before.
-
-    No once the display had the request: a ``busy`` queue, ``invalid_args``,
-    an ``internal`` error, or a timeout or hang-up after the request was
-    sent. The display may have applied it, or would refuse it from the
-    mailbox too, so a second copy there only hides the failure.
+def display_not_listening(error: BaseException) -> bool:
+    """True when ``error`` says no display took the request because none is
+    listening: it never reached one (``sent`` is False) and the reason is in
+    :data:`NOT_LISTENING_REASONS`. A display that is started, or finishes
+    starting, may take the same request later. False for everything else:
+    a display that had the request and failed it, one too old to know the
+    command, a client that cannot use the socket at all (``disabled``,
+    ``unsupported``), and an exception that is not a :class:`ControlError`.
     """
-    if not isinstance(error, ControlError):
-        return True
-    return not error.sent or error.reason in UPGRADE_REASONS
+    return (isinstance(error, ControlError) and not error.sent
+            and error.reason in NOT_LISTENING_REASONS)
 
 
 def request(cmd: str, args: Optional[Mapping[str, Any]] = None, *,
@@ -218,8 +214,8 @@ def on_demand_start(request_id: str, plugin_id: Optional[str], mode: Optional[st
                     paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Ask the display to show a plugin now. Returns the ack; raises :class:`ControlError`.
 
-    ``request_id`` doubles as the on-demand request id, so a request that a
-    timed-out caller then also writes to the mailbox is processed only once.
+    ``request_id`` doubles as the on-demand request id, so a request sent
+    twice with the same id is processed only once.
     """
     args = {'plugin_id': plugin_id, 'mode': mode, 'duration': duration, 'pinned': pinned}
     return request(Command.ON_DEMAND_START, args, request_id=request_id,
@@ -281,8 +277,7 @@ def errors_clear(request_id: str, cutoff: float, *,
 
     Returns :class:`~src.ipc.contract.ErrorsClearResult` once it is done.
     Raises :class:`ControlError`: ``unknown_command`` from a display older
-    than the command, which still reads the ``plugin_error_clear_request``
-    mailbox.
+    than the command.
     """
     return request(Command.ERRORS_CLEAR, {'cutoff': cutoff}, request_id=request_id,
                    timeout=timeout, paths=paths)

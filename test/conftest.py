@@ -329,6 +329,20 @@ def _hermetic_control_socket(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_pending_on_demand_dispatch():
+    """Drop the web process's on-demand dispatcher after each test, so a
+    start one test left pending is not still being sent in the next."""
+    yield
+    module = sys.modules.get('web_interface.on_demand_dispatch')
+    if module is None:
+        return
+    dispatcher = module.current()
+    if dispatcher is not None:
+        dispatcher.cancel('test-teardown')
+    module.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_unit_refresh(monkeypatch, tmp_path_factory):
     """Keep updates' systemd unit refresh off the host.
 

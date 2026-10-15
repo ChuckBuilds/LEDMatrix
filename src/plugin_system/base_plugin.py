@@ -1114,16 +1114,16 @@ class BasePlugin(ABC):
         Returns:
             The request id once the display has queued it, or None when
             there is no display in this process to ask (the web interface,
-            scripts/check_plugin.py) or its queue is full. A plugin that
-            also runs on cores without this method writes the
-            ``display_on_demand_request`` mailbox on None, as before; see
-            "On-demand display" in docs/PLUGIN_API_REFERENCE.md.
+            scripts/check_plugin.py) or its queue is full. Nothing else can
+            take the request then: the ``display_on_demand_request`` file
+            mailbox older cores read is gone, and a write to it is dropped
+            with a warning. See "On-demand display" in
+            docs/PLUGIN_API_REFERENCE.md.
 
         Example::
 
-            if not (hasattr(self, 'request_on_demand')
-                    and self.request_on_demand(mode='my_alert', duration=15)):
-                self._write_on_demand_mailbox(...)   # older cores
+            if self.request_on_demand(mode='my_alert', duration=15) is None:
+                self.logger.info("No display to show the alert on")
         """
         request = getattr(getattr(self, 'plugin_manager', None), 'request_on_demand', None)
         if not callable(request):

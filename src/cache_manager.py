@@ -25,10 +25,11 @@ Typical plugin usage::
 
 import json
 import os
+import sys
 import time
 from datetime import datetime
 import pytz
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import logging
 import threading
 import tempfile
@@ -72,41 +73,60 @@ def _outlived(record: Any, max_age: Optional[float], now: float) -> bool:
         return False
 
 
-_NOT_SEEN: Any = object()
+#: Cache keys that were file "mailboxes" from the web interface (and some
+#: plugins) to the display. The control socket replaced them, and nothing
+#: reads them any more, so a write is refused rather than left on the SD card
+#: for nobody: see :func:`_refuse_retired_mailbox_write`.
+RETIRED_MAILBOX_KEYS = frozenset({'display_on_demand_request', 'plugin_error_clear_request'})
+
+#: (key, writer) pairs already warned about, so a plugin that writes on every
+#: event logs once per process, not once per write.
+_retired_writers_warned: set = set()
+_retired_writers_lock = threading.Lock()
 
 
-class MailboxWatch:
-    """Tells the poller of a mailbox key whether its file changed since the
-    last look, from one stat() (:meth:`CacheManager.file_signature`).
+def _retired_mailbox_writer(data: Any) -> str:
+    """Name whoever is writing a retired mailbox key, as well as can be told.
 
-    The display polls the mailboxes the web interface falls back to. Reading
-    one is an open and a JSON parse; with this a poll that finds the same file
-    (or none) costs a stat, and the file is read only after a new write. A
-    cache without ``file_signature`` (a test double) is read every time.
+    The plugin instance on the call stack when there is one (a ``self`` with
+    a string ``plugin_id`` and a ``cache_manager``: what BasePlugin gives
+    every plugin), else the ``plugin_id`` the request itself names, else
+    ``'unknown'``.
     """
+    frame = sys._getframe(2)  # pylint: disable=protected-access
+    depth = 0
+    while frame is not None and depth < 25:
+        owner = frame.f_locals.get('self')
+        plugin_id = getattr(owner, 'plugin_id', None) if owner is not None else None
+        if isinstance(plugin_id, str) and plugin_id and hasattr(owner, 'cache_manager'):
+            return f"plugin '{plugin_id}'"
+        frame = frame.f_back
+        depth += 1
+    payload = data.get('data', data) if isinstance(data, dict) else None
+    named = payload.get('plugin_id') if isinstance(payload, dict) else None
+    if isinstance(named, str) and named:
+        return f"plugin '{named}' (named in the request)"
+    return 'unknown'
 
-    def __init__(self, key: str):
-        self.key = key
-        self._seen: Any = _NOT_SEEN
 
-    def changed(self, cache_manager: Any) -> bool:
-        """True when the poller should read the key now."""
-        signature = getattr(cache_manager, 'file_signature', None)
-        sig = signature(self.key) if callable(signature) else _NOT_SEEN
-        if sig is not None and not isinstance(sig, tuple):
-            return True   # cannot tell: read it
-        if sig is None:
-            self._seen = None
-            return False   # no file, nothing to read
-        if sig == self._seen:
-            return False
-        self._seen = sig
-        return True
-
-    def forget(self) -> None:
-        """Read the key on the next poll even if its file has not changed
-        (the last read failed)."""
-        self._seen = _NOT_SEEN
+def _refuse_retired_mailbox_write(logger: logging.Logger, key: str, data: Any) -> None:
+    """Warn, once per writer, that a write to a retired mailbox key was dropped."""
+    try:
+        writer = _retired_mailbox_writer(data)
+    except Exception:  # pylint: disable=broad-except
+        writer = 'unknown'
+    with _retired_writers_lock:
+        if (key, writer) in _retired_writers_warned:
+            return
+        _retired_writers_warned.add((key, writer))
+    if key == 'display_on_demand_request':
+        hint = ("call self.request_on_demand() / self.end_on_demand() instead "
+                "(BasePlugin, LEDMatrix 3.8.1 and later)")
+    else:
+        hint = "clear errors through POST /api/v3/errors/clear instead"
+    logger.warning("Ignored a write to the retired '%s' cache key by %s: the display no "
+                   "longer reads this file mailbox. Update it to %s. (Logged once per writer.)",
+                   key, writer, hint)
 
 
 class CacheManager:
@@ -330,24 +350,6 @@ class CacheManager:
         """Get the path for a cache file."""
         return self._disk_cache_component.get_cache_path(key)
 
-    def file_signature(self, key: str) -> Optional[Tuple[int, int, int]]:
-        """``(st_ino, st_mtime_ns, st_size)`` of ``key``'s file, or None when
-        there is no file (the key is absent, or this cache has no disk tier).
-
-        One stat(), no read: a poller of a mailbox another process writes
-        compares it with the last one it saw and reads the file only when it
-        changed. Every write replaces the file (a temp file renamed into
-        place), so a new write always has a new inode, however fast it came.
-        """
-        path = self._get_cache_path(key)
-        if not path:
-            return None
-        try:
-            st = os.stat(path)
-        except OSError:
-            return None
-        return (st.st_ino, st.st_mtime_ns, st.st_size)
-
     def get_cached_data(self, key: str, max_age: int = 300, memory_ttl: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Get data from cache (memory first, then disk) honoring TTLs.
 
@@ -385,6 +387,10 @@ class CacheManager:
             key: Cache key
             data: Data to cache
         """
+        if key in RETIRED_MAILBOX_KEYS:
+            _refuse_retired_mailbox_write(self.logger, key, data)
+            return
+
         # Periodic cleanup before adding new entries
         self._cleanup_memory_cache()
         

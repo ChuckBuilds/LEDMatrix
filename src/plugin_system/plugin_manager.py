@@ -1869,7 +1869,7 @@ class PluginManager:
         """Route plugins' on-demand requests to ``handler`` (None: nowhere).
 
         The display controller sets its ``submit_plugin_on_demand`` here
-        before any plugin loads. The handler takes a mailbox-shaped request
+        before any plugin loads. The handler takes an on-demand request dict
         from any thread, queues it for the render thread and returns True,
         or False when it could not. A plugin manager with no handler (the
         web interface's, a test's, scripts/check_plugin.py's) has no screen

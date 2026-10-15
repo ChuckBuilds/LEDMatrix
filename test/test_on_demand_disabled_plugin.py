@@ -346,13 +346,8 @@ class TestResumingAfterTheSession:
 
 class TestStopClearsAnError:
     def _post_stop(self, c):
-        stop = {'request_id': 'S1', 'action': 'stop'}
-        c._last_on_demand_poll = None
-        c.cache_manager.get = MagicMock(
-            side_effect=lambda key, *a, **kw:
-                stop if key == 'display_on_demand_request' else None)
-        c.cache_manager.delete = MagicMock()
-        c._poll_on_demand_requests()
+        c._handle_on_demand_request({'request_id': 'S1', 'action': 'stop',
+                                     'source': 'socket'})
 
     def test_a_stop_after_a_failed_request_clears_the_error(self, controller):
         _start(controller, plugin_id='uninstalled')

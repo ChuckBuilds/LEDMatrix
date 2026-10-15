@@ -85,8 +85,8 @@ DEFAULT_SOCKET_PATH = DEFAULT_SOCKET_DIR + '/' + SOCKET_NAME
 
 #: Overrides the socket path for both processes (a dev checkout, a second
 #: instance, tests). One of :data:`DISABLED_VALUES` turns the socket off: the
-#: display does not serve it and the web interface goes straight to the
-#: file mailbox.
+#: display does not serve it, and the web interface cannot send it commands
+#: (it still reads the state the display writes to the cache).
 SOCKET_PATH_ENV = 'LEDMATRIX_CONTROL_SOCKET'
 DISABLED_VALUES = frozenset({'off', '0', 'false', 'no', 'none', 'disabled'})
 
@@ -375,8 +375,8 @@ def _optional_name(args: Mapping[str, Any], key: str) -> Optional[str]:
 def _optional_duration(value: Any) -> Optional[float]:
     """Seconds, or None for "until stopped". 0 means the same as None.
 
-    Numbers and numeric strings are accepted, the same as the REST route and
-    the file mailbox take them; anything else is refused rather than guessed.
+    Numbers and numeric strings are accepted, the same as the REST route
+    takes them; anything else is refused rather than guessed.
     """
     if value is None or value == '':
         return None
@@ -415,7 +415,7 @@ class HelloArgs:
 class OnDemandStartArgs:
     """``on_demand.start``: show a plugin (or one of its modes) now.
 
-    The same fields the file mailbox carries. At least one of ``plugin_id``
+    The same fields as the REST route's body. At least one of ``plugin_id``
     and ``mode`` is required; the display resolves the other.
     """
     plugin_id: Optional[str] = None
@@ -600,13 +600,12 @@ def parse_args(cmd: str, args: Mapping[str, Any]) -> CommandArgs:
 
 def on_demand_request(request_id: str, args: Union[OnDemandStartArgs, OnDemandStopArgs],
                       timestamp: float) -> Dict[str, Any]:
-    """The file-mailbox payload for a queued on-demand command.
+    """The on-demand request dict for a queued on-demand command.
 
-    The display hands socket commands to the same code that handles the
-    mailbox (``DisplayController._handle_on_demand_request``), so a command
-    behaves identically whichever way it arrived, and a request that came
-    both ways (a client that timed out and fell back) is processed once: the
-    request id is the same.
+    The display hands socket commands to the same code that handles
+    plugins' own requests (``DisplayController._handle_on_demand_request``),
+    so a command behaves identically whichever way it arrived. (This was
+    the file mailbox's payload, which the display no longer reads.)
     """
     if isinstance(args, OnDemandStartArgs):
         return {'request_id': request_id, 'action': 'start', 'plugin_id': args.plugin_id,

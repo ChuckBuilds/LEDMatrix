@@ -3,7 +3,7 @@
 Pure data, so every test here runs on every platform. What they pin:
 
 * a request and a response survive encode -> decode -> parse unchanged, and
-  the on-demand arguments carry exactly what the file mailbox carries;
+  the on-demand arguments carry exactly what the REST route sends;
 * the envelope and the arguments refuse what the display could not act on
   (missing ids, wrong types, a non-finite duration) with a stable error code;
 * framing never holds more than one message's worth of bytes, however the
@@ -186,8 +186,8 @@ class TestOnDemandArgs:
 
 
 class TestMailboxShape:
-    """Socket commands are handed to the mailbox's own handler, so they must
-    look exactly like what the web route writes to the mailbox."""
+    """Socket commands are handed to the display's on-demand handler, so they
+    must look exactly like the request dict it takes."""
 
     def test_start(self):
         args = OnDemandStartArgs(plugin_id='clock', mode='clock_main', duration=60.0,

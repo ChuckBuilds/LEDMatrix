@@ -1739,6 +1739,13 @@ function submitOnDemandRequest(event) {
                 showNotification(`Requested on-demand mode for ${pluginName}`, 'success');
                 closeOnDemandModal();
                 setTimeout(() => loadOnDemandStatus(true), 700);
+            } else if (result.status === 'starting') {
+                // 202: the display service is starting; the web process sends
+                // the request once it listens. The status card shows the outcome.
+                const pluginName = resolvePluginDisplayName(currentOnDemandPluginId);
+                showNotification(`Starting the display for ${pluginName}…`, 'info');
+                closeOnDemandModal();
+                setTimeout(() => loadOnDemandStatus(true), 700);
             } else {
                 console.error('[submitOnDemandRequest] Request failed:', result);
                 showNotification(result.message || 'Failed to start on-demand mode', 'error');

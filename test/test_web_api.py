@@ -528,14 +528,17 @@ class TestDisplayAPI:
         from web_interface.blueprints.api_v3 import api_v3
 
         mock_cache_manager = api_v3.cache_manager = MagicMock()
-        
-        response = client.post('/api/v3/display/on-demand/stop')
-        
-        # May return 200 if successful or 500 on error
-        assert response.status_code in [200, 500]
-        # Verify stop request was set in cache if successful
-        if response.status_code == 200:
-            assert mock_cache_manager.set.called
+
+        with patch('web_interface.blueprints.api_v3.display.control_client.on_demand_stop',
+                   side_effect=lambda request_id, **kw: {'accepted': True}) as stop:
+            response = client.post('/api/v3/display/on-demand/stop')
+
+        assert response.status_code == 200
+        assert response.get_json()['data']['transport'] == 'socket'
+        stop.assert_called_once()
+        # The request goes over the control socket; nothing is written to
+        # the cache (the file mailbox is gone).
+        mock_cache_manager.set.assert_not_called()
 
 
 class TestPluginsAPI:

@@ -327,3 +327,27 @@ class TestCleartextIsCalledOut:
     def test_tls_on_does_not_warn(self, bridge_module):
         assert bridge_module.warn_if_cleartext(
             {"mqtt_tls": True, "mqtt_password": "hunter2"}) is False
+
+
+class TestTheApiClientReadsStartingAsTaken:
+    """A cold start answers 202 with ``status: "starting"``: the request is
+    taken and the web process delivers it once the display listens. The
+    bridge must report that as success, not as a failure."""
+
+    def _client(self, bridge_module, status_code, body):
+        response = MagicMock(status_code=status_code)
+        response.json.return_value = body
+        session = MagicMock()
+        session.request.return_value = response
+        return bridge_module.LEDMatrixClient("http://pi:5000", session=session)
+
+    def test_202_starting_is_returned_not_raised(self, bridge_module):
+        api = self._client(bridge_module, 202, {
+            "status": "starting", "message": "starting",
+            "data": {"request_id": "r1", "pending": True}})
+        assert api.start_on_demand(mode="clock") == {"request_id": "r1", "pending": True}
+
+    def test_an_error_is_still_raised(self, bridge_module):
+        api = self._client(bridge_module, 503, {"status": "error", "message": "no display"})
+        with pytest.raises(RuntimeError, match="no display"):
+            api.start_on_demand(mode="clock")

@@ -77,11 +77,22 @@ def fresh_web_process(api_v3_module, plugins_dir):
 
 @pytest.fixture
 def display_service(api_v3_module):
-    """Keep on-demand start away from systemctl and the real cache."""
-    cache = api_v3_module.api_v3.cache_manager = MagicMock()
-    with patch('web_interface.blueprints.api_v3.display._get_display_service_status') as status:
+    """Keep on-demand start away from systemctl and the real cache; the
+    display's control socket is a mock that acks. What it was sent is
+    recorded as ``.set(cmd, request)`` calls on the yielded mock."""
+    api_v3_module.api_v3.cache_manager = MagicMock()
+    sent = MagicMock()
+
+    def ack(request_id, plugin_id, mode, *a, **kw):
+        sent.set('on_demand.start', {'request_id': request_id,
+                                     'plugin_id': plugin_id, 'mode': mode})
+        return {'accepted': True}
+
+    with patch('web_interface.blueprints.api_v3.display._get_display_service_status') as status, \
+         patch('web_interface.blueprints.api_v3.display.control_client.on_demand_start',
+               side_effect=ack):
         status.return_value = {'active': True}
-        yield cache
+        yield sent
 
 
 def _start(client, **body):

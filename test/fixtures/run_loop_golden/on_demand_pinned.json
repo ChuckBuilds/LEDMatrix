@@ -1,11 +1,11 @@
 {
   "screens": [
-    [0.0, "clock", 12.0, "on-demand-start", 13, false],
+    [0.0, "clock", 12.0, "on-demand-start", 12, false],
     [12.0, "sports_upcoming", 15.0, "duration", 15, true],
     [27.0, "sports_upcoming", 15.0, "duration", 15, true],
     [42.0, "sports_upcoming", 15.0, "duration", 15, true],
     [57.0, "sports_upcoming", 15.0, "duration", 15, true],
-    [72.0, "sports_upcoming", 8.0, "on-demand-start", 9, true],
+    [72.0, "sports_upcoming", 8.0, "on-demand-start", 8, true],
     [80.0, "app_a", 0.0, "empty", 1, true],
     [80.0, "app_b", 10.0, "duration", 10, true],
     [90.0, "app_a", 0.0, "empty", 1, true],
