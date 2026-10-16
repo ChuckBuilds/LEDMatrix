@@ -307,6 +307,15 @@ class TestStaticPauseRedraws:
         _, calls, _ = self._run(monkeypatch, duration=1.0, high_fps=True)
         assert len(calls) == pytest.approx(1.0 / HIGH_FPS_INTERVAL, abs=2)
 
+    def test_the_high_fps_rule_matches_the_rotation(self):
+        from src.vegas_mode.coordinator import VegasModeCoordinator
+        rule = VegasModeCoordinator._static_needs_high_fps
+        legacy_image = SimpleNamespace(plugin_id='static-image')
+        assert rule(legacy_image) is True
+        assert rule(SimpleNamespace(plugin_id='static-image', needs_high_fps=False)) is False
+        assert rule(SimpleNamespace(plugin_id='clock', enable_scrolling=True)) is True
+        assert rule(SimpleNamespace(plugin_id='clock')) is False
+
     def test_an_interrupt_still_ends_the_pause(self, monkeypatch):
         done, calls, clock = self._run(monkeypatch, duration=30.0, interrupt_at=2.5)
         assert done is False

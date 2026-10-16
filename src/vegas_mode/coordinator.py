@@ -1053,12 +1053,15 @@ class VegasModeCoordinator:
     @staticmethod
     def _static_needs_high_fps(plugin: 'BasePlugin') -> bool:
         """Whether the rotation would run ``plugin`` in its high-FPS loop:
-        DisplayController._needs_high_fps's rule, without its static-image
-        special case (static-image declares needs_high_fps)."""
+        DisplayController._needs_high_fps's rule. Older static-image
+        versions, which do not declare needs_high_fps, get high FPS for
+        their GIFs there too."""
         declared = getattr(plugin, 'needs_high_fps', None)
-        if declared is None:
-            declared = getattr(plugin, 'enable_scrolling', False)
-        return bool(declared)
+        if declared is not None:
+            return bool(declared)
+        if getattr(plugin, 'plugin_id', None) == 'static-image':
+            return True
+        return bool(getattr(plugin, 'enable_scrolling', False))
 
     def _static_pause_duration(self, plugin: 'BasePlugin') -> float:
         """Seconds a static pause shows ``plugin``: its display duration,
