@@ -188,7 +188,7 @@
                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
                             <span class="ml-2 text-sm font-medium text-gray-900">Enable Schedule</span>
                         </label>
-                        <p class="mt-1 text-sm text-gray-600">When enabled, the display will only operate during specified hours.</p>
+                        <p class="mt-1 text-sm text-gray-600">${window.LEDEscape.html(xOptions.enableDescription || 'When enabled, the display will only operate during specified hours.')}</p>
                     </div>
                 `;
             }

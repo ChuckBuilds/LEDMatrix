@@ -47,6 +47,7 @@
             }
         }
     },
+    "plugin_schedules": {},
     "dim_schedule": {
         "enabled": false,
         "dim_brightness": 30,

@@ -16,7 +16,7 @@ BasePlugin.get_vegas_participation):
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Deque, Tuple, TYPE_CHECKING
+from typing import Callable, Optional, List, Dict, Deque, FrozenSet, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -75,6 +75,11 @@ class StreamManager:
         self.config = config
         self.plugin_manager = plugin_manager
         self.plugin_adapter = plugin_adapter
+        # Plugin ids to leave out right now (config['plugin_schedules']);
+        # the display controller sets it. Read at each list refresh.
+        # ponytail: applies from the next cycle (minutes on a long ticker);
+        # drop the plugin's cached segments when the set changes if that shows.
+        self.hidden_plugins: Optional[Callable[[], FrozenSet[str]]] = None
 
         # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
@@ -295,9 +300,13 @@ class StreamManager:
             # own thread (DisplayController._start_plugin_reload).
             plugins = list(self.plugin_manager.plugins.items())
             loaded = len(plugins)
+            hidden = self.hidden_plugins() if self.hidden_plugins else frozenset()
             for plugin_id, plugin in plugins:
                 if not getattr(plugin, 'enabled', False):
                     logger.debug("[%s] Vegas: skipped (not enabled)", plugin_id)
+                    continue
+                if plugin_id in hidden:
+                    logger.debug("[%s] Vegas: skipped (scheduled off)", plugin_id)
                     continue
 
                 # 'pause' plugins stay in the rotation: they pause the scroll

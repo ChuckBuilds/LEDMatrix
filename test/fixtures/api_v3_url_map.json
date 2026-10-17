@@ -160,6 +160,23 @@
     ]
   ],
   [
+    "/api/v3/config/plugin-schedules",
+    "api_v3.get_plugin_schedules",
+    [
+      "GET",
+      "HEAD",
+      "OPTIONS"
+    ]
+  ],
+  [
+    "/api/v3/config/plugin-schedules",
+    "api_v3.save_plugin_schedule",
+    [
+      "OPTIONS",
+      "POST"
+    ]
+  ],
+  [
     "/api/v3/config/raw/main",
     "api_v3.save_raw_main_config",
     [

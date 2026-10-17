@@ -55,6 +55,40 @@ saved via `POST /api/v3/config/dim-schedule`). The display returns to
 boundaries as `schedule`: dimmed from `start_time` up to, but not including,
 `end_time`.
 
+## `plugin_schedules` — when each plugin may show
+
+Maps a plugin id to a schedule shaped like `schedule` (the window in which
+that plugin may show), plus:
+
+| Key | Type / default | Meaning |
+|---|---|---|
+| `hide_when_live` | bool, `false` | Hide the plugin whenever any plugin reports a live game (its `has_live_content()`), live priority or not |
+
+A plugin with no entry always shows. Outside its window, or during a live
+game with `hide_when_live`, a plugin is skipped in the rotation, in the live
+takeover and in Vegas mode; it stays loaded, and an on-demand request still shows it. Example, news off on
+Sundays and during any live game:
+
+```json
+"plugin_schedules": {
+  "news": {"enabled": true, "mode": "per-day", "hide_when_live": true,
+           "start_time": "00:00", "end_time": "23:59",
+           "days": {"sunday": {"enabled": false}}}
+}
+```
+
+As in `schedule`, a day missing from `days` uses the top-level times
+(`07:00`–`23:00` when those are missing too). The window ends at `end_time`,
+so `00:00`–`23:59` leaves the plugin out for that last minute.
+
+A change takes effect at the next screen in the rotation or live takeover,
+and at the start of the next scroll cycle in Vegas mode, which on a long
+ticker can be several minutes (about 6 on ledpi with 8 plugins).
+
+Read by `src/plugin_schedule.py` through `DisplayController._hidden_plugins()`.
+Managed in the web UI under Schedule → Plugin Schedules, saved via
+`POST /api/v3/config/plugin-schedules`.
+
 ## `display.hardware` — matrix panel hardware
 
 All keys map to the corresponding `rpi-rgb-led-matrix` options and are read
