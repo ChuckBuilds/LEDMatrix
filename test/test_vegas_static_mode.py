@@ -14,6 +14,7 @@ from collections import deque
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from PIL import Image
 
 from src.plugin_system.base_plugin import VegasDisplayMode
@@ -233,7 +234,7 @@ class TestCoordinatorStaticPause:
         plugin.display.side_effect = lambda **k: seen.append(lock.locked())
         coord = self._coord(plugin, lock)
         assert coord._handle_static_pause(plugin) is True
-        assert seen == [True]
+        assert seen and all(seen)
         assert not lock.locked()
 
     def test_pause_is_skipped_while_update_holds_the_lock(self):
@@ -247,3 +248,108 @@ class TestCoordinatorStaticPause:
         finally:
             lock.release()
         plugin.display.assert_not_called()
+
+
+class FakeClock:
+    """time.monotonic/time.sleep for the pause loop: sleeping moves the clock."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        assert seconds >= 0
+        self.now += seconds
+        if self.now > 3600:
+            raise RuntimeError("the static pause never ended")
+
+
+class TestStaticPauseRedraws:
+    """A pause redraws its plugin for as long as it lasts.
+
+    It used to call display() once and sleep out the duration, so a plugin
+    that rotates its screens or animates (Fantasy Blitz's playlist, say) was
+    frozen on its first frame for the whole pause.
+    """
+
+    def _run(self, monkeypatch, duration=10.0, high_fps=False, interrupt_at=None,
+             lock=None):
+        from src.vegas_mode import coordinator
+        clock = FakeClock()
+        monkeypatch.setattr(coordinator, 'time', clock)
+        plugin = MagicMock()
+        plugin.plugin_id = 'clock'
+        plugin.needs_high_fps = high_fps
+        plugin.get_display_duration.return_value = duration
+        calls = []
+        plugin.display.side_effect = lambda **k: calls.append((clock.now, k))
+        coord = TestCoordinatorStaticPause()._coord(plugin, lock)
+        if interrupt_at is not None:
+            coord._interrupt_check = lambda: clock.now >= interrupt_at
+        return coord._handle_static_pause(plugin), calls, clock
+
+    def test_redraws_once_a_second_for_the_whole_pause(self, monkeypatch):
+        done, calls, clock = self._run(monkeypatch, duration=10.0)
+        assert done is True
+        assert len(calls) == 10
+        assert [round(t, 6) for t, _ in calls] == [float(i) for i in range(10)]
+        assert 10.0 <= clock.now < 10.2
+
+    def test_only_the_first_draw_clears(self, monkeypatch):
+        _, calls, _ = self._run(monkeypatch, duration=3.0)
+        assert calls[0][1] == {'force_clear': True}
+        assert all(kwargs == {} for _, kwargs in calls[1:])
+
+    def test_a_high_fps_plugin_redraws_at_the_high_fps_rate(self, monkeypatch):
+        from src.screen_runner import HIGH_FPS_INTERVAL
+        _, calls, _ = self._run(monkeypatch, duration=1.0, high_fps=True)
+        assert len(calls) == pytest.approx(1.0 / HIGH_FPS_INTERVAL, abs=2)
+
+    def test_the_high_fps_rule_matches_the_rotation(self):
+        from src.vegas_mode.coordinator import VegasModeCoordinator
+        rule = VegasModeCoordinator._static_needs_high_fps
+        legacy_image = SimpleNamespace(plugin_id='static-image')
+        assert rule(legacy_image) is True
+        assert rule(SimpleNamespace(plugin_id='static-image', needs_high_fps=False)) is False
+        assert rule(SimpleNamespace(plugin_id='clock', enable_scrolling=True)) is True
+        assert rule(SimpleNamespace(plugin_id='clock')) is False
+
+    def test_an_interrupt_still_ends_the_pause(self, monkeypatch):
+        done, calls, clock = self._run(monkeypatch, duration=30.0, interrupt_at=2.5)
+        assert done is False
+        assert clock.now < 2.7
+        assert len(calls) == 3
+
+    def test_a_held_lock_skips_one_redraw_not_the_pause(self, monkeypatch):
+        lock = threading.Lock()
+        real_acquire = lock.acquire
+        held = {'count': 0}
+
+        class FlakyLock:
+            def acquire(self, timeout=-1):
+                held['count'] += 1
+                # update() holds the lock at the third draw only.
+                return False if held['count'] == 3 else real_acquire(timeout=timeout)
+
+            def release(self):
+                lock.release()
+
+        done, calls, _ = self._run(monkeypatch, duration=5.0, lock=FlakyLock())
+        assert done is True
+        assert [round(t) for t, _ in calls] == [0, 1, 3, 4]
+
+    def test_a_raise_from_a_redraw_ends_the_pause(self, monkeypatch):
+        from src.vegas_mode import coordinator
+        clock = FakeClock()
+        monkeypatch.setattr(coordinator, 'time', clock)
+        plugin = MagicMock()
+        plugin.plugin_id = 'clock'
+        plugin.needs_high_fps = False
+        plugin.get_display_duration.return_value = 30.0
+        plugin.display.side_effect = [None, RuntimeError('boom')]
+        coord = TestCoordinatorStaticPause()._coord(plugin)
+        assert coord._handle_static_pause(plugin) is False
+        assert clock.now < 1.2
+        assert coord._static_pause_active is False

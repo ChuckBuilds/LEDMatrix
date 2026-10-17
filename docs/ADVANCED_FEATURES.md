@@ -21,7 +21,10 @@ Each plugin has a *Vegas participation*:
 **`pause`:**
 - The scroll stops when the plugin's turn comes round
 - The plugin draws the whole panel for its display duration, then the
-  scroll resumes
+  scroll resumes. `display()` is called again through the pause at the
+  rotation's rate (once a second, or the high-FPS rate for a plugin that
+  declares `needs_high_fps`), so a plugin can rotate screens or animate in
+  it; only the first call passes `force_clear=True`
 - Best for content that needs to be read in full, or alerts
 
 **`exclude`:**
@@ -362,7 +365,7 @@ Vegas mode consists of four core components working together to provide smooth 1
 
 **Main Loop:**
 1. Check for interrupts (live priority, on-demand, config updates)
-2. If static pause active, wait for duration
+2. If a static pause is due, redraw that plugin for its duration
 3. Otherwise, delegate to render pipeline for frame rendering
 4. Sleep to maintain target FPS
 

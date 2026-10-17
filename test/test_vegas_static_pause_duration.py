@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 os.environ.setdefault("EMULATOR", "true")
 
@@ -62,6 +62,7 @@ def _plugin(duration, plugin_id='clock-simple'):
     plugin = MagicMock()
     plugin.plugin_id = plugin_id
     plugin.get_display_duration.return_value = duration
+    plugin.needs_high_fps = False
     return plugin
 
 
@@ -104,7 +105,9 @@ class TestPauseLength:
         completed, lasted = _pause(_coord(plugin), plugin, clock)
         assert completed is True
         assert lasted == pytest.approx(30.0, abs=0.15)
-        plugin.display.assert_called_once_with(force_clear=True)
+        # Redrawn once a second; only the first draw clears.
+        assert plugin.display.call_args_list[0] == call(force_clear=True)
+        assert plugin.display.call_count == 30
 
     @pytest.mark.parametrize('value', NOT_ABOVE_ZERO, ids=repr)
     def test_a_number_not_above_zero_pauses_for_15s(self, clock, value):

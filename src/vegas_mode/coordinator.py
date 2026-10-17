@@ -23,6 +23,7 @@ from typing import Optional, Dict, Any, FrozenSet, List, Callable, TYPE_CHECKING
 from src import display_watchdog
 from src.common import render_gate
 from src.plugin_system.base_plugin import finite_seconds
+from src.screen_runner import HIGH_FPS_INTERVAL, STATIC_INTERVAL
 from src.vegas_mode.config import VegasModeConfig
 from src.vegas_mode.elements import LiveEpochs
 from src.vegas_mode.plugin_adapter import PluginAdapter
@@ -970,25 +971,38 @@ class VegasModeCoordinator:
             # turn rather than stall the marquee.
             get_lock = getattr(self.plugin_manager, 'get_plugin_lock', None)
             plugin_lock = get_lock(plugin_id) if get_lock else None
-            if plugin_lock is not None and not plugin_lock.acquire(
-                    timeout=self.STATIC_LOCK_TIMEOUT):
+            if not self._draw_static(plugin, plugin_lock, self.STATIC_LOCK_TIMEOUT,
+                                     force_clear=True):
                 logger.info("Static pause skipped for %s: its update() is still running",
                             plugin_id)
                 return True
-            try:
-                plugin.display(force_clear=True)
-            finally:
-                if plugin_lock is not None:
-                    plugin_lock.release()
-            self.display_manager.update_display()
 
             # Wait for the plugin's display duration. Monotonic, like the
             # iteration clock: an NTP step on an RTC-less Pi would otherwise
             # end the pause at once or stretch it by the correction.
             duration = self._static_pause_duration(plugin)
             start = time.monotonic()
+            # Redraw for the whole pause at the rotation's own rate. One
+            # display() used to be all a pause got, so a plugin that rotates
+            # its screens or animates was frozen on its first frame.
+            interval = (HIGH_FPS_INTERVAL if self._static_needs_high_fps(plugin)
+                        else STATIC_INTERVAL)
+            next_draw = start + interval
+            next_check = start
 
-            while time.monotonic() - start < duration:
+            while (now := time.monotonic()) - start < duration:
+                if now >= next_draw:
+                    next_draw = max(next_draw, now) + interval
+                    # No wait for the lock: update() holding it costs this
+                    # frame only, and the next one tries again.
+                    self._draw_static(plugin, plugin_lock, 0)
+                if now < next_check:
+                    time.sleep(max(0.0, min(next_draw, next_check) - time.monotonic()))
+                    continue
+                # Every 0.1 s, however fast the redraws: the live-priority
+                # check asks the plugins.
+                next_check = now + 0.1
+
                 # Check for interruptions
                 if self._should_stop:
                     logger.info("Static pause interrupted by stop request")
@@ -1003,9 +1017,8 @@ class VegasModeCoordinator:
                     logger.info("Static pause interrupted by the display controller")
                     return False
 
-                # Sleep in small increments to remain responsive
-                time.sleep(0.1)
                 display_watchdog.beat()
+                time.sleep(max(0.0, min(next_draw, next_check) - time.monotonic()))
 
             logger.info(
                 "Static pause completed for %s after %.1fs",
@@ -1020,6 +1033,35 @@ class VegasModeCoordinator:
             self._end_static_pause()
 
         return True
+
+    def _draw_static(self, plugin: 'BasePlugin', plugin_lock: Any,
+                     timeout: float, **kwargs: Any) -> bool:
+        """One display() of a static pause, under the plugin's lock like
+        every other display() call: without it this could draw while the
+        update worker is inside the plugin's update(). False when update()
+        held the lock past ``timeout`` and nothing was drawn."""
+        if plugin_lock is not None and not plugin_lock.acquire(timeout=timeout):
+            return False
+        try:
+            plugin.display(**kwargs)
+        finally:
+            if plugin_lock is not None:
+                plugin_lock.release()
+        self.display_manager.update_display()
+        return True
+
+    @staticmethod
+    def _static_needs_high_fps(plugin: 'BasePlugin') -> bool:
+        """Whether the rotation would run ``plugin`` in its high-FPS loop:
+        DisplayController._needs_high_fps's rule. Older static-image
+        versions, which do not declare needs_high_fps, get high FPS for
+        their GIFs there too."""
+        declared = getattr(plugin, 'needs_high_fps', None)
+        if declared is not None:
+            return bool(declared)
+        if getattr(plugin, 'plugin_id', None) == 'static-image':
+            return True
+        return bool(getattr(plugin, 'enable_scrolling', False))
 
     def _static_pause_duration(self, plugin: 'BasePlugin') -> float:
         """Seconds a static pause shows ``plugin``: its display duration,
