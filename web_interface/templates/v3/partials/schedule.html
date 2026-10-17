@@ -85,4 +85,51 @@
         </div>
     </form>
 </div>
+
+<!-- Plugin Schedules Section (config plugin_schedules, src/plugin_schedule.py) -->
+<div class="bg-white rounded-lg shadow p-6 mt-6">
+    <div class="border-b border-gray-200 pb-4 mb-6">
+        <h2 class="text-lg font-semibold text-gray-900">Plugin Schedules</h2>
+        <p class="mt-1 text-sm text-gray-600">Choose when each plugin may show. Outside its schedule a plugin is skipped in the rotation and in Vegas mode; it stays loaded, and on-demand still shows it. "Hide while a game is live" skips it whenever any plugin has a live game, so on gameday you only see scores.</p>
+    </div>
+
+    {% if plugin_schedule_rows %}
+    <div class="space-y-3">
+        {% for row in plugin_schedule_rows %}
+        <details class="border border-gray-200 rounded-md">
+            <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-gray-900">
+                {{ row.name }}
+                {% if row.schedule.enabled or row.schedule.hide_when_live %}
+                <span class="ml-2 text-xs text-blue-700">scheduled</span>
+                {% endif %}
+            </summary>
+            <form class="plugin-schedule-form px-4 pb-4 space-y-4"
+                  hx-post="/api/v3/config/plugin-schedules"
+                  hx-ext="json-enc"
+                  hx-headers='{"Content-Type": "application/json"}'
+                  hx-swap="none"
+                  data-reports-result>
+                <input type="hidden" name="plugin_id" value="{{ row.id }}">
+                <label class="flex items-center text-sm text-gray-700">
+                    <input type="checkbox" name="hide_when_live" class="mr-2"
+                           {% if row.schedule.hide_when_live %}checked{% endif %}>
+                    Hide while a game is live
+                </label>
+                <div id="plugin_schedule_picker_{{ loop.index }}"
+                     data-plugin-schedule-config='{{ row.schedule | tojson }}'></div>
+                <div class="flex justify-end">
+                    <button type="submit"
+                            class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+                        <i class="fas fa-save mr-2"></i>
+                        Save {{ row.name }} Schedule
+                    </button>
+                </div>
+            </form>
+        </details>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-600">No enabled plugins.</p>
+    {% endif %}
+</div>
 </div>

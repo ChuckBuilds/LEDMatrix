@@ -19,6 +19,16 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Added: plugin schedules
+
+Schedule → Plugin Schedules sets when each plugin may show, per day or with
+one time range, and can hide a plugin whenever any game is live ("no news or
+stocks on gameday"). A hidden plugin is skipped in the rotation, the live
+takeover and Vegas mode, but stays loaded. New core config key
+`plugin_schedules`, new `GET/POST /api/v3/config/plugin-schedules`, new
+module `src/plugin_schedule.py` (the display schedule's window rule now
+lives there too).
+
 ### Removed: the cache-key mailboxes (control socket stage 5) -- breaking
 
 The control socket (`docs/IPC_CONTROL_SOCKET.md`) is now the only way the

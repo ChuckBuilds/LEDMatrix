@@ -224,6 +224,105 @@ def get_refresh_rate():
     }})
 
 
+def _build_schedule(data):
+    """``(schedule, None)`` from a schedule picker's POST body, or ``(None, message)``.
+
+    The display schedule and each plugin schedule (``plugin_schedules``)
+    share it. Times are validated; a per-day schedule that is on needs a day
+    that is on.
+    """
+    # Build schedule configuration
+    # Handle enabled checkbox - can be True, False, or 'on'
+    enabled_value = data.get('enabled', False)
+    if isinstance(enabled_value, str):
+        enabled_value = enabled_value.lower() in ('true', 'on', '1')
+    schedule_config = {
+        'enabled': enabled_value
+    }
+
+    mode = data.get('mode', 'global')
+    schedule_config['mode'] = mode
+
+    if mode == 'global':
+        # Simple global schedule
+        start_time = data.get('start_time', '07:00')
+        end_time = data.get('end_time', '23:00')
+
+        # Validate time formats
+        is_valid, error_msg = _validate_time_format(start_time)
+        if not is_valid:
+            return None, error_msg
+
+        is_valid, error_msg = _validate_time_format(end_time)
+        if not is_valid:
+            return None, error_msg
+
+        schedule_config['start_time'] = start_time
+        schedule_config['end_time'] = end_time
+        # Remove days config when switching to global mode
+        schedule_config.pop('days', None)
+    else:
+        # Per-day schedule
+        schedule_config['days'] = {}
+        # Remove global times when switching to per-day mode
+        schedule_config.pop('start_time', None)
+        schedule_config.pop('end_time', None)
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        enabled_days_count = 0
+
+        for day in days:
+            day_config = {}
+            enabled_key = f'{day}_enabled'
+            start_key = f'{day}_start'
+            end_key = f'{day}_end'
+
+            # Check if day is enabled
+            has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
+            if has_enabled:
+                # Handle checkbox values that may come as 'on', True, or False
+                if isinstance(enabled_val, str):
+                    day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
+                else:
+                    day_config['enabled'] = bool(enabled_val)
+            else:
+                # Default to enabled if not specified
+                day_config['enabled'] = True
+
+            # Only add times if day is enabled
+            if day_config.get('enabled', True):
+                enabled_days_count += 1
+                start_time = None
+                end_time = None
+
+                start_time = _day_setting(data, day, start_key, 'start_time')[1] or '07:00'
+                end_time = _day_setting(data, day, end_key, 'end_time')[1] or '23:00'
+
+                # Validate time formats
+                is_valid, error_msg = _validate_time_format(start_time)
+                if not is_valid:
+                    return None, f"Invalid start time for {day}: {error_msg}"
+
+                is_valid, error_msg = _validate_time_format(end_time)
+                if not is_valid:
+                    return None, f"Invalid end time for {day}: {error_msg}"
+
+                day_config['start_time'] = start_time
+                day_config['end_time'] = end_time
+            else:
+                day_config.update(_disabled_day_times(data, day, start_key, end_key))
+
+            schedule_config['days'][day] = day_config
+
+        # An enabled per-day schedule needs a day to be on. A disabled
+        # one does not: every day off with the schedule off is what
+        # config.template.json ships, so refusing it meant a fresh
+        # install could not post back the schedule GET returned.
+        if enabled_days_count == 0 and enabled_value:
+            return None, "At least one day must be enabled in per-day schedule mode"
+
+    return schedule_config, None
+
+
 @api_v3.route('/config/schedule', methods=['GET'])
 def get_schedule_config():
     """Get current schedule configuration"""
@@ -261,114 +360,9 @@ def save_schedule_config():
         # Load current config
         current_config = api_v3.config_manager.load_config()
 
-        # Build schedule configuration
-        # Handle enabled checkbox - can be True, False, or 'on'
-        enabled_value = data.get('enabled', False)
-        if isinstance(enabled_value, str):
-            enabled_value = enabled_value.lower() in ('true', 'on', '1')
-        schedule_config = {
-            'enabled': enabled_value
-        }
-
-        mode = data.get('mode', 'global')
-        schedule_config['mode'] = mode
-
-        if mode == 'global':
-            # Simple global schedule
-            start_time = data.get('start_time', '07:00')
-            end_time = data.get('end_time', '23:00')
-
-            # Validate time formats
-            is_valid, error_msg = _validate_time_format(start_time)
-            if not is_valid:
-                return error_response(
-                    ErrorCode.VALIDATION_ERROR,
-                    error_msg,
-                    status_code=400
-                )
-
-            is_valid, error_msg = _validate_time_format(end_time)
-            if not is_valid:
-                return error_response(
-                    ErrorCode.VALIDATION_ERROR,
-                    error_msg,
-                    status_code=400
-                )
-
-            schedule_config['start_time'] = start_time
-            schedule_config['end_time'] = end_time
-            # Remove days config when switching to global mode
-            schedule_config.pop('days', None)
-        else:
-            # Per-day schedule
-            schedule_config['days'] = {}
-            # Remove global times when switching to per-day mode
-            schedule_config.pop('start_time', None)
-            schedule_config.pop('end_time', None)
-            days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-            enabled_days_count = 0
-
-            for day in days:
-                day_config = {}
-                enabled_key = f'{day}_enabled'
-                start_key = f'{day}_start'
-                end_key = f'{day}_end'
-
-                # Check if day is enabled
-                has_enabled, enabled_val = _day_setting(data, day, enabled_key, 'enabled')
-                if has_enabled:
-                    # Handle checkbox values that may come as 'on', True, or False
-                    if isinstance(enabled_val, str):
-                        day_config['enabled'] = enabled_val.lower() in ('true', 'on', '1')
-                    else:
-                        day_config['enabled'] = bool(enabled_val)
-                else:
-                    # Default to enabled if not specified
-                    day_config['enabled'] = True
-
-                # Only add times if day is enabled
-                if day_config.get('enabled', True):
-                    enabled_days_count += 1
-                    start_time = None
-                    end_time = None
-
-                    start_time = _day_setting(data, day, start_key, 'start_time')[1] or '07:00'
-                    end_time = _day_setting(data, day, end_key, 'end_time')[1] or '23:00'
-
-                    # Validate time formats
-                    is_valid, error_msg = _validate_time_format(start_time)
-                    if not is_valid:
-                        return error_response(
-                            ErrorCode.VALIDATION_ERROR,
-                            f"Invalid start time for {day}: {error_msg}",
-                            status_code=400
-                        )
-
-                    is_valid, error_msg = _validate_time_format(end_time)
-                    if not is_valid:
-                        return error_response(
-                            ErrorCode.VALIDATION_ERROR,
-                            f"Invalid end time for {day}: {error_msg}",
-                            status_code=400
-                        )
-
-                    day_config['start_time'] = start_time
-                    day_config['end_time'] = end_time
-                else:
-                    day_config.update(_disabled_day_times(data, day, start_key, end_key))
-
-                schedule_config['days'][day] = day_config
-
-            # An enabled per-day schedule needs a day to be on. A disabled
-            # one does not: every day off with the schedule off is what
-            # config.template.json ships, so refusing it meant a fresh
-            # install could not post back the schedule GET returned.
-            if enabled_days_count == 0 and enabled_value:
-                return error_response(
-                    ErrorCode.VALIDATION_ERROR,
-                    "At least one day must be enabled in per-day schedule mode",
-                    status_code=400
-                )
+        schedule_config, error_msg = _build_schedule(data)
+        if error_msg:
+            return error_response(ErrorCode.VALIDATION_ERROR, error_msg, status_code=400)
 
         # Update and save config using atomic save
         current_config['schedule'] = schedule_config
@@ -391,6 +385,67 @@ def save_schedule_config():
 
             status_code=500, details=describe_exception(e)
         )
+@api_v3.route('/config/plugin-schedules', methods=['GET'])
+def get_plugin_schedules():
+    """Every plugin's schedule (config['plugin_schedules']), by plugin id."""
+    if not api_v3.config_manager:
+        return error_response(ErrorCode.CONFIG_LOAD_FAILED,
+                              'Config manager not initialized', status_code=500)
+    config = api_v3.config_manager.load_config()
+    return success_response(data=config.get('plugin_schedules') or {})
+
+
+@api_v3.route('/config/plugin-schedules', methods=['POST'])
+def save_plugin_schedule():
+    """Save one plugin's schedule (src/plugin_schedule.py).
+
+    The body is a schedule picker's fields plus ``plugin_id`` and
+    ``hide_when_live``. A schedule that is off and does not hide during live
+    games changes nothing, so it is removed rather than stored.
+    """
+    try:
+        if not api_v3.config_manager:
+            return error_response(ErrorCode.CONFIG_LOAD_FAILED,
+                                  'Config manager not initialized', status_code=500)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return error_response(ErrorCode.VALIDATION_ERROR, 'No data provided', status_code=400)
+        plugin_id = data.get('plugin_id')
+        if not isinstance(plugin_id, str) or not plugin_id:
+            return error_response(ErrorCode.VALIDATION_ERROR, 'plugin_id is required', status_code=400)
+        not_plugin = _pkg._non_plugin_id_error(plugin_id)
+        if not_plugin is not None:
+            return not_plugin
+        if plugin_id not in _pkg._discovered_plugin_manifests(plugin_id):
+            return error_response(ErrorCode.PLUGIN_NOT_FOUND,
+                                  f"Plugin '{plugin_id}' is not installed", status_code=404)
+
+        schedule, error_msg = _build_schedule(data)
+        if error_msg:
+            return error_response(ErrorCode.VALIDATION_ERROR, error_msg, status_code=400)
+        schedule['hide_when_live'] = _coerce_to_bool(data.get('hide_when_live'))
+
+        current_config = api_v3.config_manager.load_config()
+        schedules = dict(current_config.get('plugin_schedules') or {})
+        if schedule['enabled'] or schedule['hide_when_live']:
+            schedules[plugin_id] = schedule
+        else:
+            schedules.pop(plugin_id, None)
+        current_config['plugin_schedules'] = schedules
+        success, error_msg = _pkg._save_config_atomic(api_v3.config_manager, current_config,
+                                                     create_backup=True)
+        if not success:
+            return error_response(ErrorCode.CONFIG_SAVE_FAILED,
+                                  f"Failed to save plugin schedule: {error_msg}", status_code=500)
+        invalidate_cache()
+        return success_response(message=f"Schedule for {plugin_id} saved")
+    except Exception as e:
+        logger.error("Error saving plugin schedule", exc_info=True)
+        return error_response(ErrorCode.CONFIG_SAVE_FAILED,
+                              "An error occurred; see logs for details",
+                              status_code=500, details=describe_exception(e))
+
+
 @api_v3.route('/config/dim-schedule', methods=['GET'])
 def get_dim_schedule_config():
     """Get current dim schedule configuration"""

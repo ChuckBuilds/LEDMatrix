@@ -2409,6 +2409,20 @@ enabled with default times `20:00`-`07:00`. As for the schedule above, an
 enabled dim schedule needs at least one day enabled and a disabled one may
 have every day off.
 
+### Plugin Schedules
+
+**GET** `/api/v3/config/plugin-schedules`
+
+Every plugin's schedule (`plugin_schedules` in `docs/CONFIG_REFERENCE.md`),
+keyed by plugin id.
+
+**POST** `/api/v3/config/plugin-schedules`
+
+Save one plugin's schedule: `plugin_id`, `hide_when_live`, and the same
+fields as `POST /api/v3/config/schedule`. A schedule that is off and does
+not hide during live games is removed. 400 for a core section name or a bad
+time, 404 for a plugin that is not installed.
+
 ---
 
 ## Integrations
