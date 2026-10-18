@@ -149,6 +149,16 @@ class TestVegas:
         stream._refresh_plugin_list()
         assert set(stream._ordered_plugins) == {'nfl'}
 
+    def test_a_changed_hidden_set_skips_the_refresh_interval(self):
+        plugins = {pid: SimpleNamespace(enabled=True, config={}) for pid in ('news', 'nfl')}
+        stream = StreamManager(VegasModeConfig(), SimpleNamespace(plugins=plugins), MagicMock())
+        stream.refresh()  # the interval's refresh
+        assert set(stream._ordered_plugins) == {'news', 'nfl'}
+        stream.refresh()  # inside the interval, nothing changed: no rebuild
+        stream.hidden_plugins = lambda: frozenset({'news'})
+        stream.refresh()  # still inside the interval, but the set changed
+        assert set(stream._ordered_plugins) == {'nfl'}
+
 
 class TestSaveEndpoint:
     @pytest.fixture

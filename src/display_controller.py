@@ -1430,7 +1430,9 @@ class DisplayController:
             return
         if self._empty_pass_streak == rotation:
             # Blank once: with every plugin empty or scheduled off, the last
-            # screen drawn would otherwise stay up indefinitely.
+            # screen drawn would otherwise stay up indefinitely. A blank the
+            # controller draws, so the last scroll's state ends first.
+            self._end_scroll_before_core_screen()
             self.display_manager.clear()
             self.display_manager.update_display()
             logger.info("No mode has anything to show; checking one mode every %.0fs "

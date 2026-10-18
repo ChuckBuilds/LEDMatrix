@@ -41,6 +41,8 @@ class TestNoteEmptyPass:
         assert dc.sleeps == [DisplayController.EMPTY_ROTATION_PAUSE] * 3
         # Blanked once, so the last screen drawn does not stay up.
         assert dc.display_manager.clear.call_count == 1
+        # A controller-drawn blank: the last scroll's state is ended first.
+        dc.display_manager.set_scrolling_state.assert_called_once_with(False)
         assert dc.display_manager.update_display.call_count == 1
         # ...and the preview gets the blank frame however the throttle fell.
         assert dc.display_manager.write_owed_snapshot.call_count == 3

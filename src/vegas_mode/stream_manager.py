@@ -77,9 +77,10 @@ class StreamManager:
         self.plugin_adapter = plugin_adapter
         # Plugin ids to leave out right now (config['plugin_schedules']);
         # the display controller sets it. Read at each list refresh.
-        # ponytail: applies from the next cycle (minutes on a long ticker);
-        # drop the plugin's cached segments when the set changes if that shows.
+        # A change to it rebuilds the list at the next refresh() even inside
+        # the refresh interval; segments already composed still scroll out.
         self.hidden_plugins: Optional[Callable[[], FrozenSet[str]]] = None
+        self._applied_hidden: FrozenSet[str] = frozenset()
         # True once "no plugins" has been logged, until the list fills again:
         # with every plugin scheduled off the display retries every second,
         # and three log lines a second is a full journal on an SD card.
@@ -280,7 +281,9 @@ class StreamManager:
         Called periodically to pick up new plugins or config changes.
         """
         current_time = time.time()
-        if current_time - self._last_refresh < self._refresh_interval:
+        hidden = self.hidden_plugins() if self.hidden_plugins else frozenset()
+        if (current_time - self._last_refresh < self._refresh_interval
+                and hidden == self._applied_hidden):
             return
 
         self._last_refresh = current_time
@@ -308,6 +311,7 @@ class StreamManager:
             plugins = list(self.plugin_manager.plugins.items())
             loaded = len(plugins)
             hidden = self.hidden_plugins() if self.hidden_plugins else frozenset()
+            self._applied_hidden = hidden
             for plugin_id, plugin in plugins:
                 if not getattr(plugin, 'enabled', False):
                     logger.debug("[%s] Vegas: skipped (not enabled)", plugin_id)

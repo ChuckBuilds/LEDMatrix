@@ -82,8 +82,9 @@ As in `schedule`, a day missing from `days` uses the top-level times
 so `00:00`–`23:59` leaves the plugin out for that last minute.
 
 A change takes effect at the next screen in the rotation or live takeover,
-and at the start of the next scroll cycle in Vegas mode, which on a long
-ticker can be several minutes (about 6 on ledpi with 8 plugins).
+and in Vegas mode at its next plugin-list refresh: the next scroll group,
+or at the latest the next scroll cycle (about 6 minutes on ledpi with 8
+plugins). Content already composed into the ticker scrolls out first.
 
 Read by `src/plugin_schedule.py` through `DisplayController._hidden_plugins()`.
 Managed in the web UI under Schedule → Plugin Schedules, saved via
