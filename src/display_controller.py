@@ -1429,13 +1429,15 @@ class DisplayController:
             return
         if self._empty_pass_streak == rotation:
             # Blank once: with every plugin empty or scheduled off, the last
-            # screen drawn would otherwise stay up indefinitely. update_display
-            # pushes the blank frame to the web preview too, as the
-            # scheduled-off blank does.
+            # screen drawn would otherwise stay up indefinitely.
             self.display_manager.clear()
             self.display_manager.update_display()
             logger.info("No mode has anything to show; checking one mode every %.0fs "
                         "until one does", self.EMPTY_ROTATION_PAUSE)
+        # The preview throttle may have skipped the blank frame, and with no
+        # display() call to follow, nothing else writes it (see
+        # DisplayManager.write_owed_snapshot). Cheap when nothing is owed.
+        self.display_manager.write_owed_snapshot()
         self._sleep_with_plugin_updates(self.EMPTY_ROTATION_PAUSE)
 
     #: Plugins already warned about a display duration that is not a number,

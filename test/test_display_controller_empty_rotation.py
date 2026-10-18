@@ -42,6 +42,8 @@ class TestNoteEmptyPass:
         # Blanked once, so the last screen drawn does not stay up.
         assert dc.display_manager.clear.call_count == 1
         assert dc.display_manager.update_display.call_count == 1
+        # ...and the preview gets the blank frame however the throttle fell.
+        assert dc.display_manager.write_owed_snapshot.call_count == 3
 
     def test_a_partly_empty_rotation_never_blanks(self):
         dc = _bare_controller(["a", "b", "c"])
