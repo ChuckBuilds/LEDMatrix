@@ -303,7 +303,9 @@ class VegasModeCoordinator:
 
             # Initialize stream manager
             if not self.stream_manager.initialize():
-                logger.error("Failed to initialize stream manager")
+                # Only fails with no plugin to show (every one excluded or
+                # scheduled off), which initialize() has logged once.
+                logger.debug("Vegas not started: no plugins to scroll")
                 return False
 
             # Compose initial content

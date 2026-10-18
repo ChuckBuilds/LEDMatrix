@@ -80,6 +80,10 @@ class StreamManager:
         # ponytail: applies from the next cycle (minutes on a long ticker);
         # drop the plugin's cached segments when the set changes if that shows.
         self.hidden_plugins: Optional[Callable[[], FrozenSet[str]]] = None
+        # True once "no plugins" has been logged, until the list fills again:
+        # with every plugin scheduled off the display retries every second,
+        # and three log lines a second is a full journal on an SD card.
+        self._empty_logged = False
 
         # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
@@ -111,8 +115,11 @@ class StreamManager:
         self._refresh_plugin_list()
 
         if not self._ordered_plugins:
-            logger.warning("No plugins available for Vegas scroll")
+            if not self._empty_logged:
+                logger.warning("No plugins available for Vegas scroll")
+                self._empty_logged = True
             return False
+        self._empty_logged = False
 
         # Fill the buffer to a whole cycle's worth of plugins. This used to be
         # buffer_ahead + 1, which conflated prefetch depth with cycle size and
@@ -338,7 +345,8 @@ class StreamManager:
 
         slots = (f", {len(ordered_plugins)} slots"
                  if len(ordered_plugins) != len(set(ordered_plugins)) else "")
-        logger.info(
+        logger.log(
+            logging.DEBUG if (self._empty_logged and not ordered_plugins) else logging.INFO,
             "Vegas rotation: %d of %d loaded plugin(s)%s: %s",
             len(set(ordered_plugins)), loaded, slots, ', '.join(ordered_plugins)
         )

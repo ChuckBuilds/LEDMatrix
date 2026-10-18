@@ -20,6 +20,7 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 :meth:`~DisplayController.run`.
 """
 
+import logging
 import time
 import os
 import inspect
@@ -3917,7 +3918,12 @@ class DisplayController:
         elif nxt is not state:
             self._adopt_state(nxt)
             self.force_change = True
-            logger.info("Switching to mode: %s", self.current_display_mode)
+            # DEBUG once a whole rotation has been empty (_note_empty_pass):
+            # it then steps once a second, and every plugin scheduled off
+            # would otherwise journal a line a second.
+            logger.log(logging.DEBUG if self._empty_pass_streak >= max(1, len(self.available_modes))
+                       else logging.INFO,
+                       "Switching to mode: %s", self.current_display_mode)
 
     def _still_live(self, mode: Optional[str]) -> bool:
         """The live hold: ``mode``'s plugin has live priority and live content,
