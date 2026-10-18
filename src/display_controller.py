@@ -707,9 +707,8 @@ class DisplayController:
         self._dim_checked_minute: Optional[tuple] = None
         self._cached_target_brightness: int = self._normal_brightness
         # Per-plugin schedules (config['plugin_schedules'], src/plugin_schedule.py):
-        # the hidden set, recomputed when the minute or the live answer changes.
-        self._plugin_hidden_key: Optional[tuple] = None
-        self._plugin_hidden: FrozenSet[str] = frozenset()
+        # (key, hidden set), see _hidden_plugins.
+        self._plugin_hidden_cache: Tuple[Optional[tuple], FrozenSet[str]] = (None, frozenset())
         self._game_live = False
         self._game_live_at = float('-inf')
 
@@ -2941,22 +2940,26 @@ class DisplayController:
     def _hidden_plugins(self) -> FrozenSet[str]:
         """Plugin ids their plugin_schedules entry keeps off the panel right now.
 
-        Recomputed when the minute or the live-game answer changes. Also
-        Vegas's filter (StreamManager.hidden_plugins), from its own thread.
+        Recomputed when the schedules, the minute or the live-game answer
+        change. Also Vegas's filter (StreamManager.hidden_plugins), from its
+        own thread: the schedules are part of the key and the cache is one
+        tuple, so a call still holding the config from before a reload
+        cannot leave its answer standing for the new one.
         """
-        schedules = self.config.get('plugin_schedules') or {}
-        if not schedules:
+        schedules = self.config.get('plugin_schedules')
+        if not isinstance(schedules, dict) or not schedules:
             return frozenset()
         now = datetime.now(self._timezone())
         game_live = wants_live_scan(schedules) and self._any_game_live()
-        key = (now.hour, now.minute, game_live)
-        if key != self._plugin_hidden_key:
+        key = (schedules, now.hour, now.minute, game_live)
+        cached_key, hidden = self._plugin_hidden_cache
+        if key != cached_key:
+            previous = hidden
             hidden = hidden_plugins(schedules, now, game_live)
-            if hidden != self._plugin_hidden:
+            if hidden != previous:
                 logger.info("Plugin schedules: hidden now %s", sorted(hidden) or "none")
-            self._plugin_hidden = hidden
-            self._plugin_hidden_key = key
-        return self._plugin_hidden
+            self._plugin_hidden_cache = (key, hidden)
+        return hidden
 
     def _collect_live_modes(self):
         """Return every currently live-priority mode, in registration order.
@@ -4795,7 +4798,6 @@ class DisplayController:
         # Invalidate minute-gates so the new schedule/dim times take effect immediately
         self._schedule_checked_minute = None
         self._dim_checked_minute = None
-        self._plugin_hidden_key = None
         self._cached_target_brightness = self._normal_brightness
         logger.debug("Config cache refreshed (brightness=%s, scroll_speed=%s)",
                      self._normal_brightness, self._scroll_speed)

@@ -88,8 +88,7 @@ def controller(schedules, plugin_modes):
     dc.config = {'plugin_schedules': schedules}
     dc._tz = None
     dc.plugin_modes = plugin_modes
-    dc._plugin_hidden_key = None
-    dc._plugin_hidden = frozenset()
+    dc._plugin_hidden_cache = (None, frozenset())
     dc._game_live = False
     dc._game_live_at = float('-inf')
     dc._health_tracker = lambda: None
@@ -118,8 +117,19 @@ class TestController:
         dc = controller({'nfl': ALWAYS_OFF}, modes)
         assert dc._collect_live_modes() == []
         dc.config = {}
-        dc._plugin_hidden_key = None
         assert dc._collect_live_modes() == ['nfl_live']
+
+    @pytest.mark.parametrize('schedules', [['news'], 'news', 5])
+    def test_wrong_shaped_plugin_schedules_hide_nothing(self, schedules):
+        dc = controller(schedules, {'news': plugin('news')})
+        assert dc._hidden_plugins() == frozenset()
+
+    def test_a_reload_is_never_answered_from_the_old_schedules(self):
+        dc = controller({'news': ALWAYS_OFF}, {'news': plugin('news')})
+        assert dc._hidden_plugins() == {'news'}
+        # A new config in the same minute, with no cache reset.
+        dc.config = {'plugin_schedules': {'news': {'enabled': False}}}
+        assert dc._hidden_plugins() == frozenset()
 
 
 class TestVegas:
