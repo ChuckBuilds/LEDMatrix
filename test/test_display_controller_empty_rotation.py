@@ -41,6 +41,7 @@ class TestNoteEmptyPass:
         assert dc.sleeps == [DisplayController.EMPTY_ROTATION_PAUSE] * 3
         # Blanked once, so the last screen drawn does not stay up.
         assert dc.display_manager.clear.call_count == 1
+        assert dc.display_manager.update_display.call_count == 1
 
     def test_a_partly_empty_rotation_never_blanks(self):
         dc = _bare_controller(["a", "b", "c"])
