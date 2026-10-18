@@ -39,8 +39,11 @@ const ok = (l, c, x) => c ? (pass++, console.log('  ok   ' + l))
   ok('the partial has no inline handlers', !/\son(click|input|change|submit)=/i.test(partial));
   ok('the forms carry no hx-on handler', !/hx-on/i.test(partial));
   ok('the partial root is data-page="schedule"', /data-page="schedule"/.test(partial));
-  ok('both forms are marked data-reports-result',
-     (partial.match(/<form[^>]*data-reports-result/g) || []).length === 2);
+  // The two schedule forms, plus one per plugin in the Plugin Schedules card.
+  ok('every form is marked data-reports-result',
+     (partial.match(/<form[^>]*data-reports-result/g) || []).length
+       === (partial.match(/<form[\s>]/g) || []).length
+     && (partial.match(/<form[\s>]/g) || []).length >= 2);
 
   const errs = [];
   const logged = [];

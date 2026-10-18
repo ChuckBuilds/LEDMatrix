@@ -51,12 +51,16 @@ def schedule_state(schedule: Mapping[str, Any], now: datetime) -> Tuple[bool, st
         return True, 'no schedule'
 
     day = now.strftime('%A').lower()
-    days = schedule.get('days') or {}
+    # Wrong-shaped values (the raw config editor allows any) are treated as
+    # missing rather than raised: this runs in the display loop.
+    days = schedule.get('days')
+    if not isinstance(days, Mapping):
+        days = {}
     mode = schedule.get('mode')
-    mode = mode.replace('_', '-') if mode else None
+    mode = mode.replace('_', '-') if isinstance(mode, str) else None
     # An explicit Global mode beats a stray 'days' dict left from a past
     # per-day setup.
-    per_day = mode != 'global' and day in days
+    per_day = mode != 'global' and isinstance(days.get(day), Mapping)
 
     if per_day:
         day_config = days[day]

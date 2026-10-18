@@ -4187,10 +4187,8 @@ class DisplayController:
                 logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
 
                 # Handle plugin-based display modes
+                # None skips the mode; _plugin_to_draw has logged why.
                 manager_to_display = self._plugin_to_draw(plan)
-                if not manager_to_display:
-                    logger.warning(f"No plugin manager found for mode {active_mode} - skipping display and rotating to next mode")
-                    manager_to_display = None
 
                 # One screen: the first frame, the frame loop, the make-up
                 # dwell (src/screen_runner.py).

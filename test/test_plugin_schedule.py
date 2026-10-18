@@ -57,6 +57,16 @@ class TestHiddenPlugins:
     def test_bad_time_shows_rather_than_hides(self):
         assert schedule_state({'mode': 'global', 'start_time': '25:00'}, MONDAY_1PM)[0]
 
+    @pytest.mark.parametrize('schedule', [
+        {'mode': 1},
+        {'mode': 'per-day', 'days': 5},
+        {'mode': 'per-day', 'days': {'sunday': False}},
+        {'mode': 'per-day', 'days': ['sunday']},
+    ])
+    def test_wrong_shapes_show_rather_than_raise(self, schedule):
+        # Falls back to the global 07:00-23:00 window, which 13:00 is inside.
+        assert schedule_state(schedule, SUNDAY_1PM)[0]
+
     def test_global_mode_ignores_days(self):
         schedule = {**sundays_off(), 'mode': 'global', 'start_time': '12:00', 'end_time': '14:00'}
         assert schedule_state(schedule, SUNDAY_1PM)[0]
