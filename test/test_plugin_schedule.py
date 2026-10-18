@@ -119,6 +119,13 @@ class TestController:
         dc.config = {}
         assert dc._collect_live_modes() == ['nfl_live']
 
+    def test_a_scheduled_off_live_mode_does_not_hold_the_rotation(self):
+        modes = {'nfl_live': plugin('nfl', live=True, priority=True)}
+        dc = controller({'nfl': ALWAYS_OFF}, modes)
+        assert not dc._still_live('nfl_live')
+        dc.config = {}
+        assert dc._still_live('nfl_live')
+
     @pytest.mark.parametrize('schedules', [['news'], 'news', 5])
     def test_wrong_shaped_plugin_schedules_hide_nothing(self, schedules):
         dc = controller(schedules, {'news': plugin('news')})

@@ -1428,6 +1428,9 @@ class DisplayController:
         if self._empty_pass_streak < rotation:
             return
         if self._empty_pass_streak == rotation:
+            # Blank once: with every plugin empty or scheduled off, the last
+            # screen drawn would otherwise stay up indefinitely.
+            self.display_manager.clear()
             logger.info("No mode has anything to show; checking one mode every %.0fs "
                         "until one does", self.EMPTY_ROTATION_PAUSE)
         self._sleep_with_plugin_updates(self.EMPTY_ROTATION_PAUSE)
@@ -3913,10 +3916,13 @@ class DisplayController:
 
     def _still_live(self, mode: Optional[str]) -> bool:
         """The live hold: ``mode``'s plugin has live priority and live content,
-        so the rotation stays on it."""
+        so the rotation stays on it. Never for a plugin scheduled off: the
+        hold would keep the rotation on a mode it skips."""
         if mode not in self.plugin_modes:
             return False
         plugin_instance = self.plugin_modes[mode]
+        if getattr(plugin_instance, 'plugin_id', mode) in self._hidden_plugins():
+            return False
         if not (hasattr(plugin_instance, 'has_live_priority')
                 and hasattr(plugin_instance, 'has_live_content')):
             return False

@@ -8,6 +8,7 @@ now pauses between passes, and it stops pausing as soon as something shows.
 """
 
 import os
+from unittest.mock import MagicMock
 
 os.environ.setdefault("EMULATOR", "true")
 
@@ -21,6 +22,7 @@ def _bare_controller(modes, on_demand_modes=None):
     dc.on_demand_modes = list(on_demand_modes or [])
     dc.sleeps = []
     dc._sleep_with_plugin_updates = lambda duration, tick_interval=1.0: dc.sleeps.append(duration)
+    dc.display_manager = MagicMock()
     return dc
 
 
@@ -37,6 +39,14 @@ class TestNoteEmptyPass:
             dc._note_empty_pass()
         # Passes 3, 4 and 5 are at or past one full rotation.
         assert dc.sleeps == [DisplayController.EMPTY_ROTATION_PAUSE] * 3
+        # Blanked once, so the last screen drawn does not stay up.
+        assert dc.display_manager.clear.call_count == 1
+
+    def test_a_partly_empty_rotation_never_blanks(self):
+        dc = _bare_controller(["a", "b", "c"])
+        dc._note_empty_pass()
+        dc._note_empty_pass()
+        dc.display_manager.clear.assert_not_called()
 
     def test_content_resets_the_streak(self):
         dc = _bare_controller(["a", "b"])
