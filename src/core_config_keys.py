@@ -23,6 +23,7 @@ CORE_CONFIG_KEYS = frozenset({
     'auto_update',
     'schedule',
     'dim_schedule',
+    'plugin_schedules',
     'timezone',
     'target_fps',
     'location',

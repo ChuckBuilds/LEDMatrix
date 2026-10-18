@@ -615,7 +615,28 @@ def _load_schedule_partial():
         return render_template('v3/partials/schedule.html',
                              schedule_config=schedule_config,
                              dim_schedule_config=dim_schedule_config,
-                             normal_brightness=normal_brightness)
+                             normal_brightness=normal_brightness,
+                             plugin_schedule_rows=_plugin_schedule_rows(main_config))
+
+
+def _plugin_schedule_rows(main_config):
+    """One row per enabled plugin, or plugin with a saved schedule, for the
+    Plugin Schedules card: ``{id, name, schedule}``, sorted by name."""
+    schedules = main_config.get('plugin_schedules') or {}
+    if not pages_v3.plugin_catalog:
+        return []
+    try:
+        pages_v3.plugin_catalog.discover_plugins()
+        infos = pages_v3.plugin_catalog.get_all_plugin_info()
+    except Exception:
+        logger.warning("schedule: could not enumerate plugins", exc_info=True)
+        return []
+    rows = [{'id': info['id'], 'name': info.get('name') or info['id'],
+             'schedule': schedules.get(info['id']) or {}}
+            for info in infos
+            if info.get('id') and ((main_config.get(info['id']) or {}).get('enabled', False)
+                                   or info['id'] in schedules)]
+    return sorted(rows, key=lambda r: r['name'].lower())
 
 
 def _load_plugins_partial():

@@ -59,6 +59,25 @@ def test_a_refresh_logs_a_single_info_summary(caplog):
     assert any('off' in m and 'not enabled' in m for m in debug)
 
 
+def test_an_empty_list_is_logged_once_until_it_fills(caplog):
+    # Every plugin scheduled off: the display retries every second.
+    stream = _stream({'clock': _Plugin()})
+    stream.hidden_plugins = lambda: frozenset({'clock'})
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        for _ in range(3):
+            assert not stream.initialize()
+    loud = [r for r in caplog.records if r.name == LOGGER and r.levelno >= logging.INFO]
+    assert len(loud) == 2, [r.getMessage() for r in loud]  # one summary, one warning
+    caplog.clear()
+    stream.hidden_plugins = lambda: frozenset()
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        assert stream.initialize()
+        stream.hidden_plugins = lambda: frozenset({'clock'})
+        assert not stream.initialize()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1  # warned again after the list had filled
+
+
 def test_fetching_content_logs_nothing_at_info(caplog):
     stream = _stream({'clock': _Plugin()})
     with caplog.at_level(logging.DEBUG, logger=LOGGER):

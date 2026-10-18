@@ -20,6 +20,7 @@ Entry point: :func:`main` — instantiates :class:`DisplayController` and calls
 :meth:`~DisplayController.run`.
 """
 
+import logging
 import time
 import os
 import inspect
@@ -37,6 +38,7 @@ import pytz
 
 from src import display_watchdog
 from src.malloc_tuning import MallocTrimmer
+from src.plugin_schedule import hidden_plugins, in_window, schedule_state, wants_live_scan
 from src.display_arbiter import (
     Arbiter, ArbiterInputs, ArbiterState, FramePolicy,
     ScreenPlan, Source, WifiNotice, live_pick, live_takeover, on_demand_bound, rotation_plan,
@@ -705,6 +707,11 @@ class DisplayController:
         self._schedule_checked_minute: Optional[tuple] = None
         self._dim_checked_minute: Optional[tuple] = None
         self._cached_target_brightness: int = self._normal_brightness
+        # Per-plugin schedules (config['plugin_schedules'], src/plugin_schedule.py):
+        # (key, hidden set), see _hidden_plugins.
+        self._plugin_hidden_cache: Tuple[Optional[tuple], FrozenSet[str]] = (None, frozenset())
+        self._game_live = False
+        self._game_live_at = float('-inf')
 
         # Register controller-level hot-reload callback so cached config values
         # (_normal_brightness, _scroll_speed, _tz, minute-gates) stay in sync
@@ -751,6 +758,8 @@ class DisplayController:
 
             # Set up live priority checker
             self.vegas_coordinator.set_live_priority_checker(self._check_live_priority)
+            # Plugins scheduled off sit out the ticker too.
+            self.vegas_coordinator.stream_manager.hidden_plugins = self._hidden_plugins
 
             # Set up interrupt checker for on-demand/wifi status and follower mode
             def _vegas_interrupt():
@@ -912,36 +921,17 @@ class DisplayController:
                 self._tz = pytz.UTC
         return self._tz
 
-    @staticmethod
-    def _in_window(start, end, now) -> bool:
-        """Whether ``now`` is within [start, end), a window that may span midnight.
-
-        Half-open: on from the start minute, off at exactly the end minute.
-        A closed end made the end minute count as inside, and because ``now``
-        carries seconds, only a check at hh:mm:00.000 saw it that way -- so
-        whether the panel went off at the start or the end of that minute
-        depended on when the minute's one check ran. ``start == end`` is an
-        empty window, as it effectively was before.
-        """
-        if start <= end:
-            return start <= now < end
-        return now >= start or now < end
+    # The window rule, shared with the dim schedule and plugin schedules.
+    _in_window = staticmethod(in_window)
 
     def _check_schedule(self):
         """Check if display should be active based on schedule."""
         schedule_config = self.config.get('schedule', {})
 
-        # No schedule configured: always active.
-        if not schedule_config:
+        # No schedule, or a disabled one: always active.
+        if not schedule_config or not schedule_config.get('enabled', True):
             self.is_display_active = True
             self._was_display_active = True
-            return
-
-        # A schedule without an 'enabled' key counts as enabled.
-        if 'enabled' in schedule_config and not schedule_config.get('enabled', True):
-            self.is_display_active = True
-            self._was_display_active = True
-            logger.debug("Schedule is disabled - display always active")
             return
 
         current_time = datetime.now(self._timezone())
@@ -952,81 +942,15 @@ class DisplayController:
             return
         self._schedule_checked_minute = current_minute_key
 
-        current_day = current_time.strftime('%A').lower()  # e.g. 'monday'
-        current_time_only = current_time.time()
-
-        # Check if per-day schedule is configured
-        days_config = schedule_config.get('days')
-
-        # Determine which schedule to use. Respect an explicit 'mode' field
-        # (like the dim schedule does) so a stray/legacy 'days' dict left over
-        # from config migration or a prior per-day setup can't silently
-        # override a user's Global schedule selection.
-        mode = schedule_config.get('mode')
-        mode_normalized = mode.replace('_', '-') if mode else None
-
-        use_per_day = False
-        if mode_normalized == 'global':
-            use_per_day = False
-        elif mode_normalized == 'per-day':
-            use_per_day = bool(days_config and current_day in days_config)
-        elif days_config:
-            # No explicit mode recorded (legacy config) - fall back to
-            # inferring from presence of a 'days' dict for the current day.
-            if current_day in days_config:
-                use_per_day = True
-            else:
-                logger.debug("Per-day schedule exists but %s not configured, using global schedule", current_day)
-
-        if use_per_day:
-            day_config = days_config[current_day]
-
-            if not day_config.get('enabled', True):
-                was_active = self._was_display_active
-                self.is_display_active = False
-                if was_active:
-                    logger.info("Schedule activated: Display is now INACTIVE (%s is disabled in schedule). Display will be blanked.", current_day)
-                else:
-                    logger.debug("Display inactive - %s is disabled in schedule", current_day)
-                self._was_display_active = self.is_display_active
-                return
-
-            start_time_str = day_config.get('start_time', '07:00')
-            end_time_str = day_config.get('end_time', '23:00')
-            schedule_type = f"per-day ({current_day})"
+        active, why = schedule_state(schedule_config, current_time)
+        if active != self._was_display_active:
+            logger.info("Schedule activated: Display is now %s (%s)%s",
+                        "ACTIVE" if active else "INACTIVE", why,
+                        "" if active else ". Display will be blanked.")
         else:
-            start_time_str = schedule_config.get('start_time', '07:00')
-            end_time_str = schedule_config.get('end_time', '23:00')
-            schedule_type = "global"
-
-        try:
-            start_time = datetime.strptime(start_time_str, '%H:%M').time()
-            end_time = datetime.strptime(end_time_str, '%H:%M').time()
-            self.is_display_active = self._in_window(start_time, end_time, current_time_only)
-
-            was_active = self._was_display_active
-            if not self.is_display_active:
-                if was_active:
-                    logger.info("Schedule activated: Display is now INACTIVE (outside %s schedule window %s - %s). Display will be blanked.",
-                               schedule_type, start_time_str, end_time_str)
-                else:
-                    logger.debug("Display inactive - outside %s schedule window (%s - %s)",
-                               schedule_type, start_time_str, end_time_str)
-            else:
-                if not was_active:
-                    logger.info("Schedule activated: Display is now ACTIVE (within %s schedule window %s - %s)",
-                               schedule_type, start_time_str, end_time_str)
-                else:
-                    logger.debug("Display active - within %s schedule window (%s - %s)",
-                               schedule_type, start_time_str, end_time_str)
-
-            self._was_display_active = self.is_display_active
-
-        except ValueError as e:
-            logger.warning("Invalid schedule format for %s schedule: %s (start: %s, end: %s). Defaulting to active.",
-                         schedule_type, e, start_time_str, end_time_str)
-            self.is_display_active = True
-            self._was_display_active = True
+            logger.debug("Display %s - %s", "active" if active else "inactive", why)
+        self.is_display_active = active
+        self._was_display_active = active
 
     def _check_dim_schedule(self) -> int:
         """
@@ -1505,8 +1429,18 @@ class DisplayController:
         if self._empty_pass_streak < rotation:
             return
         if self._empty_pass_streak == rotation:
+            # Blank once: with every plugin empty or scheduled off, the last
+            # screen drawn would otherwise stay up indefinitely. A blank the
+            # controller draws, so the last scroll's state ends first.
+            self._end_scroll_before_core_screen()
+            self.display_manager.clear()
+            self.display_manager.update_display()
             logger.info("No mode has anything to show; checking one mode every %.0fs "
                         "until one does", self.EMPTY_ROTATION_PAUSE)
+        # The preview throttle may have skipped the blank frame, and with no
+        # display() call to follow, nothing else writes it (see
+        # DisplayManager.write_owed_snapshot). Cheap when nothing is owed.
+        self.display_manager.write_owed_snapshot()
         self._sleep_with_plugin_updates(self.EMPTY_ROTATION_PAUSE)
 
     #: Plugins already warned about a display duration that is not a number,
@@ -2990,6 +2924,54 @@ class DisplayController:
                 self.force_change = True
                 logger.info("Live priority ended - resuming rotation at %s", self.current_display_mode)
 
+    #: How long a "is any game live?" answer is reused for plugin schedules.
+    GAME_LIVE_TTL = 5.0
+
+    def _any_game_live(self) -> bool:
+        """Whether any plugin reports live content, asked at most every GAME_LIVE_TTL s.
+
+        Unlike _collect_live_modes this asks every plugin, live priority or
+        not: a scoreboard without live priority still makes it gameday.
+        """
+        now = time.monotonic()
+        if now - self._game_live_at >= self.GAME_LIVE_TTL:
+            self._game_live_at = now
+            live = False
+            for plugin in {id(p): p for p in list(self.plugin_modes.values())}.values():
+                try:
+                    if hasattr(plugin, 'has_live_content') and plugin.has_live_content():
+                        live = True
+                        break
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.warning("Error checking live content for %s: %s",
+                                   getattr(plugin, 'plugin_id', plugin), e)
+            self._game_live = live
+        return self._game_live
+
+    def _hidden_plugins(self) -> FrozenSet[str]:
+        """Plugin ids their plugin_schedules entry keeps off the panel right now.
+
+        Recomputed when the schedules, the minute or the live-game answer
+        change. Also Vegas's filter (StreamManager.hidden_plugins), from its
+        own thread: the schedules are part of the key and the cache is one
+        tuple, so a call still holding the config from before a reload
+        cannot leave its answer standing for the new one.
+        """
+        schedules = self.config.get('plugin_schedules')
+        if not isinstance(schedules, dict) or not schedules:
+            return frozenset()
+        now = datetime.now(self._timezone())
+        game_live = wants_live_scan(schedules) and self._any_game_live()
+        key = (schedules, now.hour, now.minute, game_live)
+        cached_key, hidden = self._plugin_hidden_cache
+        if key != cached_key:
+            previous = hidden
+            hidden = hidden_plugins(schedules, now, game_live)
+            if hidden != previous:
+                logger.info("Plugin schedules: hidden now %s", sorted(hidden) or "none")
+            self._plugin_hidden_cache = (key, hidden)
+        return hidden
+
     def _collect_live_modes(self):
         """Return every currently live-priority mode, in registration order.
 
@@ -3006,9 +2988,13 @@ class DisplayController:
         # Asked once per plugin per scan, not once per mode key: a scoreboard
         # registered under several modes computes the same answer each time.
         is_live: Dict[int, bool] = {}
+        # A scoreboard scheduled off does not win the panel by going live.
+        hidden = self._hidden_plugins()
         for mode_name, plugin_instance in self.plugin_modes.items():
             if not (hasattr(plugin_instance, 'has_live_priority')
                     and hasattr(plugin_instance, 'has_live_content')):
+                continue
+            if getattr(plugin_instance, 'plugin_id', mode_name) in hidden:
                 continue
             try:
                 key = id(plugin_instance)
@@ -3468,6 +3454,20 @@ class DisplayController:
         logger.debug(f"Found plugin manager for mode {mode}: {type(plugin_instance).__name__}")
         return plugin_instance
 
+    def _plugin_to_draw(self, plan: ScreenPlan):
+        """The plugin to draw ``plan``'s mode, or None to skip it this pass.
+
+        _plugin_for_mode, and None for a plugin its plugin_schedules entry
+        keeps off the panel right now: skipped like an empty screen. An
+        on-demand plan is the user asking, so it still shows.
+        """
+        plugin = self._plugin_for_mode(plan.mode)
+        if (plugin is not None and plan.source is not Source.ON_DEMAND
+                and getattr(plugin, 'plugin_id', plan.mode) in self._hidden_plugins()):
+            logger.debug("%s is scheduled off, skipping", plan.mode)
+            return None
+        return plugin
+
     def _start_screen_handover(self, plugin, active_mode: str) -> bool:
         """Before a screen's first dispatch: if the screen is static, keep
         the last scroll's leftovers off its first frame.
@@ -3920,14 +3920,22 @@ class DisplayController:
         elif nxt is not state:
             self._adopt_state(nxt)
             self.force_change = True
-            logger.info("Switching to mode: %s", self.current_display_mode)
+            # DEBUG once a whole rotation has been empty (_note_empty_pass):
+            # it then steps once a second, and every plugin scheduled off
+            # would otherwise journal a line a second.
+            logger.log(logging.DEBUG if self._empty_pass_streak >= max(1, len(self.available_modes))
+                       else logging.INFO,
+                       "Switching to mode: %s", self.current_display_mode)
 
     def _still_live(self, mode: Optional[str]) -> bool:
         """The live hold: ``mode``'s plugin has live priority and live content,
-        so the rotation stays on it."""
+        so the rotation stays on it. Never for a plugin scheduled off: the
+        hold would keep the rotation on a mode it skips."""
         if mode not in self.plugin_modes:
             return False
         plugin_instance = self.plugin_modes[mode]
+        if getattr(plugin_instance, 'plugin_id', mode) in self._hidden_plugins():
+            return False
         if not (hasattr(plugin_instance, 'has_live_priority')
                 and hasattr(plugin_instance, 'has_live_content')):
             return False
@@ -4201,10 +4209,8 @@ class DisplayController:
                 logger.debug("Loaded plugin modes: %s", list(self.plugin_modes.keys()))
 
                 # Handle plugin-based display modes
-                manager_to_display = self._plugin_for_mode(active_mode)
-                if not manager_to_display:
-                    logger.warning(f"No plugin manager found for mode {active_mode} - skipping display and rotating to next mode")
-                    manager_to_display = None
+                # None skips the mode; _plugin_to_draw has logged why.
+                manager_to_display = self._plugin_to_draw(plan)
 
                 # One screen: the first frame, the frame loop, the make-up
                 # dwell (src/screen_runner.py).

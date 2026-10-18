@@ -39,12 +39,26 @@ const PICKERS = [
     },
 ];
 
+// Each plugin's picker (the Plugin Schedules card): the window in which the
+// plugin may show. Unset, it offers the whole day.
+const PLUGIN_PICKER = { label: 'PluginSchedule', start: '00:00', end: '23:59', fillEmptyDays: true };
+
 const FORMS = {
     schedule_form: { saved: 'Schedule settings saved', failed: 'Error saving schedule' },
     dim_schedule_form: { saved: 'Dim schedule settings saved', failed: 'Error saving dim schedule' },
 };
+const PLUGIN_FORM = { saved: 'Plugin schedule saved', failed: 'Error saving plugin schedule' };
+
+/** The notification labels for a form on this page, or null. */
+function formLabels(form) {
+    if (FORMS[form.id]) return FORMS[form.id];
+    return form.classList.contains('plugin-schedule-form') ? PLUGIN_FORM : null;
+}
 
 const WIDGET_OPTIONS = { showModeToggle: true, showEnableToggle: true, compactMode: false };
+const PLUGIN_WIDGET_OPTIONS = Object.assign({}, WIDGET_OPTIONS, {
+    enableDescription: 'When enabled, this plugin only shows during the hours below.',
+});
 
 // The mounted page, for the deprecated aliases (boot.js).
 let active = null;
@@ -126,6 +140,11 @@ function drawPickers(root, ctx) {
             widget.render(container, { 'x-options': WIDGET_OPTIONS },
                           widgetValue(readConfig(root, spec.data), spec), { fieldId: spec.fieldId });
         });
+        root.querySelectorAll('[data-plugin-schedule-config]').forEach(function(container) {
+            widget.render(container, { 'x-options': PLUGIN_WIDGET_OPTIONS },
+                          widgetValue(readConfig(container, 'data-plugin-schedule-config'), PLUGIN_PICKER),
+                          { fieldId: container.id });
+        });
     }
     attempt();
 }
@@ -135,7 +154,7 @@ export function init(root, ctx) {
 
     root.addEventListener('htmx:afterRequest', function(event) {
         const form = event.target && event.target.closest ? event.target.closest('form') : null;
-        const labels = form && root.contains(form) ? FORMS[form.id] : null;
+        const labels = form && root.contains(form) ? formLabels(form) : null;
         if (labels && event.detail && event.detail.xhr) report(ctx.notify, event.detail.xhr, labels);
     }, on);
 

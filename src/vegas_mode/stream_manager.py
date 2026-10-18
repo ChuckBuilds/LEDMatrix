@@ -16,7 +16,7 @@ BasePlugin.get_vegas_participation):
 import logging
 import threading
 import time
-from typing import Optional, List, Dict, Deque, Tuple, TYPE_CHECKING
+from typing import Callable, Optional, List, Dict, Deque, FrozenSet, Tuple, TYPE_CHECKING
 from collections import deque
 from dataclasses import dataclass, field
 from PIL import Image
@@ -75,6 +75,16 @@ class StreamManager:
         self.config = config
         self.plugin_manager = plugin_manager
         self.plugin_adapter = plugin_adapter
+        # Plugin ids to leave out right now (config['plugin_schedules']);
+        # the display controller sets it. Read at each list refresh.
+        # A change to it rebuilds the list at the next refresh() even inside
+        # the refresh interval; segments already composed still scroll out.
+        self.hidden_plugins: Optional[Callable[[], FrozenSet[str]]] = None
+        self._applied_hidden: FrozenSet[str] = frozenset()
+        # True once "no plugins" has been logged, until the list fills again:
+        # with every plugin scheduled off the display retries every second,
+        # and three log lines a second is a full journal on an SD card.
+        self._empty_logged = False
 
         # Segments composed into the current cycle (swap mode only).
         self._active_buffer: Deque[ContentSegment] = deque()
@@ -106,8 +116,11 @@ class StreamManager:
         self._refresh_plugin_list()
 
         if not self._ordered_plugins:
-            logger.warning("No plugins available for Vegas scroll")
+            if not self._empty_logged:
+                logger.warning("No plugins available for Vegas scroll")
+                self._empty_logged = True
             return False
+        self._empty_logged = False
 
         # Fill the buffer to a whole cycle's worth of plugins. This used to be
         # buffer_ahead + 1, which conflated prefetch depth with cycle size and
@@ -268,7 +281,9 @@ class StreamManager:
         Called periodically to pick up new plugins or config changes.
         """
         current_time = time.time()
-        if current_time - self._last_refresh < self._refresh_interval:
+        hidden = self.hidden_plugins() if self.hidden_plugins else frozenset()
+        if (current_time - self._last_refresh < self._refresh_interval
+                and hidden == self._applied_hidden):
             return
 
         self._last_refresh = current_time
@@ -295,9 +310,14 @@ class StreamManager:
             # own thread (DisplayController._start_plugin_reload).
             plugins = list(self.plugin_manager.plugins.items())
             loaded = len(plugins)
+            hidden = self.hidden_plugins() if self.hidden_plugins else frozenset()
+            self._applied_hidden = hidden
             for plugin_id, plugin in plugins:
                 if not getattr(plugin, 'enabled', False):
                     logger.debug("[%s] Vegas: skipped (not enabled)", plugin_id)
+                    continue
+                if plugin_id in hidden:
+                    logger.debug("[%s] Vegas: skipped (scheduled off)", plugin_id)
                     continue
 
                 # 'pause' plugins stay in the rotation: they pause the scroll
@@ -329,7 +349,8 @@ class StreamManager:
 
         slots = (f", {len(ordered_plugins)} slots"
                  if len(ordered_plugins) != len(set(ordered_plugins)) else "")
-        logger.info(
+        logger.log(
+            logging.DEBUG if (self._empty_logged and not ordered_plugins) else logging.INFO,
             "Vegas rotation: %d of %d loaded plugin(s)%s: %s",
             len(set(ordered_plugins)), loaded, slots, ', '.join(ordered_plugins)
         )
