@@ -604,6 +604,15 @@ class TestFreshnessOverTicks:
 
 # --- end to end over a real socket -------------------------------------------------------
 
+def _until(predicate, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
 @needs_unix_sockets
 class TestEndToEnd:
     def test_routes_read_the_socket_then_fall_back_when_it_goes(self, web, tmp_path,
@@ -624,14 +633,17 @@ class TestEndToEnd:
         try:
             data = _data(client, '/api/v3/display/current-status')
             assert (data['mode'], data['source']) == ('weather', 'socket')
-            # The subscription picks up a change the display publishes.
+            # The subscription picks up a change the display publishes. That
+            # first answer can be a one-shot state.get with the subscription's
+            # own snapshot still on its way: a change published in between
+            # would read new (one-shot), then old (that snapshot), then new
+            # again (its event). So wait for the subscription first.
+            feed = display_state._subscription()
+            assert _until(lambda: feed.latest() is not None)
             hub.publish('display', dict(hub.snapshot()['state']['display'], mode='stocks'),
                         volatile=('last_updated',))
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if _data(client, '/api/v3/display/current-status')['mode'] == 'stocks':
-                    break
-                time.sleep(0.05)
+            assert _until(lambda: (display_state.current_status(feed.latest()) or {})
+                          .get('mode') == 'stocks')
             assert _data(client, '/api/v3/display/current-status')['mode'] == 'stocks'
             assert hub.subscribers == 1 and hub.readers_active()
         finally:
