@@ -54,7 +54,8 @@ def git_running_in(project_dir, proc_root=_PROC):
     """True when a git process may be working in ``project_dir``.
 
     Scans ``/proc`` for processes named ``git`` or ``git-*`` (``git-remote-https``
-    and friends) whose working directory is inside the checkout. A git process
+    and friends) whose working directory is inside the checkout, or whose
+    arguments name it (``git --git-dir=... --work-tree=...``). A git process
     whose working directory cannot be read (another user's) counts as running
     here: it might be. Returns None when ``/proc`` is unavailable.
     """
@@ -81,9 +82,20 @@ def git_running_in(project_dir, proc_root=_PROC):
             continue  # exited meanwhile
         except OSError:
             return True
-        if _is_within(cwd, root):
+        if _is_within(cwd, root) or _names_checkout(entry, root):
             return True
     return False
+
+
+def _names_checkout(entry, root):
+    """True when the process's arguments name the checkout (``--git-dir``,
+    ``--work-tree``): git can work on it from any working directory."""
+    try:
+        args = (entry / 'cmdline').read_bytes().split(b'\0')
+    except OSError:
+        return False
+    marker = os.fsencode(str(root))
+    return any(marker in arg for arg in args)
 
 
 def clear_stale_index_lock(project_dir, proc_root=_PROC, now=None):

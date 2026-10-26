@@ -38,14 +38,15 @@ def _checkout(tmp_path, lock_age=None):
 
 
 def _proc(tmp_path, *procs):
-    """A fake /proc: ``procs`` are (comm, cwd) pairs; cwd None means unreadable."""
+    """A fake /proc: ``procs`` are (comm, cwd[, argv]); cwd None means unreadable."""
     root = tmp_path / 'proc'
     root.mkdir()
     (root / 'self').mkdir()  # non-numeric entries are skipped
-    for pid, (comm, cwd) in enumerate(procs, start=100):
+    for pid, (comm, cwd, *argv) in enumerate(procs, start=100):
         entry = root / str(pid)
         entry.mkdir()
         (entry / 'comm').write_text(comm + '\n')
+        (entry / 'cmdline').write_bytes(b'\0'.join(a.encode() for a in [comm, *argv]) + b'\0')
         if cwd is not None:
             (entry / 'cwd').symlink_to(cwd)
         else:
@@ -68,6 +69,13 @@ class TestClearStaleIndexLock:
     def test_a_lock_held_by_a_running_git_is_kept(self, tmp_path, comm):
         repo = _checkout(tmp_path, lock_age=60)
         proc = _proc(tmp_path, (comm, str(repo / 'src')))
+        assert gil.clear_stale_index_lock(repo, proc_root=proc, now=OLD + 60) == gil.IN_USE
+        assert (repo / '.git' / 'index.lock').exists()
+
+    def test_a_git_pointed_at_the_checkout_from_elsewhere_is_running(self, tmp_path):
+        repo = _checkout(tmp_path, lock_age=60)
+        proc = _proc(tmp_path, ('git', str(tmp_path), f'--git-dir={repo.resolve()}/.git',
+                                f'--work-tree={repo.resolve()}', 'checkout', 'v3.8.7'))
         assert gil.clear_stale_index_lock(repo, proc_root=proc, now=OLD + 60) == gil.IN_USE
         assert (repo / '.git' / 'index.lock').exists()
 
