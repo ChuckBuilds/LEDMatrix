@@ -9,9 +9,11 @@ Git runs for real against a throwaway origin/device clone pair; systemd, sudo
 and the health check service are faked.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -578,6 +580,27 @@ class TestUpdateIsVerified:
         result = Harness(tmp_path, repo, core_update=half_failed).updater.run()
         assert repo.head() == old
         assert 'rolled back' in result['core_message']
+
+    @pytest.mark.skipif(not Path('/proc/self/comm').exists(), reason='needs /proc')
+    def test_a_pull_killed_by_its_timeout_is_still_rolled_back(self, tmp_path):
+        """subprocess.run SIGKILLs a timed-out git, which leaves .git/index.lock
+        behind; the rollback's reset would fail on it."""
+        repo = Repo(tmp_path)
+        old = repo.head()
+        repo.publish()
+        pull = real_pull(repo.device)
+        lock = repo.device / '.git' / 'index.lock'
+
+        def killed(**kwargs):
+            pull()
+            lock.write_text('')
+            stale = time.time() - 60
+            os.utime(lock, (stale, stale))
+            raise subprocess.TimeoutExpired(['git', 'pull'], 60)
+        result = Harness(tmp_path, repo, core_update=killed).updater.run()
+        assert repo.head() == old
+        assert 'rolled back' in result['core_message']
+        assert not lock.exists()
 
     @pytest.mark.parametrize('how', ['partial_pull', 'check_never_started'])
     def test_a_failed_rollback_leaves_plugins_and_the_display_alone(self, tmp_path, how):
