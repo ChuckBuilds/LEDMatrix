@@ -79,6 +79,19 @@ class TestClearStaleIndexLock:
         assert gil.clear_stale_index_lock(repo, proc_root=proc, now=OLD + 60) == gil.IN_USE
         assert (repo / '.git' / 'index.lock').exists()
 
+    @pytest.mark.parametrize('argv', [['-C', 'LEDMatrix', 'status'],
+                                      ['--git-dir=LEDMatrix/.git', '--work-tree=LEDMatrix', 'add', '.']])
+    def test_a_git_pointed_at_the_checkout_by_a_relative_path_is_running(self, tmp_path, argv):
+        repo = _checkout(tmp_path, lock_age=60)
+        proc = _proc(tmp_path, ('git', str(repo.resolve().parent), *argv))
+        assert gil.clear_stale_index_lock(repo, proc_root=proc, now=OLD + 60) == gil.IN_USE
+
+    def test_a_git_working_on_another_repository_is_not(self, tmp_path):
+        repo = _checkout(tmp_path, lock_age=60)
+        proc = _proc(tmp_path, ('git', str(tmp_path), '-C', 'other', 'pull'),
+                     ('git', str(tmp_path), '--git-dir=LEDMatrix-backup/.git', 'fetch'))
+        assert gil.clear_stale_index_lock(repo, proc_root=proc, now=OLD + 60) == gil.REMOVED
+
     def test_a_git_whose_cwd_cannot_be_read_counts_as_running(self, tmp_path):
         repo = _checkout(tmp_path, lock_age=60)
         proc = _proc(tmp_path, ('git', None))

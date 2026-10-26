@@ -55,7 +55,7 @@ def git_running_in(project_dir, proc_root=_PROC):
 
     Scans ``/proc`` for processes named ``git`` or ``git-*`` (``git-remote-https``
     and friends) whose working directory is inside the checkout, or whose
-    arguments name it (``git --git-dir=... --work-tree=...``). A git process
+    arguments name a path in it (``git -C ...``, ``--git-dir=...``). A git process
     whose working directory cannot be read (another user's) counts as running
     here: it might be. Returns None when ``/proc`` is unavailable.
     """
@@ -82,20 +82,27 @@ def git_running_in(project_dir, proc_root=_PROC):
             continue  # exited meanwhile
         except OSError:
             return True
-        if _is_within(cwd, root) or _names_checkout(entry, root):
+        if _is_within(cwd, root) or _names_checkout(entry, cwd, root):
             return True
     return False
 
 
-def _names_checkout(entry, root):
-    """True when the process's arguments name the checkout (``--git-dir``,
-    ``--work-tree``): git can work on it from any working directory."""
+def _names_checkout(entry, cwd, root):
+    """True when the process's arguments name a path in the checkout
+    (``-C``, ``--git-dir``, ``--work-tree``, absolute or relative to its
+    working directory): git can work on it from anywhere. Unreadable
+    arguments count as naming it."""
     try:
-        args = (entry / 'cmdline').read_bytes().split(b'\0')
+        args = os.fsdecode((entry / 'cmdline').read_bytes()).split('\0')
+    except FileNotFoundError:
+        return False  # exited meanwhile
     except OSError:
-        return False
-    marker = os.fsencode(str(root))
-    return any(marker in arg for arg in args)
+        return True
+    for arg in args[1:]:
+        value = arg.split('=', 1)[1] if arg.startswith('--') and '=' in arg else arg
+        if value and _is_within(os.path.normpath(os.path.join(cwd, value)), root):
+            return True
+    return False
 
 
 def clear_stale_index_lock(project_dir, proc_root=_PROC, now=None):
