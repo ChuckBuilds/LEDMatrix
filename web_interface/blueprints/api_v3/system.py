@@ -332,7 +332,16 @@ def channel_status(project_dir=None, fetch=True):
 
 def _perform_core_update_locked(stash_local_changes=True):
     project_dir = str(PROJECT_ROOT)
-    from web_interface import update_channel
+    from web_interface import update_channel, git_index_lock
+
+    # A git killed mid-command (a timed-out pull, a power cut) leaves
+    # .git/index.lock behind, and every later update then fails with
+    # "Unable to create .../index.lock: File exists". Remove it when no git
+    # process can still own it; refuse while one is running.
+    if git_index_lock.clear_stale_index_lock(project_dir) == git_index_lock.IN_USE:
+        return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
+                'message': 'Another git command is running in the LEDMatrix folder; '
+                           'try again in a minute.'}
 
     # Which code to move to: the newest release (stable) or main (beta).
     # See web_interface/update_channel.py; it never picks an older commit.
@@ -554,6 +563,8 @@ def _perform_core_update_locked(stash_local_changes=True):
         detail = next((ln.strip() for ln in (result.stderr or '').splitlines()
                        if ln.strip()), '')
         pull_message = f"Update failed: {detail}" if detail else "Update failed; check logs for details"
+        if 'index.lock' in (result.stderr or ''):
+            pull_message = f"{pull_message} {git_index_lock.manual_fix_hint(project_dir)}"
 
     # Nothing here restarts anything: the pull replaces files on
     # disk while the display and web services keep running the code

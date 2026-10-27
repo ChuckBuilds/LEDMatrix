@@ -42,7 +42,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from web_interface import update_channel
+from web_interface import git_index_lock, update_channel
 
 logger = logging.getLogger(__name__)
 
@@ -615,6 +615,9 @@ class AutoUpdater:
         if core.get('status') != 'success':
             message = core.get('message') or 'The LEDMatrix update failed.'
             if new_head and new_head != old_head:
+                # A pull killed by its timeout leaves .git/index.lock behind,
+                # and the rollback's reset would fail on it.
+                git_index_lock.clear_stale_index_lock(self.project_root)
                 ok, detail = rollback()
                 message += (' The partial update was rolled back.' if ok
                             else f' Rolling back the partial update also failed: {detail}.')

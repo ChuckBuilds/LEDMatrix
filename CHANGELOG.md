@@ -96,6 +96,13 @@ to for one release are gone.
   draw still passes `force_clear=True`; later ones pass nothing. A redraw
   that finds the plugin's `update()` holding its lock is skipped; the pause
   carries on.
+- Update Code no longer fails forever with `fatal: Unable to create
+  '.../.git/index.lock': File exists`. A git killed mid-command (a pull or
+  checkout that hit its timeout is SIGKILLed; a power cut does the same)
+  leaves that lock behind. Update Code and the automatic update's rollback
+  now remove it when no git process is running in the checkout and the
+  file is more than a few seconds old (new `web_interface/git_index_lock.py`);
+  while another git is running, Update Code says so instead of failing.
 
 ## 3.8.7
 
