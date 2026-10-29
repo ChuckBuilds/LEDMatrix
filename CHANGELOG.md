@@ -19,6 +19,27 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+## 3.9.0
+
+Per-plugin schedules (#799), the end of the cache-key mailboxes (#773,
+**breaking**: see "Removed" below; restart the display and the web interface
+together after updating), a Vegas pause fix (#798), and a fix for Update Code
+failing with `.git/index.lock: File exists` on a slow Pi (#801, #802).
+
+### Fixed: Update Code left `.git/index.lock` behind
+
+A git that Python's timeout killed could not remove `.git/index.lock`, so
+every later update failed with "Unable to create '.../.git/index.lock': File
+exists", and removing the file by hand only lasted until the next timeout.
+Update Code now runs git in its own process group, stops it with SIGTERM
+before SIGKILL and clears the lock it left; pulls get 600 s instead of 60 s;
+the read-only version and status checks set `GIT_OPTIONAL_LOCKS=0` so a
+timed-out poll cannot take the lock. A rebase in progress (detached HEAD) now
+stops Update Code with a message instead of failing inside git; an abandoned
+one is quit first. If a device is already stuck on an older release, stop
+the services, kill any running git, remove `.git/index.lock` and pull by hand
+once. (#801, #802)
+
 ### Added: plugin schedules
 
 Schedule → Plugin Schedules sets when each plugin may show, per day or with
