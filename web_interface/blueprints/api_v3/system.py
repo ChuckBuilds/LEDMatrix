@@ -346,12 +346,26 @@ def _perform_core_update_locked(stash_local_changes=True):
                            'try again in a minute.'}
 
     # A pull killed mid-rebase leaves .git/rebase-merge behind, and every
-    # later `pull --rebase` then fails. Nothing is running (checked above).
+    # later `pull --rebase` then fails. Same rule as the automatic update's
+    # preflight: a rebase really in progress leaves HEAD detached and holds
+    # the user's conflict work, so leave it; with HEAD back on a branch it was
+    # abandoned, and `--quit` drops its state without touching the tree.
     git_dir = Path(project_dir) / '.git'
-    if any((git_dir / name).exists() for name in ('rebase-merge', 'rebase-apply')):
-        logger.warning("aborting a rebase left by an interrupted update")
-        git_index_lock.run_git(['git', 'rebase', '--abort'], capture_output=True, text=True,
-                               timeout=60, cwd=project_dir)
+    rebase_dirs = [git_dir / name for name in ('rebase-merge', 'rebase-apply') if (git_dir / name).exists()]
+    if rebase_dirs:
+        def _git(*args):
+            return git_index_lock.run_git(['git', *args], capture_output=True, text=True,
+                                          timeout=60, cwd=project_dir)
+        if _git('symbolic-ref', '-q', 'HEAD').returncode != 0:
+            return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
+                    'message': 'A git rebase is in progress in the LEDMatrix folder. '
+                               'Finish or abort it (git rebase --continue / --abort), then update again.'}
+        cleared = _git('rebase', '--quit')
+        if cleared.returncode != 0 or any(path.exists() for path in rebase_dirs):
+            return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
+                    'message': 'An abandoned git rebase in the LEDMatrix folder could not be cleared: '
+                               f'{(cleared.stderr or "").strip() or "unknown error"}.'}
+        logger.warning("Cleared an abandoned git rebase from %s", ', '.join(str(p) for p in rebase_dirs))
 
     # Which code to move to: the newest release (stable) or main (beta).
     # See web_interface/update_channel.py; it never picks an older commit.

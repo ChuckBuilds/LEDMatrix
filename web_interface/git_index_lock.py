@@ -19,7 +19,7 @@ the file alone. Standard library only.
 import logging
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import time
 from pathlib import Path
 
@@ -166,6 +166,20 @@ def _stop_group(proc):
         pass
 
 
+def _clear_after_stop(project_dir):
+    """Remove the lock a stopped git left, waiting out the freshness window.
+
+    A lock created within ``MIN_STALE_AGE_SECONDS`` of the stop reads as IN_USE
+    on age alone; with no git process left it only needs to age, so wait for
+    that rather than leave it to block the next attempt.
+    """
+    deadline = time.monotonic() + MIN_STALE_AGE_SECONDS + 1
+    while clear_stale_index_lock(project_dir) == IN_USE and git_running_in(project_dir) is False:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+
 def run_git(cmd, *, cwd=None, timeout=None, capture_output=True, text=True, **kwargs):
     """``subprocess.run`` for git, without leaving ``.git/index.lock`` behind.
 
@@ -177,14 +191,14 @@ def run_git(cmd, *, cwd=None, timeout=None, capture_output=True, text=True, **kw
     """
     if capture_output:
         kwargs['stdout'] = kwargs['stderr'] = subprocess.PIPE
-    with subprocess.Popen(cmd, cwd=cwd, text=text, start_new_session=True, **kwargs) as proc:
+    with subprocess.Popen(cmd, cwd=cwd, text=text, start_new_session=True, **kwargs) as proc:  # nosec B603 - list-form argv  # nosemgrep
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             _stop_group(proc)
             exc.stdout, exc.stderr = proc.communicate()
             if cwd is not None:
-                clear_stale_index_lock(cwd)
+                _clear_after_stop(cwd)
             raise
         except BaseException:
             _stop_group(proc)

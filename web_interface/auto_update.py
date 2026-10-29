@@ -303,11 +303,11 @@ def local_changes(project_dir, run=None, timeout=30):
     ``run`` raises (e.g. ``subprocess.TimeoutExpired``).
     """
     # A status that times out must not leave index.lock: don't refresh the index.
-    extra = {} if run else {'env': git_index_lock.read_only_env()}
     run = run or git_index_lock.run_git
     result = run(['git', '-c', 'core.fileMode=false', 'status', '--porcelain',
                   '--untracked-files=no', '-z'],
-                 cwd=str(project_dir), capture_output=True, text=True, timeout=timeout, **extra)
+                 cwd=str(project_dir), capture_output=True, text=True, timeout=timeout,
+                 env=git_index_lock.read_only_env())
     if result.returncode != 0:
         return None
     changed = []
