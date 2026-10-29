@@ -203,7 +203,7 @@ def run_git(cmd, *, cwd=None, timeout=None, capture_output=True, text=True, **kw
         except BaseException:
             _stop_group(proc)
             raise
-    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)  # result object only, nothing is run  # nosemgrep
 
 
 def read_only_env():
