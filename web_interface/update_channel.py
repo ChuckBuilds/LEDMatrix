@@ -24,6 +24,8 @@ import re
 import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 from pathlib import Path
 
+from web_interface import git_index_lock
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHANNELS = ('stable', 'beta')
 DEFAULT_CHANNEL = 'stable'
@@ -105,7 +107,7 @@ class ChannelStatus(dict):
 
 
 def _git(project_dir, run, *args, timeout=30):
-    run = run or subprocess.run
+    run = run or git_index_lock.run_git
     return run(['git', *args], cwd=str(project_dir), capture_output=True, text=True, timeout=timeout)
 
 

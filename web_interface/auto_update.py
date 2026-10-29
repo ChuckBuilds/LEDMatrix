@@ -302,10 +302,12 @@ def local_changes(project_dir, run=None, timeout=30):
     Returns the changed paths, or None when git could not tell. Raises what
     ``run`` raises (e.g. ``subprocess.TimeoutExpired``).
     """
-    run = run or subprocess.run
+    # A status that times out must not leave index.lock: don't refresh the index.
+    run = run or git_index_lock.run_git
     result = run(['git', '-c', 'core.fileMode=false', 'status', '--porcelain',
                   '--untracked-files=no', '-z'],
-                 cwd=str(project_dir), capture_output=True, text=True, timeout=timeout)
+                 cwd=str(project_dir), capture_output=True, text=True, timeout=timeout,
+                 env=git_index_lock.read_only_env())
     if result.returncode != 0:
         return None
     changed = []

@@ -9,6 +9,7 @@ restart is owed, and the UI raises the existing restart-pending banner.
 import subprocess
 import sys
 from pathlib import Path
+import contextlib
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from web_interface.blueprints import api_v3 as mod  # noqa: E402
 from web_interface.blueprints.api_v3 import api_v3  # noqa: E402
+
+
+@contextlib.contextmanager
+def _patched(fake):
+    """Fake git for both the plain subprocess calls and the timeout-safe runner."""
+    with patch.object(mod.subprocess, 'run', fake), patch.object(mod.git_index_lock, 'run_git', fake):
+        yield
 
 
 @pytest.fixture
@@ -62,7 +70,7 @@ def _pull(client):
 
 class TestRestartIsRequestedWhenCodeChanged:
     def test_a_pull_that_moved_head_asks_for_a_restart(self, client):
-        with patch.object(mod.subprocess, 'run', _git(['aaa111', 'bbb222'])):
+        with _patched(_git(['aaa111', 'bbb222'])):
             data = _pull(client)
         assert data['status'] == 'success'
         assert data['restart_required'] is True, (
@@ -70,15 +78,14 @@ class TestRestartIsRequestedWhenCodeChanged:
             "nothing told the user to restart")
 
     def test_already_up_to_date_does_not(self, client):
-        with patch.object(mod.subprocess, 'run',
-                          _git(['aaa111', 'aaa111'], pull_out='Already up to date.\n')):
+        with _patched(_git(['aaa111', 'aaa111'], pull_out='Already up to date.\n')):
             data = _pull(client)
         assert data['status'] == 'success'
         assert data['restart_required'] is False, (
             "prompting after a no-op update trains users to ignore the prompt")
 
     def test_a_failed_pull_does_not(self, client):
-        with patch.object(mod.subprocess, 'run', _git(['aaa111'], pull_rc=1)):
+        with _patched(_git(['aaa111'], pull_rc=1)):
             data = _pull(client)
         assert data['status'] == 'error'
         assert data['restart_required'] is False
@@ -100,19 +107,18 @@ class TestUnitsAreRefreshedWithTheCode:
         return calls
 
     def test_an_update_that_moved_head_refreshes_the_units(self, client, refresh):
-        with patch.object(mod.subprocess, 'run', _git(['aaa111', 'bbb222'])):
+        with _patched(_git(['aaa111', 'bbb222'])):
             data = _pull(client)
         assert refresh == [True]
         assert data['unit_refresh']['status'] == 'refreshed'
         assert 'Service settings updated' in data['message']
 
     def test_nothing_new_touches_no_units(self, client, refresh):
-        with patch.object(mod.subprocess, 'run',
-                          _git(['aaa111', 'aaa111'], pull_out='Already up to date.\n')):
+        with _patched(_git(['aaa111', 'aaa111'], pull_out='Already up to date.\n')):
             data = _pull(client)
         assert refresh == [] and data['unit_refresh'] is None
 
     def test_a_failed_pull_touches_no_units(self, client, refresh):
-        with patch.object(mod.subprocess, 'run', _git(['aaa111'], pull_rc=1)):
+        with _patched(_git(['aaa111'], pull_rc=1)):
             data = _pull(client)
         assert refresh == [] and data['unit_refresh'] is None

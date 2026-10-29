@@ -18,6 +18,8 @@ the file alone. Standard library only.
 """
 import logging
 import os
+import signal
+import subprocess  # nosec B404 - list-form argv only, no shell  # nosemgrep
 import time
 from pathlib import Path
 
@@ -32,6 +34,15 @@ ABSENT = 'absent'      # no lock file: nothing to do
 REMOVED = 'removed'    # it was stale and has been removed
 IN_USE = 'in_use'      # a git process is running here (or the lock is brand new)
 UNKNOWN = 'unknown'    # could not tell whether git is running; left alone
+
+#: How long a timed-out git gets to exit after SIGTERM (which lets it remove
+#: its own lock) before the whole process group is SIGKILLed.
+TERM_GRACE_SECONDS = 5
+
+#: Timeout for commands that rewrite the checkout (pull, checkout, reset,
+#: stash). A Pi on an SD card can take minutes; killing git is what leaves the
+#: lock behind, so this is generous.
+MUTATING_TIMEOUT_SECONDS = 600
 
 _PROC = Path('/proc')
 
@@ -137,7 +148,73 @@ def clear_stale_index_lock(project_dir, proc_root=_PROC, now=None):
     return REMOVED
 
 
+def _stop_group(proc):
+    """SIGTERM the process group, then SIGKILL whatever is left of it."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.wait(timeout=TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    # Also reaps git's children (git-remote-https, rebase helpers) that
+    # outlive a killed parent.
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _clear_after_stop(project_dir):
+    """Remove the lock a stopped git left, waiting out the freshness window.
+
+    A lock created within ``MIN_STALE_AGE_SECONDS`` of the stop reads as IN_USE
+    on age alone; with no git process left it only needs to age, so wait for
+    that rather than leave it to block the next attempt.
+    """
+    deadline = time.monotonic() + MIN_STALE_AGE_SECONDS + 1
+    while clear_stale_index_lock(project_dir) == IN_USE and git_running_in(project_dir) is False:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+
+def run_git(cmd, *, cwd=None, timeout=None, capture_output=True, text=True, **kwargs):
+    """``subprocess.run`` for git, without leaving ``.git/index.lock`` behind.
+
+    ``subprocess.run`` SIGKILLs only the direct child when ``timeout`` expires,
+    which skips git's cleanup and orphans its helpers. This starts git in its
+    own session, stops the whole group with SIGTERM before SIGKILL, removes a
+    lock nothing owns any more, then raises ``TimeoutExpired`` as
+    ``subprocess.run`` would.
+    """
+    if capture_output:
+        kwargs['stdout'] = kwargs['stderr'] = subprocess.PIPE
+    with subprocess.Popen(cmd, cwd=cwd, text=text, start_new_session=True, **kwargs) as proc:  # nosec B603 - list-form argv  # nosemgrep
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _stop_group(proc)
+            exc.stdout, exc.stderr = proc.communicate()
+            if cwd is not None:
+                _clear_after_stop(cwd)
+            raise
+        except BaseException:
+            _stop_group(proc)
+            raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)  # result object only, nothing is run  # nosemgrep
+
+
+def read_only_env():
+    """Environment for git calls that only read: ``GIT_OPTIONAL_LOCKS=0``
+    stops ``status`` and ``describe --dirty`` refreshing (and so locking) the
+    index, so a poll that times out cannot leave a lock."""
+    return {**os.environ, 'GIT_OPTIONAL_LOCKS': '0'}
+
+
 def manual_fix_hint(project_dir):
     """The sentence shown when a lock blocks the update and was not removed."""
-    return (f"If no other git command is running, remove the stale lock with "
-            f"rm -f {Path(project_dir) / '.git' / 'index.lock'} and try again.")
+    lock = Path(project_dir) / '.git' / 'index.lock'
+    return (f"If it keeps coming back, stop the LEDMatrix services, kill any running git "
+            f"(ps aux | grep git), then remove it with rm -f {lock} and try again.")
