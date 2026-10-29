@@ -35,6 +35,7 @@ from typing import Dict, Any, Optional, Tuple, Type
 from urllib.parse import urlparse, urlunparse
 logger = logging.getLogger(__name__)
 # Import new infrastructure
+from web_interface import git_index_lock
 from src.web_interface.api_helpers import (success_response, error_response,
                                            exception_error_response, validate_request_json)
 from src.web_interface.errors import ErrorCode
@@ -558,7 +559,8 @@ def get_git_version(project_dir=None):
             capture_output=True,
             text=True,
             timeout=5,
-            cwd=str(project_dir)
+            cwd=str(project_dir),
+            env=git_index_lock.read_only_env()
         )
 
         if result.returncode == 0:

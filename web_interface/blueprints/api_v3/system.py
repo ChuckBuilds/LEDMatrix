@@ -14,6 +14,7 @@ from web_interface.blueprints.api_v3 import (
 )
 import threading
 
+from web_interface import git_index_lock
 from web_interface.cache import get_cached, set_cached
 from web_interface.system_metrics import collect_system_metrics, format_uptime
 import web_interface.blueprints.api_v3 as _pkg
@@ -163,6 +164,7 @@ def check_for_update():
             ['git', 'fetch', '--quiet', '--tags', '--force', update_channel.REMOTE,
              update_channel.BETA_BRANCH],
             capture_output=True, timeout=10, cwd=cwd,
+            env=git_index_lock.read_only_env(),
         )
         if fetch_result.returncode != 0:
             stderr = fetch_result.stderr.decode(errors='replace').strip()
@@ -332,7 +334,7 @@ def channel_status(project_dir=None, fetch=True):
 
 def _perform_core_update_locked(stash_local_changes=True):
     project_dir = str(PROJECT_ROOT)
-    from web_interface import update_channel, git_index_lock
+    from web_interface import update_channel
 
     # A git killed mid-command (a timed-out pull, a power cut) leaves
     # .git/index.lock behind, and every later update then fails with
@@ -342,6 +344,14 @@ def _perform_core_update_locked(stash_local_changes=True):
         return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
                 'message': 'Another git command is running in the LEDMatrix folder; '
                            'try again in a minute.'}
+
+    # A pull killed mid-rebase leaves .git/rebase-merge behind, and every
+    # later `pull --rebase` then fails. Nothing is running (checked above).
+    git_dir = Path(project_dir) / '.git'
+    if any((git_dir / name).exists() for name in ('rebase-merge', 'rebase-apply')):
+        logger.warning("aborting a rebase left by an interrupted update")
+        git_index_lock.run_git(['git', 'rebase', '--abort'], capture_output=True, text=True,
+                               timeout=60, cwd=project_dir)
 
     # Which code to move to: the newest release (stable) or main (beta).
     # See web_interface/update_channel.py; it never picks an older commit.
@@ -434,25 +444,33 @@ def _perform_core_update_locked(stash_local_changes=True):
     # Stable checks out the release tag, carrying edits across the way the
     # pull's --autostash does.
     channel_note = ''
-    if action == update_channel.ACTION_CHECKOUT_TAG:
-        result, autostash_note = update_channel.checkout_release(project_dir, channel.newest_release)
-        channel_note = f"Now on release {channel.newest_release} (stable channel). {autostash_note}".strip()
-    elif action == update_channel.ACTION_SWITCH_TO_BETA:
-        result, autostash_note = update_channel.checkout_beta_branch(project_dir)
-        if result.returncode == 0:
-            result = subprocess.run(['git', 'pull', '--rebase', '--autostash'],
-                                    capture_output=True, text=True, timeout=60, cwd=project_dir)
-        channel_note = f"Now following {update_channel.BETA_BRANCH} (beta channel). {autostash_note}".strip()
-    else:
-        result = subprocess.run(
-            pull_args,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=project_dir
-        )
-        if channel.waiting and channel.newest_release:
-            channel_note = channel.message
+    try:
+        if action == update_channel.ACTION_CHECKOUT_TAG:
+            result, autostash_note = update_channel.checkout_release(project_dir, channel.newest_release)
+            channel_note = f"Now on release {channel.newest_release} (stable channel). {autostash_note}".strip()
+        elif action == update_channel.ACTION_SWITCH_TO_BETA:
+            result, autostash_note = update_channel.checkout_beta_branch(project_dir)
+            if result.returncode == 0:
+                result = git_index_lock.run_git(['git', 'pull', '--rebase', '--autostash'],
+                                               capture_output=True, text=True,
+                                               timeout=git_index_lock.MUTATING_TIMEOUT_SECONDS, cwd=project_dir)
+            channel_note = f"Now following {update_channel.BETA_BRANCH} (beta channel). {autostash_note}".strip()
+        else:
+            result = git_index_lock.run_git(
+                pull_args,
+                capture_output=True,
+                text=True,
+                timeout=git_index_lock.MUTATING_TIMEOUT_SECONDS,
+                cwd=project_dir
+            )
+            if channel.waiting and channel.newest_release:
+                channel_note = channel.message
+    except subprocess.TimeoutExpired:
+        # run_git has stopped git and removed the lock it left.
+        logger.warning("git timed out during Update Code")
+        return {'status': 'error', 'restart_required': False, 'dependency_failures': [],
+                'message': 'Update failed: git took too long (a slow network or SD card). '
+                           'The partial update was cleaned up; try again.'}
 
     # Give the branch tracking information so the next pull is a plain
     # `git pull` — otherwise every update repeats the fallback.

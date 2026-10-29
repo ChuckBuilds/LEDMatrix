@@ -823,6 +823,7 @@ def test_core_update_names_the_requirement_files_that_failed():
     pkg.api_v3.plugin_store_manager = None
     failed_install = subprocess.CompletedProcess([], 1, stdout='', stderr='boom')
     with patch.object(pkg.subprocess, 'run', run), \
+            patch.object(system.git_index_lock, 'run_git', run), \
             patch.object(system, '_pip_install_requirements', return_value=failed_install):
         result = system.perform_core_update()
     assert result['status'] == 'success'
