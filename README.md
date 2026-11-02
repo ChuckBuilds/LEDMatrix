@@ -6,18 +6,18 @@
 
 
 ## Welcome to LEDMatrix! 
-Welcome to the LEDMatrix Project! This open-source project enables you to run an information-rich display on a Raspberry Pi connected to an LED RGB Matrix panel. Whether you want to see your calendar, weather forecasts, sports scores, stock prices, or any other information at a glance, LEDMatrix brings it all together.
+Welcome to the LEDMatrix Project! This open-source project enables you to run an information-rich display on a Raspberry Pi connected to an LED RGB Matrix panel. Whether you want to see your calendar, weather forecasts, sports scores, stock prices, or any other information at a glance, LEDMatrix brings it all together. The leading intent with this project is to consolidate efforts on these panels and projects to be something more modular and robust. We've all seen the reddit posts, raspberry pi forum posts, and advertisements for products based on these technologies. I truly hope to lower the barrier to customizing your LED Panel to enable more people to create the project of their dreams with less focus on the back-end support of updating, managing, or configuring their panels. 
 
 ### About This Project
 
 LEDMatrix is a constantly evolving project that I'm building to create a customizable information display. The project is designed to be modular and extensible, with a plugin-based architecture that makes it easy to add new features and displays.
 
-**This project is open source and supports third-party plugin development.** I believe that great projects get better when more people are involved, and I'm excited to see what the community can build together. Whether you want to contribute to the core project, develop your own plugins, or just use and enjoy LEDMatrix, you're welcome here!
+**This project is open source and supports third-party development.** I believe that great projects get better when more people are involved, and I'm excited to see what the community can build together. Whether you want to contribute to the core project, develop your own plugins, or just use and enjoy LEDMatrix, you're welcome here! Seriously, let's work together to make this a definitive place to host an LED panel project instead of lots of half-baked, abandoned, or otherwise unfinished projects that can be found on Reddit, Github, and the internet. 
 
 ### A Note from the ChuckBuilds
 I'm very new to all of this and am *heavily* relying on AI development tools to create this project. This means I'm learning as I go, and I'm grateful for your patience and feedback as the project continues to evolve and improve.
 
-I'm trying to be open to constructive criticism and support, as long as it's a realistic ask and aligns with my priorities on this project. If you have ideas for improvements, find bugs, or want to add features to the base project, please don't hesitate to reach out on Discord or submit a pull request. Similarly, if you want to develop a plugin of your own, please do so! I'd love to see what you create.
+I'm trying to be open to constructive criticism and support, as long as it's a realistic ask and aligns with this project. If you have ideas for improvements, find bugs, or want to add features to the base project, please don't hesitate to reach out on Discord or submit a pull request. Similarly, if you want to develop a plugin of your own, please do so! I'd love to see what you create.
 
 
 ### Installing the LEDMatrix project on a pi video:
