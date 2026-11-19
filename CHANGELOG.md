@@ -19,6 +19,18 @@ accepts both, but the store flags the old spelling as deprecated
 
 ## Unreleased
 
+### Fixed: the setup AP came back at boot and kept the device offline
+
+The setup AP profile (`LEDMatrix-Setup-AP`) was created with NetworkManager's
+default `autoconnect yes`. A device rebooted while the AP was up brought the
+AP back at boot ahead of its saved WiFi, and the new WiFi monitor had not
+started it, so the 15-minute idle timeout never applied -- seen on a Pi that
+stayed in setup mode for an hour with its home network in range. The profile
+is now created with `connection.autoconnect no`, and the monitor adopts an AP
+it finds already running (starting its idle clock and clearing autoconnect on
+the profile, so profiles saved by older releases are fixed too). A
+force-enabled AP is left alone.
+
 ## 3.9.0
 
 Per-plugin schedules (#799), the end of the cache-key mailboxes (#773,
