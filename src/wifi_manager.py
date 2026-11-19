@@ -2149,6 +2149,13 @@ class WiFiManager:
                 "802-11-wireless.channel", str(ap_channel),
                 "ipv4.method", "shared",
                 "ipv4.addresses", f"{AP_IP}/24",
+                # Never auto-activate. NetworkManager keeps this profile on
+                # disk, so with the default (autoconnect yes) a reboot while
+                # the AP was up brought the AP back at boot ahead of the
+                # user's saved WiFi -- a device stuck in setup mode with its
+                # home network in range, and nothing in this process knowing
+                # it had started the AP, so the idle timeout never ran.
+                "connection.autoconnect", "no",
                 # No 802-11-wireless-security section → open network
             ]
 
@@ -2510,6 +2517,30 @@ address=/detectportal.firefox.com/{AP_IP}
         changed, _status, _ethernet, _ap = self.check_and_manage_ap_mode_with_state()
         return changed
 
+    def _adopt_running_ap(self) -> None:
+        """Take charge of an AP that was already up when this process looked.
+
+        Starts the idle-timeout clock from now and clears autoconnect on the
+        app-managed AP profiles that exist, so NetworkManager stops reviving
+        them at boot. Best effort: a failed nmcli call only means the profile
+        may come back once more, and is logged at debug.
+        """
+        self._ap_enabled_at = time.time()
+        logger.info("AP mode is active but was not started by this process "
+                    "(restored at boot or left from a restart); adopting it so "
+                    "the idle timeout applies")
+        if not self.has_nmcli:
+            return
+        for conn_name in AP_PROFILE_NAMES:
+            try:
+                subprocess.run(
+                    ["nmcli", "connection", "modify", conn_name,
+                     "connection.autoconnect", "no"],
+                    capture_output=True, timeout=10,
+                )
+            except (subprocess.SubprocessError, OSError) as e:
+                logger.debug(f"Could not clear autoconnect on {conn_name}: {e}")
+
     def check_and_manage_ap_mode_with_state(self) -> Tuple[bool, WiFiStatus, bool, bool]:
         """Like check_and_manage_ap_mode, but also returns the state it
         observed, so callers (the wifi monitor daemon) don't have to re-run
@@ -2619,9 +2650,30 @@ address=/detectportal.firefox.com/{AP_IP}
                 elif not auto_enable:
                     logger.debug("AP mode is active (manually enabled), keeping active")
 
+            # An AP this process did not start: one NetworkManager brought back
+            # at boot from a profile an older release saved with autoconnect on,
+            # or one left up across a daemon restart. Without a start time the
+            # idle timeout below never applied, and while the AP holds the radio
+            # the saved WiFi cannot connect either -- so it stayed up until
+            # someone joined it. Adopt it: start its idle clock now, and turn
+            # autoconnect off on the profile so the next boot does not repeat it.
+            # A force-enabled AP is left alone; its flag says a user asked for it.
+            force_active = self._FORCE_AP_FLAG_PATH.exists()
+            if not ap_active:
+                # The AP is gone, whoever took it down (the web process's
+                # connect, NM): its idle clock goes with it, so a later AP --
+                # e.g. the connect's failsafe AP -- never inherits a stale one.
+                self._ap_enabled_at = None
+            elif self._ap_enabled_at is None and not force_active:
+                self._adopt_running_ap()
+
             # Idle-timeout check: disable AP if no client has connected within the window.
             # Only applies when AP is active and we haven't just decided to enable/disable it.
-            if ap_active and self._ap_enabled_at is not None:
+            # Never to a force-enabled AP: the web process raises one as the
+            # failsafe after a failed connect, inside a connect window this
+            # method skips, so this process may still hold the clock of the AP
+            # that connect replaced -- and would take the recovery AP down.
+            if ap_active and self._ap_enabled_at is not None and not force_active:
                 try:
                     idle_timeout_min = max(1, min(1440, int(self.config.get("ap_idle_timeout_minutes", 15))))
                 except (TypeError, ValueError):
