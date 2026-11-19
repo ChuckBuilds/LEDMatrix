@@ -2658,13 +2658,22 @@ address=/detectportal.firefox.com/{AP_IP}
             # someone joined it. Adopt it: start its idle clock now, and turn
             # autoconnect off on the profile so the next boot does not repeat it.
             # A force-enabled AP is left alone; its flag says a user asked for it.
-            if (ap_active and self._ap_enabled_at is None
-                    and not self._FORCE_AP_FLAG_PATH.exists()):
+            force_active = self._FORCE_AP_FLAG_PATH.exists()
+            if not ap_active:
+                # The AP is gone, whoever took it down (the web process's
+                # connect, NM): its idle clock goes with it, so a later AP --
+                # e.g. the connect's failsafe AP -- never inherits a stale one.
+                self._ap_enabled_at = None
+            elif self._ap_enabled_at is None and not force_active:
                 self._adopt_running_ap()
 
             # Idle-timeout check: disable AP if no client has connected within the window.
             # Only applies when AP is active and we haven't just decided to enable/disable it.
-            if ap_active and self._ap_enabled_at is not None:
+            # Never to a force-enabled AP: the web process raises one as the
+            # failsafe after a failed connect, inside a connect window this
+            # method skips, so this process may still hold the clock of the AP
+            # that connect replaced -- and would take the recovery AP down.
+            if ap_active and self._ap_enabled_at is not None and not force_active:
                 try:
                     idle_timeout_min = max(1, min(1440, int(self.config.get("ap_idle_timeout_minutes", 15))))
                 except (TypeError, ValueError):

@@ -123,6 +123,42 @@ def test_adoption_happens_once(wm):
 
 
 @pytest.mark.unit
+def test_a_failsafe_ap_replacing_an_adopted_one_is_not_timed_out(wm):
+    """Adopt an AP, let its clock expire with a client on it, then have the web
+    process's failed connect replace it with a force-enabled failsafe AP --
+    inside a connect window this daemon skips, so it never saw the AP drop.
+    The stale clock must not take the recovery AP down."""
+    _orphan_ap(wm)
+    with patch("src.wifi_manager.subprocess.run", return_value=_ok()):
+        wm.check_and_manage_ap_mode_with_state()         # adopted
+        wm._ap_enabled_at = time.time() - 60 * 60        # well past the timeout
+        wm._has_ap_clients.return_value = True           # a phone keeps it up
+        wm.check_and_manage_ap_mode_with_state()
+        wm.disable_ap_mode.assert_not_called()
+
+        wm._connect_in_progress.return_value = True      # connect -> fails -> failsafe AP
+        wm.check_and_manage_ap_mode_with_state()
+        wm._connect_in_progress.return_value = False
+        wm._FORCE_AP_FLAG_PATH.exists.return_value = True
+        wm._has_ap_clients.return_value = False          # client not back yet
+        changed, *_ = wm.check_and_manage_ap_mode_with_state()
+
+    assert changed is False
+    wm.disable_ap_mode.assert_not_called()
+
+
+@pytest.mark.unit
+def test_the_idle_clock_is_dropped_when_the_ap_goes_away(wm):
+    _orphan_ap(wm)
+    with patch("src.wifi_manager.subprocess.run", return_value=_ok()):
+        wm.check_and_manage_ap_mode_with_state()
+        assert wm._ap_enabled_at is not None
+        wm._is_ap_mode_active.return_value = False       # taken down elsewhere
+        wm.check_and_manage_ap_mode_with_state()
+    assert wm._ap_enabled_at is None
+
+
+@pytest.mark.unit
 def test_a_force_enabled_ap_is_not_adopted(wm):
     _orphan_ap(wm)
     wm._FORCE_AP_FLAG_PATH.exists.return_value = True
