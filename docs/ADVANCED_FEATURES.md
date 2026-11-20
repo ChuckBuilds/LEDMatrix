@@ -212,7 +212,7 @@ Some plugins also offer a `vegas_mode` setting of their own (`scroll`,
 `fixed` or `static`). It still works — `static` pauses, the other two scroll
 — but `vegas_participation` takes precedence, and `fixed` has never done
 anything different from `scroll`. The old `vegas_panel_count` setting never
-had an effect and is deprecated (removed in 3.9.0).
+had an effect and is deprecated (removed in 3.10.0).
 
 ### Plugin Integration (Developer Guide)
 
@@ -260,7 +260,7 @@ behaviour: `get_vegas_display_mode()` returning `VegasDisplayMode.STATIC`
 pauses, `get_vegas_content_type()` returning `'none'` excludes, and
 everything else scrolls. `get_supported_vegas_modes()`,
 `get_vegas_segment_width()` and the SCROLL / FIXED_SEGMENT distinction are
-deprecated (removed in 3.9.0): Vegas never read them.
+deprecated (removed in 3.10.0): Vegas never read them.
 
 ### Content Rendering Guidelines
 

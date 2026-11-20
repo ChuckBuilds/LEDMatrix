@@ -80,7 +80,7 @@ class VegasDisplayMode(Enum):
     - SCROLL and FIXED_SEGMENT: the plugin's content joins the scroll --
       participation ``'scroll'``. Vegas has never told the two apart: a card's
       width comes from get_vegas_content() and ``vegas_width_pct``, not from
-      the mode. The distinction is deprecated and goes away in LEDMatrix 3.9.0.
+      the mode. The distinction is deprecated and goes away in LEDMatrix 3.10.0.
     """
     SCROLL = "scroll"
     FIXED_SEGMENT = "fixed"
@@ -100,7 +100,7 @@ VEGAS_PARTICIPATION_VALUES = ('scroll', 'pause', 'exclude')
 #: SCROLL / FIXED_SEGMENT distinction. The two @deprecated markers below
 #: spell it as a literal, because tools that read markers statically (the
 #: deprecation tests, the plugin API usage scan) cannot follow a name.
-VEGAS_LEGACY_REMOVAL = "3.9.0"
+VEGAS_LEGACY_REMOVAL = "3.10.0"
 
 _vegas_logger = get_logger(__name__)
 _vegas_warned: set = set()
@@ -1233,7 +1233,7 @@ class BasePlugin(ABC):
         a participation when neither the user nor the manifest declares one,
         and only STATIC matters there: it pauses the scroll for the plugin's
         turn. SCROLL and FIXED_SEGMENT both scroll -- Vegas has never told them
-        apart, and the distinction is deprecated (removed in 3.9.0).
+        apart, and the distinction is deprecated (removed in 3.10.0).
 
         Reads the plugin's ``vegas_mode`` config value, else maps
         get_vegas_content_type() ('multi' to SCROLL, anything else to
@@ -1260,14 +1260,14 @@ class BasePlugin(ABC):
             return VegasDisplayMode.SCROLL
         return VegasDisplayMode.FIXED_SEGMENT
 
-    @deprecated("3.9.0",
+    @deprecated("3.10.0",
                 "nothing reads it -- declare vegas_participation in the manifest instead")
     def get_supported_vegas_modes(self) -> List[VegasDisplayMode]:
         """
         Deprecated: the Vegas display modes this plugin supports.
 
         Never consulted by core -- neither Vegas mode nor the web UI calls it
-        -- and removed in LEDMatrix 3.9.0. A plugin's own override keeps
+        -- and removed in LEDMatrix 3.10.0. A plugin's own override keeps
         working for the plugin itself; calling this base implementation logs a
         deprecation warning.
 
@@ -1288,7 +1288,7 @@ class BasePlugin(ABC):
         else:  # 'static'
             return [VegasDisplayMode.FIXED_SEGMENT, VegasDisplayMode.STATIC]
 
-    @deprecated("3.9.0",
+    @deprecated("3.10.0",
                 "nothing reads it -- Vegas sizes a card from vegas_width_pct "
                 "(see get_vegas_render_width())")
     def get_vegas_segment_width(self) -> Optional[int]:
@@ -1298,7 +1298,7 @@ class BasePlugin(ABC):
         Never consulted by core: Vegas sizes a card from the
         ``vegas_width_pct`` / ``vegas_scroll.render_width_pct`` settings (see
         get_vegas_render_width()). Removed, with the ``vegas_panel_count``
-        setting it reads, in LEDMatrix 3.9.0.
+        setting it reads, in LEDMatrix 3.10.0.
 
         Returns:
             ``vegas_panel_count`` from config when it is a positive integer,
