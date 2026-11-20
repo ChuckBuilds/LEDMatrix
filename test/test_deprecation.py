@@ -24,18 +24,16 @@ REPO = Path(__file__).resolve().parents[1]
 #: removed in it: docs/DEPRECATIONS_3.8.md found them unused.) Removing one
 #: of these, or deprecating another, should be a deliberate edit here too.
 #:
-#: Deprecated with Vegas participation, for removal in 3.9.0: core never read
-#: them (src.plugin_system.base_plugin.VEGAS_LEGACY_REMOVAL).
-DEPRECATED_3_9 = {
+#: Deprecated for 3.10.0. The two BasePlugin Vegas hooks came with Vegas
+#: participation and were due out in 3.9.0, but 3.9.0 shipped them, so they
+#: moved here (src.plugin_system.base_plugin.VEGAS_LEGACY_REMOVAL); core never
+#: read them. The rest followed the October 2026 over-engineering audit:
+#: nothing in core, the monorepo or the registry's third-party plugins calls
+#: them.
+DEPRECATED_3_10 = {
     "src.plugin_system.base_plugin.BasePlugin": [
         "get_supported_vegas_modes", "get_vegas_segment_width",
     ],
-}
-
-#: Deprecated after the October 2026 over-engineering audit, for removal in
-#: 3.10.0: nothing in core, the monorepo or the registry's third-party plugins
-#: calls them.
-DEPRECATED_3_10 = {
     "src.logo_downloader.LogoDownloader": [
         "fetch_teams_data", "extract_teams_from_data", "download_missing_logos_for_league",
         "download_all_ncaa_football_logos", "download_all_missing_logos",
@@ -71,7 +69,7 @@ DEPRECATED_3_10 = {
 
 #: Every pinned marker: (class path, method) -> the release that removes it.
 PINNED = {(path, name): removal
-          for removal, table in (("3.9.0", DEPRECATED_3_9), ("3.10.0", DEPRECATED_3_10))
+          for removal, table in (("3.10.0", DEPRECATED_3_10),)
           for path, names in table.items() for name in names}
 
 

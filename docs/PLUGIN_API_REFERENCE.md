@@ -478,11 +478,11 @@ mattered: `get_vegas_content_type()` returning `'none'`, and
 
 `SCROLL` and `FIXED_SEGMENT` (and `vegas_mode` `"scroll"` and `"fixed"`)
 have always behaved identically: both scroll. The distinction is deprecated
-and goes away in 3.9.0 — see [Deprecated APIs](#deprecated-apis).
+and goes away in 3.10.0 — see [Deprecated APIs](#deprecated-apis).
 
 #### Deprecated: `get_supported_vegas_modes()` and `get_vegas_segment_width()`
 
-Never read by core, and removed in 3.9.0: calling the `BasePlugin`
+Never read by core, and removed in 3.10.0: calling the `BasePlugin`
 implementation logs a deprecation warning. A plugin's own override keeps
 working for the plugin itself. `get_vegas_segment_width()` read the
 `vegas_panel_count` config value, which has never affected Vegas — a card's
@@ -1327,7 +1327,7 @@ now raises `AttributeError`.
 | `font_manager` | `set_override`, `remove_override`, `get_overrides`, `add_font`, `remove_font`, `validate_font`, `get_size_tokens`, `get_performance_stats`, `get_manager_fonts`, `get_detected_fonts`, `get_plugin_fonts`, `unregister_plugin_fonts` | no replacement |
 | `plugin_manager` | `get_enabled_plugins` | check `enabled` on the entries in `plugin_manager.plugins` |
 
-### Removed in 3.9.0
+### Removed in 3.10.0
 
 The Vegas APIs that described a fixed-width segment, which Vegas never
 implemented. Vegas participation (`'scroll'`, `'pause'`, `'exclude'`, see

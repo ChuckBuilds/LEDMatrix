@@ -331,14 +331,14 @@ class TestStreamManager:
 
 
 # ---------------------------------------------------------------------------
-# Deprecations (removal in 3.9.0)
+# Deprecations (removal in 3.10.0)
 # ---------------------------------------------------------------------------
 
 class TestDeprecations:
     @pytest.mark.parametrize('name', ['get_supported_vegas_modes', 'get_vegas_segment_width'])
-    def test_marked_for_3_9_0(self, name):
+    def test_marked_for_3_10_0(self, name):
         marker = getattr(getattr(BasePlugin, name), '__deprecated__', '')
-        assert 'LEDMatrix 3.9.0' in marker
+        assert 'LEDMatrix 3.10.0' in marker
         # The marker spells the version out; it must match the constant.
         assert f'LEDMatrix {VEGAS_LEGACY_REMOVAL}' in marker
 
@@ -359,7 +359,7 @@ class TestDeprecations:
             assert plugin.get_vegas_segment_width() == 2
         messages = [str(w.message) for w in caught]
         assert len(messages) == 2
-        assert all('3.9.0' in m for m in messages)
+        assert all('3.10.0' in m for m in messages)
 
     def test_vegas_panel_count_warns_once_per_plugin(self, caplog):
         first = _plugin({'vegas_panel_count': 2}, plugin_id='a')
@@ -372,7 +372,7 @@ class TestDeprecations:
         messages = [str(w.message) for w in caught]
         assert len(messages) == 2
         assert "plugin 'a'" in messages[0] and "plugin 'b'" in messages[1]
-        assert all('removed in LEDMatrix 3.9.0' in m for m in messages)
+        assert all('removed in LEDMatrix 3.10.0' in m for m in messages)
 
     def test_no_warning_without_the_key(self):
         with warnings.catch_warnings(record=True) as caught:

@@ -18,6 +18,11 @@ accepts both, but the store flags the old spelling as deprecated
 (`store_manager.py`) and only the new one is in `schema/manifest_schema.json`.
 
 ## Unreleased
+### Changed: the legacy Vegas hooks are removed in 3.10.0, not 3.9.0
+`BasePlugin.get_supported_vegas_modes()`, `get_vegas_segment_width()`, the
+`vegas_panel_count` setting and the SCROLL / FIXED_SEGMENT distinction were
+due out in 3.9.0, but 3.9.0 shipped them. They still work and still warn; the
+warnings, docs and `VEGAS_LEGACY_REMOVAL` now say 3.10.0.
 
 ### Fixed: the setup AP came back at boot and kept the device offline
 
